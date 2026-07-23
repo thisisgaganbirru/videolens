@@ -16,6 +16,7 @@ export interface JobCreateResponse {
 export interface JobStatusResponse {
   job_id: string;
   status: JobStatus;
+  stage: string | null;
   result: VideoAnalysis | null;
   error: string | null;
 }

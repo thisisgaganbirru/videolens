@@ -1,11 +1,14 @@
 import asyncio
 import json
+from typing import Awaitable, Callable, Optional
 
 from google import genai
 from google.genai import types
 
 from .config import settings
 from .models import VideoAnalysis
+
+StageCallback = Callable[[str], Awaitable[None]]
 
 SYSTEM_INSTRUCTION = """You are analyzing a short video in full, not just its audio track.
 
@@ -49,13 +52,17 @@ async def _wait_until_active(client: genai.Client, file_name: str, timeout: floa
     raise RuntimeError("Timed out waiting for Gemini to finish processing the uploaded video.")
 
 
-async def analyze_video(video_path: str) -> VideoAnalysis:
+async def analyze_video(video_path: str, on_stage: Optional[StageCallback] = None) -> VideoAnalysis:
     client = _get_client()
 
+    if on_stage:
+        await on_stage("uploading_to_gemini")
     uploaded = await client.aio.files.upload(file=video_path)
     try:
         await _wait_until_active(client, uploaded.name)
 
+        if on_stage:
+            await on_stage("analyzing")
         response = await client.aio.models.generate_content(
             model=settings.gemini_model,
             contents=[uploaded, "Analyze this video as instructed."],
@@ -79,11 +86,13 @@ async def analyze_video(video_path: str) -> VideoAnalysis:
             pass
 
 
-async def analyze_video_with_retry(video_path: str, attempts: int = 2) -> VideoAnalysis:
+async def analyze_video_with_retry(
+    video_path: str, on_stage: Optional[StageCallback] = None, attempts: int = 2
+) -> VideoAnalysis:
     last_error: Exception | None = None
     for attempt in range(attempts):
         try:
-            return await analyze_video(video_path)
+            return await analyze_video(video_path, on_stage=on_stage)
         except Exception as exc:  # noqa: BLE001
             last_error = exc
             if attempt < attempts - 1:

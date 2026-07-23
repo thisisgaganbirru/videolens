@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     max_file_size_mb: int = 200
     max_duration_seconds: int = 180
     rate_limit_per_hour: int = 10
+    job_ttl_seconds: int = 3600
 
     temp_dir: str = "/tmp/videolens"
     allowed_origins: str = "*"

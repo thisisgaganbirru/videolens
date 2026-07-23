@@ -1,6 +1,8 @@
 import asyncio
 import os
 import uuid
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,7 +20,17 @@ from .video import VideoValidationError, enforce_duration_cap, save_upload
 
 os.makedirs(settings.temp_dir, exist_ok=True)
 
-app = FastAPI(title="VideoLens AI")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    sweep_task = asyncio.create_task(job_store.sweep_loop())
+    try:
+        yield
+    finally:
+        sweep_task.cancel()
+
+
+app = FastAPI(title="VideoLens AI", lifespan=lifespan)
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -62,6 +74,7 @@ async def get_job(job_id: str) -> JobStatusResponse:
     return JobStatusResponse(
         job_id=job.job_id,
         status=job.status,
+        stage=job.stage,
         result=job.result,
         error=job.error,
     )

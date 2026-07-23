@@ -70,14 +70,20 @@ Frontend at `http://localhost:3000`, backend at `http://localhost:8000`.
   the file fails format/size/duration validation before any processing
   starts. Rate limited per IP (`RATE_LIMIT_PER_HOUR`, default 10/hour).
 - `GET /api/jobs/{job_id}` — returns
-  `{ job_id, status, result, error }`, where `status` is one of `queued`,
-  `processing`, `complete`, `failed`.
+  `{ job_id, status, stage, result, error }`, where `status` is one of
+  `queued`, `processing`, `complete`, `failed`, and `stage` (only set while
+  `processing`) is one of `normalizing`, `uploading_to_gemini`, `analyzing`.
+
+Completed/failed jobs are swept from the in-process store after
+`JOB_TTL_SECONDS` (default 1 hour) so long-running instances don't grow
+memory unbounded.
 
 ## Configuration
 
 See `backend/.env.example` and `frontend/.env.example`. Key backend
 settings: `GEMINI_API_KEY`, `GEMINI_MODEL`, `MAX_FILE_SIZE_MB`,
-`MAX_DURATION_SECONDS`, `RATE_LIMIT_PER_HOUR`, `ALLOWED_ORIGINS`.
+`MAX_DURATION_SECONDS`, `RATE_LIMIT_PER_HOUR`, `JOB_TTL_SECONDS`,
+`ALLOWED_ORIGINS`.
 
 ## Deployment
 
@@ -85,6 +91,15 @@ Both `backend/` and `frontend/` have standalone Dockerfiles suited to
 Railway or Render as two separate services. Point the frontend's
 `NEXT_PUBLIC_API_BASE_URL` at the deployed backend URL, and set
 `ALLOWED_ORIGINS` on the backend to the deployed frontend origin.
+
+- **Render**: `render.yaml` at the repo root is a Blueprint defining both
+  services — import the repo in Render and it picks it up automatically.
+- **Railway**: `backend/railway.json` and `frontend/railway.json` configure
+  each as a separate Railway service pointing at its own Dockerfile.
+
+A GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every PR and
+push to `main`/`dev`: it compiles and import-checks the backend, and runs a
+full `next build` for the frontend.
 
 ## Out of scope for V1
 
