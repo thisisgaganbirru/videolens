@@ -25,6 +25,7 @@ class Job(BaseModel):
     status: JobStatus
     created_at: datetime
     updated_at: datetime
+    stage: Optional[str] = None
     result: Optional[VideoAnalysis] = None
     error: Optional[str] = None
 
@@ -37,5 +38,6 @@ class JobCreateResponse(BaseModel):
 class JobStatusResponse(BaseModel):
     job_id: str
     status: JobStatus
+    stage: Optional[str] = None
     result: Optional[VideoAnalysis] = None
     error: Optional[str] = None

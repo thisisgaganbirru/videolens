@@ -11,9 +11,14 @@ logger = logging.getLogger("videolens")
 
 async def run_job(job_id: str, saved_path: str, job_dir: str) -> None:
     await job_store.set_status(job_id, JobStatus.PROCESSING)
+    await job_store.set_stage(job_id, "normalizing")
     try:
         normalized_path = await video.normalize_video(saved_path, job_dir)
-        result = await analyze_video_with_retry(normalized_path)
+
+        async def on_stage(stage: str) -> None:
+            await job_store.set_stage(job_id, stage)
+
+        result = await analyze_video_with_retry(normalized_path, on_stage=on_stage)
         await job_store.set_result(job_id, result)
     except VideoValidationError as exc:
         await job_store.set_error(job_id, str(exc))

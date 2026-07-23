@@ -11,6 +11,7 @@ const POLL_INTERVAL_MS = 3000;
 
 export default function Home() {
   const [status, setStatus] = useState<JobStatus | "idle">("idle");
+  const [stage, setStage] = useState<string | null>(null);
   const [result, setResult] = useState<VideoAnalysis | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -26,6 +27,7 @@ export default function Home() {
       try {
         const job = await getJob(jobId);
         setStatus(job.status);
+        setStage(job.stage);
         if (job.status === "complete") {
           setResult(job.result);
           if (pollRef.current) clearInterval(pollRef.current);
@@ -44,6 +46,7 @@ export default function Home() {
     async (file: File) => {
       setError(null);
       setResult(null);
+      setStage(null);
       setStatus("queued");
       try {
         const job = await createJob(file);
@@ -59,6 +62,7 @@ export default function Home() {
 
   const reset = () => {
     setStatus("idle");
+    setStage(null);
     setResult(null);
     setError(null);
   };
@@ -74,7 +78,9 @@ export default function Home() {
 
       {status === "idle" && <UploadForm onSubmit={handleSubmit} />}
 
-      {(status === "queued" || status === "processing") && <JobStatusView status={status} />}
+      {(status === "queued" || status === "processing") && (
+        <JobStatusView status={status} stage={stage} />
+      )}
 
       {error && (
         <div className="rounded-xl border border-red-900 bg-red-950/40 p-4 text-sm text-red-300">
