@@ -10,29 +10,45 @@ from .models import VideoAnalysis
 
 StageCallback = Callable[[str], Awaitable[None]]
 
-SYSTEM_INSTRUCTION = """You are analyzing a short video in full, not just its audio track.
+SYSTEM_INSTRUCTION = """You are analyzing a short media file. It may be audio-only or a video.
 
-Watch the entire video and:
+Analyze the entire file and:
 - Transcribe all spoken content.
-- Read and capture all visible on-screen text: captions, code, UI labels, slides, charts, overlays.
-- Understand visual actions and on-screen elements even when nothing is said about them out loud.
+- For video, read and capture all visible on-screen text: captions, code, UI labels, slides, charts, overlays.
+- For video, understand visual actions and on-screen elements even when nothing is said about them out loud.
 - Combine speech and visuals into one coherent explanation of what the video communicates,
   rather than describing the audio and the visuals as two separate, disconnected things.
-- Do not omit anything that is only conveyed visually and never spoken aloud.
+- For audio-only input, leave screen_text empty and focus on the spoken or audible content.
 - The video may be in English, Spanish, or Hindi. Keep the transcript in its original language.
+
+Use timestamps measured from the start of the media. Keep them accurate to the nearest second.
+Group spoken content into natural, short segments and identify a speaker only when their identity
+or role is reasonably clear. For on-screen text, create a new segment whenever the visible text
+meaningfully changes. Do not invent text that is not legible.
 
 Return your analysis in the requested structured format:
 - title: a short descriptive title for the video
 - summary: a natural language summary of what the video covers
 - transcript: the full spoken transcript
+- transcript_segments: timestamped spoken segments with start_seconds, end_seconds, text, and optional speaker
 - screen_text: the important on-screen text, in the order it appears
+- screen_text_segments: timestamped visible-text segments with start_seconds, end_seconds, and text
 - markdown: well-formatted markdown notes combining speech and visual context"""
 
 _client: genai.Client | None = None
 
 
+class GeminiConfigurationError(RuntimeError):
+    pass
+
+
 def _get_client() -> genai.Client:
     global _client
+    if not settings.gemini_api_key.strip():
+        raise GeminiConfigurationError(
+            "Gemini API key is not configured. Add GEMINI_API_KEY to backend/.env "
+            "and restart the backend."
+        )
     if _client is None:
         _client = genai.Client(api_key=settings.gemini_api_key)
     return _client
@@ -53,10 +69,10 @@ async def _wait_until_active(client: genai.Client, file_name: str, timeout: floa
 
 
 async def analyze_video(video_path: str, on_stage: Optional[StageCallback] = None) -> VideoAnalysis:
-    client = _get_client()
-
     if on_stage:
         await on_stage("uploading_to_gemini")
+    client = _get_client()
+
     uploaded = await client.aio.files.upload(file=video_path)
     try:
         await _wait_until_active(client, uploaded.name)
@@ -65,7 +81,7 @@ async def analyze_video(video_path: str, on_stage: Optional[StageCallback] = Non
             await on_stage("analyzing")
         response = await client.aio.models.generate_content(
             model=settings.gemini_model,
-            contents=[uploaded, "Analyze this video as instructed."],
+        contents=[uploaded, "Analyze this media file as instructed."],
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_INSTRUCTION,
                 response_mime_type="application/json",
