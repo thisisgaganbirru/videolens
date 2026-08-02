@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Copy, Download } from "lucide-react";
+import { Capacitor } from "@capacitor/core";
+import { Share } from "@capacitor/share";
+import { Check, Copy, Download, Share2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ScreenTextSegment, TranscriptSegment, VideoAnalysis } from "@/lib/types";
@@ -101,6 +103,7 @@ function downloadMarkdown(result: VideoAnalysis) {
 export default function ResultsView({ result }: { result: VideoAnalysis }) {
   const [active, setActive] = useState<TabKey>("markdown");
   const [copied, setCopied] = useState(false);
+  const [canShare, setCanShare] = useState(false);
 
   const content = result[active];
 
@@ -108,10 +111,22 @@ export default function ResultsView({ result }: { result: VideoAnalysis }) {
     setCopied(false);
   }, [active]);
 
+  useEffect(() => {
+    setCanShare(Capacitor.isNativePlatform() || typeof navigator.share === "function");
+  }, []);
+
   const copyContent = async () => {
     await navigator.clipboard.writeText(content);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2000);
+  };
+
+  const shareContent = async () => {
+    if (Capacitor.isNativePlatform()) {
+      await Share.share({ title: result.title, text: content, dialogTitle: "Share analysis" });
+    } else if (navigator.share) {
+      await navigator.share({ title: result.title, text: content });
+    }
   };
 
   return (
@@ -240,14 +255,26 @@ export default function ResultsView({ result }: { result: VideoAnalysis }) {
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={copyContent}
-        className="inline-flex min-h-11 items-center gap-2 self-start whitespace-nowrap rounded-lg border border-[#343a36] px-3 text-sm text-slate-300 transition-colors hover:bg-[#1b201d] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 active:bg-[#090b0a]"
-      >
-        {copied ? <Check className="h-4 w-4" aria-hidden="true" /> : <Copy className="h-4 w-4" aria-hidden="true" />}
-        {copied ? "Copied" : "Copy"}
-      </button>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={copyContent}
+          className="inline-flex min-h-11 items-center gap-2 whitespace-nowrap rounded-lg border border-[#343a36] px-3 text-sm text-slate-300 transition-colors hover:bg-[#1b201d] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 active:bg-[#090b0a]"
+        >
+          {copied ? <Check className="h-4 w-4" aria-hidden="true" /> : <Copy className="h-4 w-4" aria-hidden="true" />}
+          {copied ? "Copied" : "Copy"}
+        </button>
+        {canShare && (
+          <button
+            type="button"
+            onClick={() => void shareContent()}
+            className="inline-flex min-h-11 items-center gap-2 whitespace-nowrap rounded-lg border border-[#343a36] px-3 text-sm text-slate-300 transition-colors hover:bg-[#1b201d] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 active:bg-[#090b0a]"
+          >
+            <Share2 className="h-4 w-4" aria-hidden="true" />
+            Share
+          </button>
+        )}
+      </div>
     </section>
   );
 }

@@ -102,6 +102,11 @@ export default function Home() {
           Analyze another file
         </button>
       )}
+
+      <footer className="mt-8 flex gap-5 border-t border-[#292e2b] pt-5 text-xs text-slate-500">
+        <a href="/privacy" className="hover:text-slate-300">Privacy</a>
+        <a href="/terms" className="hover:text-slate-300">Terms</a>
+      </footer>
     </main>
   );
 }
