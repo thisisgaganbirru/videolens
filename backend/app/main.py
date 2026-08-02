@@ -4,7 +4,7 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -12,18 +12,19 @@ from slowapi.middleware import SlowAPIMiddleware
 from starlette.requests import Request
 
 from .config import settings
-from .jobs import job_store
-from .models import JobCreateResponse, JobStatusResponse
-from .pipeline import run_job
+from .models import RunCreateResponse, RunStatusResponse
+from .pipeline import run_pipeline
 from .rate_limit import limiter
-from .video import VideoValidationError, enforce_duration_cap, save_upload
+from .runs import run_store
+from .video import MediaValidationError, enforce_duration_cap, save_upload, validate_media_tools
 
 os.makedirs(settings.temp_dir, exist_ok=True)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    sweep_task = asyncio.create_task(job_store.sweep_loop())
+    validate_media_tools()
+    sweep_task = asyncio.create_task(run_store.sweep_loop())
     try:
         yield
     finally:
@@ -49,32 +50,54 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
-@app.post("/api/jobs", response_model=JobCreateResponse, status_code=202)
+@app.post("/api/runs", response_model=RunCreateResponse, status_code=202)
 @limiter.limit(f"{settings.rate_limit_per_hour}/hour")
-async def create_job(request: Request, file: UploadFile = File(...)) -> JobCreateResponse:
-    job_id = str(uuid.uuid4())
+async def create_run(
+    request: Request,
+    file: UploadFile | None = File(default=None),
+    url: str | None = Form(default=None),
+) -> RunCreateResponse:
+    run_id = str(uuid.uuid4())
+    source_url = url.strip() if url else None
+
+    if (file is None) == (source_url is None):
+        if file is not None:
+            await file.close()
+        raise HTTPException(
+            status_code=400,
+            detail="Provide exactly one source: either a media file or a public URL.",
+        )
 
     try:
-        saved = await save_upload(job_id, file)
-        await enforce_duration_cap(job_id, saved.path)
-    except VideoValidationError as exc:
+        saved = None
+        if file is not None:
+            saved = await save_upload(run_id, file)
+            await enforce_duration_cap(run_id, saved.path)
+    except MediaValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    job = await job_store.create(job_id)
-    asyncio.create_task(run_job(job_id, saved.path, saved.job_dir))
+    run = await run_store.create(run_id)
+    asyncio.create_task(
+        run_pipeline(
+            run_id,
+            saved_path=saved.path if saved else None,
+            run_dir=saved.run_dir if saved else None,
+            source_url=source_url,
+        )
+    )
 
-    return JobCreateResponse(job_id=job.job_id, status=job.status)
+    return RunCreateResponse(run_id=run.run_id, status=run.status)
 
 
-@app.get("/api/jobs/{job_id}", response_model=JobStatusResponse)
-async def get_job(job_id: str) -> JobStatusResponse:
-    job = await job_store.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="Job not found.")
-    return JobStatusResponse(
-        job_id=job.job_id,
-        status=job.status,
-        stage=job.stage,
-        result=job.result,
-        error=job.error,
+@app.get("/api/runs/{run_id}", response_model=RunStatusResponse)
+async def get_run(run_id: str) -> RunStatusResponse:
+    run = await run_store.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+    return RunStatusResponse(
+        run_id=run.run_id,
+        status=run.status,
+        stage=run.stage,
+        result=run.result,
+        error=run.error,
     )
