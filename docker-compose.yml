@@ -5,6 +5,11 @@ services:
       - "8000:8000"
     env_file:
       - ./backend/.env
+    environment:
+      # ffmpeg/ffprobe are installed on PATH in the image; never inherit a
+      # host-specific FFMPEG_LOCATION (e.g. a Windows path) from backend/.env.
+      FFMPEG_LOCATION: ""
+      TEMP_DIR: /tmp/videolens
     volumes:
       - videolens_tmp:/tmp/videolens
 
