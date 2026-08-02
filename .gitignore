@@ -1,6 +1,7 @@
 # node
 node_modules/
 .next/
+out/
 *.tsbuildinfo
 
 # python
@@ -15,3 +16,11 @@ venv/
 
 # misc
 .DS_Store
+frontend/android/.gradle/
+frontend/android/build/
+frontend/android/app/build/
+
+# Android signing secrets
+*.jks
+*.keystore
+keystore.properties

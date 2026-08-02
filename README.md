@@ -22,15 +22,16 @@ login-only URLs may not be downloadable.
 4. On completion the run result contains `title`, `summary`, `transcript`,
    `screen_text`, and `markdown`.
 
-Run state lives in an in-process store for V1 — no database, no persistent
-media storage. Uploaded and downloaded files are deleted from disk as soon as a run
-finishes, whether it succeeds or fails.
+Local development can use in-process run state. Production mode uses Redis,
+an ARQ analysis worker, and S3-compatible temporary object storage. Uploaded
+and downloaded files are deleted after every successful or failed run.
 
 ## Project layout
 
 ```
-backend/     FastAPI app, FFmpeg processing, Gemini integration
-frontend/    Next.js + Tailwind upload / status / results UI
+backend/             FastAPI API, worker, FFmpeg, Gemini, Redis/S3 adapters
+frontend/            Next.js PWA and Capacitor source
+frontend/android/    Android API 36 native project
 ```
 
 ## Running locally
@@ -70,50 +71,77 @@ cp backend/.env.example backend/.env   # fill in GEMINI_API_KEY
 docker compose up --build
 ```
 
-Frontend at `http://localhost:3000`, backend at `http://localhost:8000`.
+This starts the frontend, API, analysis worker, Redis, and MinIO. Frontend is
+at `http://localhost:3000`, backend at `http://localhost:8000`, and the MinIO
+console at `http://localhost:9001`.
 
 ## API
 
 - `POST /api/runs` — multipart request with exactly one field: `file` (MP3,
   MP4, or MOV) or `url` (a public HTTP(S) media URL). Returns `{ run_id,
   status }` with `202 Accepted`. Upload validation errors return immediately;
-  URL download errors are reported through run status. Rate limited per IP
-  (`RATE_LIMIT_PER_HOUR`, default 20/hour).
+  URL download errors are reported through run status. Requires
+  `X-Client-ID`, `accept_terms=true`, and is rate limited per client or
+  authenticated token (`RATE_LIMIT_PER_HOUR`, default 20/hour).
 - `GET /api/runs/{run_id}` — returns
   `{ run_id, status, stage, result, error }`, where `status` is one of
   `queued`, `processing`, `complete`, `failed`, and `stage` (only set while
   `processing`) is one of `downloading`, `normalizing`,
   `uploading_to_gemini`, `analyzing`.
 
-Completed/failed runs are swept from the in-process store after
-`RUN_TTL_SECONDS` (default 1 hour) so long-running instances don't grow
-memory unbounded.
+Run access is owner-bound. In distributed mode, Redis expires run state after
+`RUN_TTL_SECONDS` (default 1 hour).
 
 ## Configuration
 
 See `backend/.env.example` and `frontend/.env.example`. Key backend
 settings: `GEMINI_API_KEY`, `GEMINI_MODEL`, `MAX_FILE_SIZE_MB`,
 `MAX_DURATION_SECONDS`, `RATE_LIMIT_PER_HOUR`, `RUN_TTL_SECONDS`, `FFMPEG_LOCATION`,
+`REDIS_URL`, the `S3_*` variables, optional `AUTH_*` OIDC settings, and
 `ALLOWED_ORIGINS`.
+
+## PWA and Android
+
+The production frontend is an installable PWA with offline fallback, launcher
+icons, and URL share-target support. API responses and submitted media are never
+cached by the service worker.
+
+Build and synchronize the Android application:
+
+```bash
+cd frontend
+npm run android:sync
+cd android
+./gradlew assembleDebug testDebugUnitTest
+```
+
+The debug APK is written to
+`frontend/android/app/build/outputs/apk/debug/app-debug.apk`. The Android app
+targets API 36, accepts text/URL shares, uses the native media picker, and can
+share analysis results through the system share sheet. A production `.aab`
+still requires an operator-owned signing key and Play Console configuration.
 
 ## Deployment
 
-Both `backend/` and `frontend/` have standalone Dockerfiles suited to
-Railway or Render as two separate services. Point the frontend's
+Production requires frontend, API, worker, Redis, and S3-compatible bucket
+resources. Point the frontend's
 `NEXT_PUBLIC_API_BASE_URL` at the deployed backend URL, and set
 `ALLOWED_ORIGINS` on the backend to the deployed frontend origin.
 
-- **Render**: `render.yaml` at the repo root is a Blueprint defining both
-  services — import the repo in Render and it picks it up automatically.
-- **Railway**: `backend/railway.json` and `frontend/railway.json` configure
-  each as a separate Railway service pointing at its own Dockerfile.
+- **Railway API**: use `backend/railway.json`.
+- **Railway worker**: use `backend/railway.worker.json` with the same backend
+  image and variables.
+- **Railway frontend**: use `frontend/railway.json`.
+- Provision Redis and an S3-compatible bucket, then share their variables with
+  the API and worker services.
 
-A GitHub Actions workflow (`.github/workflows/ci.yml`) runs on every PR and
-push to `main`/`dev`: it compiles and import-checks the backend, and runs a
-full `next build` for the frontend.
+A GitHub Actions workflow (`.github/workflows/ci.yml`) runs backend tests,
+TypeScript checks, production and mobile builds, and an Android API 36 build.
 
-## Out of scope for V1
+## Release gates
 
-No user accounts, no payments, no mobile app, no browser extension, no
-search, no sharing, no Notion/Obsidian export, no persistent video storage,
-no database beyond in-process run state.
+OIDC verification is implemented, but the operator must choose and configure an
+identity provider before disabling anonymous access. Public release also requires
+verified contact details in the Privacy Policy, production domains and secrets,
+an Android signing key, Play Console declarations, physical-device testing, and
+the required closed-test group. See `PUBLISHING_PLAN.md`.
