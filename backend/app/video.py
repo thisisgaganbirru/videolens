@@ -30,7 +30,7 @@ class SavedUpload:
     run_dir: str
 
 
-def _run_temp_dir(run_id: str) -> str:
+def create_run_dir(run_id: str) -> str:
     path = os.path.join(settings.temp_dir, run_id)
     os.makedirs(path, exist_ok=True)
     return path
@@ -78,7 +78,7 @@ async def save_upload(run_id: str, upload: UploadFile) -> SavedUpload:
             f"Unsupported file type '{ext or 'unknown'}'. Only .mp3, .mp4, and .mov are accepted."
         )
 
-    run_dir = _run_temp_dir(run_id)
+    run_dir = create_run_dir(run_id)
     dest_path = os.path.join(run_dir, f"upload{ext}")
     max_bytes = settings.max_file_size_mb * 1024 * 1024
     chunk_size = 1024 * 1024
@@ -198,7 +198,7 @@ async def download_url(run_id: str, url: str) -> SavedUpload:
     await asyncio.to_thread(_validate_public_url, url)
     cookie_options = _cookie_options()
     ffmpeg_path = _media_binary("ffmpeg")
-    run_dir = _run_temp_dir(run_id)
+    run_dir = create_run_dir(run_id)
     max_bytes = settings.max_file_size_mb * 1024 * 1024
 
     def progress_hook(status: dict) -> None:

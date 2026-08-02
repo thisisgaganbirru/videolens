@@ -37,6 +37,7 @@ class VideoAnalysis(BaseModel):
 
 class Run(BaseModel):
     run_id: str
+    owner_id: str
     status: RunStatus
     created_at: datetime
     updated_at: datetime
