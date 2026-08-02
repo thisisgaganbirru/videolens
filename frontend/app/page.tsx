@@ -2,16 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import UploadForm from "@/components/UploadForm";
-import JobStatusView from "@/components/JobStatusView";
+import RunStatusView from "@/components/RunStatusView";
 import ResultsView from "@/components/ResultsView";
-import { ApiError, createJob, getJob } from "@/lib/api";
-import type { JobStatus, VideoAnalysis } from "@/lib/types";
+import { ApiError, createRun, getRun, type MediaSource } from "@/lib/api";
+import type { RunStatus, VideoAnalysis } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 3000;
 
 export default function Home() {
-  const [status, setStatus] = useState<JobStatus | "idle">("idle");
+  const [status, setStatus] = useState<RunStatus | "idle">("idle");
   const [stage, setStage] = useState<string | null>(null);
+  const [sourceKind, setSourceKind] = useState<"file" | "url">("file");
   const [result, setResult] = useState<VideoAnalysis | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -22,17 +23,17 @@ export default function Home() {
     };
   }, []);
 
-  const pollJob = useCallback((jobId: string) => {
+  const pollRun = useCallback((runId: string) => {
     pollRef.current = setInterval(async () => {
       try {
-        const job = await getJob(jobId);
-        setStatus(job.status);
-        setStage(job.stage);
-        if (job.status === "complete") {
-          setResult(job.result);
+        const run = await getRun(runId);
+        setStatus(run.status);
+        setStage(run.stage);
+        if (run.status === "complete") {
+          setResult(run.result);
           if (pollRef.current) clearInterval(pollRef.current);
-        } else if (job.status === "failed") {
-          setError(job.error || "Video analysis failed.");
+        } else if (run.status === "failed") {
+          setError(run.error || "Video analysis failed.");
           if (pollRef.current) clearInterval(pollRef.current);
         }
       } catch (err) {
@@ -43,26 +44,28 @@ export default function Home() {
   }, []);
 
   const handleSubmit = useCallback(
-    async (file: File) => {
+    async (source: MediaSource) => {
       setError(null);
       setResult(null);
       setStage(null);
+      setSourceKind(source.url ? "url" : "file");
       setStatus("queued");
       try {
-        const job = await createJob(file);
-        setStatus(job.status);
-        pollJob(job.job_id);
+        const run = await createRun(source);
+        setStatus(run.status);
+        pollRun(run.run_id);
       } catch (err) {
         setStatus("idle");
-        setError(err instanceof ApiError ? err.message : "Upload failed.");
+        setError(err instanceof ApiError ? err.message : "Could not submit media.");
       }
     },
-    [pollJob]
+    [pollRun]
   );
 
   const reset = () => {
     setStatus("idle");
     setStage(null);
+    setSourceKind("file");
     setResult(null);
     setError(null);
   };
@@ -72,17 +75,17 @@ export default function Home() {
       <div>
         <h1 className="text-2xl font-semibold">VideoLens AI</h1>
         <p className="text-sm text-slate-400">
-          Upload a short video and get a transcript, on-screen text, summary, and notes.
+          Upload media or paste a public link to get a transcript, summary, and notes.
         </p>
       </div>
 
       {status === "idle" && <UploadForm onSubmit={handleSubmit} />}
 
-      {(status === "queued" || status === "processing") && (
-        <JobStatusView status={status} stage={stage} />
+      {status !== "idle" && (
+        <RunStatusView status={status} stage={stage} sourceKind={sourceKind} error={error} />
       )}
 
-      {error && (
+      {error && status !== "failed" && (
         <div className="rounded-xl border border-red-900 bg-red-950/40 p-4 text-sm text-red-300">
           {error}
         </div>
@@ -96,7 +99,7 @@ export default function Home() {
           onClick={reset}
           className="self-start text-sm text-indigo-300 hover:underline"
         >
-          Analyze another video
+          Analyze another file
         </button>
       )}
     </main>
