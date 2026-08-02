@@ -16,9 +16,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
-      - run: python -m py_compile app/*.py
-      - run: python -c "import app.main"
+      - run: python -m compileall -q app
+      - run: python -m unittest discover -s tests
+      - run: python -c "import app.main; import app.worker"
         env:
           GEMINI_API_KEY: ci-test-key
 
@@ -31,8 +34,34 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: "22"
+          cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      - run: npx tsc --noEmit
       - run: npm run build
+      - run: npm run build:mobile
+
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+      - run: npm ci
+      - run: npm run android:sync
+      - run: ./gradlew assembleDebug testDebugUnitTest
+        working-directory: frontend/android
