@@ -1,0 +1,27 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      # ffmpeg/ffprobe are installed on PATH in the image; never inherit a
+      # host-specific FFMPEG_LOCATION (e.g. a Windows path) from backend/.env.
+      FFMPEG_LOCATION: ""
+      TEMP_DIR: /tmp/videolens
+    volumes:
+      - videolens_tmp:/tmp/videolens
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  videolens_tmp:
