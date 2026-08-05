@@ -63,10 +63,18 @@ jobs:
       - run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
       - run: npm ci
       - run: npm run android:sync
-      - run: ./gradlew assembleDebug testDebugUnitTest
+      - id: version
+        run: |
+          echo "name=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - run: |
+          ./gradlew assembleDebug testDebugUnitTest \
+            -PappVersionName=${{ steps.version.outputs.name }} \
+            -PappVersionCode=${{ github.run_number }} \
+            -PbuildRef=${{ steps.version.outputs.sha }}
         working-directory: frontend/android
       - uses: actions/upload-artifact@v4
         with:
-          name: app-debug-apk
-          path: frontend/android/app/build/outputs/apk/debug/app-debug.apk
+          name: videolens-ai-v${{ steps.version.outputs.name }}-code${{ github.run_number }}-${{ steps.version.outputs.sha }}-debug
+          path: frontend/android/app/build/outputs/apk/debug/*.apk
           retention-days: 30
