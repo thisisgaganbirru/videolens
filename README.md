@@ -116,10 +116,30 @@ cd android
 ```
 
 The debug APK is written to
-`frontend/android/app/build/outputs/apk/debug/app-debug.apk`. The Android app
-targets API 36, accepts text/URL shares, uses the native media picker, and can
-share analysis results through the system share sheet. A production `.aab`
-still requires an operator-owned signing key and Play Console configuration.
+`frontend/android/app/build/outputs/apk/debug/videolens-ai-v<versionName>-code<versionCode>-<buildRef>-debug.apk`.
+The Android app targets API 36, accepts text/URL shares, uses the native media
+picker, and can share analysis results through the system share sheet. A
+production `.aab` still requires an operator-owned signing key and Play Console
+configuration.
+
+### Versioning
+
+`frontend/android/app/build.gradle` reads its `versionName` from
+`frontend/package.json`'s `version` field — that's the single source of truth
+for the app's semantic version. Bump it there for every release.
+
+`versionCode` must strictly increase on every Play Store upload, so it's
+supplied at build time rather than hardcoded:
+
+- CI passes `-PappVersionCode=<GitHub Actions run number>`, which is always
+  increasing across builds.
+- Local builds without that property default to `versionCode 1`.
+
+Both `versionName` and `versionCode`, plus the short git commit (`buildRef`),
+are baked into the output APK's filename so any build can be traced back to
+the exact version and commit it came from. CI additionally names the uploaded
+workflow artifact after the same values (see the `android` job in
+`.github/workflows/ci.yml`), downloadable from the Actions run summary.
 
 ## Deployment
 
