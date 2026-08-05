@@ -18,13 +18,13 @@ class Principal:
     authenticated: bool
 
 
-def quota_key_from_headers(authorization: str, client_id: str) -> str:
+def quota_key_from_headers(authorization: str, client_ip: str) -> str:
+    # Keyed by IP, not the client-supplied X-Client-ID: that header is
+    # self-reported and free to regenerate, so it carries no quota weight.
     if authorization.startswith("Bearer "):
         digest = hashlib.sha256(authorization.encode()).hexdigest()[:32]
         return f"token:{digest}"
-    if CLIENT_ID_PATTERN.fullmatch(client_id):
-        return f"client:{client_id}"
-    return "anonymous"
+    return f"ip:{client_ip}" if client_ip else "anonymous"
 
 
 def _decode_token(token: str) -> dict:
