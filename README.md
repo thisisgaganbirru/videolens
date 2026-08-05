@@ -141,6 +141,11 @@ the exact version and commit it came from. CI additionally names the uploaded
 workflow artifact after the same values (see the `android` job in
 `.github/workflows/ci.yml`), downloadable from the Actions run summary.
 
+On every push to `dev`, CI also publishes the debug APK as a GitHub Release
+(tagged `dev-v<versionName>-build<run number>`, marked pre-release) under the
+repo's **Releases** page — a stable, non-expiring download link, unlike the
+30-day workflow artifact.
+
 ## Deployment
 
 Production requires frontend, API, worker, Redis, and S3-compatible bucket
