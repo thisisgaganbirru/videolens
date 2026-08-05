@@ -81,8 +81,15 @@ console at `http://localhost:9001`.
   MP4, or MOV) or `url` (a public HTTP(S) media URL). Returns `{ run_id,
   status }` with `202 Accepted`. Upload validation errors return immediately;
   URL download errors are reported through run status. Requires
-  `X-Client-ID`, `accept_terms=true`, and is rate limited per client or
-  authenticated token (`RATE_LIMIT_PER_HOUR`, default 20/hour).
+  `X-Client-ID` (used only to scope which runs a browser can see, not for
+  quota) and `accept_terms=true`. Rate limited per source IP, or per
+  authenticated token when signed in (`RATE_LIMIT_PER_HOUR`, default
+  20/hour). The limiter is Redis-backed when `REDIS_URL` is set, so the cap
+  holds across replicas instead of resetting per process. A separate
+  `DAILY_RUN_CAP` (default 200) bounds total accepted runs per UTC day
+  across every caller, regardless of IP — the backstop against total Gemini
+  spend once per-IP limits alone aren't enough. New runs are rejected with
+  `503` once either cap is hit, before any download or FFmpeg work happens.
 - `GET /api/runs/{run_id}` — returns
   `{ run_id, status, stage, result, error }`, where `status` is one of
   `queued`, `processing`, `complete`, `failed`, and `stage` (only set while
@@ -162,6 +169,22 @@ resources. Point the frontend's
 
 A GitHub Actions workflow (`.github/workflows/ci.yml`) runs backend tests,
 TypeScript checks, production and mobile builds, and an Android API 36 build.
+
+### Cost protection
+
+The app has no accounts and no paid tier, so nothing gates the Gemini calls
+that cost money except server-side limits. Before going live:
+
+- Set `ALLOWED_ORIGINS` to your real frontend origin(s) — never leave it as
+  `*` in production. The backend logs a startup warning if it detects a
+  distributed deployment (`REDIS_URL` set) still running with `*`.
+- Tune `RATE_LIMIT_PER_HOUR` and `DAILY_RUN_CAP` to what you're willing to
+  spend per hour/day at your Gemini model's per-request price.
+- Set a hard budget/quota alert on the Gemini API key itself in
+  [Google AI Studio](https://aistudio.google.com/) or Google Cloud Console
+  billing. This is the only layer enforced outside this app's own code — if
+  every app-level limit above somehow fails or gets bypassed, this is what
+  actually stops the bill.
 
 ## Release gates
 
