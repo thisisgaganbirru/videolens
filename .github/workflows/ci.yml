@@ -44,6 +44,8 @@ jobs:
 
   android:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: frontend
@@ -78,3 +80,13 @@ jobs:
           name: videolens-ai-v${{ steps.version.outputs.name }}-code${{ github.run_number }}-${{ steps.version.outputs.sha }}-debug
           path: frontend/android/app/build/outputs/apk/debug/*.apk
           retention-days: 30
+      - name: Publish dev release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev-v${{ steps.version.outputs.name }}-build${{ github.run_number }}
+          name: VideoLens AI dev build v${{ steps.version.outputs.name }} (#${{ github.run_number }})
+          prerelease: true
+          files: frontend/android/app/build/outputs/apk/debug/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
