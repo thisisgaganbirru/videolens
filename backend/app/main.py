@@ -1,3 +1,4 @@
+import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
@@ -28,6 +29,7 @@ from .video import (
 )
 
 configure_logging()
+logger = logging.getLogger(__name__)
 os.makedirs(settings.temp_dir, exist_ok=True)
 
 
@@ -38,6 +40,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await run_store.ping()
         if not settings.object_storage_enabled:
             raise RuntimeError("S3-compatible object storage is required when Redis queueing is enabled.")
+        if settings.allowed_origins.strip() == "*":
+            logger.warning(
+                "ALLOWED_ORIGINS is \"*\" in a distributed deployment (REDIS_URL is set). "
+                "Any website can call this API from a browser. Set ALLOWED_ORIGINS to your "
+                "real frontend origin(s) before going live."
+            )
     try:
         yield
     finally:
