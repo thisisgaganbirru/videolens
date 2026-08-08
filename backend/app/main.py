@@ -62,7 +62,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in settings.allowed_origins.split(",") if origin.strip()],
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Client-ID"],
+    allow_headers=["Authorization", "Content-Type", "X-Client-ID", "X-Gemini-Api-Key"],
 )
 
 
@@ -97,7 +97,12 @@ async def create_run(
     if not accept_terms:
         raise HTTPException(status_code=400, detail="Accept the media-use terms before analysis.")
 
-    if not await daily_budget.try_consume():
+    # A caller-supplied key spends their own quota, not ours, so it's exempt
+    # from the daily budget backstop (which exists purely to bound our own
+    # Gemini spend). The per-IP/token rate limit above still applies - it
+    # protects server compute (FFmpeg, bandwidth), which BYOK doesn't change.
+    gemini_api_key = request.headers.get("x-gemini-api-key", "").strip() or None
+    if not gemini_api_key and not await daily_budget.try_consume():
         raise HTTPException(
             status_code=503,
             detail="VideoLens AI has reached its analysis limit for today. Please try again tomorrow.",
@@ -130,6 +135,7 @@ async def create_run(
             run_dir=saved.run_dir if saved and not settings.queue_enabled else None,
             source_url=source_url,
             source_key=source_key,
+            gemini_api_key=gemini_api_key,
         )
         return RunCreateResponse(run_id=run.run_id, status=run.status)
     except MediaValidationError as exc:
