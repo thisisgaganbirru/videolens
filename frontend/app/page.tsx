@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import UploadForm from "@/components/UploadForm";
 import RunStatusView from "@/components/RunStatusView";
 import ResultsView from "@/components/ResultsView";
+import AppMenu from "@/components/AppMenu";
 import { ApiError, createRun, getRun, type MediaSource } from "@/lib/api";
 import type { RunStatus, VideoAnalysis } from "@/lib/types";
 
@@ -70,13 +71,42 @@ export default function Home() {
     setError(null);
   };
 
+  const handleOpenRun = useCallback(
+    async (runId: string) => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      setError(null);
+      setResult(null);
+      setSourceKind("file");
+      setStatus("processing");
+      try {
+        const run = await getRun(runId);
+        setStatus(run.status);
+        setStage(run.stage);
+        if (run.status === "complete") {
+          setResult(run.result);
+        } else if (run.status === "failed") {
+          setError(run.error || "Video analysis failed.");
+        } else {
+          pollRun(runId);
+        }
+      } catch (err) {
+        setStatus("idle");
+        setError(err instanceof ApiError ? err.message : "Could not load that run.");
+      }
+    },
+    [pollRun]
+  );
+
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-16">
-      <div>
-        <h1 className="text-2xl font-semibold">VideoLens AI</h1>
-        <p className="text-sm text-slate-400">
-          Upload media or paste a public link to get a transcript, summary, and notes.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">VideoLens AI</h1>
+          <p className="text-sm text-slate-400">
+            Upload media or paste a public link to get a transcript, summary, and notes.
+          </p>
+        </div>
+        <AppMenu onOpenRun={handleOpenRun} />
       </div>
 
       {status === "idle" && <UploadForm onSubmit={handleSubmit} />}

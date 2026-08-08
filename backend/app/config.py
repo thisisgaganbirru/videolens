@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     max_duration_seconds: int = 180
     rate_limit_per_hour: int = 20
     daily_run_cap: int = 200
-    run_ttl_seconds: int = 3600
+    run_ttl_seconds: int = 604800  # 7 days - drives both run TTL and history retention
     worker_max_jobs: int = 2
     worker_job_timeout_seconds: int = 600
 
