@@ -35,3 +35,14 @@ export interface RunStatusResponse {
   result: VideoAnalysis | null;
   error: string | null;
 }
+
+export interface RunSummary {
+  run_id: string;
+  status: RunStatus;
+  title: string | null;
+  created_at: string;
+}
+
+export interface RunListResponse {
+  runs: RunSummary[];
+}
