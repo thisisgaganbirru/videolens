@@ -14,7 +14,7 @@ from starlette.requests import Request
 from .budget import daily_budget
 from .config import settings
 from .logging_config import configure_logging
-from .models import RunCreateResponse, RunStatusResponse
+from .models import RunCreateResponse, RunListResponse, RunStatusResponse, RunSummary
 from .queue import close_queue, enqueue_run
 from .rate_limit import limiter
 from .runs import run_store
@@ -146,6 +146,24 @@ async def create_run(
         if source_key:
             await delete_source(source_key)
         raise HTTPException(status_code=503, detail="Could not queue the analysis run.") from exc
+
+
+@app.get("/api/runs", response_model=RunListResponse)
+async def list_runs(
+    principal: Principal = Depends(get_principal),
+) -> RunListResponse:
+    runs = await run_store.list_for_owner(principal.subject)
+    return RunListResponse(
+        runs=[
+            RunSummary(
+                run_id=run.run_id,
+                status=run.status,
+                title=run.result.title if run.result else None,
+                created_at=run.created_at,
+            )
+            for run in runs
+        ]
+    )
 
 
 @app.get("/api/runs/{run_id}", response_model=RunStatusResponse)

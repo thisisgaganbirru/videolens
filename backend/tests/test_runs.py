@@ -32,6 +32,23 @@ class RunStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.status, RunStatus.COMPLETE)
         self.assertEqual(saved.stage, "analyzing")
 
+    async def test_list_for_owner_returns_only_that_owners_runs_newest_first(self) -> None:
+        await self.store.create("run-a", "client:owner-1")
+        await self.store.create("run-b", "client:owner-2")
+        await self.store.create("run-c", "client:owner-1")
+
+        history = await self.store.list_for_owner("client:owner-1")
+
+        self.assertEqual([run.run_id for run in history], ["run-c", "run-a"])
+
+    async def test_list_for_owner_respects_limit(self) -> None:
+        for i in range(5):
+            await self.store.create(f"run-{i}", "client:owner-1")
+
+        history = await self.store.list_for_owner("client:owner-1", limit=2)
+
+        self.assertEqual(len(history), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
