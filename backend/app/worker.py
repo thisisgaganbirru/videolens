@@ -1,5 +1,6 @@
 from arq.connections import RedisSettings
 
+from .byok import byok_keys
 from .config import settings
 from .pipeline import run_pipeline
 from .runs import run_store
@@ -15,6 +16,7 @@ async def startup(ctx: dict) -> None:
 
 async def shutdown(ctx: dict) -> None:
     await run_store.close()
+    await byok_keys.close()
 
 
 async def process_run(
@@ -24,7 +26,10 @@ async def process_run(
     source_url: str | None = None,
     source_key: str | None = None,
 ) -> None:
-    await run_pipeline(run_id, source_url=source_url, source_key=source_key)
+    gemini_api_key = await byok_keys.take(run_id)
+    await run_pipeline(
+        run_id, source_url=source_url, source_key=source_key, gemini_api_key=gemini_api_key
+    )
 
 
 class WorkerSettings:

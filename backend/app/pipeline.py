@@ -17,6 +17,7 @@ async def run_pipeline(
     run_dir: str | None = None,
     source_url: str | None = None,
     source_key: str | None = None,
+    gemini_api_key: str | None = None,
 ) -> None:
     await run_store.set_status(run_id, RunStatus.PROCESSING)
     try:
@@ -42,7 +43,7 @@ async def run_pipeline(
         async def on_stage(stage: str) -> None:
             await run_store.set_stage(run_id, stage)
 
-        result = await analyze_video_with_retry(normalized_path, on_stage=on_stage)
+        result = await analyze_video_with_retry(normalized_path, on_stage=on_stage, api_key=gemini_api_key)
         await run_store.set_result(run_id, result)
     except MediaValidationError as exc:
         await run_store.set_error(run_id, str(exc))
