@@ -90,14 +90,37 @@ console at `http://localhost:9001`.
   across every caller, regardless of IP — the backstop against total Gemini
   spend once per-IP limits alone aren't enough. New runs are rejected with
   `503` once either cap is hit, before any download or FFmpeg work happens.
+  An optional `X-Gemini-Api-Key` header (see "Bring your own key" below)
+  exempts that run from `DAILY_RUN_CAP`, since it doesn't spend the shared
+  quota; the per-IP/token rate limit still applies.
 - `GET /api/runs/{run_id}` — returns
   `{ run_id, status, stage, result, error }`, where `status` is one of
   `queued`, `processing`, `complete`, `failed`, and `stage` (only set while
   `processing`) is one of `downloading`, `normalizing`,
   `uploading_to_gemini`, `analyzing`.
+- `GET /api/runs` — returns `{ runs: [{ run_id, status, title, created_at }] }`,
+  the caller's own run history (newest first, capped at 20). Backs the
+  in-app History panel.
 
-Run access is owner-bound. In distributed mode, Redis expires run state after
-`RUN_TTL_SECONDS` (default 1 hour).
+Run access is owner-bound. In distributed mode, Redis expires run state (and
+each caller's history entries) after `RUN_TTL_SECONDS` (default 7 days).
+
+### Bring your own key
+
+The in-app menu's "API key" panel lets someone paste their own Gemini API key
+(from [Google AI Studio](https://aistudio.google.com/apikey)). It's stored
+only in the browser's `localStorage` and sent as `X-Gemini-Api-Key` on run
+creation. The backend uses it in place of the shared `GEMINI_API_KEY` for
+that run only:
+
+- Never written to `RunStore` or logged.
+- In distributed mode it can't travel as a normal background-job argument
+  (arq logs job args/results), so it's held in a dedicated, single-use Redis
+  entry (`backend/app/byok.py`) keyed by `run_id`, deleted the instant the
+  worker reads it, with a 15-minute safety-net TTL in case it's never read.
+- Exempt from `DAILY_RUN_CAP` (that cap protects the shared key's spend, not
+  a key someone brought themselves) but still subject to the normal per-IP
+  rate limit, since FFmpeg/bandwidth/worker capacity are still spent either way.
 
 ## Configuration
 

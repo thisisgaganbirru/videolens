@@ -42,7 +42,13 @@ class GeminiConfigurationError(RuntimeError):
     pass
 
 
-def _get_client() -> genai.Client:
+def _get_client(api_key: str | None = None) -> genai.Client:
+    # A caller-supplied (bring-your-own) key gets its own client, never cached
+    # in the module-level singleton - that singleton is only for the shared
+    # server key, and must never end up holding someone else's credential.
+    if api_key:
+        return genai.Client(api_key=api_key)
+
     global _client
     if not settings.gemini_api_key.strip():
         raise GeminiConfigurationError(
@@ -68,10 +74,12 @@ async def _wait_until_active(client: genai.Client, file_name: str, timeout: floa
     raise RuntimeError("Timed out waiting for Gemini to finish processing the uploaded video.")
 
 
-async def analyze_video(video_path: str, on_stage: Optional[StageCallback] = None) -> VideoAnalysis:
+async def analyze_video(
+    video_path: str, on_stage: Optional[StageCallback] = None, api_key: str | None = None
+) -> VideoAnalysis:
     if on_stage:
         await on_stage("uploading_to_gemini")
-    client = _get_client()
+    client = _get_client(api_key)
 
     uploaded = await client.aio.files.upload(file=video_path)
     try:
@@ -103,12 +111,15 @@ async def analyze_video(video_path: str, on_stage: Optional[StageCallback] = Non
 
 
 async def analyze_video_with_retry(
-    video_path: str, on_stage: Optional[StageCallback] = None, attempts: int = 2
+    video_path: str,
+    on_stage: Optional[StageCallback] = None,
+    attempts: int = 2,
+    api_key: str | None = None,
 ) -> VideoAnalysis:
     last_error: Exception | None = None
     for attempt in range(attempts):
         try:
-            return await analyze_video(video_path, on_stage=on_stage)
+            return await analyze_video(video_path, on_stage=on_stage, api_key=api_key)
         except Exception as exc:  # noqa: BLE001
             last_error = exc
             if attempt < attempts - 1:
