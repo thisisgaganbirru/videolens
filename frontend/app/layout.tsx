@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import ServiceWorkerRegistration from "@/components/ServiceWorkerRegistration";
+import UpdateBanner from "@/components/UpdateBanner";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -28,6 +29,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="min-h-screen bg-[#0b0d0c] text-slate-100 antialiased">
+        <UpdateBanner />
         {children}
         <ServiceWorkerRegistration />
       </body>
