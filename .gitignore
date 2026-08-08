@@ -23,4 +23,8 @@ frontend/android/app/build/
 # Android signing secrets
 *.jks
 *.keystore
+# Debug keystore is intentionally checked in (not a secret): a stable debug
+# signing identity lets a newly installed APK be treated as an update to the
+# previous one instead of Android refusing the install over a mismatched key.
+!frontend/android/debug.keystore
 keystore.properties

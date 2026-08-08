@@ -80,6 +80,19 @@ jobs:
           name: videolens-ai-v${{ steps.version.outputs.name }}-code${{ github.run_number }}-${{ steps.version.outputs.sha }}-debug
           path: frontend/android/app/build/outputs/apk/debug/*.apk
           retention-days: 30
+      - name: Write version manifest
+        # Read by the app's in-app update check (frontend/lib/updateCheck.ts).
+        # A separate JSON asset instead of parsing the release tag string, so
+        # the app doesn't depend on the tag naming scheme staying stable.
+        run: |
+          cat > android/app/build/outputs/apk/debug/version.json <<JSON
+          {
+            "versionCode": ${{ github.run_number }},
+            "versionName": "${{ steps.version.outputs.name }}",
+            "commit": "${{ steps.version.outputs.sha }}",
+            "releaseUrl": "https://github.com/${{ github.repository }}/releases/tag/dev-v${{ steps.version.outputs.name }}-build${{ github.run_number }}"
+          }
+          JSON
       - name: Publish dev release
         if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
         uses: softprops/action-gh-release@v2
@@ -87,6 +100,8 @@ jobs:
           tag_name: dev-v${{ steps.version.outputs.name }}-build${{ github.run_number }}
           name: VideoLens AI dev build v${{ steps.version.outputs.name }} (#${{ github.run_number }})
           prerelease: true
-          files: frontend/android/app/build/outputs/apk/debug/*.apk
+          files: |
+            frontend/android/app/build/outputs/apk/debug/*.apk
+            frontend/android/app/build/outputs/apk/debug/version.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

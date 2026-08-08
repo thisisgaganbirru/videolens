@@ -153,6 +153,33 @@ On every push to `dev`, CI also publishes the debug APK as a GitHub Release
 repo's **Releases** page — a stable, non-expiring download link, unlike the
 30-day workflow artifact.
 
+### Debug signing
+
+`frontend/android/debug.keystore` is checked into the repo (not a secret —
+see the comment in `.gitignore`) and every debug build, local or CI, signs
+with it via the `debug` block in `signingConfigs`. Without this, Android
+Gradle Plugin falls back to an implicit `~/.android/debug.keystore` that's
+auto-generated per machine — meaning every CI runner would sign with a
+different key, and Android refuses to install a new APK over an existing
+one when the signing certificate doesn't match. A stable debug identity is
+what lets a newly downloaded APK actually install *as an update* over
+whatever's already on the phone, instead of failing and requiring an
+uninstall first.
+
+### In-app update check
+
+The app isn't distributed through Play Store, so nothing checks for updates
+automatically — that's Play Store's job normally. `frontend/lib/updateCheck.ts`
+does a lightweight version of it on native Android only: on launch, it reads
+the installed app's `versionCode` via `@capacitor/app`'s `App.getInfo()`,
+fetches the videolens GitHub repo's release list, and compares against the
+`version.json` manifest attached to the newest release (see the "Write
+version manifest" step in the `android` CI job). If a newer build exists,
+`components/UpdateBanner.tsx` shows a banner linking to that release's page.
+This is a check-and-link flow, not silent installation — Android doesn't
+allow apps to install APKs without the user going through the system
+installer UI outside of Play Store's own privileged path.
+
 ## Deployment
 
 Production requires frontend, API, worker, Redis, and S3-compatible bucket
