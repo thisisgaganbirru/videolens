@@ -57,3 +57,14 @@ class RunStatusResponse(BaseModel):
     stage: Optional[str] = None
     result: Optional[VideoAnalysis] = None
     error: Optional[str] = None
+
+
+class RunSummary(BaseModel):
+    run_id: str
+    status: RunStatus
+    title: Optional[str] = None
+    created_at: datetime
+
+
+class RunListResponse(BaseModel):
+    runs: list[RunSummary]

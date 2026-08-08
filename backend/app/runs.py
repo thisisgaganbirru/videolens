@@ -7,6 +7,11 @@ from redis.asyncio import Redis
 from .config import settings
 from .models import Run, RunStatus, VideoAnalysis
 
+# Cap on how many run_ids the per-owner history index retains, independent of
+# how many a caller asks to list - bounds Redis memory regardless of how long
+# RUN_TTL_SECONDS is set to.
+_HISTORY_INDEX_CAP = 50
+
 
 class RunStore:
     def __init__(self) -> None:
@@ -22,6 +27,10 @@ class RunStore:
     @staticmethod
     def _key(run_id: str) -> str:
         return f"videolens:run:{run_id}"
+
+    @staticmethod
+    def _owner_index_key(owner_id: str) -> str:
+        return f"videolens:owner:{owner_id}:runs"
 
     async def _write(self, run: Run) -> None:
         if settings.queue_enabled:
@@ -44,7 +53,23 @@ class RunStore:
             updated_at=now,
         )
         await self._write(run)
+        if settings.queue_enabled:
+            index_key = self._owner_index_key(owner_id)
+            client = self._client()
+            await client.zadd(index_key, {run_id: now.timestamp()})
+            await client.zremrangebyrank(index_key, 0, -(_HISTORY_INDEX_CAP + 1))
+            await client.expire(index_key, settings.run_ttl_seconds)
         return run
+
+    async def list_for_owner(self, owner_id: str, limit: int = 20) -> list[Run]:
+        if settings.queue_enabled:
+            run_ids = await self._client().zrevrange(self._owner_index_key(owner_id), 0, limit - 1)
+            runs = [await self.get(run_id) for run_id in run_ids]
+            return [run for run in runs if run is not None]
+        async with self._lock:
+            matches = [run for run in self._memory.values() if run.owner_id == owner_id]
+        matches.sort(key=lambda run: run.created_at, reverse=True)
+        return matches[:limit]
 
     async def get(self, run_id: str) -> Optional[Run]:
         if settings.queue_enabled:
