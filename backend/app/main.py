@@ -1,3 +1,4 @@
+import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
@@ -10,6 +11,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from starlette.requests import Request
 
+from .budget import daily_budget
 from .config import settings
 from .logging_config import configure_logging
 from .models import RunCreateResponse, RunStatusResponse
@@ -27,6 +29,7 @@ from .video import (
 )
 
 configure_logging()
+logger = logging.getLogger(__name__)
 os.makedirs(settings.temp_dir, exist_ok=True)
 
 
@@ -37,11 +40,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await run_store.ping()
         if not settings.object_storage_enabled:
             raise RuntimeError("S3-compatible object storage is required when Redis queueing is enabled.")
+        if settings.allowed_origins.strip() == "*":
+            logger.warning(
+                "ALLOWED_ORIGINS is \"*\" in a distributed deployment (REDIS_URL is set). "
+                "Any website can call this API from a browser. Set ALLOWED_ORIGINS to your "
+                "real frontend origin(s) before going live."
+            )
     try:
         yield
     finally:
         await close_queue()
         await run_store.close()
+        await daily_budget.close()
 
 
 app = FastAPI(title="VideoLens AI", lifespan=lifespan)
@@ -86,6 +96,12 @@ async def create_run(
 ) -> RunCreateResponse:
     if not accept_terms:
         raise HTTPException(status_code=400, detail="Accept the media-use terms before analysis.")
+
+    if not await daily_budget.try_consume():
+        raise HTTPException(
+            status_code=503,
+            detail="VideoLens AI has reached its analysis limit for today. Please try again tomorrow.",
+        )
 
     run_id = str(uuid.uuid4())
     source_url = url.strip() if url else None
