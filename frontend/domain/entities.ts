@@ -28,11 +28,25 @@ export interface RunCreateResponse {
   status: RunStatus;
 }
 
+export interface SourceMetadata {
+  platform: string;
+  source_url: string;
+  title?: string | null;
+  uploader?: string | null;
+  uploader_url?: string | null;
+  description?: string | null;
+  upload_date?: string | null;
+  like_count?: number | null;
+  view_count?: number | null;
+  comment_count?: number | null;
+}
+
 export interface RunStatusResponse {
   run_id: string;
   status: RunStatus;
   stage: string | null;
   result: VideoAnalysis | null;
+  source_metadata?: SourceMetadata | null;
   error: string | null;
 }
 
@@ -46,3 +60,5 @@ export interface RunSummary {
 export interface RunListResponse {
   runs: RunSummary[];
 }
+
+export type MediaSource = { file: File; url?: never } | { url: string; file?: never };
