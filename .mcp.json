@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "videolens": {
+      "comment": "Points at the local build for repo contributors (run `npm run build` in mcp/ first). Once videolens-mcp is published to npm, external users should follow mcp/README.md's `npx videolens-mcp` instructions instead of this file.",
+      "command": "node",
+      "args": ["mcp/dist/index.js"],
+      "env": {
+        "GEMINI_API_KEY": "${GEMINI_API_KEY}",
+        "VIDEOLENS_API_BASE_URL": "${VIDEOLENS_API_BASE_URL:-http://localhost:8000}"
+      }
+    }
+  }
+}
