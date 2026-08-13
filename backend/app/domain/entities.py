@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Optional
@@ -35,6 +36,19 @@ class VideoAnalysis(BaseModel):
     markdown: str
 
 
+class SourceMetadata(BaseModel):
+    platform: str
+    source_url: str
+    title: Optional[str] = None
+    uploader: Optional[str] = None
+    uploader_url: Optional[str] = None
+    description: Optional[str] = None
+    upload_date: Optional[str] = None
+    like_count: Optional[int] = None
+    view_count: Optional[int] = None
+    comment_count: Optional[int] = None
+
+
 class Run(BaseModel):
     run_id: str
     owner_id: str
@@ -44,27 +58,17 @@ class Run(BaseModel):
     stage: Optional[str] = None
     result: Optional[VideoAnalysis] = None
     error: Optional[str] = None
+    source_metadata: Optional[SourceMetadata] = None
 
 
-class RunCreateResponse(BaseModel):
-    run_id: str
-    status: RunStatus
+@dataclass(frozen=True)
+class Principal:
+    subject: str
+    authenticated: bool
 
 
-class RunStatusResponse(BaseModel):
-    run_id: str
-    status: RunStatus
-    stage: Optional[str] = None
-    result: Optional[VideoAnalysis] = None
-    error: Optional[str] = None
-
-
-class RunSummary(BaseModel):
-    run_id: str
-    status: RunStatus
-    title: Optional[str] = None
-    created_at: datetime
-
-
-class RunListResponse(BaseModel):
-    runs: list[RunSummary]
+@dataclass
+class SavedUpload:
+    path: str
+    run_dir: str
+    metadata: Optional[SourceMetadata] = None
