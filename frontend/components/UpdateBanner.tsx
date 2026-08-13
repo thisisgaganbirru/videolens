@@ -1,29 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { Download } from "lucide-react";
-import { checkForUpdate, type UpdateInfo } from "@/lib/updateCheck";
+import { useUpdateCheck } from "@/application/useUpdateCheck";
 
 export default function UpdateBanner() {
-  const [update, setUpdate] = useState<UpdateInfo | null>(null);
-
-  useEffect(() => {
-    checkForUpdate().then(setUpdate);
-  }, []);
+  const { update } = useUpdateCheck();
 
   if (!update) return null;
 
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-[#292e2b] bg-[#121513] px-4 py-2 text-sm text-slate-300">
-      <span className="min-w-0 truncate">A new version ({update.versionName}) is available.</span>
+    <div
+      className="flex min-h-14 items-center justify-between gap-3 border-b border-[var(--color-rule)] bg-[var(--color-surface-raised)] px-[var(--page-gutter)] text-sm text-[var(--color-text)]"
+      style={{ zIndex: "var(--z-banner)" }}
+    >
+      <span className="min-w-0 leading-5">Version {update.versionName} is available.</span>
       <a
         href={update.releaseUrl}
         target="_blank"
         rel="noopener noreferrer"
-        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-[#343a36] px-3 py-1.5 font-medium text-slate-100 transition-colors hover:bg-[#1b201d] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+        className="button-secondary min-h-11 shrink-0 px-3"
       >
         <Download className="h-4 w-4" aria-hidden="true" />
-        Download update
+        <span className="hidden sm:inline">Download update</span>
+        <span className="sm:hidden">Update</span>
       </a>
     </div>
   );

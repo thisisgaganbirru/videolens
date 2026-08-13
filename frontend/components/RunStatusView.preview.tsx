@@ -1,7 +1,7 @@
 /* Hallmark · lifecycle preview: queued · stages · error · success */
 
 import RunStatusView from "./RunStatusView";
-import type { RunStatus } from "@/lib/types";
+import type { RunStatus } from "@/domain/entities";
 
 const PREVIEW_STATES: Array<{
   label: string;

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import ServiceWorkerRegistration from "@/components/ServiceWorkerRegistration";
 import UpdateBanner from "@/components/UpdateBanner";
+import { AppBackground } from "@/components/ui/AppBackground";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -19,6 +20,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   themeColor: "#0b0d0c",
   colorScheme: "dark",
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
@@ -27,11 +29,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-[#0b0d0c] text-slate-100 antialiased">
-        <UpdateBanner />
-        {children}
-        <ServiceWorkerRegistration />
+    <html lang="en" className="h-[100dvh] overflow-hidden">
+      <body className="h-[100dvh] overflow-hidden bg-[var(--color-paper)] text-[var(--color-text)] antialiased select-none">
+        <AppBackground />
+        <div className="safe-area-frame relative h-full w-full overflow-hidden" style={{ zIndex: "var(--z-content)" }}>
+          <UpdateBanner />
+          {children}
+          <ServiceWorkerRegistration />
+        </div>
       </body>
     </html>
   );

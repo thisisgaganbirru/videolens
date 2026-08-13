@@ -1,12 +1,12 @@
 export default function OfflinePage() {
   return (
-    <main className="mx-auto flex min-h-screen max-w-lg flex-col justify-center px-4 py-16">
+    <main className="page-shell flex min-h-[calc(100dvh-var(--safe-top)-var(--safe-bottom))] max-w-lg flex-col justify-center py-10">
       <img src="/icon-192.png" alt="" className="h-14 w-14" />
-      <h1 className="mt-6 text-2xl font-semibold text-slate-100">You are offline</h1>
-      <p className="mt-2 text-sm leading-6 text-slate-400">
+      <h1 className="mt-6 text-3xl font-semibold tracking-[-0.025em] text-[var(--color-text-strong)]">You are offline</h1>
+      <p className="mt-3 text-base leading-7 text-[var(--color-muted)]">
         Video analysis requires a network connection. Reconnect, then return to your run.
       </p>
-      <a href="/" className="mt-6 self-start text-sm text-indigo-300 hover:underline">
+      <a href="/" className="button-primary mt-6 self-start">
         Try again
       </a>
     </main>

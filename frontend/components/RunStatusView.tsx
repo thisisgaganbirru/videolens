@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 /* Hallmark · component: processing pipeline · genre: atmospheric · theme: existing slate/indigo */
 
-import type { RunStatus } from "@/lib/types";
+import type { RunStatus } from "@/domain/entities";
 
 type SourceKind = "file" | "url";
 type StepState = "complete" | "active" | "upcoming" | "failed";
@@ -78,10 +78,10 @@ function getStepState(
 
 function StepMarker({ number, state }: { number: number; state: StepState }) {
   const markerClass = {
-    complete: "border-slate-400 bg-slate-950 text-slate-300",
-    active: "border-white bg-slate-950 text-white",
-    failed: "border-red-400 bg-red-950 text-red-200",
-    upcoming: "border-slate-700 bg-slate-950 text-slate-500",
+    complete: "border-[var(--color-success)] bg-[var(--color-paper)] text-[var(--color-success)]",
+    active: "border-[var(--color-text-strong)] bg-[var(--color-paper)] text-[var(--color-text-strong)]",
+    failed: "border-[var(--color-danger)] bg-[var(--color-danger-soft)] text-[var(--color-danger)]",
+    upcoming: "border-[var(--color-rule-strong)] bg-[var(--color-paper)] text-[var(--color-faint)]",
   }[state];
 
   return (
@@ -91,7 +91,7 @@ function StepMarker({ number, state }: { number: number; state: StepState }) {
     >
       {state === "complete" ? <span>&#10003;</span> : state === "failed" ? "!" : number}
       {state === "active" && (
-        <span className="absolute -inset-1 animate-spin rounded-full border border-transparent border-t-white motion-reduce:animate-none" />
+        <span className="absolute -inset-1 animate-spin rounded-full border border-transparent border-t-[var(--color-focus)] motion-reduce:animate-none" />
       )}
     </span>
   );
@@ -108,16 +108,19 @@ export default function RunStatusView({ status, stage, sourceKind, error }: RunS
       <section className="py-2" aria-live="polite">
         <div className="flex items-center gap-3">
           <span
-            className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-slate-500 bg-slate-900 text-sm font-semibold text-slate-300"
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-[var(--color-success)] bg-[var(--color-paper)] text-sm font-semibold text-[var(--color-success)]"
             aria-hidden="true"
           >
             <span>&#10003;</span>
           </span>
-          <p className="text-sm font-medium text-slate-300">Analysis complete</p>
+          <p className="text-sm font-medium text-[var(--color-text)]">Analysis complete</p>
         </div>
       </section>
     );
   }
+
+  const activeStep = steps[activeIndex];
+  const activeState = getStepState(activeIndex, activeIndex, status);
 
   return (
     <section
@@ -125,12 +128,12 @@ export default function RunStatusView({ status, stage, sourceKind, error }: RunS
       aria-live="polite"
       aria-busy={status === "queued" || status === "processing"}
     >
-      <div className="mb-7 border-b border-slate-800 pb-5">
-        <h2 className="text-lg font-semibold text-slate-100">{statusCopy.title}</h2>
-        <p className="mt-1 text-sm leading-6 text-slate-400">{statusCopy.detail}</p>
+      <div className="mb-5 border-b border-[var(--color-rule)] pb-4">
+        <h2 className="text-xl font-semibold text-[var(--color-text-strong)]">{statusCopy.title}</h2>
+        <p className="mt-1 text-base leading-6 text-[var(--color-muted)]">{statusCopy.detail}</p>
       </div>
 
-      <ol aria-label="Media analysis pipeline">
+      <ol aria-label="Media analysis pipeline" className="flex items-start">
         {steps.map((step, index) => {
           const stepState = getStepState(index, activeIndex, status);
           const isLast = index === steps.length - 1;
@@ -138,65 +141,55 @@ export default function RunStatusView({ status, stage, sourceKind, error }: RunS
           return (
             <li
               key={step.stage}
-              className={`relative flex gap-4 ${isLast ? "" : "pb-8"}`}
+              className={`flex items-center ${isLast ? "" : "flex-1"}`}
               aria-current={stepState === "active" ? "step" : undefined}
             >
+              <div className="flex flex-col items-center gap-1.5">
+                <StepMarker number={index + 1} state={stepState} />
+                <span
+                  className={`hidden text-center text-[11px] font-medium leading-tight sm:block ${
+                    stepState === "upcoming" ? "text-[var(--color-faint)]" : "text-[var(--color-text-strong)]"
+                  }`}
+                >
+                  {step.title}
+                </span>
+              </div>
               {!isLast && (
                 <span
-                  className={`absolute bottom-0 left-[15px] top-8 border-l ${
+                  className={`mx-2 h-px flex-1 self-start mt-4 ${
                     stepState === "complete"
-                      ? "border-solid border-slate-500"
-                      : "border-dotted border-slate-700"
+                      ? "border-t border-solid border-[var(--color-success)]"
+                      : "border-t border-dotted border-[var(--color-rule-strong)]"
                   }`}
                   aria-hidden="true"
                 />
               )}
-              <StepMarker number={index + 1} state={stepState} />
-              <div className="min-w-0 pt-0.5">
-                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                  <h3
-                    className={`text-base font-semibold ${
-                      stepState === "upcoming" ? "text-slate-500" : "text-slate-100"
-                    }`}
-                  >
-                    {step.title}
-                  </h3>
-                  <span
-                    className={`text-sm font-medium ${
-                      stepState === "complete"
-                        ? "text-slate-300"
-                        : stepState === "active"
-                          ? "text-white"
-                          : stepState === "failed"
-                            ? "text-red-300"
-                            : "text-slate-600"
-                    }`}
-                  >
-                    {stepState === "complete"
-                      ? "Completed"
-                      : stepState === "active"
-                        ? "Running"
-                        : stepState === "failed"
-                          ? "Failed"
-                          : "Waiting"}
-                  </span>
-                </div>
-                {stepState === "failed" && error ? (
-                  <p className="mt-1 max-w-prose text-sm leading-6 text-red-300">{error}</p>
-                ) : (
-                  <p
-                    className={`mt-1 max-w-prose text-sm leading-6 ${
-                      stepState === "upcoming" ? "text-slate-600" : "text-slate-400"
-                    }`}
-                  >
-                    {step.description}
-                  </p>
-                )}
-              </div>
             </li>
           );
         })}
       </ol>
+
+      <div className="mt-6 rounded-[var(--radius-md)] border border-[var(--color-rule)] bg-[var(--color-paper-2)] p-4">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h3 className="text-base font-semibold text-[var(--color-text-strong)]">{activeStep.title}</h3>
+          <span
+            className={`text-sm font-medium ${
+              activeState === "active"
+                ? "text-[var(--color-text-strong)]"
+                : activeState === "failed"
+                  ? "text-[var(--color-danger)]"
+                  : "text-[var(--color-faint)]"
+            }`}
+          >
+            {activeState === "active" ? "Running" : activeState === "failed" ? "Failed" : "Waiting"}
+          </span>
+        </div>
+        {activeState === "failed" && error ? (
+          <p className="mt-1 max-w-prose text-sm leading-6 text-[var(--color-danger)]">{error}</p>
+        ) : (
+          <p className="mt-1 max-w-prose text-sm leading-6 text-[var(--color-muted)]">{activeStep.description}</p>
+        )}
+      </div>
     </section>
   );
 }
