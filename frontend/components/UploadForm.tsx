@@ -1,7 +1,8 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import type { MediaSource } from "@/lib/api";
+import { Link2, UploadCloud } from "lucide-react";
+import type { MediaSource } from "@/domain/entities";
 
 const ACCEPTED_EXTENSIONS = [".mp3", ".mp4", ".mov"];
 const MAX_FILE_SIZE_MB = 200;
@@ -52,7 +53,6 @@ function readMediaDuration(file: File): Promise<number> {
 }
 
 export default function UploadForm({ onSubmit, disabled }: UploadFormProps) {
-  const [mode, setMode] = useState<"file" | "url">("file");
   const [url, setUrl] = useState("");
   const [dragActive, setDragActive] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -73,7 +73,6 @@ export default function UploadForm({ onSubmit, disabled }: UploadFormProps) {
         params.get("text")?.match(/https?:\/\/\S+/)?.[0] ||
         nativeText.match(/https?:\/\/\S+/)?.[0];
       if (shared) {
-        setMode("url");
         setUrl(shared);
         window.localStorage.removeItem("videolens-shared-text");
       }
@@ -103,7 +102,7 @@ export default function UploadForm({ onSubmit, disabled }: UploadFormProps) {
           return;
         }
       } catch {
-        // The backend performs the authoritative media validation.
+        // Backend performs authoritative validation
       } finally {
         setChecking(false);
       }
@@ -129,124 +128,111 @@ export default function UploadForm({ onSubmit, disabled }: UploadFormProps) {
     onSubmit({ url: value });
   };
 
-  const selectMode = (nextMode: "file" | "url") => {
-    setMode(nextMode);
-    setError(null);
-  };
-
   return (
-    <section className={`flex flex-col gap-4 ${disabled ? "pointer-events-none opacity-50" : ""}`}>
-      <div className="grid grid-cols-2 border-b border-slate-800" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === "file"}
-          onClick={() => selectMode("file")}
-          className={`border-b-2 px-4 py-3 text-sm font-medium ${
-            mode === "file"
-              ? "border-indigo-400 text-slate-100"
-              : "border-transparent text-slate-400 hover:text-slate-200"
-          }`}
-        >
-          Upload file
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === "url"}
-          onClick={() => selectMode("url")}
-          className={`border-b-2 px-4 py-3 text-sm font-medium ${
-            mode === "url"
-              ? "border-indigo-400 text-slate-100"
-              : "border-transparent text-slate-400 hover:text-slate-200"
-          }`}
-        >
-          Paste URL
-        </button>
+    <section className="flex flex-col gap-4" aria-disabled={disabled || undefined}>
+      {/* 1. PRIMARY: Paste Public Video URL (Top Focus) */}
+      <form onSubmit={submitUrl} className="flex flex-col gap-2.5">
+        <label htmlFor="media-url" className="flex items-center gap-2 text-sm font-bold text-[var(--color-text-strong)]">
+          <Link2 className="h-4 w-4 text-[var(--color-accent)]" />
+          <span>Paste Video or Audio URL (Primary)</span>
+        </label>
+        <div className="flex flex-col gap-2.5 sm:flex-row">
+          <input
+            id="media-url"
+            type="url"
+            value={url}
+            onChange={(event) => {
+              setUrl(event.target.value);
+              setError(null);
+            }}
+            placeholder="https://www.instagram.com/reel/..., YouTube, TikTok, or public video link"
+            autoComplete="url"
+            disabled={disabled}
+            aria-invalid={Boolean(error)}
+            className="field min-w-0 flex-1 text-sm font-medium"
+          />
+          <button
+            type="submit"
+            disabled={disabled || !url.trim() || !acceptedTerms}
+            className="button-primary text-xs font-bold px-6 py-2.5 sm:shrink-0 shadow-lg shadow-indigo-950/40"
+          >
+            Analyze URL
+          </button>
+        </div>
+      </form>
+
+      {/* 2. OR Divider */}
+      <div className="relative flex items-center justify-center my-1">
+        <div className="absolute inset-0 flex items-center">
+          <div className="w-full border-t border-[var(--color-rule)]" />
+        </div>
+        <span className="relative bg-[var(--color-surface)] px-3 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-muted)] rounded-full border border-[var(--color-rule)]">
+          or upload a local file (secondary)
+        </span>
       </div>
 
-      {mode === "file" ? (
-        <div
-          onDragOver={(event) => {
-            event.preventDefault();
-            setDragActive(true);
-          }}
-          onDragLeave={() => setDragActive(false)}
-          onDrop={(event) => {
-            event.preventDefault();
-            setDragActive(false);
-            const file = event.dataTransfer.files?.[0];
+      {/* 3. SECONDARY: File Drag & Drop Zone (Bottom Focus) */}
+      <div
+        onDragOver={(event) => {
+          event.preventDefault();
+          setDragActive(true);
+        }}
+        onDragLeave={() => setDragActive(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragActive(false);
+          const file = event.dataTransfer.files?.[0];
+          if (!acceptedTerms) {
+            setError("Accept the media-use terms before analysis.");
+          } else if (file) {
+            void handleFile(file);
+          }
+        }}
+        className={`flex flex-col items-center justify-center gap-2 rounded-[var(--radius-lg)] border border-dashed px-4 py-5 text-center backdrop-blur-md transition-all ${
+          dragActive
+            ? "border-[var(--color-accent-hover)] bg-[var(--color-accent-soft)]"
+            : "border-[var(--color-rule-strong)] bg-[var(--color-paper-2)]/60 hover:border-[var(--color-rule)]"
+        }`}
+      >
+        <div className="flex items-center gap-2 text-xs font-medium text-[var(--color-muted)]">
+          <UploadCloud className="h-4 w-4 text-[var(--color-faint)]" />
+          <span>Drop an audio or video file here or</span>
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={disabled || checking || !acceptedTerms}
+            aria-busy={checking}
+            className="button-secondary text-xs px-3.5 py-1.5 font-semibold"
+          >
+            {checking ? "Checking..." : "Browse file"}
+          </button>
+        </div>
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".mp3,.mp4,.mov,audio/mpeg,video/mp4,video/quicktime"
+          className="hidden"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
             if (!acceptedTerms) {
               setError("Accept the media-use terms before analysis.");
             } else if (file) {
               void handleFile(file);
             }
+            event.target.value = "";
           }}
-          className={`flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed p-12 text-center transition-colors ${
-            dragActive ? "border-indigo-400 bg-indigo-950/30" : "border-slate-700"
-          }`}
-        >
-          <p className="text-lg font-medium">Drop an audio or video file here</p>
-          <p className="text-sm text-slate-400">or</p>
-          <button
-            type="button"
-            onClick={() => inputRef.current?.click()}
-            disabled={checking || !acceptedTerms}
-            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium hover:bg-indigo-500 disabled:opacity-50"
-          >
-            {checking ? "Checking media..." : "Choose a file"}
-          </button>
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".mp3,.mp4,.mov,audio/mpeg,video/mp4,video/quicktime"
-            className="hidden"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (!acceptedTerms) {
-                setError("Accept the media-use terms before analysis.");
-              } else if (file) {
-                void handleFile(file);
-              }
-              event.target.value = "";
-            }}
-          />
-          <p className="text-xs text-slate-500">
-            MP3, MP4, or MOV, up to {MAX_FILE_SIZE_MB}MB and 3 minutes long.
-          </p>
-        </div>
-      ) : (
-        <form onSubmit={submitUrl} className="flex flex-col gap-3 py-4">
-          <label htmlFor="media-url" className="text-sm font-medium text-slate-200">
-            Public media URL
-          </label>
-          <div className="flex flex-col gap-3 sm:flex-row">
-            <input
-              id="media-url"
-              type="url"
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
-              placeholder="https://www.instagram.com/reel/..."
-              autoComplete="url"
-              className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none placeholder:text-slate-600 focus:border-indigo-400"
-            />
-            <button
-              type="submit"
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium hover:bg-indigo-500"
-            >
-              Download and analyze
-            </button>
-          </div>
-          <p className="text-xs text-slate-500">
-            Supports public links from sites handled by the downloader. Private or login-only posts may fail.
-          </p>
-        </form>
-      )}
+        />
+        <p className="text-[11px] text-[var(--color-faint)]">
+          Supports MP3, MP4, or MOV up to {MAX_FILE_SIZE_MB}MB & 3 mins
+        </p>
+      </div>
 
-      <label className="flex items-start gap-3 text-sm leading-6 text-slate-400">
+      {/* 4. Terms Agreement Checkbox */}
+      <label className="flex items-start gap-2.5 text-xs text-[var(--color-muted)] mt-0.5">
         <input
           type="checkbox"
           checked={acceptedTerms}
+          disabled={disabled}
           onChange={(event) => {
             const accepted = event.target.checked;
             setAcceptedTerms(accepted);
@@ -257,22 +243,26 @@ export default function UploadForm({ onSubmit, disabled }: UploadFormProps) {
             }
             setError(null);
           }}
-          className="mt-1 h-4 w-4 shrink-0 accent-indigo-500"
+          className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--color-accent)]"
         />
         <span>
           I will only submit media I own or am authorized to process, and I agree to the{" "}
-          <a className="text-indigo-300 hover:underline" href="/terms">
+          <a className="font-medium text-[var(--color-accent-hover)] underline underline-offset-2" href="/terms">
             Terms
           </a>{" "}
           and{" "}
-          <a className="text-indigo-300 hover:underline" href="/privacy">
+          <a className="font-medium text-[var(--color-accent-hover)] underline underline-offset-2" href="/privacy">
             Privacy Policy
           </a>
           .
         </span>
       </label>
 
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && (
+        <p role="alert" className="text-xs leading-5 text-[var(--color-danger)]">
+          {error}
+        </p>
+      )}
     </section>
   );
 }
