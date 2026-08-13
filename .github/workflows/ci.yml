@@ -105,3 +105,57 @@ jobs:
             frontend/android/app/build/outputs/apk/debug/version.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Update release manifest
+        # The repo is private, so the in-app "Releases" tab can't call
+        # GitHub's API from the browser (unauthenticated calls 404, and a
+        # token can't safely live in client-side JS). Instead, this job -
+        # which just published the release above using the ambient,
+        # zero-setup token every Actions run already gets - also updates a
+        # static frontend/public/releases.json and commits it straight to
+        # dev. The frontend then reads that as a same-origin static file
+        # (see frontend/infrastructure/versionLogGateway.ts). No credential
+        # of any kind is introduced for this.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        working-directory: frontend
+        env:
+          RELEASE_NAME: VideoLens AI dev build v${{ steps.version.outputs.name }} (#${{ github.run_number }})
+          RELEASE_TAG: dev-v${{ steps.version.outputs.name }}-build${{ github.run_number }}
+        run: |
+          export RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${RELEASE_TAG}"
+          export PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          node <<'NODE'
+          const fs = require("fs");
+          const path = "public/releases.json";
+          const entry = {
+            name: process.env.RELEASE_NAME,
+            tag: process.env.RELEASE_TAG,
+            publishedAt: process.env.PUBLISHED_AT,
+            url: process.env.RELEASE_URL,
+          };
+          const manifest = fs.existsSync(path) ? JSON.parse(fs.readFileSync(path, "utf8")) : { releases: [] };
+          const releases = manifest.releases.filter((release) => release.tag !== entry.tag);
+          releases.unshift(entry);
+          releases.sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt));
+          fs.writeFileSync(path, JSON.stringify({ releases: releases.slice(0, 20) }, null, 2) + "\n");
+          NODE
+      - name: Commit release manifest
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        run: |
+          if git diff --quiet -- frontend/public/releases.json; then
+            echo "No manifest changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/public/releases.json
+          git commit -m "Update release manifest for v${{ steps.version.outputs.name }} build ${{ github.run_number }} [skip ci]"
+          for attempt in 1 2 3; do
+            if git push origin HEAD:dev; then
+              exit 0
+            fi
+            echo "Push rejected, rebasing onto latest dev (attempt $attempt)..."
+            git fetch origin dev
+            git rebase origin/dev
+          done
+          echo "Could not push the release manifest after 3 attempts." >&2
+          exit 1
