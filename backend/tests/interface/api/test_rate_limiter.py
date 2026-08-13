@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 
-from app.rate_limit import client_ip
+from app.interface.api.rate_limiter import client_ip
 
 
 class ClientIpTests(unittest.TestCase):

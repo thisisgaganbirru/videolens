@@ -1,6 +1,6 @@
 import unittest
 
-from app.security import quota_key_from_headers
+from app.domain.policies import quota_key_from_headers
 
 
 class QuotaIdentityTests(unittest.TestCase):

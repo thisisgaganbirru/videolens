@@ -1,12 +1,13 @@
 import unittest
 
-from app.models import RunStatus, VideoAnalysis
-from app.runs import RunStore
+from app.domain.entities import RunStatus, VideoAnalysis
+from app.infrastructure.config import Settings
+from app.infrastructure.persistence.run_repository import RunStore
 
 
 class RunStoreTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self.store = RunStore()
+        self.store = RunStore(Settings())
 
     async def test_run_lifecycle_keeps_owner(self) -> None:
         run = await self.store.create("run-1", "client:test-client-1234")
