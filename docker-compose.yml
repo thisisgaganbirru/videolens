@@ -7,7 +7,7 @@ x-backend-environment: &backend-environment
   S3_BUCKET: videolens
   S3_ACCESS_KEY_ID: videolens
   S3_SECRET_ACCESS_KEY: videolens-development
-  ALLOWED_ORIGINS: http://localhost:3000
+  ALLOWED_ORIGINS: http://localhost:3000,http://localhost:3005
 
 services:
   backend:

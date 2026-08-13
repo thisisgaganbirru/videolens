@@ -3,6 +3,7 @@ node_modules/
 .next/
 out/
 *.tsbuildinfo
+dist/
 
 # python
 __pycache__/
@@ -19,6 +20,16 @@ venv/
 frontend/android/.gradle/
 frontend/android/build/
 frontend/android/app/build/
+
+# IDE / local tool state
+.idea/
+.hallmark/
+
+# naming/branding research (not for the repo)
+research/
+
+# per-task session logs (local scratch, not for the repo)
+mem/
 
 # Android signing secrets
 *.jks
