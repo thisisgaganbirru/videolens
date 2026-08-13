@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     worker_job_timeout_seconds: int = 600
 
     temp_dir: str = "/tmp/videolens"
-    allowed_origins: str = "*"
+    allowed_origins: str = "http://localhost:3000,http://localhost:3005"
     redis_url: str = ""
 
     s3_endpoint_url: str = ""
@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     ffmpeg_location: str = ""
 
     allowed_extensions: tuple[str, ...] = (".mp3", ".mp4", ".mov")
+
+    @property
+    def allowed_origin_list(self) -> list[str]:
+        return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
 
     @property
     def queue_enabled(self) -> bool:
