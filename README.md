@@ -64,6 +64,9 @@ cp .env.example .env.local
 npm run dev
 ```
 
+The development server runs at `http://localhost:3005`; the backend allows
+that origin by default.
+
 ### With Docker Compose
 
 ```bash
@@ -116,11 +119,22 @@ that run only:
 - Never written to `RunStore` or logged.
 - In distributed mode it can't travel as a normal background-job argument
   (arq logs job args/results), so it's held in a dedicated, single-use Redis
-  entry (`backend/app/byok.py`) keyed by `run_id`, deleted the instant the
+  entry (`backend/app/infrastructure/byok/key_vault.py`) keyed by `run_id`, deleted the instant the
   worker reads it, with a 15-minute safety-net TTL in case it's never read.
 - Exempt from `DAILY_RUN_CAP` (that cap protects the shared key's spend, not
   a key someone brought themselves) but still subject to the normal per-IP
   rate limit, since FFmpeg/bandwidth/worker capacity are still spent either way.
+
+## Use from an AI agent
+
+`mcp/` is an MCP server so terminal AI agents (Claude Code, Cursor, Codex,
+Antigravity, or any MCP client) can call VideoLens directly instead of going
+through the web UI — two tools, `analyze_video` and `list_recent_runs`. It
+requires your own Gemini API key (no shared-quota fallback, unlike the web
+BYOK panel above — see `mcp/README.md` for why) supplied via your agent's
+MCP config, never as a tool argument or file. Not yet published to npm;
+`mcp/README.md` covers building and pointing your agent at the local build
+in the meantime.
 
 ## Configuration
 
@@ -242,4 +256,10 @@ OIDC verification is implemented, but the operator must choose and configure an
 identity provider before disabling anonymous access. Public release also requires
 verified contact details in the Privacy Policy, production domains and secrets,
 an Android signing key, Play Console declarations, physical-device testing, and
-the required closed-test group. See `PUBLISHING_PLAN.md`.
+the required closed-test group. See `DEPLOYMENT.md`.
+
+## License
+
+[GNU AGPL-3.0](LICENSE). If you run a modified version of this project as a
+network service, you must make your modified source available to that
+service's users — see the license text for the exact terms.
