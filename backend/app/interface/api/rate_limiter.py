@@ -1,8 +1,8 @@
 from slowapi import Limiter
 from starlette.requests import Request
 
-from .config import settings
-from .security import quota_key_from_headers
+from ...domain.policies import quota_key_from_headers
+from ...infrastructure.config import settings
 
 
 def client_ip(request: Request) -> str:
