@@ -4,6 +4,16 @@ This project's docs/ folder holds quick per-feature/component reference docs —
 
 Every new feature or component should get (or update) a doc here. Scope is strictly the feature/component you're actively touching this session — never a retroactive sweep to document the rest of an existing codebase just because docs/ is new or empty. Pre-existing features stay undocumented until someone actually touches them — this folder starting empty is not a backlog to clear.
 
+## Cross-cutting docs
+
+Everything else here is filed per feature under `backend/` or `frontend/`. The
+exception, listed so it isn't mistaken for a stray file:
+
+- `engineering-standards.md` — cross-cutting, not a per-feature reference. A
+  deferred-work register of repo-wide engineering hygiene (dependency pinning,
+  layering enforcement, linting, typing, test and CI gates) audited 2026-08-15.
+  Nothing in it is fixed; pickup is after the terminal redesign lands.
+
 ## Applies to subagents too — no exceptions
 
 **Every agent and subagent follows this, not just the main session.** If you were
