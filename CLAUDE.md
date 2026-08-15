@@ -19,6 +19,18 @@ frontend is a Next.js PWA with a Capacitor Android wrapper.
   touches, known issues). Check here before touching a feature; add/update
   the relevant doc when you change one. Doesn't replace this file or the
   `ARCHITECTURE.md` files.
+- `mem/` — per-task session logs (`mem/YYYYMMDD-{slug}.md`: The Ask, Changes
+  Made, Decisions & Rationale, Current Architecture). Gitignored, local only.
+  Search here before re-deriving why something was built a certain way.
+
+**This applies to every agent and subagent, with no exceptions.** If you were
+dispatched to do a piece of work — however small — you read the relevant doc
+under `docs/` before starting, and you update it plus the `mem/` entry before
+reporting back. The agent that did the work is the one that knows what changed
+and why; deferring it to whoever dispatched you loses that. Append a one-line
+entry to the doc's `## Changelog` naming yourself (`YYYY-MM-DD · <who> ·
+<what>`) so parallel agents sharing these files can see what has already been
+done instead of duplicating or reverting it. See `docs/README.md`.
 
 Both backend and frontend have their own `ARCHITECTURE.md` — read those
 before making structural changes; they're the authoritative layering
