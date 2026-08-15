@@ -287,3 +287,27 @@ backend `ALLOWED_ORIGINS` to the deployed frontend origin. See
 `DEPLOYMENT.md` for what's still required before public release (OIDC
 provider choice, production domains/secrets, Android signing key, Play
 Console setup).
+
+## Operating rules for Railway / infra tools
+
+These exist because both were violated in a real session (2026-08-14) and
+caused real problems — treat them as binding, not suggestions.
+
+- **Never call a tool that bulk-dumps secrets** (e.g. Railway MCP's
+  `list_variables`, which returns every `KEY=VALUE` on a service including
+  API keys, DB passwords, S3 credentials) just to check one field's state.
+  Prefer a scoped check, or ask the user to confirm from the dashboard. If
+  no scoped option exists and a full dump is unavoidable, say so and get
+  confirmation *before* calling it, not after — a "don't paste secrets"
+  warning after the fact doesn't undo a dump already in the transcript.
+- **Don't assert unverified infra/integration state as confirmed fact.** A
+  config field (e.g. a service's `Source repo` value) reflects what's
+  *configured*, not whether it actually works end-to-end (e.g. whether the
+  GitHub App install behind it is authorized). If the check was shallow,
+  say so or ask the user to confirm from the dashboard, rather than saying
+  "confirmed" / "verified live."
+- Config/IaC changes touching Railway (service settings, variables,
+  reconnecting sources) are the kind of action that needs a heads-up before
+  acting per this repo's general risk posture — doubly true here since
+  services span both `videolens` and other unrelated projects sharing the
+  same account/GitHub App installation.
