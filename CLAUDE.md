@@ -70,6 +70,21 @@ npm run build:mobile      # Capacitor build (sets CAPACITOR_BUILD=true)
 npm run lint
 ```
 
+`next.config.mjs` sets **`agentRules: false`** deliberately — leave it off.
+Without it, every `next dev` writes `frontend/AGENTS.md` and
+`frontend/CLAUDE.md`. The second one is the problem: a subdirectory `CLAUDE.md`
+is auto-loaded as agent context whenever someone works in `frontend/`, making it
+a competing instruction source alongside this file. Next emits both files
+together, so disabling generation is the only way to suppress just that one.
+Agent instructions for this repo live here, in the root `CLAUDE.md`, only.
+
+`npm run lint` is currently **broken and has been for a while** — Next 16
+removed `next lint`, so the script resolves `lint` as a directory
+(`no such directory: frontend/lint`). Unrelated to any recent change; the fix is
+`npx @next/codemod@latest next-lint-to-eslint-cli`. CI does not run it (the
+frontend job is `tsc --noEmit` + `build` + `build:mobile`), so this is not
+gating anything today.
+
 ### Android (`cd frontend`)
 
 ```bash
