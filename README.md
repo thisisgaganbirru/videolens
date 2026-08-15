@@ -69,14 +69,18 @@ that origin by default.
 
 ### With Docker Compose
 
-```bash
+Docker Compose is the isolated **local workspace** workflow. It is not used to
+deploy either hosted environment.
+
+```powershell
 cp backend/.env.example backend/.env   # fill in GEMINI_API_KEY
-docker compose up --build
+.\scripts\workspace.ps1 up
 ```
 
 This starts the frontend, API, analysis worker, Redis, and MinIO. Frontend is
 at `http://localhost:3000`, backend at `http://localhost:8000`, and the MinIO
-console at `http://localhost:9001`.
+console at `http://localhost:9001`. Use `verify`, `test`, `scan`, or `down` in
+place of `up` for the other local lifecycle operations.
 
 ## API
 
@@ -181,9 +185,10 @@ supplied at build time rather than hardcoded:
 
 Both `versionName` and `versionCode`, plus the short git commit (`buildRef`),
 are baked into the output APK's filename so any build can be traced back to
-the exact version and commit it came from. CI additionally names the uploaded
-workflow artifact after the same values (see the `android` job in
-`.github/workflows/ci.yml`), downloadable from the Actions run summary.
+the exact version and commit it came from. The dedicated Android dev workflow
+additionally names the uploaded artifact after the same values (see
+`.github/workflows/android-development-build.yml`), downloadable from the Actions run
+summary.
 
 On every push to `dev`, CI also publishes the debug APK as a GitHub Release
 (tagged `dev-v<versionName>-build<run number>`, marked pre-release) under the
@@ -231,8 +236,11 @@ resources. Point the frontend's
 - Provision Redis and an S3-compatible bucket, then share their variables with
   the API and worker services.
 
-A GitHub Actions workflow (`.github/workflows/ci.yml`) runs backend tests,
-TypeScript checks, production and mobile builds, and an Android API 36 build.
+GitHub Actions is separated by environment and responsibility: pull requests
+run application and container checks, `dev` publishes signed dev images and a
+separate Android dev build, and `main` publishes signed production images only
+after all checks and the protected `production` environment gate pass. See
+`docs/container-workflows.md` for the exact workflow and deployment boundaries.
 
 ### Cost protection
 

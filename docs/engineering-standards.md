@@ -7,12 +7,10 @@ enforcement, linting, typing, tests, CI gates — as measured on 2026-08-15,
 when the ask was to hold this repo to enterprise standards rather than
 lab-experiment quality.
 
-**Nothing in here is fixed.** Not one line. The audit ran, the findings were
-accepted, and the deliberate decision was to *not* act on any of it yet. The
-frontend terminal redesign is mid-flight across several agents; landing a
-formatter or a first `ruff --fix` pass on top of that would bury the redesign
-review under mechanical churn, and the backend fixes would collide with
-nothing but would still fragment attention.
+Two findings have now been addressed without touching the active frontend
+redesign: backend dependency reproducibility and container-focused security
+scanning. All other findings remain deferred. The sections below retain their
+original audit detail, with resolution notes where work has landed.
 
 **Trigger for picking this up**: the terminal-redesign frontend work landing,
 together with whatever the remaining frontend agents surface. When that
@@ -33,6 +31,11 @@ value of the register depends on that line holding.
 ## Real defects
 
 ### Unpinned backend dependencies
+
+**Resolved 2026-08-15.** Direct requirements now live in
+`backend/requirements.in`; `backend/requirements.txt` is a universal, exact,
+hash-verified lock. Local images and application checks install with
+`--require-hashes`.
 
 Highest priority on this list, and the only item with a live production
 failure mode.
@@ -226,9 +229,19 @@ early.
 
 ### No security scanning of any kind in CI
 
-`.github/workflows/ci.yml` has three jobs (`backend`, `frontend`, `android`)
-and no CodeQL, no `dependency-review-action`, no `npm audit` / `pip-audit`, no
-secret scanning, and no `.github/dependabot.yml`.
+**Partially resolved 2026-08-15.** Reusable container checks now fail on
+fixable high/critical findings, release images carry SBOM/provenance and are
+signed with OIDC, and Dependabot covers Docker, Actions, npm, and pip. CodeQL,
+dependency review, and secret scanning remain follow-up items.
+
+The original finding: `.github/workflows/ci.yml` had three jobs (`backend`,
+`frontend`, `android`) and no CodeQL, no `dependency-review-action`, no
+`npm audit` / `pip-audit`, no secret scanning, and no
+`.github/dependabot.yml`. `ci.yml` has since been deleted and replaced by a
+caller/reusable workflow set (see `docs/container-workflows.md`), and
+`.github/dependabot.yml` now exists — matching the "partially resolved" note
+above. CodeQL, `dependency-review-action`, `npm audit` / `pip-audit`, and
+secret scanning are still absent.
 
 Relevant here rather than generically because this repo handles user-supplied
 API keys (BYOK), carries a deliberately checked-in `debug.keystore`, and has
@@ -246,13 +259,16 @@ Even once the branch merges, nothing would `tsc` or build it. The stale
 ### Branch protection is unverified
 
 This lives in GitHub repo settings, not in the tree, and was deliberately not
-guessed at. `.github/workflows/ci.yml:3-6` triggers on `pull_request` and on
-pushes to `main`/`dev`, so the checks exist to be required — but whether they
-actually *block* a merge has to be confirmed from Settings → Branches by
-someone with access.
+guessed at. `ci.yml` (single file, `pull_request` + push-to-`main`/`dev`
+triggers) has since been deleted and replaced by a caller/reusable workflow
+set that still runs application and container checks on pull requests into
+`dev`/`main` and on pushes to `dev`/`main` (see `docs/container-workflows.md`),
+so the checks still exist to be required — but whether they actually *block*
+a merge has to be confirmed from Settings → Branches by someone with access.
 
-One catch if it gets enabled: the `android` job holds `contents: write` and
-pushes a release manifest directly to `dev`. Protection on `dev` needs a
+One catch if it gets enabled: `android-development-build.yml` holds
+`contents: write` and pushes a release manifest directly to `dev`. Protection
+on `dev` needs a
 carve-out for that bot push or the release step starts failing.
 
 ---
@@ -356,3 +372,5 @@ Re-verify before fixing; do not treat the line numbers as authoritative.
 ## Changelog
 
 - 2026-08-15 · standards audit agent · recorded the engineering-standards audit as a deferred register; nothing fixed yet, pickup is after the terminal redesign lands
+- 2026-08-15 · main session · marked dependency locking and container security gates implemented while preserving the remaining deferred findings
+- 2026-08-15 · stale-ref agent · corrected the three `ci.yml` references invalidated by the workflow rewrite (deleted `ci.yml` -> caller/reusable workflow set) at "No security scanning of any kind in CI" and "Branch protection is unverified"; left the historical `ci.yml:21` citation under "Unpinned backend dependencies" and the meta-note under "Known issues with this register" unchanged as defensible historical audit text

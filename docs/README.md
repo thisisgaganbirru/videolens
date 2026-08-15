@@ -9,10 +9,12 @@ Every new feature or component should get (or update) a doc here. Scope is stric
 Everything else here is filed per feature under `backend/` or `frontend/`. The
 exception, listed so it isn't mistaken for a stray file:
 
+- `container-workflows.md` — local/dev/production workflow boundaries,
+  hardened container behavior, image publication, and operator requirements.
 - `engineering-standards.md` — cross-cutting, not a per-feature reference. A
-  deferred-work register of repo-wide engineering hygiene (dependency pinning,
-  layering enforcement, linting, typing, test and CI gates) audited 2026-08-15.
-  Nothing in it is fixed; pickup is after the terminal redesign lands.
+  repo-wide engineering-hygiene register audited 2026-08-15. Dependency
+  reproducibility and container vulnerability gates are now implemented;
+  remaining findings stay deferred.
 
 ## Applies to subagents too — no exceptions
 
@@ -41,3 +43,7 @@ detail belongs in the doc body and in `mem/`.
 **Several agents share these files.** Read the changelog before editing so you
 don't duplicate or revert a sibling's work, and append rather than rewriting
 someone else's entry.
+
+## Changelog
+
+- 2026-08-15 · main session · indexed the environment-separated container workflow reference and updated the standards status
