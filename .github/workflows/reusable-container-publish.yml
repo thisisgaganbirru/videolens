@@ -1,0 +1,101 @@
+name: Reusable container publication
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub environment that protects this publication
+        required: true
+        type: string
+      channel:
+        description: Mutable environment tag, such as dev or latest
+        required: true
+        type: string
+      revision:
+        description: Full commit SHA used for the immutable tag and OCI label
+        required: true
+        type: string
+      api_base_url:
+        description: Public backend URL compiled into the frontend image
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: ${{ matrix.service }} / ${{ inputs.environment }}
+    environment: ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    env:
+      API_BASE_URL: ${{ inputs.api_base_url || vars.PRODUCTION_API_BASE_URL }}
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [backend, frontend]
+    steps:
+      - name: Validate publication inputs
+        shell: bash
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          REVISION: ${{ inputs.revision }}
+          SERVICE: ${{ matrix.service }}
+        run: |
+          test -n "$CHANNEL" || { echo "channel is required" >&2; exit 1; }
+          test -n "$REVISION" || { echo "revision is required" >&2; exit 1; }
+          # Only the frontend image compiles a backend URL in. Requiring it for
+          # the backend leg would let a missing production variable block an
+          # image that has no use for it.
+          if [ "$SERVICE" = "frontend" ]; then
+            test -n "$API_BASE_URL" || {
+              echo "api_base_url is required to publish the frontend image: pass it from the calling workflow, or define PRODUCTION_API_BASE_URL in the '${ENVIRONMENT}' GitHub environment." >&2
+              exit 1
+            }
+          fi
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.revision }}
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # provenance and sbom below are BuildKit --attest shorthands. They attach
+      # in-toto attestation manifests to the image index in GHCR itself; they are
+      # not Sigstore-signed and emit nothing to any public log. Keyless Cosign
+      # signing was deliberately removed - it wrote a permanent, undeletable
+      # Rekor transparency-log entry, and it cannot be kept without that log
+      # because the short-lived Fulcio certificate is only verifiable through it.
+      - name: Build and publish multi-platform image
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          build-args: ${{ matrix.service == 'frontend' && format('NEXT_PUBLIC_API_BASE_URL={0}', env.API_BASE_URL) || '' }}
+          cache-from: type=gha,scope=publish-${{ inputs.environment }}-${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=publish-${{ inputs.environment }}-${{ matrix.service }}
+          context: ./${{ matrix.service }}
+          labels: |
+            org.opencontainers.image.revision=${{ inputs.revision }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          platforms: linux/amd64,linux/arm64
+          provenance: mode=max
+          pull: true
+          push: true
+          sbom: true
+          tags: |
+            ghcr.io/${{ github.repository }}/videolens-${{ matrix.service }}:${{ inputs.channel }}
+            ghcr.io/${{ github.repository }}/videolens-${{ matrix.service }}:sha-${{ inputs.revision }}
+      - name: Report published digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ghcr.io/${{ github.repository }}/videolens-${{ matrix.service }}
+        run: echo "Published ${IMAGE}@${DIGEST}" >> "$GITHUB_STEP_SUMMARY"
