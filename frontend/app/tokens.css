@@ -1,70 +1,121 @@
-/* Hallmark · macrostructure: Workbench · genre: atmospheric · tone: engaging · theme: Midnight Glass · anchor: indigo · nav: N9 · footer: Ft2 · enrichment: dynamic WebGL · interaction: functional · contrast: pass (40–41) · slop: pass (42–49) · mobile: pass (34, 49, 50–57) */
+/* Hallmark · genre: atmospheric · macrostructure: Feature Stack (adapted, UI) · theme: Terminal
+ * enrichment: none · nav: N5 floating pill · footer: Ft5 compact bar
+ * source of truth: docs/frontend/mockups/terminal-redesign.html (lines 21-89)
+ *
+ * THE RULE THAT MATTERS: every ink and paper token is near-neutral (chroma
+ * below ~0.015). Green is spent on --color-accent alone. Tinting the ink
+ * tokens green is what turns a "terminal" palette into the monochrome
+ * hacker-terminal cliche — an earlier pass did exactly that and it read as
+ * generated slop. Do not regress this.
+ *
+ * pre-emit critique: P5 H5 E5 S5 R5 V4
+ */
+
 :root {
-  color-scheme: dark;
+  /* ---- paper + ink (near-neutral; chroma < 0.015) ---- */
+  --color-paper:      oklch(98.5% 0.003 145);
+  --color-paper-2:    oklch(96.5% 0.005 145);
+  --color-paper-3:    oklch(93% 0.007 145);
+  --color-nav-bg:     oklch(95.5% 0.025 142);
+  --color-rule:       oklch(88% 0.008 140);
+  --color-rule-2:     oklch(72% 0.012 140);
+  --color-muted:      oklch(52% 0.012 140);
+  --color-ink-2:      oklch(35% 0.010 140);
+  --color-ink:        oklch(18% 0.008 140);
 
-  --color-paper: transparent;
-  --color-paper-2: rgba(255, 255, 255, 0.06);
-  --color-paper-3: rgba(255, 255, 255, 0.10);
-  --color-surface: rgba(12, 14, 24, 0.30);
-  --color-surface-raised: rgba(16, 18, 30, 0.30);
-  --color-rule: rgba(255, 255, 255, 0.14);
-  --color-rule-strong: rgba(255, 255, 255, 0.22);
-  --color-text: oklch(90% 0.012 255);
-  --color-text-strong: oklch(98% 0.006 255);
-  --color-muted: oklch(75% 0.018 255);
-  --color-faint: oklch(65% 0.018 255);
-  --color-accent: oklch(58% 0.18 274);
-  --color-accent-hover: oklch(63% 0.19 274);
-  --color-accent-soft: rgba(139, 92, 246, 0.25);
-  --color-accent-ink: oklch(99% 0.006 255);
-  --color-focus: oklch(82% 0.12 205);
-  --color-danger: oklch(75% 0.16 25);
-  --color-danger-soft: rgba(239, 68, 68, 0.25);
-  --color-success: oklch(78% 0.14 155);
-  --color-backdrop: rgba(0, 0, 0, 0.55);
+  /* ---- the only chromatic tokens in the system ---- */
+  --color-accent:     oklch(42% 0.150 142);
+  --color-accent-ink: oklch(98% 0.015 145);
+  --color-focus:      oklch(38% 0.160 142);
+  --color-danger:     oklch(48% 0.200 25);
+  --color-danger-ink: oklch(98% 0.010 25);
 
-  --color-wave-base: transparent;
-  --color-wave-surface: rgba(139, 92, 246, 0.30);
-  --color-wave-fallback: rgba(12, 14, 24, 0.30);
-  --color-glow-indigo: rgba(99, 102, 241, 0.25);
+  /* ---- type: Terminal is a single-face theme on purpose. Mono everywhere
+     is the design, not a missing pairing. Reading sizes run a notch smaller
+     than a serif would need because mono sets wider per character. ---- */
+  --font-display: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", "Roboto Mono", Menlo, Consolas, monospace;
+  --font-body:    ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", "Roboto Mono", Menlo, Consolas, monospace;
+  /* No --font-mono alias: in a single-face theme it would just be a third name
+     for --font-body, and a token nothing calls is a token that drifts. */
 
-  --font-body: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-display: "Trebuchet MS", var(--font-body);
-  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  /* ---- space ---- */
+  --space-2xs: 0.5rem;
+  --space-xs:  0.75rem;
+  --space-sm:  1rem;
+  --space-md:  1.5rem;
+  --space-lg:  2rem;
+  --space-xl:  3rem;
 
-  --space-1: 0.25rem;
-  --space-2: 0.5rem;
-  --space-3: 0.75rem;
-  --space-4: 1rem;
-  --space-5: 1.25rem;
-  --space-6: 1.5rem;
-  --space-8: 2rem;
-  --space-10: 2.5rem;
-  --space-12: 3rem;
+  /* ---- shape: Terminal has square corners; two exceptions, both named ----
+     --radius-card is 0 because surfaces in this theme are defined by rules and
+     alignment, not by rounded boxes. --radius-pill is the floating nav band and
+     the round icon buttons inside it. --radius-control is the third and last:
+     a small, discrete control that has to read as a *button* rather than as a
+     surface or as a pill — currently only the legal routes' crumb back button.
+     8px against that control's 28px box. Stated as a ratio because that is what
+     actually governs how round it reads: 8/28 is 57% of the way to a circle
+     (a circle at 28px is a 14px radius). 4-6px reads as an anti-aliasing
+     artifact at this size; past ~10px it reads as a squircle and by 12px it is
+     hard to tell from the circle this control deliberately is not. If the box
+     size changes, re-derive this against the new box rather than keeping 8px. */
+  --radius-card: 0;
+  --radius-control: 8px;
+  --radius-pill: 999px;
+  --rule-w: 1px;
 
-  --radius-sm: 0.5rem;
-  --radius-md: 0.75rem;
-  --radius-lg: 1rem;
-  --radius-panel: 1.25rem;
-  --shadow-panel: 0 24px 70px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.15);
-  --shadow-sheet: -20px 0 70px rgba(0, 0, 0, 0.6);
-
-  --dur-press: 100ms;
-  --dur-short: 180ms;
-  --dur-sheet: 270ms;
-  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  /* ---- motion ---- */
+  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in:     cubic-bezier(0.7, 0, 0.84, 0);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-instant: 100ms;
+  --dur-short:   200ms;
+  --dur-mid:     280ms;
 
+  /* ---- layout ---- */
+  --shell-width: 68rem;
+  /* The reading measure, in one place. Mono sets wide, so 40rem at 0.86rem is
+     already ~75 characters — the top of the comfortable range, not the middle.
+     Every rule and every paragraph in a document view shares this edge; that
+     alignment is the structure in a theme with no boxes to provide it. */
+  --measure: 40rem;
   --page-gutter: clamp(1rem, 4vw, 2rem);
-  --content-width: 48rem;
-  --safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
-  --safe-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+  --safe-top:    var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --safe-right:  var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
   --safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
-  --safe-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+  --safe-left:   var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
 
   --z-background: 0;
   --z-content: 10;
   --z-banner: 30;
   --z-overlay: 50;
+
+  /* Scrim behind the mobile nav drawer. Deliberately a flat black wash rather
+     than a paper tint — an overlay painted in --color-paper was invisible
+     against the page it was meant to dim. */
+  --color-backdrop: color-mix(in oklch, oklch(0% 0 0) 55%, transparent);
+
+  color-scheme: light;
+}
+
+/* Dark theme. Same discipline inverted: near-neutral inks on near-neutral
+   dark paper, accent alone carries the phosphor. Stamped on <html> by the
+   blocking script in app/layout.tsx before first paint. */
+:root[data-theme="dark"] {
+  --color-paper:      oklch(13% 0.005 145);
+  --color-paper-2:    oklch(16.5% 0.007 145);
+  --color-paper-3:    oklch(21% 0.009 145);
+  --color-nav-bg:     oklch(16.5% 0.007 145);
+  --color-rule:       oklch(29% 0.010 140);
+  --color-rule-2:     oklch(44% 0.014 140);
+  --color-muted:      oklch(62% 0.014 140);
+  --color-ink-2:      oklch(80% 0.012 140);
+  --color-ink:        oklch(94% 0.008 140);
+
+  --color-accent:     oklch(78% 0.190 138);
+  --color-accent-ink: oklch(14% 0.03 145);
+  --color-focus:      oklch(86% 0.190 138);
+  --color-danger:     oklch(70% 0.17 25);
+  --color-danger-ink: oklch(14% 0.020 25);
+
+  color-scheme: dark;
 }
