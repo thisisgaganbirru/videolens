@@ -1,191 +1,241 @@
 "use client";
 
 import { useState } from "react";
-import { Film, History as HistoryIcon, KeyRound, Palette, ScrollText, Sparkles } from "lucide-react";
+import { ChevronDown } from "lucide-react";
+import AppNav from "@/components/AppNav";
 import UploadForm from "@/components/UploadForm";
 import RunStatusView from "@/components/RunStatusView";
 import ResultsView, { SourceCard } from "@/components/ResultsView";
-import { BackgroundPickerPanel } from "@/components/ui/BackgroundSwitcher";
 import ApiKeyPanel from "@/components/panels/ApiKeyPanel";
 import HistoryPanel from "@/components/panels/HistoryPanel";
 import VersionLogPanel from "@/components/panels/VersionLogPanel";
 import { useAnalysisRun } from "@/application/useAnalysisRun";
+import { goToMainTab, useMainTab, type MainTab } from "@/application/useMainTab";
 
-type MainTab = "analyze" | "theme" | "history" | "api-key" | "releases";
+/**
+ * The app shell for one tab.
+ *
+ * Takes the tab as a prop rather than reading the URL itself, so it can be
+ * rendered both as the resolved route and as `app/page.tsx`'s Suspense
+ * fallback — the fallback is what gets baked into the prerendered HTML, and it
+ * has to be a real Analyze view, not a placeholder.
+ */
+export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
+  const [sourceOpen, setSourceOpen] = useState(false);
+  const {
+    status,
+    stage,
+    sourceKind,
+    result,
+    sourceMetadata,
+    error,
+    errorKind,
+    submitting,
+    submit,
+    reset,
+    openRun,
+  } = useAnalysisRun();
 
-const NAV_TABS: { id: MainTab; label: string; icon: typeof Film }[] = [
-  { id: "analyze", label: "Analyze", icon: Film },
-  { id: "theme", label: "Theme", icon: Palette },
-  { id: "history", label: "History", icon: HistoryIcon },
-  { id: "api-key", label: "API Key", icon: KeyRound },
-  { id: "releases", label: "Releases", icon: ScrollText },
-];
-
-export default function HomeScreen() {
-  const [activeTab, setActiveTab] = useState<MainTab>("analyze");
-  const { status, stage, sourceKind, result, sourceMetadata, error, submit, reset, openRun } = useAnalysisRun();
+  /* An error while the pipeline is on screen can only come from the poll's
+     catch — `submit` now stays on idle until the server answers, and `openRun`
+     returns to idle on failure. So this is precisely "the interval is dead":
+     nothing above will ever update again. */
+  const connectionLost = Boolean(error) && (status === "queued" || status === "processing");
 
   const handleOpenRun = (runId: string) => {
-    setActiveTab("analyze");
+    /* Pushes a history entry, so back from a run lands on the list it was
+       opened from rather than dropping out of the app. */
+    goToMainTab("analyze");
     void openRun(runId);
   };
 
+  /* "fixed" is the one-viewport frame where only the results pane scrolls.
+     It applies on mobile whenever there is a results pane to bound; every
+     other state lets the page flow and scroll normally. From 32rem up the
+     stylesheet puts every view back on the fixed frame. */
+  const frame = activeTab === "analyze" && status === "complete" && !sourceOpen ? "fixed" : "flow";
+
   return (
-    <div className="flex h-[100dvh] w-full items-center justify-center p-3 sm:p-5 md:p-6 overflow-hidden">
-      {/* Center Unified Glass Workspace Card */}
-      <main className="surface-panel flex h-full max-h-[94dvh] w-full max-w-4xl flex-col overflow-hidden shadow-2xl backdrop-blur-2xl lg:max-h-[97dvh] lg:max-w-6xl xl:max-w-7xl">
-        {/* Header Bar & Segmented Navigation inside Center Card */}
-        <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-[var(--color-rule)] px-4 py-3 sm:px-6">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--color-accent-soft)] border border-[var(--color-accent)] shadow-sm">
-              <Sparkles className="h-4 w-4 text-[var(--color-accent)]" />
-            </div>
-            <div>
-              <h1 className="text-lg font-bold tracking-tight text-[var(--color-text-strong)] sm:text-xl">
-                VideoLens AI
-              </h1>
-            </div>
-          </div>
+    <div className="shell" data-view={activeTab} data-frame={frame}>
+      <AppNav activeTab={activeTab} onSelectTab={goToMainTab} />
 
-          {/* Integrated Segmented Control Navigation */}
-          <nav className="flex items-center gap-1 rounded-xl bg-[var(--color-paper-2)] p-1 border border-[var(--color-rule-strong)]" aria-label="Main Navigation">
-            {NAV_TABS.map(({ id, label, icon: Icon }) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setActiveTab(id)}
-                className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-all duration-180 ${
-                  activeTab === id
-                    ? "bg-[var(--color-accent)] text-[var(--color-accent-ink)] shadow-md"
-                    : "text-[var(--color-muted)] hover:text-[var(--color-text-strong)] hover:bg-[var(--color-paper-3)]"
-                }`}
-              >
-                <Icon className="h-3.5 w-3.5" />
-                <span className="hidden xs:inline sm:inline">{label}</span>
-              </button>
-            ))}
-          </nav>
-        </header>
-
-        {/* Scrollable Center Content Workspace */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8">
-          {activeTab === "analyze" && (
-            <div className="flex flex-col gap-5 lg:h-full lg:min-h-0">
-              <div className="min-w-0 lg:shrink-0">
-                <h2 className="text-xl font-bold text-[var(--color-text-strong)] sm:text-2xl">
-                  Video & Audio Analysis
-                </h2>
-                <p className="mt-1 text-xs text-[var(--color-muted)] sm:text-sm">
-                  Upload media or paste a public link to get transcripts, summaries, and structured notes.
-                </p>
+      {activeTab === "analyze" && (
+        <section data-view="analyze" aria-label="Analyze">
+          {status === "idle" && (
+            <div className="home-center">
+              <div className="intake">
+                <p className="card-label">new analysis</p>
+                <UploadForm onSubmit={submit} submitting={submitting} />
+                {/* Back at idle with an error means the submit was rejected, or
+                    a history row would not open. Either way the control that
+                    failed is still on screen — and, since `submit` no longer
+                    unmounts this branch while the request is in flight, so is
+                    whatever the user typed. Pressing the same button again is
+                    the whole recovery, so this is a form-level line in
+                    UploadForm's own error slot, not the centred `.error-block`,
+                    which is drawn for a full-view failure with an action of its
+                    own. */}
+                {error && (
+                  <p
+                    role="alert"
+                    data-error-kind={errorKind ?? undefined}
+                    className="error-note mt-[var(--space-xs)]"
+                  >
+                    {error}
+                  </p>
+                )}
               </div>
+            </div>
+          )}
 
-              {status === "idle" && <UploadForm onSubmit={submit} />}
-
-              {status !== "idle" && (
-                <div
-                  className={`lg:shrink-0 ${
-                    status === "complete" ? "" : "rounded-xl border border-[var(--color-rule)] bg-[var(--color-paper-2)] p-4 sm:p-6"
-                  }`}
-                >
-                  <RunStatusView status={status} stage={stage} sourceKind={sourceKind} error={error} />
-                </div>
-              )}
-
-              {error && status !== "failed" && (
-                <div
-                  role="alert"
-                  className="rounded-[var(--radius-md)] border border-[var(--color-danger)] bg-[var(--color-danger-soft)] p-3.5 text-xs leading-5 text-[var(--color-danger)] sm:text-sm lg:shrink-0"
-                >
-                  {error}
-                </div>
-              )}
-
-              {status === "complete" && result && (
-                <div className="lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[3fr_7fr] lg:items-stretch lg:gap-6">
-                  {/* Desktop-only sidebar: source card + "analyze another" live here instead of inline with the tabs */}
-                  <div className="hidden lg:flex lg:flex-col lg:gap-4 lg:overflow-y-auto">
-                    {sourceMetadata && <SourceCard metadata={sourceMetadata} />}
-                    <button
-                      type="button"
-                      onClick={reset}
-                      className="text-link self-start text-xs font-medium"
-                    >
-                      Analyze another file
+          {(status === "queued" || status === "processing" || status === "failed") && (
+            <div className="home-center">
+              <div className="run-state">
+                <RunStatusView
+                  status={status}
+                  stage={stage}
+                  sourceKind={sourceKind}
+                  error={error}
+                  connectionLost={connectionLost}
+                />
+                {connectionLost ? (
+                  /* Polling threw, so `useAnalysisRun` cleared its interval: the
+                     pipeline above is now frozen and nothing on this screen will
+                     ever update again. That is a genuine full stop, which is what
+                     `.error-block` was drawn for — lead, explanation, and an
+                     action inside the block, so the spec's reserved
+                     `p:last-of-type` margin is the gap above the button rather
+                     than dead space. The button replaces the `.reset-link` here
+                     instead of joining it: two ways to start over is one too
+                     many, and `.btn` is the one that gets a 44px target on
+                     touch. The same flag stops `RunStatusView` pulsing and
+                     removes its "you can leave this open" note, so this block is
+                     the only thing on screen describing the failure. */
+                  <div role="alert" data-error-kind={errorKind ?? undefined} className="error-block">
+                    {/* The lead says what happened to the *run*; the gateway's
+                        message already says why the request failed, so
+                        repeating "lost contact" here would be the same
+                        sentence twice. */}
+                    <p>
+                      <strong>This run stopped updating.</strong> {error}
+                    </p>
+                    <p>
+                      It may still finish on the server — reopen it from History in a
+                      moment, or start over.
+                    </p>
+                    <button type="button" className="btn btn-secondary" onClick={reset}>
+                      start over
                     </button>
                   </div>
-                  <ResultsView result={result} sourceMetadata={sourceMetadata} />
-                </div>
-              )}
+                ) : (
+                  <button type="button" className="reset-link" onClick={reset}>
+                    analyze another file
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
-              {(status === "complete" || status === "failed" || error) && (
+          {status === "complete" && result && (
+            <div className="workspace">
+              {/* Two ruled columns, no card on either side: the single vertical
+                  hairline on .right-col is the whole separation, and only the
+                  results pane carries the paper-2 tint. */}
+              <div className="left-col" data-collapsed={sourceOpen ? "false" : "true"}>
                 <button
                   type="button"
-                  onClick={reset}
-                  className={`text-link self-start text-xs font-medium sm:text-sm ${
-                    status === "complete" ? "lg:hidden" : ""
-                  }`}
+                  className="col-label"
+                  onClick={() => setSourceOpen((open) => !open)}
+                  aria-expanded={sourceOpen}
+                  aria-controls="source-panel"
                 >
-                  Analyze another file
+                  Source
+                  <ChevronDown className="col-chevron" aria-hidden="true" />
                 </button>
-              )}
+                <div className="source-frame" id="source-panel">
+                  <div className="source-body">
+                    {sourceMetadata ? (
+                      <SourceCard metadata={sourceMetadata} />
+                    ) : (
+                      <p className="pending-note">No source metadata for this run.</p>
+                    )}
+                  </div>
+                  <button type="button" className="reset-link" onClick={reset}>
+                    analyze another file
+                  </button>
+                </div>
+              </div>
+
+              <div className="right-col">
+                <p className="col-label">Results</p>
+                <div className="results">
+                  <ResultsView result={result} sourceMetadata={sourceMetadata} />
+                </div>
+              </div>
             </div>
           )}
+        </section>
+      )}
 
-          {activeTab === "theme" && (
-            <div className="flex flex-col gap-4">
-              <div className="min-w-0">
-                <h2 className="text-xl font-bold text-[var(--color-text-strong)] sm:text-2xl">
-                  Background Themes
-                </h2>
-              </div>
-              <BackgroundPickerPanel />
-            </div>
-          )}
-
-          {activeTab === "history" && (
-            <div className="flex flex-col gap-4 max-w-2xl">
-              <div className="min-w-0">
-                <h2 className="text-xl font-bold text-[var(--color-text-strong)] sm:text-2xl">
-                  Analysis History
-                </h2>
-              </div>
+      {/* `.tab-view` carries the top margin that lines these labels up with
+          `.workspace`'s. It is a class rather than a list of view names in the
+          selector so a fifth tab inherits the alignment instead of silently
+          missing it — and so `legal`/`offline`, which are sections too but not
+          tabs, stay out of it. */}
+      {activeTab === "history" && (
+        <section className="tab-view" data-view="history" aria-label="History">
+          <p className="col-label">History</p>
+          <div className="surface">
+            <div className="pane">
               <HistoryPanel onOpenRun={handleOpenRun} />
             </div>
-          )}
+          </div>
+        </section>
+      )}
 
-          {activeTab === "api-key" && (
-            <div className="flex flex-col gap-4">
-              <div className="min-w-0">
-                <h2 className="text-xl font-bold text-[var(--color-text-strong)] sm:text-2xl">
-                  Gemini API Key
-                </h2>
-              </div>
+      {activeTab === "api-key" && (
+        <section className="tab-view" data-view="api-key" aria-label="API key">
+          <p className="col-label">API key</p>
+          <div className="surface">
+            <div className="pane">
               <ApiKeyPanel />
             </div>
-          )}
+          </div>
+        </section>
+      )}
 
-          {activeTab === "releases" && (
-            <div className="flex flex-col gap-4 max-w-2xl">
-              <div className="min-w-0">
-                <h2 className="text-xl font-bold text-[var(--color-text-strong)] sm:text-2xl">
-                  Release Notes
-                </h2>
-              </div>
+      {activeTab === "releases" && (
+        <section className="tab-view" data-view="releases" aria-label="Releases">
+          <p className="col-label">Releases</p>
+          <div className="surface">
+            <div className="pane">
               <VersionLogPanel />
             </div>
-          )}
-        </div>
+          </div>
+        </section>
+      )}
 
-        {/* Integrated Card Footer */}
-        <footer className="flex shrink-0 items-center justify-between border-t border-[var(--color-rule)] px-4 py-2.5 text-xs text-[var(--color-faint)] sm:px-6">
+      <div className="page-end">
+        <footer className="foot">
           <span>VideoLens AI</span>
-          <nav className="flex gap-4" aria-label="Legal">
-            <a href="/privacy" className="hover:text-[var(--color-text)] transition-colors">Privacy</a>
-            <a href="/terms" className="hover:text-[var(--color-text)] transition-colors">Terms</a>
+          <nav className="foot-legal" aria-label="Legal">
+            <a href="/privacy">Privacy</a>
+            <a href="/terms">Terms</a>
           </nav>
         </footer>
-      </main>
+      </div>
     </div>
   );
+}
+
+/**
+ * The same shell, told which tab it is by the URL.
+ *
+ * Split out so the `useSearchParams` call sits in exactly one component: it is
+ * what suspends during prerender, and putting it in `HomeScreen` itself would
+ * make the Suspense fallback suspend too.
+ */
+export function RoutedHomeScreen() {
+  const activeTab = useMainTab();
+  return <HomeScreen activeTab={activeTab} />;
 }
