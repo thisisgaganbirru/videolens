@@ -49,6 +49,12 @@ needs. Each hook owns its `useState`/`useEffect` and calls out to
 - `useRunHistory.ts` — fetches the caller's run history.
 - `useVersionLog.ts` — fetches the release list.
 - `useUpdateCheck.ts` — wraps the native update check for `UpdateBanner`.
+- `useMainTab.ts` — which of the four shell destinations is showing, held
+  in the URL as `/?view=…` rather than in a component's `useState`. Reading
+  and writing that URL is orchestration, so it sits here; `domain/` and
+  `infrastructure/` know nothing about routing. Exports `MAIN_TABS`,
+  `mainTabHref`, `goToMainTab` (a plain function, so the Suspense fallback
+  can switch tabs without calling `useSearchParams`) and `useMainTab`.
 
 **`app/` + `components/`** — the framework-bound presentation layer
 (Next.js routing + React). `app/` holds only what Next.js requires to live
@@ -56,15 +62,27 @@ there (route files: `page.tsx`, `layout.tsx`, `manifest.ts`, the legal
 pages, global CSS) - `app/page.tsx` is 4 lines and does nothing but render
 `<HomeScreen />`. Everything about what the page actually looks like and
 does lives in `components/`:
-- `HomeScreen.tsx` — the real page body: header, tab navigation, and
-  composing `useAnalysisRun()` with the presentational pieces below.
+- `HomeScreen.tsx` — the real page body for one tab, taking that tab as a
+  prop and composing `useAnalysisRun()` with the presentational pieces
+  below. `RoutedHomeScreen` (same file) is the variant that reads the tab
+  from the URL; `app/page.tsx` renders it inside the `<Suspense>` boundary
+  `useSearchParams` requires on a statically rendered route, with a real
+  Analyze shell as the fallback.
+- `AppNav.tsx` — the whole nav band (brand, the four tab links, the mobile
+  drawer, the theme toggle) as one component. `HomeScreen` and `LegalShell`
+  both render it, which only became possible once the tabs had addresses.
+- `theme.ts` — the light/dark constants and the `theme-color` sync, shared
+  by `ThemeToggle` and `app/layout.tsx`'s pre-paint script.
 - `panels/{ApiKeyPanel,HistoryPanel,VersionLogPanel}.tsx` — one component
   per tab, each just rendering its matching hook's state.
 - `format.ts` — the shared `formatDate` used by the two list-style panels.
 - `UploadForm.tsx`, `ResultsView.tsx`, `RunStatusView.tsx`,
-  `UpdateBanner.tsx`, `ServiceWorkerRegistration.tsx`, `ui/*` — presentational
+  `UpdateBanner.tsx`, `ServiceWorkerRegistration.tsx` — presentational
   components, unchanged in behavior; only their imports moved to
   `@/domain/entities` where they used to pull from the now-deleted `lib/`.
+
+`components/ui/` is gone — it held the animated-background system, deleted
+with the Terminal redesign (see `docs/frontend/design-direction-terminal.md`).
 
 ## What used to be here
 
@@ -81,8 +99,11 @@ still imported the old component.
   `application/`, backed by a port in `domain/ports.ts` if it talks to an
   external system, with the concrete adapter in `infrastructure/` and
   registered in `container.ts`.
-- **New tab/panel** → a component in `components/panels/`, wired into
-  `HomeScreen.tsx`'s tab list.
+- **New tab/panel** → a component in `components/panels/`; add the id to
+  `MAIN_TABS` in `application/useMainTab.ts`, its label and icon to
+  `TAB_META` in `components/AppNav.tsx`, and its `<section className="tab-view">`
+  to `HomeScreen.tsx`. The `.tab-view` class is what gives it the same
+  label alignment as every other tab.
 - **Swap out an external system** (e.g. the backend URL scheme, or how
   version info is sourced) → write a new adapter in `infrastructure/`
   satisfying the existing port, point `container.ts` at it. Hooks and

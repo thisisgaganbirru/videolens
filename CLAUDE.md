@@ -19,6 +19,18 @@ frontend is a Next.js PWA with a Capacitor Android wrapper.
   touches, known issues). Check here before touching a feature; add/update
   the relevant doc when you change one. Doesn't replace this file or the
   `ARCHITECTURE.md` files.
+- `mem/` — per-task session logs (`mem/YYYYMMDD-{slug}.md`: The Ask, Changes
+  Made, Decisions & Rationale, Current Architecture). Gitignored, local only.
+  Search here before re-deriving why something was built a certain way.
+
+**This applies to every agent and subagent, with no exceptions.** If you were
+dispatched to do a piece of work — however small — you read the relevant doc
+under `docs/` before starting, and you update it plus the `mem/` entry before
+reporting back. The agent that did the work is the one that knows what changed
+and why; deferring it to whoever dispatched you loses that. Append a one-line
+entry to the doc's `## Changelog` naming yourself (`YYYY-MM-DD · <who> ·
+<what>`) so parallel agents sharing these files can see what has already been
+done instead of duplicating or reverting it. See `docs/README.md`.
 
 Both backend and frontend have their own `ARCHITECTURE.md` — read those
 before making structural changes; they're the authoritative layering
@@ -57,6 +69,21 @@ npm run build             # production build
 npm run build:mobile      # Capacitor build (sets CAPACITOR_BUILD=true)
 npm run lint
 ```
+
+`next.config.mjs` sets **`agentRules: false`** deliberately — leave it off.
+Without it, every `next dev` writes `frontend/AGENTS.md` and
+`frontend/CLAUDE.md`. The second one is the problem: a subdirectory `CLAUDE.md`
+is auto-loaded as agent context whenever someone works in `frontend/`, making it
+a competing instruction source alongside this file. Next emits both files
+together, so disabling generation is the only way to suppress just that one.
+Agent instructions for this repo live here, in the root `CLAUDE.md`, only.
+
+`npm run lint` is currently **broken and has been for a while** — Next 16
+removed `next lint`, so the script resolves `lint` as a directory
+(`no such directory: frontend/lint`). Unrelated to any recent change; the fix is
+`npx @next/codemod@latest next-lint-to-eslint-cli`. CI does not run it (the
+frontend job is `tsc --noEmit` + `build` + `build:mobile`), so this is not
+gating anything today.
 
 ### Android (`cd frontend`)
 
@@ -287,3 +314,27 @@ backend `ALLOWED_ORIGINS` to the deployed frontend origin. See
 `DEPLOYMENT.md` for what's still required before public release (OIDC
 provider choice, production domains/secrets, Android signing key, Play
 Console setup).
+
+## Operating rules for Railway / infra tools
+
+These exist because both were violated in a real session (2026-08-14) and
+caused real problems — treat them as binding, not suggestions.
+
+- **Never call a tool that bulk-dumps secrets** (e.g. Railway MCP's
+  `list_variables`, which returns every `KEY=VALUE` on a service including
+  API keys, DB passwords, S3 credentials) just to check one field's state.
+  Prefer a scoped check, or ask the user to confirm from the dashboard. If
+  no scoped option exists and a full dump is unavoidable, say so and get
+  confirmation *before* calling it, not after — a "don't paste secrets"
+  warning after the fact doesn't undo a dump already in the transcript.
+- **Don't assert unverified infra/integration state as confirmed fact.** A
+  config field (e.g. a service's `Source repo` value) reflects what's
+  *configured*, not whether it actually works end-to-end (e.g. whether the
+  GitHub App install behind it is authorized). If the check was shallow,
+  say so or ask the user to confirm from the dashboard, rather than saying
+  "confirmed" / "verified live."
+- Config/IaC changes touching Railway (service settings, variables,
+  reconnecting sources) are the kind of action that needs a heads-up before
+  acting per this repo's general risk posture — doubly true here since
+  services span both `videolens` and other unrelated projects sharing the
+  same account/GitHub App installation.
