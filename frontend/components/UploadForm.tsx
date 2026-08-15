@@ -1,7 +1,6 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { Link2, UploadCloud } from "lucide-react";
 import type { MediaSource } from "@/domain/entities";
 
 const ACCEPTED_EXTENSIONS = [".mp3", ".mp4", ".mov"];
@@ -12,6 +11,11 @@ const MEDIA_TERMS_ACCEPTANCE_KEY = "videolens-media-terms-v1";
 interface UploadFormProps {
   onSubmit: (source: MediaSource) => void;
   disabled?: boolean;
+  /** The submit request is in flight. Distinct from `disabled` because it also
+   *  relabels the primary button: the form now stays mounted for the whole
+   *  request (so a rejection does not wipe the typed URL), which means it is
+   *  the form that has to show the wait. */
+  submitting?: boolean;
 }
 
 function validateFile(file: File): string | null {
@@ -52,13 +56,22 @@ function readMediaDuration(file: File): Promise<number> {
   });
 }
 
-export default function UploadForm({ onSubmit, disabled }: UploadFormProps) {
+export default function UploadForm({ onSubmit, disabled, submitting }: UploadFormProps) {
+  const busy = disabled || submitting;
   const [url, setUrl] = useState("");
   const [dragActive, setDragActive] = useState(false);
   const [checking, setChecking] = useState(false);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /* Which of the two entry points is waiting. Both are disabled while a submit
+     is in flight, but only the one the user actually pressed should say so —
+     "sending…" on both reads as two things happening at once. */
+  const [pendingKind, setPendingKind] = useState<"url" | "file" | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!submitting) setPendingKind(null);
+  }, [submitting]);
 
   useEffect(() => {
     setAcceptedTerms(
@@ -107,6 +120,7 @@ export default function UploadForm({ onSubmit, disabled }: UploadFormProps) {
         setChecking(false);
       }
 
+      setPendingKind("file");
       onSubmit({ file });
     },
     [onSubmit]
@@ -125,54 +139,55 @@ export default function UploadForm({ onSubmit, disabled }: UploadFormProps) {
       return;
     }
     setError(null);
+    setPendingKind("url");
     onSubmit({ url: value });
   };
 
+  const rejectUnaccepted = () => {
+    setError("Accept the media-use terms before analysis.");
+  };
+
+  /* No surface, no frame, no card: this control sits directly inside
+     HomeScreen's `.intake` (which already renders the "new analysis"
+     micro-label). Structure is the field's own edge, the rule of the
+     divider, and the dashed drop zone — nothing wraps them. */
   return (
-    <section className="flex flex-col gap-4" aria-disabled={disabled || undefined}>
-      {/* 1. PRIMARY: Paste Public Video URL (Top Focus) */}
-      <form onSubmit={submitUrl} className="flex flex-col gap-2.5">
-        <label htmlFor="media-url" className="flex items-center gap-2 text-sm font-bold text-[var(--color-text-strong)]">
-          <Link2 className="h-4 w-4 text-[var(--color-accent)]" />
-          <span>Paste Video or Audio URL (Primary)</span>
+    <>
+      <form onSubmit={submitUrl} className="row">
+        <label htmlFor="media-url" className="sr-only">
+          Video or audio URL
         </label>
-        <div className="flex flex-col gap-2.5 sm:flex-row">
-          <input
-            id="media-url"
-            type="url"
-            value={url}
-            onChange={(event) => {
-              setUrl(event.target.value);
-              setError(null);
-            }}
-            placeholder="https://www.instagram.com/reel/..., YouTube, TikTok, or public video link"
-            autoComplete="url"
-            disabled={disabled}
-            aria-invalid={Boolean(error)}
-            className="field min-w-0 flex-1 text-sm font-medium"
-          />
-          <button
-            type="submit"
-            disabled={disabled || !url.trim() || !acceptedTerms}
-            className="button-primary text-xs font-bold px-6 py-2.5 sm:shrink-0 shadow-lg shadow-indigo-950/40"
-          >
-            Analyze URL
-          </button>
-        </div>
+        <input
+          id="media-url"
+          type="url"
+          value={url}
+          onChange={(event) => {
+            setUrl(event.target.value);
+            setError(null);
+          }}
+          placeholder="paste a youtube, tiktok, or instagram link"
+          autoComplete="url"
+          disabled={busy}
+          aria-invalid={error ? "true" : undefined}
+          aria-describedby={error ? "intake-error" : undefined}
+          className="field"
+        />
+        <button
+          type="submit"
+          disabled={busy || !url.trim() || !acceptedTerms}
+          aria-busy={pendingKind === "url" && submitting ? true : undefined}
+          className="btn btn-primary"
+        >
+          {pendingKind === "url" && submitting ? "sending…" : "analyze url"}
+        </button>
       </form>
 
-      {/* 2. OR Divider */}
-      <div className="relative flex items-center justify-center my-1">
-        <div className="absolute inset-0 flex items-center">
-          <div className="w-full border-t border-[var(--color-rule)]" />
-        </div>
-        <span className="relative bg-[var(--color-surface)] px-3 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-muted)] rounded-full border border-[var(--color-rule)]">
-          or upload a local file (secondary)
-        </span>
+      <div className="divider" aria-hidden="true">
+        or
       </div>
 
-      {/* 3. SECONDARY: File Drag & Drop Zone (Bottom Focus) */}
       <div
+        data-dragging={dragActive ? "true" : undefined}
         onDragOver={(event) => {
           event.preventDefault();
           setDragActive(true);
@@ -181,32 +196,39 @@ export default function UploadForm({ onSubmit, disabled }: UploadFormProps) {
         onDrop={(event) => {
           event.preventDefault();
           setDragActive(false);
+          /* The drop zone has no disabled state of its own, so it is the one
+             entry point that could still fire mid-submit. The hook guards
+             against the double submit; this stops the drop looking accepted. */
+          if (busy) return;
           const file = event.dataTransfer.files?.[0];
           if (!acceptedTerms) {
-            setError("Accept the media-use terms before analysis.");
+            rejectUnaccepted();
           } else if (file) {
             void handleFile(file);
           }
         }}
-        className={`flex flex-col items-center justify-center gap-2 rounded-[var(--radius-lg)] border border-dashed px-4 py-5 text-center backdrop-blur-md transition-all ${
-          dragActive
-            ? "border-[var(--color-accent-hover)] bg-[var(--color-accent-soft)]"
-            : "border-[var(--color-rule-strong)] bg-[var(--color-paper-2)]/60 hover:border-[var(--color-rule)]"
-        }`}
+        className="drop"
       >
-        <div className="flex items-center gap-2 text-xs font-medium text-[var(--color-muted)]">
-          <UploadCloud className="h-4 w-4 text-[var(--color-faint)]" />
-          <span>Drop an audio or video file here or</span>
-          <button
-            type="button"
-            onClick={() => inputRef.current?.click()}
-            disabled={disabled || checking || !acceptedTerms}
-            aria-busy={checking}
-            className="button-secondary text-xs px-3.5 py-1.5 font-semibold"
-          >
-            {checking ? "Checking..." : "Browse file"}
-          </button>
+        <div>
+          <p>drop an audio or video file here</p>
+          <p className="hint">
+            mp3, mp4, or mov — up to {MAX_FILE_SIZE_MB}mb &amp;{" "}
+            {MAX_DURATION_SECONDS / 60} minutes
+          </p>
         </div>
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={busy || checking || !acceptedTerms}
+          aria-busy={checking || (pendingKind === "file" && submitting) || undefined}
+          className="btn btn-secondary"
+        >
+          {pendingKind === "file" && submitting
+            ? "sending…"
+            : checking
+              ? "checking…"
+              : "browse file"}
+        </button>
         <input
           ref={inputRef}
           type="file"
@@ -215,24 +237,20 @@ export default function UploadForm({ onSubmit, disabled }: UploadFormProps) {
           onChange={(event) => {
             const file = event.target.files?.[0];
             if (!acceptedTerms) {
-              setError("Accept the media-use terms before analysis.");
+              rejectUnaccepted();
             } else if (file) {
               void handleFile(file);
             }
             event.target.value = "";
           }}
         />
-        <p className="text-[11px] text-[var(--color-faint)]">
-          Supports MP3, MP4, or MOV up to {MAX_FILE_SIZE_MB}MB & 3 mins
-        </p>
       </div>
 
-      {/* 4. Terms Agreement Checkbox */}
-      <label className="flex items-start gap-2.5 text-xs text-[var(--color-muted)] mt-0.5">
+      <label className="mt-[var(--space-sm)] flex items-start gap-[var(--space-2xs)] text-[0.72rem] leading-[1.6] text-[var(--color-muted)]">
         <input
           type="checkbox"
           checked={acceptedTerms}
-          disabled={disabled}
+          disabled={busy}
           onChange={(event) => {
             const accepted = event.target.checked;
             setAcceptedTerms(accepted);
@@ -243,26 +261,30 @@ export default function UploadForm({ onSubmit, disabled }: UploadFormProps) {
             }
             setError(null);
           }}
-          className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--color-accent)]"
+          className="mt-[0.2rem] h-3.5 w-3.5 shrink-0 accent-[var(--color-accent)]"
         />
         <span>
           I will only submit media I own or am authorized to process, and I agree to the{" "}
-          <a className="font-medium text-[var(--color-accent-hover)] underline underline-offset-2" href="/terms">
+          <a className="text-[var(--color-accent)] underline underline-offset-2" href="/terms">
             Terms
           </a>{" "}
           and{" "}
-          <a className="font-medium text-[var(--color-accent-hover)] underline underline-offset-2" href="/privacy">
+          <a className="text-[var(--color-accent)] underline underline-offset-2" href="/privacy">
             Privacy Policy
           </a>
           .
         </span>
       </label>
 
+      {/* `.error-note` is the named class for this exact recipe (`.pending-note`
+          at danger ink) — see the four-rung ladder documented in globals.css.
+          It used to be inlined here as arbitrary values, which meant the same
+          rule lived in two places. */}
       {error && (
-        <p role="alert" className="text-xs leading-5 text-[var(--color-danger)]">
+        <p id="intake-error" role="alert" className="error-note mt-[var(--space-xs)]">
           {error}
         </p>
       )}
-    </section>
+    </>
   );
 }

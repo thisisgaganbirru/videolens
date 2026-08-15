@@ -34,16 +34,40 @@ deliberately excluded: their brand guidelines require prior written
 permission to use their logo, unlike Instagram/YouTube which permit
 unmodified-logo attribution use, so TikTok results just show the plain text
 label. A platform with no entry in `PLATFORM_ICONS` (including TikTok) simply
-renders no icon. It is a full-width responsive glass card using
-the raised-surface token's 30% background alpha; only the background is
-translucent, while its text and controls remain fully opaque. Padding tightens
-on small screens and long uploader names truncate safely. Its premium hierarchy
-uses a creator monogram, optional source title, a readable caption measure,
-icon-led engagement data with tabular numerals, and the source date when
-available. The surrounding `ResultsView` is an unframed content section,
-making this source module the single card containment layer in the
-completed-result view.
+renders no icon.
 
-**Known issue**: none identified.
+**Source card is deliberately unboxed** (Terminal redesign — see
+`design-direction-terminal.md`). No border, no tint, no shadow: `.source-card`
+is `background: transparent; padding: 0`. Only the results pane carries the
+`--color-paper-2` tint. Two bordered tinted rectangles side by side read as a
+PowerPoint slide, so structure comes from the single vertical hairline between
+the columns instead. Do not re-box it. Its hierarchy is a creator monogram,
+optional source title (two-line clamp), a readable caption measure with a
+show-more disclosure, engagement counts, and the source date when available —
+long uploader names truncate safely.
+
+The description disclosure uses the **shared `.disclosure`**, not a BEM
+variant: only the shared rule carries `all: unset`, the pointer cursor, and the
+`[aria-expanded="true"]` chevron rotation. It needs `self-start`, since
+`.disclosure` blockifies as a flex child and would otherwise stretch the full
+column width as a hit target.
+
+**Known issues**
+- `.pull` (the mockup's pull-quote above the summary) is unused: `VideoAnalysis`
+  has a single `summary: string` and no lead/quote field, and styling a whole
+  multi-paragraph summary as a pull-quote would be wrong. Porting it faithfully
+  needs a backend field that doesn't exist.
+- `.ocr-tag` renders on *every* on-screen-text row, not selectively as the
+  mockup shows — `ScreenTextSegment` has no field distinguishing an overlay from
+  other on-screen text, so the mockup's one-tagged-row-of-three was sample
+  variety, not data.
+- The generated-title band above the tabs has no shared class; it's styled
+  inline to align with `.tab-list`'s gutter. A `.result-title` class would be
+  the place if it needs centralising.
+- Not visually verified — no browser/screenshot tooling was available.
 
 **Tests**: none (see `run-analysis-hook.md`).
+
+## Changelog
+
+- 2026-08-15 · frontend agent · ported ResultsView + SourceCard; de-boxed the source card, wired .disclosure and role=tabpanel, rebuilt SourceCard.preview with six states
