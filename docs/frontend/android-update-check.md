@@ -11,7 +11,7 @@ Since this app isn't distributed through Play Store, nothing else checks for upd
 
 **Flow**: reads the installed app's `versionCode` via `@capacitor/app`'s `App.getInfo()`, fetches the last 5 non-draft GitHub releases, finds the newest one carrying a `version.json` asset, downloads that manifest, and compares its `versionCode` against the installed build. Only shows the banner if the manifest's version is strictly newer.
 
-**Why a separate JSON manifest instead of parsing the release tag**: so the app doesn't depend on the tag-naming scheme (`dev-v{name}-build{n}`) staying stable — see `.github/workflows/android-dev.yml`'s "Write version manifest" step, which produces this asset on every `dev` push.
+**Why a separate JSON manifest instead of parsing the release tag**: so the app doesn't depend on the tag-naming scheme (`dev-v{name}-build{n}`) staying stable — see `.github/workflows/android-development-build.yml`'s "Write version manifest" step, which produces this asset on every `dev` push.
 
 **Design status — extrapolated, needs review.** The Terminal mockup never drew
 this banner. It's now a flat `--color-paper-2` band with a hairline below,
@@ -29,3 +29,4 @@ preserved.
 
 - 2026-08-15 · frontend agent · ported UpdateBanner; added shrink-0 so it cannot compress the measured viewport frame
 - 2026-08-15 · main session · updated the manifest producer reference after Android dev automation was separated from CI
+- 2026-08-15 · main session · updated the manifest producer path to the descriptive workflow naming convention
