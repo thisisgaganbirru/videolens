@@ -5,25 +5,21 @@ import { Capacitor } from "@capacitor/core";
 import { Share } from "@capacitor/share";
 import {
   CalendarDays,
-  Check,
   ChevronDown,
-  Copy,
-  Download,
   ExternalLink,
   Eye,
   Heart,
   MessageCircle,
-  Share2,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ScreenTextSegment, SourceMetadata, TranscriptSegment, VideoAnalysis } from "@/domain/entities";
 
 const TABS = [
-  { key: "markdown", label: "Notes" },
-  { key: "summary", label: "Summary" },
-  { key: "transcript", label: "Transcript" },
-  { key: "screen_text", label: "On-screen text" },
+  { key: "markdown", label: "notes" },
+  { key: "summary", label: "summary" },
+  { key: "transcript", label: "transcript" },
+  { key: "screen_text", label: "on-screen text" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -43,55 +39,49 @@ function formatTimestamp(value: number) {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+/**
+ * Timestamped rows on the shared `.line` grid: an accent timestamp column and
+ * the text beside it, separated by hairlines rather than a drawn rail. Only
+ * the start time is shown (the end is carried in the `title`/`dateTime`) —
+ * the two-line time column the old glass layout used cost more width than the
+ * 3.6rem gutter the Terminal grid allows.
+ */
 function TimelineView({
   segments,
   fallback,
   emptyMessage,
+  label,
+  marker,
 }: {
   segments: TimelineSegment[];
   fallback: string;
   emptyMessage: string;
+  label: string;
+  marker?: string;
 }) {
   if (segments.length === 0) {
-    return (
-      <div className="mx-auto max-h-[36rem] max-w-prose overflow-y-auto whitespace-pre-wrap text-base leading-7 text-[var(--color-text)] lg:max-h-none lg:min-h-0 lg:flex-1">
-        {fallback || emptyMessage}
-      </div>
-    );
+    return <p className="prose whitespace-pre-wrap break-words">{fallback || emptyMessage}</p>;
   }
 
   return (
-    <ol
-      className="mx-auto max-h-[36rem] max-w-prose overflow-y-auto pr-1 lg:max-h-none lg:min-h-0 lg:flex-1"
-      aria-label="Timestamped media timeline"
-    >
+    <ol className="list-none" aria-label={label}>
       {segments.map((segment, index) => {
         const speaker = "speaker" in segment ? segment.speaker : null;
-        const isLast = index === segments.length - 1;
 
         return (
-          <li
-            key={`${segment.start_seconds}-${segment.end_seconds}-${index}`}
-            className={`relative grid grid-cols-[3.5rem_0.75rem_minmax(0,1fr)] gap-2 sm:grid-cols-[4.75rem_1rem_minmax(0,1fr)] sm:gap-3 ${
-              isLast ? "" : "pb-6"
-            }`}
-          >
-            <time className="pt-0.5 text-xs font-medium tabular-nums text-[var(--color-muted)]">
+          <li key={`${segment.start_seconds}-${segment.end_seconds}-${index}`} className="line">
+            <time
+              dateTime={`PT${Math.max(0, Math.round(segment.start_seconds))}S`}
+              title={`${formatTimestamp(segment.start_seconds)}–${formatTimestamp(segment.end_seconds)}`}
+              className="tabular-nums"
+            >
               {formatTimestamp(segment.start_seconds)}
-              <span className="block text-[var(--color-faint)]">{formatTimestamp(segment.end_seconds)}</span>
             </time>
-            <span className="relative flex justify-center" aria-hidden="true">
-              <span className="mt-1.5 h-2 w-2 rounded-full border border-[var(--color-muted)] bg-[var(--color-paper-2)]" />
-              {!isLast && (
-                <span className="absolute bottom-[-1.5rem] top-3 border-l border-[var(--color-rule-strong)]" />
-              )}
-            </span>
-            <div className="min-w-0 pb-1">
-              {speaker && (
-                <p className="mb-1 break-words text-xs font-semibold uppercase text-[var(--color-muted)]">{speaker}</p>
-              )}
-              <p className="whitespace-pre-wrap break-words text-base leading-7 text-[var(--color-text)]">{segment.text}</p>
-            </div>
+            <p className="min-w-0 whitespace-pre-wrap break-words">
+              {speaker ? <span className="speaker">{speaker}</span> : null}
+              {!speaker && marker ? <span className="ocr-tag">{marker}</span> : null}
+              {segment.text}
+            </p>
           </li>
         );
       })}
@@ -206,6 +196,16 @@ const PLATFORM_ICONS: Record<string, string> = {
   youtube: "/brand/youtube-icon.svg",
 };
 
+/**
+ * Deliberately unboxed: no border, no tint, no shadow. It sits in HomeScreen's
+ * left ruled column, where the single vertical hairline against the results
+ * pane is the whole separation — two bordered rectangles side by side read as
+ * a slide, which is what the de-boxing pass removed.
+ *
+ * Section order mirrors the mockup: origin row (platform left, original-post
+ * link right), creator block with the source title nested under the uploader,
+ * caption clamped to three lines behind a disclosure, then the stats footer.
+ */
 export function SourceCard({ metadata }: { metadata: SourceMetadata }) {
   const [expanded, setExpanded] = useState(false);
   const stats = [
@@ -216,90 +216,100 @@ export function SourceCard({ metadata }: { metadata: SourceMetadata }) {
 
   return (
     <article className="source-card">
-      <header className="source-card__header">
-        <div className="source-card__origin">
-          <span className="source-card__platform">
-            {PLATFORM_ICONS[metadata.platform.toLowerCase()] && (
-              <img
-                src={PLATFORM_ICONS[metadata.platform.toLowerCase()]}
-                alt=""
-                className="source-card__platform-icon"
-              />
-            )}
-            {metadata.platform}
-          </span>
-          <a
-            href={metadata.source_url}
-            target="_blank"
-            rel="noreferrer"
-            className="source-card__action"
-          >
-            Original post
-            <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-          </a>
-        </div>
+      {/* Row, not a stacked column: platform reads left, the outbound link
+          right, on one baseline — the mockup's `.origin`. */}
+      <div className="source-card__origin w-full flex-row items-center justify-between gap-[var(--space-xs)]">
+        <span className="source-card__platform">
+          {PLATFORM_ICONS[metadata.platform.toLowerCase()] && (
+            <img
+              src={PLATFORM_ICONS[metadata.platform.toLowerCase()]}
+              /* Decorative on purpose: the platform name sits right beside it,
+                 so alt text would double-announce. */
+              alt=""
+              className="source-card__platform-icon"
+            />
+          )}
+          {metadata.platform}
+        </span>
+        <a
+          href={metadata.source_url}
+          target="_blank"
+          rel="noreferrer"
+          className="source-card__action hover:text-[var(--color-accent)]"
+        >
+          original post
+          <ExternalLink className="h-3 w-3" aria-hidden="true" />
+        </a>
+      </div>
 
-        {metadata.uploader &&
-          <div className="source-card__creator">
-            <span className="source-card__monogram" aria-hidden="true">
-              {creatorInitials(metadata.uploader)}
-            </span>
-            <div className="min-w-0">
-              {metadata.uploader_url ? (
-                <a
-                  href={metadata.uploader_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="source-card__creator-link"
-                  title={metadata.uploader}
-                >
-                  {metadata.uploader}
-                </a>
-              ) : (
-                <p className="source-card__creator-name" title={metadata.uploader}>
-                  {metadata.uploader}
-                </p>
-              )}
-              {metadata.title && metadata.title !== metadata.description && (
-                <p className="source-card__source-title">{metadata.title}</p>
-              )}
-            </div>
-          </div>}
-      </header>
+      {metadata.uploader && (
+        <div className="source-card__creator">
+          <span className="source-card__monogram" aria-hidden="true">
+            {creatorInitials(metadata.uploader)}
+          </span>
+          <div className="min-w-0">
+            {metadata.uploader_url ? (
+              <a
+                href={metadata.uploader_url}
+                target="_blank"
+                rel="noreferrer"
+                className="source-card__creator-link hover:text-[var(--color-accent)]"
+                title={metadata.uploader}
+              >
+                {metadata.uploader}
+              </a>
+            ) : (
+              <p className="source-card__creator-name" title={metadata.uploader}>
+                {metadata.uploader}
+              </p>
+            )}
+            {metadata.title && metadata.title !== metadata.description && (
+              <p className="source-card__source-title">{metadata.title}</p>
+            )}
+          </div>
+        </div>
+      )}
 
       {metadata.description && (
-        <p
-          className={`source-card__caption ${expanded ? "" : "line-clamp-3"}`}
-        >
-          {metadata.description}
-        </p>
+        <p className={`source-card__caption ${expanded ? "" : "line-clamp-3"}`}>{metadata.description}</p>
       )}
       {metadata.description && metadata.description.length > 160 && (
         <button
           type="button"
           onClick={() => setExpanded((value) => !value)}
-          className="source-card__disclosure"
+          /* The shared `.disclosure` (mockup name), not the BEM
+             `.source-card__disclosure`: only the shared rule carries the
+             `all: unset` reset, `cursor: pointer`, the svg sizing, and the
+             `[aria-expanded="true"] svg` chevron flip the design keys off. */
+          /* self-start because `all: unset` blockifies the button as a flex
+             item of `.source-card`, which would otherwise stretch the hit
+             target across the whole column. */
+          className="disclosure self-start hover:text-[var(--color-focus)]"
           aria-expanded={expanded}
         >
-          {expanded ? "Show less" : "Show more"}
-          <ChevronDown className="source-card__chevron h-4 w-4" aria-hidden="true" />
+          {expanded ? "show less" : "show more"}
+          <ChevronDown aria-hidden="true" />
         </button>
       )}
 
       {(stats.length > 0 || metadata.upload_date) && (
         <footer className="source-card__footer">
           <ul className="source-card__stats">
-          {stats.map((stat) => (
-              <li key={stat.label} className="source-card__stat" aria-label={`${stat.value.toLocaleString("en-US")} ${stat.label}`}>
-                <stat.icon className="h-4 w-4" aria-hidden="true" />
+            {stats.map((stat) => (
+              <li
+                key={stat.label}
+                className="source-card__stat"
+                aria-label={`${stat.value.toLocaleString("en-US")} ${stat.label}`}
+              >
+                <stat.icon className="h-3.5 w-3.5" aria-hidden="true" />
                 <strong>{formatCount(stat.value)}</strong>
                 <span>{stat.label}</span>
               </li>
-          ))}
+            ))}
           </ul>
           {metadata.upload_date && (
             <time className="source-card__date" dateTime={metadata.upload_date}>
-              <CalendarDays className="h-4 w-4" aria-hidden="true" />
+              <CalendarDays className="h-3.5 w-3.5" aria-hidden="true" />
               {formatUploadDate(metadata.upload_date)}
             </time>
           )}
@@ -309,6 +319,10 @@ export function SourceCard({ metadata }: { metadata: SourceMetadata }) {
   );
 }
 
+/* Rendered inside HomeScreen's `.results` flex column, so this returns the
+   pane's own children rather than another wrapper: title band, `.tab-list`
+   (inset to the pane gutter, underline spanning the full tint), then the
+   scrolling `.pane`. */
 export default function ResultsView({
   result,
   sourceMetadata,
@@ -345,158 +359,193 @@ export default function ResultsView({
   };
 
   return (
-    <section className="flex min-w-0 flex-col gap-5 py-2 sm:py-3 lg:h-full lg:min-h-0 lg:overflow-hidden">
-      <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center lg:shrink-0">
-        <h2 className="min-w-0 break-words text-xl font-semibold text-[var(--color-text-strong)] sm:text-2xl">{result.title}</h2>
-        <button
-          type="button"
-          onClick={() => downloadMarkdown(result, sourceMetadata)}
-          className="button-secondary w-full shrink-0 sm:w-auto"
-        >
-          <Download className="h-4 w-4" aria-hidden="true" />
-          Download report (.md)
-        </button>
-      </div>
+    <>
+      <h2 className="min-w-0 shrink-0 break-words px-[var(--space-md)] pb-[var(--space-xs)] pt-[var(--space-sm)] text-[0.95rem] font-semibold leading-[1.35] text-[var(--color-ink)]">
+        {result.title}
+      </h2>
 
-      {/* On desktop this moves into HomeScreen's left sidebar column instead - see app-shell-layout.md */}
-      {sourceMetadata && (
-        <div className="lg:hidden">
-          <SourceCard metadata={sourceMetadata} />
-        </div>
-      )}
-
-      <div
-        className="-mx-1 flex shrink-0 gap-1 overflow-x-auto border-b border-[var(--color-rule)] px-1"
-        role="tablist"
-        aria-label="Analysis results"
-      >
+      <div className="tab-list" role="tablist" aria-label="Analysis results">
         {TABS.map((tab) => (
           <button
             key={tab.key}
             type="button"
             onClick={() => setActive(tab.key)}
             role="tab"
+            id={`result-tab-${tab.key}`}
             aria-selected={active === tab.key}
-            className="tab-button shrink-0 whitespace-nowrap px-3 py-2"
+            aria-controls={`result-panel-${tab.key}`}
+            className="tab"
           >
             {tab.label}
           </button>
         ))}
       </div>
 
-      {active === "markdown" ? (
-        <article className="mx-auto max-h-[36rem] max-w-prose overflow-y-auto pr-1 text-base text-[var(--color-text)] lg:max-h-none lg:min-h-0 lg:flex-1">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              h1: ({ children }) => (
-                <h1 className="mb-5 break-words text-2xl font-bold leading-tight text-[var(--color-text-strong)]">{children}</h1>
-              ),
-              h2: ({ children }) => (
-                <h2 className="mb-3 mt-8 border-b border-[var(--color-rule)] pb-2 text-xl font-bold text-[var(--color-text-strong)] first:mt-0">
-                  {children}
-                </h2>
-              ),
-              h3: ({ children }) => (
-                <h3 className="mb-2 mt-6 text-lg font-semibold text-[var(--color-text-strong)]">{children}</h3>
-              ),
-              h4: ({ children }) => (
-                <h4 className="mb-2 mt-5 text-base font-semibold text-[var(--color-text)]">{children}</h4>
-              ),
-              p: ({ children }) => <p className="mb-4 leading-7 last:mb-0">{children}</p>,
-              ul: ({ children }) => (
-                <ul className="mb-5 list-disc space-y-2 pl-6 marker:text-[var(--color-faint)]">{children}</ul>
-              ),
-              ol: ({ children }) => (
-                <ol className="mb-5 list-decimal space-y-2 pl-6 marker:text-[var(--color-muted)]">{children}</ol>
-              ),
-              li: ({ children }) => <li className="pl-1 leading-7">{children}</li>,
-              strong: ({ children }) => (
-                <strong className="font-semibold text-[var(--color-text-strong)]">{children}</strong>
-              ),
-              blockquote: ({ children }) => (
-                <blockquote className="my-5 border-l-2 border-[var(--color-rule-strong)] pl-4 text-[var(--color-muted)]">
-                  {children}
-                </blockquote>
-              ),
-              a: ({ href, children }) => (
-                <a
-                  href={href}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[var(--color-accent-hover)] underline underline-offset-4"
-                >
-                  {children}
-                </a>
-              ),
-              code: ({ children, className }) => (
-                <code
-                  className={`${className || ""} rounded bg-[var(--color-paper)] px-1.5 py-0.5 font-mono text-[0.875em] text-[var(--color-text)]`}
-                >
-                  {children}
-                </code>
-              ),
-              pre: ({ children }) => (
-                <pre className="mb-5 overflow-x-auto rounded-[var(--radius-md)] border border-[var(--color-rule)] bg-[var(--color-paper)] p-4 text-sm leading-6 [&_code]:bg-transparent [&_code]:p-0">
-                  {children}
-                </pre>
-              ),
-              table: ({ children }) => (
-                <table className="mb-5 block w-full overflow-x-auto border-collapse text-left text-sm">
-                  {children}
-                </table>
-              ),
-              thead: ({ children }) => <thead className="border-b border-[var(--color-rule-strong)]">{children}</thead>,
-              th: ({ children }) => (
-                <th className="whitespace-nowrap px-3 py-2 font-semibold text-[var(--color-text-strong)]">{children}</th>
-              ),
-              td: ({ children }) => (
-                <td className="border-b border-[var(--color-rule)] px-3 py-2 align-top leading-6">{children}</td>
-              ),
-              hr: () => <hr className="my-7 border-[var(--color-rule)]" />,
-            }}
-          >
-            {result.markdown}
-          </ReactMarkdown>
-        </article>
-      ) : active === "transcript" ? (
-        <TimelineView
-          segments={result.transcript_segments || []}
-          fallback={result.transcript}
-          emptyMessage="No spoken content was detected."
-        />
-      ) : active === "screen_text" ? (
-        <TimelineView
-          segments={result.screen_text_segments || []}
-          fallback={result.screen_text}
-          emptyMessage="No on-screen text was detected."
-        />
-      ) : (
-        <div className="mx-auto max-h-[36rem] max-w-prose overflow-y-auto whitespace-pre-wrap break-words text-base leading-7 text-[var(--color-text)] lg:max-h-none lg:min-h-0 lg:flex-1">
-          {content || "No content was detected."}
-        </div>
-      )}
-
-      <div className="responsive-actions lg:shrink-0">
-        <button
-          type="button"
-          onClick={copyContent}
-          className="button-secondary"
+      <div className="pane">
+        {/* All four panels stay mounted; `.panel` hides the inactive ones with
+            `display: none`, which also keeps them out of the a11y tree, and
+            `[data-active="true"]` drives the fade-in. */}
+        <div
+          className="panel"
+          data-active={active === "markdown" ? "true" : "false"}
+          role="tabpanel"
+          id="result-panel-markdown"
+          aria-labelledby="result-tab-markdown"
         >
-          {copied ? <Check className="h-4 w-4" aria-hidden="true" /> : <Copy className="h-4 w-4" aria-hidden="true" />}
-          {copied ? "Copied" : "Copy"}
-        </button>
-        {canShare && (
+          <div className="prose">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                h1: ({ children }) => (
+                  <h1 className="mb-[var(--space-sm)] break-words text-[1.15rem] font-bold leading-[1.3] text-[var(--color-ink)]">
+                    {children}
+                  </h1>
+                ),
+                h2: ({ children }) => (
+                  <h2 className="mb-[var(--space-xs)] mt-[var(--space-lg)] border-b border-[var(--color-rule)] pb-[var(--space-2xs)] text-[1rem] font-bold text-[var(--color-ink)] first:mt-0">
+                    {children}
+                  </h2>
+                ),
+                h3: ({ children }) => (
+                  <h3 className="mb-[var(--space-2xs)] mt-[var(--space-md)] text-[0.92rem] font-semibold text-[var(--color-ink)]">
+                    {children}
+                  </h3>
+                ),
+                h4: ({ children }) => (
+                  <h4 className="mb-[var(--space-2xs)] mt-[var(--space-sm)] text-[0.86rem] font-semibold text-[var(--color-ink-2)]">
+                    {children}
+                  </h4>
+                ),
+                p: ({ children }) => <p className="mb-[var(--space-sm)] last:mb-0">{children}</p>,
+                ul: ({ children }) => (
+                  <ul className="mb-[var(--space-sm)] list-disc space-y-[0.35rem] pl-[1.4rem] marker:text-[var(--color-muted)]">
+                    {children}
+                  </ul>
+                ),
+                ol: ({ children }) => (
+                  <ol className="mb-[var(--space-sm)] list-decimal space-y-[0.35rem] pl-[1.4rem] marker:text-[var(--color-muted)]">
+                    {children}
+                  </ol>
+                ),
+                li: ({ children }) => <li className="pl-1">{children}</li>,
+                strong: ({ children }) => (
+                  <strong className="font-semibold text-[var(--color-ink)]">{children}</strong>
+                ),
+                blockquote: ({ children }) => (
+                  <blockquote className="my-[var(--space-sm)] border-l-2 border-[var(--color-accent)] pl-[var(--space-sm)] text-[var(--color-muted)]">
+                    {children}
+                  </blockquote>
+                ),
+                a: ({ href, children }) => (
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[var(--color-accent)] underline underline-offset-4 hover:text-[var(--color-focus)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)]"
+                  >
+                    {children}
+                  </a>
+                ),
+                code: ({ children, className }) => (
+                  <code
+                    className={`${className || ""} bg-[var(--color-paper-3)] px-1.5 py-0.5 text-[0.9em] text-[var(--color-ink)]`}
+                  >
+                    {children}
+                  </code>
+                ),
+                pre: ({ children }) => (
+                  <pre className="mb-[var(--space-sm)] overflow-x-auto border border-[var(--color-rule)] bg-[var(--color-paper)] p-[var(--space-sm)] text-[0.78rem] leading-[1.55] [&_code]:bg-transparent [&_code]:p-0">
+                    {children}
+                  </pre>
+                ),
+                table: ({ children }) => (
+                  <table className="mb-[var(--space-sm)] block w-full overflow-x-auto border-collapse text-left text-[0.78rem]">
+                    {children}
+                  </table>
+                ),
+                thead: ({ children }) => (
+                  <thead className="border-b border-[var(--color-rule-2)]">{children}</thead>
+                ),
+                th: ({ children }) => (
+                  <th className="whitespace-nowrap px-[var(--space-2xs)] py-[0.35rem] font-semibold text-[var(--color-ink)]">
+                    {children}
+                  </th>
+                ),
+                td: ({ children }) => (
+                  <td className="border-b border-[var(--color-rule)] px-[var(--space-2xs)] py-[0.35rem] align-top">
+                    {children}
+                  </td>
+                ),
+                hr: () => <hr className="my-[var(--space-md)] border-[var(--color-rule)]" />,
+              }}
+            >
+              {result.markdown}
+            </ReactMarkdown>
+          </div>
+        </div>
+
+        <div
+          className="panel"
+          data-active={active === "summary" ? "true" : "false"}
+          role="tabpanel"
+          id="result-panel-summary"
+          aria-labelledby="result-tab-summary"
+        >
+          <p className="prose whitespace-pre-wrap break-words">
+            {result.summary || "No summary was generated."}
+          </p>
+        </div>
+
+        <div
+          className="panel"
+          data-active={active === "transcript" ? "true" : "false"}
+          role="tabpanel"
+          id="result-panel-transcript"
+          aria-labelledby="result-tab-transcript"
+        >
+          <TimelineView
+            segments={result.transcript_segments || []}
+            fallback={result.transcript}
+            emptyMessage="No spoken content was detected."
+            label="Timestamped transcript"
+          />
+        </div>
+
+        <div
+          className="panel"
+          data-active={active === "screen_text" ? "true" : "false"}
+          role="tabpanel"
+          id="result-panel-screen_text"
+          aria-labelledby="result-tab-screen_text"
+        >
+          <TimelineView
+            segments={result.screen_text_segments || []}
+            fallback={result.screen_text}
+            emptyMessage="No on-screen text was detected."
+            label="Timestamped on-screen text"
+            marker="on-screen"
+          />
+        </div>
+
+        <div className="actions">
+          <button type="button" onClick={() => downloadMarkdown(result, sourceMetadata)} className="btn btn-secondary">
+            download report (.md)
+          </button>
           <button
             type="button"
-            onClick={() => void shareContent()}
-            className="button-secondary"
+            onClick={copyContent}
+            className="btn btn-secondary"
+            data-state={copied ? "copied" : undefined}
           >
-            <Share2 className="h-4 w-4" aria-hidden="true" />
-            Share
+            {copied ? "copied" : "copy"}
           </button>
-        )}
+          {canShare && (
+            <button type="button" onClick={() => void shareContent()} className="btn btn-secondary">
+              share
+            </button>
+          )}
+        </div>
       </div>
-    </section>
+    </>
   );
 }
