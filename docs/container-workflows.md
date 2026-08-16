@@ -364,17 +364,26 @@ jobs.
   This is not hypothetical: PR #12 merging to `dev` triggered an immediate
   Railway build of `backend/Dockerfile` and `frontend/Dockerfile` before any
   GitHub workflow had run against them, and that build failed — see below.
-- **Railway's builder rejects anonymous BuildKit cache mounts.** All three
-  `RUN --mount=type=cache,target=...` lines (pip, apt x2, npm) omitted the
-  optional `id=` argument, which plain `docker build`/`buildx` accept fine but
-  Railway's build backend ("Metal") reports as `dockerfile invalid: flag
-  '--mount=type=cache,target=...' is missing an id argument`, failing the
-  build outright. This broke all three Railway `dev` services (backend,
-  worker — same Dockerfile — and frontend) on first deploy after PR #12.
-  Fixed by adding explicit `id=pip-cache` / `id=apt-cache` / `id=apt-lib` /
-  `id=npm-cache`. Worth checking again the next time either Dockerfile's
-  cache mounts change, since GitHub's container checks build with standard
-  BuildKit and would not have caught this.
+- **Railway requires cache mount IDs in its own `s/<scope>` format**, not
+  plain BuildKit `id=`. All three `RUN --mount=type=cache,target=...` lines
+  (pip, apt x2, npm) originally omitted `id=` entirely, which plain `docker
+  build`/`buildx` accept fine but Railway's build backend ("Metal") rejected
+  as `dockerfile invalid: ... is missing an id argument`. Adding a bare
+  `id=pip-cache` etc. was not enough either — Metal then rejected it as
+  `missing the cacheKey prefix from its id`. Per [Railway's Dockerfile
+  docs](https://docs.railway.com/builds/dockerfiles#cache-mounts) the
+  required format is `id=s/<service id>-<target path>` (the docs use the
+  literal Railway service ID; this repo instead uses a stable descriptive
+  name — `s/videolens-backend-pip`, `s/videolens-backend-apt-cache`,
+  `s/videolens-backend-apt-lib`, `s/videolens-frontend-npm` — since
+  `backend/Dockerfile` is shared by two services with different real
+  Railway service IDs, and hardcoding a real GUID that only matches one of
+  them into version-controlled source is worse than a readable made-up
+  scope). This broke all three Railway `dev` services (backend, worker —
+  same Dockerfile — and frontend) on the first two deploys after PR #12.
+  Worth checking again the next time either Dockerfile's cache mounts
+  change, since GitHub's container checks build with standard BuildKit and
+  will not catch a Railway-specific format requirement like this.
 
 ## Changelog
 
@@ -386,4 +395,5 @@ jobs.
 - 2026-08-15 · git-commit agent · landed the runtime bump and the version-file centralization as two commits on `chore/ci-container-pipeline`; the Dockerfile digest and its `ARG` could not be split across the two, so both rode in the first
 - 2026-08-16 · grype-exception agent · added the repo-root `.grype.yaml` with a single package-and-type-scoped ignore for `CVE-2026-15308` (fix 3.15.0 unreleased, `python:3.15-slim` 404) and wired it via the scan action's `config:` input so a missing config fails loudly; documented why the gate was not weakened, the removal condition, and the missing staleness check
 - 2026-08-16 · git-commit agent · landed the Grype exception on `chore/ci-container-pipeline` as its own commit, separate from an unrelated `CLAUDE.md` correction; PR #12 into `dev` is the first real scan of the rule
-- 2026-08-16 · main session · fixed Railway `dev` build failures (backend, worker, frontend) caused by anonymous BuildKit cache mounts that Railway's Metal builder rejects; added explicit `id=` to each `--mount=type=cache` in `backend/Dockerfile` and `frontend/Dockerfile`; documented the gap under Known issues since GitHub's container checks use standard BuildKit and would not have caught it
+- 2026-08-16 · main session · fixed Railway `dev` build failures (backend, worker, frontend) caused by anonymous BuildKit cache mounts that Railway's Metal builder rejects; added explicit `id=` to each `--mount=type=cache` in `backend/Dockerfile` and `frontend/Dockerfile`; documented the gap under Known issues since GitHub's container checks use standard BuildKit and would not have caught it — merged as PR #13, landed on `dev`
+- 2026-08-16 · main session · plain `id=` was not enough: Railway rejected it as missing "the cacheKey prefix from its id" on the very next `dev` deploy. Switched all four cache mounts to Railway's required `id=s/<scope>` format per its Dockerfile docs, using descriptive scope names instead of a real Railway service ID since `backend/Dockerfile` is shared by two services; corrected the Known-issues entry above to match
