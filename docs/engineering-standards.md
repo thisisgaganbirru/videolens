@@ -230,9 +230,15 @@ early.
 ### No security scanning of any kind in CI
 
 **Partially resolved 2026-08-15.** Reusable container checks now fail on
-fixable high/critical findings, release images carry SBOM/provenance and are
-signed with OIDC, and Dependabot covers Docker, Actions, npm, and pip. CodeQL,
-dependency review, and secret scanning remain follow-up items.
+fixable high/critical findings, release images carry in-registry
+SBOM/provenance attestations, and Dependabot covers Docker, Actions, npm, and
+pip. Images are deliberately **unsigned** — keyless Cosign was removed the
+same day because it emits permanently to Rekor, the public transparency log
+(see `docs/container-workflows.md`). CodeQL, dependency review, and secret
+scanning remain follow-up items.
+
+That first scan run also produced its own finding, recorded below under
+*Container base images are past end-of-life*.
 
 The original finding: `.github/workflows/ci.yml` had three jobs (`backend`,
 `frontend`, `android`) and no CodeQL, no `dependency-review-action`, no
@@ -250,6 +256,178 @@ purely on contributor discipline to keep secrets out of commits. Pre-open-
 source is the cheapest moment this will ever be to add. It also compounds with
 the unpinned dependencies above: no audit *and* no pin means a compromised
 transitive release lands silently on the next rebuild.
+
+### Container base images are past end-of-life
+
+**Found 2026-08-15 by the first-ever Grype run, on PR #12.** Blocking: it is
+the reason that PR is red. Not deferred — recorded here because it is a
+version decision, not a mechanical fix.
+
+> **Status 2026-08-15: a fix has landed in the tree, unverified.** The owner
+> chose **Node 24 / Python 3.13** and the bump is applied, along with a
+> structural change so this never needs eight edits again (see *What landed*
+> below). **This entry stays open.** Nothing has been rebuilt or rescanned —
+> the tree cannot run Docker or Gradle, so no image build, no Grype run, and
+> no Capacitor sync has been executed against the new pins. Only a green
+> PR #12 closes this.
+
+Three failures, one root cause. Both pinned runtime majors are old enough that
+the fixes for their high-severity CVEs exist only in later majors:
+
+| Job | Finding |
+|---|---|
+| `containers / backend` | `python:3.11-slim` ships 3.11.16. Nine High CVEs against the `python` binary, fixed only in 3.13 / 3.14 / 3.15. |
+| `containers / frontend` | `node:20-alpine` ships 20.20.2. Three High CVEs, fixed only in 22.23.2 / 24.18.1 / 26.5.1. |
+| `android / Android` | `[fatal] The Capacitor CLI requires NodeJS >=22.0.0`. `reusable-android-checks.yml` pins Node 20. |
+
+Two things make this worth writing down rather than just fixing:
+
+**A digest bump cannot resolve any of it.** Dependabot's docker ecosystem
+moves a pinned digest forward within the same tag — but no patched `3.11-slim`
+or `20-alpine` exists to move to. The automation that looks like it covers
+this does not.
+
+**The scan gate is correctly configured**, which is why this is a real finding
+and not a false one. `reusable-container-checks.yml` sets `only-fixed: true`
+alongside `severity-cutoff: high`, so unfixable CVEs are already excluded.
+Everything reported here has a fix available; it just lives in a later major.
+Do not loosen the threshold to get green.
+
+The Android failure is the same Node-20 decision wearing a different hat, and
+it was foreseeable: the rewrite dropped CI from Node 22 to Node 20 to match
+`node:20-alpine`, and that regression was knowingly left in place as
+non-urgent. It was invisible until the restored Android gate actually ran.
+Moving to Node 22 resolves the Android break and the frontend container CVEs
+together.
+
+Python is the larger lift: `backend/requirements.txt` was compiled with
+`uv pip compile --python-version 3.11`, so a major move means recompiling the
+hash-locked set and confirming every dependency has wheels for the new
+version.
+
+#### What landed
+
+Owner decision: **Node 24, Python 3.13** — newest LTS, not the smallest
+possible move. Since every one of these files had to be touched anyway, the
+version chosen was the one that puts off doing this again the longest. That
+became standing policy: **pin the newest LTS major, never `latest`.**
+
+Two separable pieces of work landed together; they are described separately
+below because they fail differently.
+
+**Piece 1 — the version move.**
+
+| What | Before | After |
+|---|---|---|
+| Node (all consumers) | 20 | **24** (`node:24-alpine`, Node 24.19.0, Alpine 3.24.1) |
+| Python (all consumers) | 3.11 | **3.13** (`python:3.13-slim`, Python 3.13.15) |
+| `backend/requirements.txt` | compiled `--python-version 3.11` | recompiled `--python-version 3.13` |
+
+Digests were resolved live from the Docker Hub registry API, never copied from
+documentation. The method was validated by resolving the two *outgoing* tags
+at the same time: `node:20-alpine` and `python:3.11-slim` came back with
+exactly the digests already pinned in the Dockerfiles. New images were then
+read out of their config blobs rather than assumed. Node **24.19.0** clears
+the 24.18.1 fix version the frontend finding named. Python **3.13.15** is
+inferred to clear all nine backend CVEs — the finding listed them as fixed "in
+3.13/3.14/3.15" without per-CVE patch versions, so that one is reasoning, not
+verification.
+
+**The `openssl>=3.5.7-r0` floor still holds.** This was the real risk in the
+Node move, because the Alpine release underneath changes across Node majors:
+`node:20-alpine` sat on Alpine 3.23, `node:24-alpine` sits on Alpine 3.24.
+Alpine 3.24's `main/x86_64` APKINDEX serves `openssl 3.5.7-r0`, so
+`apk add --upgrade 'openssl>=3.5.7-r0'` still resolves — but it is met
+*exactly*, not exceeded. The constraint now sits on the boundary; raising it
+requires confirming Alpine ships the higher version first.
+
+**The recompile was almost a no-op, which is the good outcome.** `uv` 0.11.17
+resolved all 54 packages to identical versions with identical hashes. The only
+change is that `async-timeout==5.0.1 ; python_full_version < '3.11.3'` drops
+out — a `redis` conditional that can no longer be selected once the floor is
+3.13 — plus two `# via` comment lines shrinking (`anyio`, `starlette` need
+`typing-extensions` only on older Pythons). No dependency lacked 3.13 support.
+Because `--python-version` sets the resolution *floor*, the lock no longer
+installs on 3.11; the CI pin moved in the same change, so the two stay
+consistent.
+
+**Piece 2 — one declaration per runtime, replacing eight.**
+
+The upgrade itself exposed the real defect: the Node major was written in four
+places and Python in four more, so a version move meant hunting through files
+and the Android/frontend disagreement that caused this outage was *structurally
+possible*. That is now collapsed:
+
+- `/.nvmrc` (`24`) and `/.python-version` (`3.13`) hold the majors. Both
+  workflows consume them via `node-version-file` / `python-version-file`; no
+  workflow contains a version literal any more. Both inputs were verified
+  present on the **exact pinned action SHAs** rather than trusted from current
+  docs — `actions/setup-node@49933ea5` documents `.nvmrc` explicitly, and
+  `actions/setup-python@a26af69b` documents `.python-version`. No action
+  version needed bumping.
+- Each Dockerfile declares its base image once, in a global `ARG` before the
+  first `FROM` (`FROM ${NODE_IMAGE}` x3, `FROM ${PYTHON_IMAGE}` x2).
+- Side benefit: `.nvmrc` and `.python-version` are what `nvm` and `pyenv`
+  read, so local and CI runtimes can no longer silently disagree.
+
+The digest cannot be collapsed into the version file, for two independent
+reasons: it is a content hash and is not derivable from a version string, and
+the Docker build context is the service subdirectory, so a repo-root file is
+not in the build context at all.
+
+**So the major is still written twice, and CI now enforces that they match.**
+Two shell steps in `reusable-application-checks.yml` `sed` the major out of the
+`ARG` and compare against the version file. The Python check also covers a
+third copy: `backend/Dockerfile`'s `rm -rf /usr/local/lib/python3.13/ensurepip`
+hardcodes the same minor, and a stale path makes that `rm -rf` a silent no-op
+that leaves `ensurepip` in the runtime image after `pip uninstall`. It does not
+fail the build, so nothing else would ever catch it. Both checks were tested
+against deliberately drifted copies and do fire.
+
+**Cost, accepted knowingly: Dependabot digest bumps for the two application
+Dockerfiles.** Its parser matches literal `FROM image:tag@sha256:...` and
+generally cannot resolve `FROM ${NODE_IMAGE}`. The `/backend` and `/frontend`
+docker entries were kept rather than deleted so coverage resumes automatically
+if anyone reverts to a literal `FROM`. Coverage *not* lost: the `/` docker
+entry still bumps `redis`, `minio/minio`, and `minio/mc` in
+`docker-compose.yml`, and `github-actions` / `npm` / `pip` are untouched. The
+practical consequence to remember is that a quiet Dependabot is no longer
+evidence the application base images are current.
+
+`frontend/package.json` needed **no** change. Its `@types/node: ^22.10.0`
+already described a newer Node than CI ran; with Node 24 it is a floor rather
+than a mismatch, though tracking it to 24 would be tidier. There is no
+`engines` field.
+
+#### What is verified, and what is not
+
+Verified locally: the recompiled lock installs cleanly under
+`--require-hashes` on CPython 3.13.13, and all three backend CI steps pass on
+it — `compileall -q app`, `unittest discover -s tests` (48 tests, OK), and the
+`import app.main; import app.worker` check. A grep for stdlib modules removed
+in 3.12/3.13 and for `sys.version_info` gates across `app/` and `tests/`
+returned nothing.
+
+Also verified: both drift-check steps fire correctly against deliberately
+drifted copies (including the stale-`ensurepip` case), all four edited YAML
+files parse, and no version literal remains in either workflow.
+
+Not verified, and not claimable until CI runs: no image was built, no Grype
+scan was re-run, and `cap sync android` was never executed against Node 24.
+Docker and Gradle are both unavailable here. Specifically **the `FROM
+${NODE_IMAGE}` / `FROM ${PYTHON_IMAGE}` indirection has never been through a
+real build**, nor through `build-push-action`'s `call: check` with
+`# check=error=true` — a global `ARG` with a fully-qualified default should
+satisfy BuildKit's `InvalidDefaultArgInFrom` rule, but that is reasoning. The
+local Python install was also resolved on Windows/amd64 rather than the Linux
+CI target — `--universal` means one lock covers both, but only CI exercises
+the Linux path.
+
+Open question worth someone checking: keeping the now-probably-inert
+`/backend` and `/frontend` docker entries in `.github/dependabot.yml` may
+surface a "no manifest files found" warning in the Dependabot UI. That was
+judged better than deleting the safety net, but it has not been observed
+either way.
 
 ### `mcp/` has no CI job
 
@@ -373,4 +551,7 @@ Re-verify before fixing; do not treat the line numbers as authoritative.
 
 - 2026-08-15 · standards audit agent · recorded the engineering-standards audit as a deferred register; nothing fixed yet, pickup is after the terminal redesign lands
 - 2026-08-15 · main session · marked dependency locking and container security gates implemented while preserving the remaining deferred findings
+- 2026-08-15 · main session · corrected the "signed with OIDC" claim (keyless Cosign was removed the same day) and added "Container base images are past end-of-life" — the blocking finding from the first Grype run on PR #12
 - 2026-08-15 · stale-ref agent · corrected the three `ci.yml` references invalidated by the workflow rewrite (deleted `ci.yml` -> caller/reusable workflow set) at "No security scanning of any kind in CI" and "Branch protection is unverified"; left the historical `ci.yml:21` citation under "Unpinned backend dependencies" and the meta-note under "Known issues with this register" unchanged as defensible historical audit text
+- 2026-08-15 · runtime-bump agent · recorded the Node 20->24 (newest LTS) / Python 3.11->3.13 bump under "Container base images are past end-of-life", plus the collapse from eight runtime declarations to one per runtime (`/.nvmrc`, `/.python-version`, one `ARG` per Dockerfile), the CI drift checks, the openssl floor check, and the Dependabot coverage traded away; entry deliberately left OPEN — only a green PR #12 closes it
+- 2026-08-15 · git-commit agent · committed and pushed the Node 24 / Python 3.13 fix onto PR #12; the entry above stays OPEN here — closing it is a judgement call for whoever reads the CI result, not a mechanical follow-on to the push
