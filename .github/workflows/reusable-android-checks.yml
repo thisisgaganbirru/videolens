@@ -15,6 +15,15 @@ on:
         required: false
         default: false
         type: boolean
+      api_base_url:
+        description: >-
+          Backend URL compiled into the APK as NEXT_PUBLIC_API_BASE_URL.
+          Required whenever upload_apk is true, because that APK reaches real
+          devices. Gate-only callers (PR, main) may omit it: their APK is built
+          to prove it compiles and is then discarded, never installed.
+        required: false
+        default: ""
+        type: string
     outputs:
       version_name:
         description: Application version name read from frontend/package.json
@@ -41,6 +50,26 @@ jobs:
       run:
         working-directory: frontend
     steps:
+      - name: Validate build inputs
+        shell: bash
+        # Runs before checkout, so it cannot use the job's `frontend`
+        # working-directory default — that path does not exist yet.
+        working-directory: .
+        env:
+          API_BASE_URL: ${{ inputs.api_base_url }}
+          UPLOAD_APK: ${{ inputs.upload_apk }}
+        run: |
+          # Only a published APK needs a real backend URL. Without this guard a
+          # missing value is silent: the frontend falls back to
+          # http://localhost:8000 (infrastructure/runsGateway.ts), which on a
+          # phone is the phone itself, so every request fails with "Can't reach
+          # the server" and nothing in CI goes red.
+          if [ "$UPLOAD_APK" = "true" ]; then
+            test -n "$API_BASE_URL" || {
+              echo "api_base_url is required when upload_apk is true: this APK is published to real devices and must know where the backend lives." >&2
+              exit 1
+            }
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -55,7 +84,13 @@ jobs:
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
       - run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
       - run: npm ci
+      # `android:sync` runs `build:mobile`, and Next inlines NEXT_PUBLIC_* at
+      # build time — so this value is baked into the static export the APK
+      # ships, not read at runtime. It has to be set here, or the APK is
+      # permanently pointed at whatever the fallback is.
       - run: npm run android:sync
+        env:
+          NEXT_PUBLIC_API_BASE_URL: ${{ inputs.api_base_url }}
       - id: version
         run: |
           name="$(node -p "require('./package.json').version")"
