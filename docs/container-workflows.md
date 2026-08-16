@@ -94,7 +94,11 @@ console has a loopback host port.
 
 - Backend dependencies are compiled from `backend/requirements.in` into the
   hashed universal lock at `backend/requirements.txt`. Regenerate it with
-  `uv pip compile backend/requirements.in --generate-hashes --python-version 3.11 --universal -o backend/requirements.txt`.
+  `uv pip compile backend/requirements.in --generate-hashes --python-version 3.13 --universal -o backend/requirements.txt`.
+  The `--python-version` value is the resolution *floor*, so it must match the
+  `python-version` pin in `reusable-application-checks.yml` and the
+  `python:<major.minor>-slim` tag in `backend/Dockerfile`. Move all three
+  together or the lock will refuse to install on the runtime that CI uses.
 - Dockerfiles use pinned base-image digests and multi-stage/cache-mounted
   builds. Runtime images exclude package managers and build tooling where
   possible.
@@ -131,6 +135,102 @@ console has a loopback host port.
   (`'openssl>=3.5.7-r0'`), or the shell reads `>` as redirection and drops it
   silently.
 
+### Runtime versions
+
+**Policy: pin the newest LTS major, never `latest`.** Current: **Node 24**,
+**Python 3.13**. Upgrades are manual and deliberate — nothing auto-bumps a
+major, and nothing should.
+
+Each runtime is declared in exactly **two** places, not eight:
+
+| Runtime | Declaration | Holds |
+|---|---|---|
+| Node | `/.nvmrc` | the major (`24`) |
+| Node | `frontend/Dockerfile` `ARG NODE_IMAGE` | `node:24-alpine` + digest |
+| Python | `/.python-version` | the major (`3.13`) |
+| Python | `backend/Dockerfile` `ARG PYTHON_IMAGE` | `python:3.13-slim` + digest |
+
+Everything else reads from those. The workflows carry no version literal at
+all: `reusable-application-checks.yml` uses `python-version-file:
+.python-version` and `node-version-file: .nvmrc`, and
+`reusable-android-checks.yml` uses `node-version-file: .nvmrc`. Both inputs
+were verified present on the exact pinned action SHAs
+(`actions/setup-node@49933ea5`, `actions/setup-python@a26af69b`) — if you ever
+bump those pins, re-check, and never bump an action version just to get an
+input. Inside the Dockerfiles a single global `ARG` before the first `FROM`
+feeds every stage (`FROM ${NODE_IMAGE}` three times, `FROM ${PYTHON_IMAGE}`
+twice), so a digest bump is a one-line edit.
+
+Bonus: `.nvmrc` and `.python-version` are the same files `nvm` and `pyenv`
+read, so a developer's local runtime and CI can no longer silently disagree.
+
+#### Why the digest cannot live in `.nvmrc`
+
+Two independent reasons, both of which have to be solved to collapse this to
+one place — and neither can be:
+
+1. A digest is a **content hash**. It cannot be derived from a version string,
+   so `.nvmrc` (which must stay `nvm`-readable) cannot carry it.
+2. The Docker **build context is the service subdirectory** (`./frontend`,
+   `./backend`) in Compose, `reusable-container-checks.yml`, and
+   `reusable-container-publish.yml` alike. A repo-root file is not in the
+   build context at all, so the Dockerfile could not read it even if the
+   format allowed.
+
+#### The drift check
+
+Because the major is necessarily written twice, CI enforces that the two
+agree. Two shell steps in `reusable-application-checks.yml` (backend job and
+frontend job) `sed` the major out of the `ARG` line and compare it against the
+version file, failing the build on mismatch. A few lines in an existing job,
+deliberately not a new workflow.
+
+The Python check covers a **third** copy of the minor version:
+`backend/Dockerfile` deletes `ensurepip` by a hardcoded interpreter path
+(`rm -rf /usr/local/lib/python3.13/ensurepip`). Left stale that `rm -rf`
+silently succeeds while removing nothing, quietly undoing the attack-surface
+reduction it exists for — it is the one failure here that would never surface
+on its own.
+
+#### Other couplings when bumping a major
+
+- `frontend/Dockerfile`'s `'openssl>=3.5.7-r0'` floor depends on the Alpine
+  release the Node image sits on, and that changes across Node majors:
+  `node:20-alpine` was Alpine 3.23, `node:22-alpine` and `node:24-alpine` are
+  both Alpine 3.24. Before bumping, confirm the target's `main/x86_64`
+  APKINDEX still serves a version at or above the floor, or `apk add` fails
+  and the build dies. Alpine 3.24 serves exactly `3.5.7-r0` — the floor is met
+  on the nose, not exceeded, so raising it requires checking Alpine first.
+- Node 24 is above a hard floor, not just a preference: `@capacitor/cli` v8
+  refuses to run below 22 (`[fatal] The Capacitor CLI requires NodeJS
+  >=22.0.0`). Android and the frontend image must move together.
+- `backend/requirements.txt`'s `--python-version` is the resolution *floor*
+  and must match `.python-version`; see the lock bullet above.
+- `frontend/package.json` has no `engines` field, but `@types/node` should
+  track the same major as `.nvmrc`.
+
+Resolve digests from the registry, never from documentation or memory. A
+useful check on the method: resolve the tag you are replacing at the same
+time and confirm it returns the digest already pinned in the file.
+
+#### What this costs: Dependabot
+
+Dependabot's Dockerfile parser matches literal `FROM image:tag@sha256:...`
+references, and generally cannot resolve `FROM ${NODE_IMAGE}`. Moving the
+literal onto an `ARG` line therefore probably forfeits automated digest-bump
+PRs for `backend/Dockerfile` and `frontend/Dockerfile`. That trade was
+accepted deliberately: upgrades here are meant to be manual.
+
+What is **not** lost — the `/` docker entry still covers `docker-compose.yml`,
+where `redis`, `minio/minio`, and `minio/mc` remain literal digest pins and
+keep getting bumped. The `github-actions`, `npm`, and `pip` ecosystems are
+untouched.
+
+The `/backend` and `/frontend` docker entries are kept rather than deleted, so
+that coverage resumes automatically if anyone reverts to a literal `FROM`.
+The practical consequence: **a quiet Dependabot is no longer evidence that the
+application base images are current.** Check them by hand when bumping.
+
 ## Dev and production hosting
 
 Railway project `videolens` already has a populated `dev` environment. Its API,
@@ -159,6 +259,10 @@ jobs.
 ## Files touched
 
 - `backend/Dockerfile`, `frontend/Dockerfile`, and both `.dockerignore` files
+- `/.nvmrc` and `/.python-version` (the runtime-major sources of truth)
+- `.github/workflows/reusable-application-checks.yml` and
+  `.github/workflows/reusable-android-checks.yml` (version-file inputs and the
+  two drift-check steps)
 - `docker-compose.yml` and `scripts/workspace.ps1`
 - `backend/requirements.in` and `backend/requirements.txt`
 - `backend/railway.json` and `frontend/railway.json`
@@ -166,6 +270,15 @@ jobs.
 
 ## Known issues
 
+- The Node 24 / Python 3.13 bump and the version-file centralization are in the
+  tree but **unproven**. No image has been rebuilt, no Grype scan re-run, and
+  `cap sync android` has not run against Node 24 — Docker and Gradle were
+  unavailable to the agent that made the change. In particular the `FROM
+  ${NODE_IMAGE}` / `FROM ${PYTHON_IMAGE}` indirection has never been through a
+  real `docker build` or through `build-push-action`'s `call: check`. The
+  backend side was exercised locally on CPython 3.13.13 (hashed install,
+  `compileall`, 48 unit tests, import check — all pass), but on Windows rather
+  than the Linux CI target. Treat PR #12 going green as the first real proof.
 - Both architectures are configured in the publication workflow. Native amd64
   builds are verified locally; the optional local emulated arm64 verification
   was interrupted, so the first successful publication workflow remains the
@@ -182,3 +295,5 @@ jobs.
 - 2026-08-15 · main session · standardized workflow filenames to descriptive kebab-case without underscore sorting prefixes
 - 2026-08-15 · ci-fixes agent · restored Android as a pre-merge/main gate via `reusable-android-checks.yml`, pinned the dev release tag to the built commit with `target_commitish`, scoped the production API-base-URL requirement to the frontend publish leg, and recorded the `workspace.ps1 test` bind-mount coupling plus the in-`RUN`-layer pinning rule Dependabot cannot reach
 - 2026-08-15 · ci-fixes agent · removed keyless Cosign signing and its Rekor public-transparency-log emission, dropped the now-unused `id-token: write` from all three publication-path workflows, kept in-registry provenance/SBOM attestations with a `build-args` caveat, and enabled generated GitHub release notes (`releases.json` stays an index — the action exposes no body output)
+- 2026-08-15 · runtime-bump agent · moved the runtimes to Node 24 (newest LTS) / Python 3.13 with registry-resolved digests and recompiled the hashed lock at `--python-version 3.13`; centralized each major to one place (`/.nvmrc`, `/.python-version` consumed via `node-version-file`/`python-version-file`; a single global `ARG` per Dockerfile feeding every `FROM`), added CI drift checks covering the `ARG` and the `ensurepip` path, and documented the LTS-not-`latest` policy, why the digest cannot live in the version file, and the Dependabot coverage traded away
+- 2026-08-15 · git-commit agent · landed the runtime bump and the version-file centralization as two commits on `chore/ci-container-pipeline`; the Dockerfile digest and its `ARG` could not be split across the two, so both rode in the first
