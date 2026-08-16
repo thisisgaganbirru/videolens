@@ -17,7 +17,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 
 WORKDIR /build
 COPY requirements.txt ./
-RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
+RUN --mount=type=cache,id=s/videolens-backend-pip,target=/root/.cache/pip \
     python -m pip wheel --require-hashes --wheel-dir=/wheels -r requirements.txt
 
 FROM ${PYTHON_IMAGE} AS runtime
@@ -34,8 +34,8 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     TEMP_DIR=/tmp/videolens
 
 RUN rm -f /etc/apt/apt.conf.d/docker-clean
-RUN --mount=type=cache,id=apt-cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,id=apt-lib,target=/var/lib/apt,sharing=locked \
+RUN --mount=type=cache,id=s/videolens-backend-apt-cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=s/videolens-backend-apt-lib,target=/var/lib/apt,sharing=locked \
     apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && groupadd --gid 10001 videolens \
