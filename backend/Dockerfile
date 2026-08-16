@@ -1,7 +1,16 @@
 # syntax=docker/dockerfile:1
 # check=error=true
 
-FROM python:3.11-slim@sha256:a630a63cdb314e2d138a2fca3e375e319e8568346ffafac5b980f888630ac4f1 AS wheels
+# Single source of truth for the Python base image across both stages below.
+# Pin the newest supported major, never `latest`. The major must match
+# /.python-version — CI fails the build if they drift
+# (reusable-application-checks.yml), and that check also covers the ensurepip
+# path near the bottom of this file, which hardcodes the same minor. The digest
+# has to be a literal here and cannot move into .python-version: it is a content
+# hash, not something derivable from a version string.
+ARG PYTHON_IMAGE=python:3.13-slim@sha256:ffb752e139c0a19692a43af8d8523b274222dd68eebad5d583b45c2201c6e30a
+
+FROM ${PYTHON_IMAGE} AS wheels
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_COMPILE=1
@@ -11,7 +20,7 @@ COPY requirements.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip wheel --require-hashes --wheel-dir=/wheels -r requirements.txt
 
-FROM python:3.11-slim@sha256:a630a63cdb314e2d138a2fca3e375e319e8568346ffafac5b980f888630ac4f1 AS runtime
+FROM ${PYTHON_IMAGE} AS runtime
 
 LABEL org.opencontainers.image.title="VideoLens backend" \
       org.opencontainers.image.description="VideoLens API and asynchronous media-analysis worker" \
@@ -37,7 +46,7 @@ COPY --from=wheels /wheels /wheels
 COPY requirements.txt ./
 RUN python -m pip install --no-index --require-hashes --find-links=/wheels -r requirements.txt \
     && python -m pip uninstall --yes pip setuptools wheel \
-    && rm -rf /wheels /usr/local/lib/python3.11/ensurepip
+    && rm -rf /wheels /usr/local/lib/python3.13/ensurepip
 
 COPY --chown=10001:10001 app ./app
 RUN mkdir -p /tmp/videolens \

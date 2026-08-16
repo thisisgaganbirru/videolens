@@ -1,13 +1,20 @@
 # syntax=docker/dockerfile:1
 # check=error=true
 
-FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS deps
+# Single source of truth for the Node base image across every stage below.
+# Pin the newest LTS major, never `latest`. The major must match /.nvmrc — CI
+# fails the build if they drift (reusable-application-checks.yml). The digest
+# has to be a literal here and cannot move into .nvmrc: it is a content hash,
+# not something derivable from a version string.
+ARG NODE_IMAGE=node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43
+
+FROM ${NODE_IMAGE} AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci
 
-FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS builder
+FROM ${NODE_IMAGE} AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -16,7 +23,7 @@ ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL \
     NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
-FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS runner
+FROM ${NODE_IMAGE} AS runner
 
 LABEL org.opencontainers.image.title="VideoLens frontend" \
       org.opencontainers.image.description="VideoLens Next.js web application" \
