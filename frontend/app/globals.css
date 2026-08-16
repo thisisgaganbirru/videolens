@@ -187,7 +187,10 @@ h3 {
   .nav-wrap {
     flex-shrink: 0;
     z-index: 10;
-    padding-top: var(--space-sm);
+    /* On native Android/iOS the status bar sits right where the pill would
+       otherwise start; --safe-top is 0 in a normal browser tab, so this
+       only adds space where a status bar actually needs clearing. */
+    padding-top: max(var(--space-sm), var(--safe-top));
     margin-inline: calc(var(--space-2xs) * -1);
   }
 
