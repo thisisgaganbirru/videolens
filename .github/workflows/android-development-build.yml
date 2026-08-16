@@ -18,6 +18,10 @@ jobs:
     uses: ./.github/workflows/reusable-android-checks.yml
     with:
       upload_apk: true
+      # Same dev backend the dev frontend image is compiled against
+      # (development-environment.yml). This APK is installed on real devices,
+      # so it cannot fall back to localhost.
+      api_base_url: https://videolens-backend-dev.up.railway.app
 
   release:
     name: Publish dev release
