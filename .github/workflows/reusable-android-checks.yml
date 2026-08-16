@@ -24,6 +24,15 @@ on:
         required: false
         default: ""
         type: string
+      web_base_url:
+        description: >-
+          Deployed web app origin compiled in as NEXT_PUBLIC_WEB_BASE_URL. The
+          installed app fetches /version.json from here to discover newer
+          builds. Required whenever upload_apk is true; without it the update
+          banner is silently disabled (updateCheck.ts no-ops).
+        required: false
+        default: ""
+        type: string
     outputs:
       version_name:
         description: Application version name read from frontend/package.json
@@ -57,16 +66,22 @@ jobs:
         working-directory: .
         env:
           API_BASE_URL: ${{ inputs.api_base_url }}
+          WEB_BASE_URL: ${{ inputs.web_base_url }}
           UPLOAD_APK: ${{ inputs.upload_apk }}
         run: |
-          # Only a published APK needs a real backend URL. Without this guard a
-          # missing value is silent: the frontend falls back to
-          # http://localhost:8000 (infrastructure/runsGateway.ts), which on a
-          # phone is the phone itself, so every request fails with "Can't reach
-          # the server" and nothing in CI goes red.
+          # Both failures below are silent at runtime, which is why they are
+          # caught here instead: a missing backend URL falls back to
+          # http://localhost:8000 (infrastructure/runsGateway.ts) - on a phone
+          # that is the phone - and a missing web URL makes updateCheck.ts
+          # no-op, so the app can never tell the user a newer build exists.
+          # Neither turns CI red on its own; the APK builds perfectly either way.
           if [ "$UPLOAD_APK" = "true" ]; then
             test -n "$API_BASE_URL" || {
               echo "api_base_url is required when upload_apk is true: this APK is published to real devices and must know where the backend lives." >&2
+              exit 1
+            }
+            test -n "$WEB_BASE_URL" || {
+              echo "web_base_url is required when upload_apk is true: without it the installed app cannot discover newer builds and the update banner never appears." >&2
               exit 1
             }
           fi
@@ -91,6 +106,7 @@ jobs:
       - run: npm run android:sync
         env:
           NEXT_PUBLIC_API_BASE_URL: ${{ inputs.api_base_url }}
+          NEXT_PUBLIC_WEB_BASE_URL: ${{ inputs.web_base_url }}
       - id: version
         run: |
           name="$(node -p "require('./package.json').version")"
