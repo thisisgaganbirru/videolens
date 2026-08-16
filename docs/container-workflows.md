@@ -39,6 +39,30 @@ creates a tag or a release. Three callers:
   separate `release` job in that workflow (the only job holding
   `contents: write`) downloads the artifact and publishes the dev prerelease.
 
+#### The APK's backend URL
+
+`reusable-android-checks.yml` takes an `api_base_url` input and sets it as
+`NEXT_PUBLIC_API_BASE_URL` on the `npm run android:sync` step. This is
+**build-time, not runtime**: `android:sync` runs `build:mobile`, and Next
+inlines every `NEXT_PUBLIC_*` value into the static export, so the URL is
+compiled into the APK and cannot be changed after the fact.
+
+Only `android-development-build.yml` passes it (the dev Railway backend, the
+same URL `development-environment.yml` compiles the dev frontend image
+against). The PR and `main` callers deliberately omit it: those builds exist
+to prove the Android project still compiles and their APK is discarded, never
+installed.
+
+A validation step fails the build when `upload_apk: true` and `api_base_url`
+is empty, mirroring the frontend-scoped check in
+`reusable-container-publish.yml`. That guard exists because the failure it
+prevents is **completely silent**: `infrastructure/runsGateway.ts` falls back
+to `http://localhost:8000` when the variable is unset, which is correct for
+`next dev` and wrong for a phone — on a device `localhost` is the device, so
+every request fails with "Can't reach the server", while CI stays green
+because the APK builds perfectly. Every APK published before 2026-08-16
+shipped this way.
+
 The release step passes `target_commitish: ${{ github.sha }}`. Without it GitHub
 creates the tag at the repository default branch (`main`) while the APK is built
 from the pushed `dev` commit, so the tag does not describe the artifact —
@@ -489,5 +513,6 @@ jobs.
 - 2026-08-16 · main session · fixed Railway `dev` build failures (backend, worker, frontend) caused by anonymous BuildKit cache mounts that Railway's Metal builder rejects; added explicit `id=` to each `--mount=type=cache` in `backend/Dockerfile` and `frontend/Dockerfile`; documented the gap under Known issues since GitHub's container checks use standard BuildKit and would not have caught it — merged as PR #13, landed on `dev`
 - 2026-08-16 · main session · plain `id=` was not enough: Railway rejected it as missing "the cacheKey prefix from its id" on the very next `dev` deploy. Switched all four cache mounts to Railway's required `id=s/<scope>` format per its Dockerfile docs, using descriptive scope names instead of a real Railway service ID since `backend/Dockerfile` is shared by two services; corrected the Known-issues entry above to match — merged as PR #14, landed on `dev`
 - 2026-08-16 · main session · descriptive `s/`-prefixed scope names were also rejected with the identical "missing the cacheKey prefix" error — a third `dev` deploy failure. Railway needs the literal registered service UUID, not just the `s/` syntax; switched all four cache mounts to the real `videolens-backend` / `videolens-frontend` service IDs and documented the source/infra coupling this creates plus what breaks it (project recreation, service re-add) — merged as PR #15, landed on `dev`
+- 2026-08-16 · main session · fixed the Android build never receiving `NEXT_PUBLIC_API_BASE_URL`: `npm run android:sync` ran with it unset, so every APK ever published compiled in `runsGateway.ts`'s `http://localhost:8000` fallback and could not reach the backend from a device ("Can't reach the server"), with CI green throughout because the APK builds fine. Added an `api_base_url` input to `reusable-android-checks.yml` wired into the sync step's env, passed the dev Railway URL from `android-development-build.yml`, and added a validation step that fails when `upload_apk: true` without it — the PR/`main` gate callers omit it deliberately since their APK is discarded. Note this is only the client half; the backend's `ALLOWED_ORIGINS` must also admit the Capacitor WebView origin (`https://localhost`), which is a Railway dashboard value, not a repo change
 - 2026-08-16 · main session · PR #15 fixed `videolens-backend` and `videolens-frontend` but `videolens-worker` — which builds the same `backend/Dockerfile` under a different real service ID — failed the same way, proving the ID must match whichever service is actually building and can't be templated (env vars are invalid syntax in a cache mount ID per Railway's docs). Removed cache mounts from `backend/Dockerfile` entirely (plus the now-pointless `docker-clean` removal) since no single static ID can satisfy two different services; `frontend/Dockerfile`, built by one service, keeps its real-ID npm cache mount
 - 2026-08-16 · main session · with builds fixed (PR #16 merged), Railway `dev` deploys hit two more failures unrelated to cache mounts. `videolens-worker` was reading the auto-detected `backend/railway.json` instead of `backend/railway.worker.json` (no per-service Config-as-Code path was ever set), inheriting a healthcheck path that can never succeed for a service with no HTTP server — fixed via the Railway dashboard, not a repo change. `videolens-backend`'s healthcheck failed even after the app logged a clean startup every time; a red herring (the public domain's target port, `8080` vs the actual `8000`) was found and fixed first but did not resolve it, since Railway's healthcheck reads the `PORT` variable, not the domain's target port — confirmed by `NETWORK_RX_GB` metrics stuck at exactly 0 across every failed attempt, proving the probe never reached the container. Fixed with a `PORT=8000` dashboard variable plus a durable code fix: `backend/Dockerfile`'s `CMD` now honors `${PORT:-8000}` via `sh -c exec`, matching the pattern `frontend/Dockerfile` already used (`ENV PORT=3000`, read by Next.js) — which is why the frontend never hit this. Documented both dashboard-only gotchas under a new *Railway service configuration gotchas* section since neither is enforced or visible from this repo. Bundled with retroactively bumping `frontend/package.json`/`package-lock.json` to `2.0.0` to reflect PR #12's CI/CD rewrite, which had shipped without a version bump
