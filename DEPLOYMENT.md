@@ -1,6 +1,6 @@
 # VideoLens AI Deployment
 
-Last updated: August 13, 2026
+Last updated: August 15, 2026
 
 Since the previous version of this plan, the backend was rewritten into
 clean-architecture layers (`domain/` → `application/` →
@@ -162,11 +162,22 @@ in Railway's variable store, never here):
   - `videolens-frontend` — `/frontend` — `https://videolens-frontend-dev.up.railway.app`
   - `Redis` — managed, wired via `${{Redis.REDIS_URL}}`, private network only
   - `videolens-dev-media` — S3-compatible bucket, region `iad`
-- **Status**: variables are set (dev-scaled caps, real bucket credentials,
-  `ALLOWED_ORIGINS`/`NEXT_PUBLIC_API_BASE_URL` pointed at each other) except
-  `GEMINI_API_KEY`, which is a deliberate placeholder
-  (`REPLACE_ME_PLACEHOLDER`) on `videolens-backend` and `videolens-worker` —
-  swap in the real key, then trigger the first deploy. No deploy has run yet.
+- **Status (verified 2026-08-15)**: the dev worker and Redis are running; the
+  HTTP services may sleep when idle. The `production` environment exists but
+  has no service instances and must not be treated as deployed.
+
+### Environment-specific automation
+
+Local workspace, dev, and production automation are intentionally separate.
+`docker-compose.yml` is local-only. Pull requests run reusable application and
+container checks. The `dev` branch publishes signed `dev` container images and
+has its own Android debug-release workflow. The `main` branch publishes signed
+production images only after the protected GitHub `production` environment
+allows it and `PRODUCTION_API_BASE_URL` is configured.
+
+No GitHub workflow deploys Railway production yet because there are no
+production service instances to target. See `docs/container-workflows.md` for
+the source files, tags, gates, and operator setup.
 
 ### Backend & Worker Variables
 

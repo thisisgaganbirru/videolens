@@ -1,3 +1,14 @@
+# Local workspace stack only. Dev and production run through their dedicated
+# GitHub/Railway workflows; this file must not be used as a deployment manifest.
+x-app-security: &app-security
+  cap_drop:
+    - ALL
+  init: true
+  read_only: true
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+
 x-backend-environment: &backend-environment
   FFMPEG_LOCATION: ""
   TEMP_DIR: /tmp/videolens
@@ -5,18 +16,39 @@ x-backend-environment: &backend-environment
   S3_ENDPOINT_URL: http://minio:9000
   S3_REGION: us-east-1
   S3_BUCKET: videolens
-  S3_ACCESS_KEY_ID: videolens
-  S3_SECRET_ACCESS_KEY: videolens-development
+  S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-videolens}
+  S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-videolens-development}
   ALLOWED_ORIGINS: http://localhost:3000,http://localhost:3005
 
 services:
   backend:
-    build: ./backend
+    <<: *app-security
+    build:
+      context: ./backend
+    cpus: ${BACKEND_CPU_LIMIT:-2.0}
+    mem_limit: ${BACKEND_MEMORY_LIMIT:-2g}
+    pids_limit: 256
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     env_file:
-      - ./backend/.env
+      - path: ./backend/.env
+        required: false
     environment: *backend-environment
+    tmpfs:
+      - /tmp:uid=10001,gid=10001,mode=0700
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+    networks:
+      - edge
+      - data
     depends_on:
       redis:
         condition: service_healthy
@@ -24,11 +56,28 @@ services:
         condition: service_completed_successfully
 
   worker:
-    build: ./backend
+    <<: *app-security
+    build:
+      context: ./backend
     command: ["python", "-m", "arq", "app.worker.WorkerSettings"]
+    cpus: ${WORKER_CPU_LIMIT:-4.0}
+    mem_limit: ${WORKER_MEMORY_LIMIT:-4g}
+    pids_limit: 512
     env_file:
-      - ./backend/.env
+      - path: ./backend/.env
+        required: false
     environment: *backend-environment
+    tmpfs:
+      - /tmp:uid=10001,gid=10001,mode=0700
+    healthcheck:
+      test: ["CMD", "python", "-c", "import pathlib; assert b'arq' in pathlib.Path('/proc/1/cmdline').read_bytes()"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    networks:
+      - edge
+      - data
     depends_on:
       redis:
         condition: service_healthy
@@ -36,44 +85,105 @@ services:
         condition: service_completed_successfully
 
   frontend:
+    <<: *app-security
     build:
       context: ./frontend
       args:
         NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    cpus: ${FRONTEND_CPU_LIMIT:-1.0}
+    mem_limit: ${FRONTEND_MEMORY_LIMIT:-1g}
+    pids_limit: 256
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
+    tmpfs:
+      - /tmp:uid=1000,gid=1000,mode=0700
+    networks:
+      - edge
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
   redis:
-    image: redis:7-alpine
+    <<: *app-security
+    image: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    user: "999:1000"
     command: ["redis-server", "--appendonly", "yes"]
+    cpus: ${REDIS_CPU_LIMIT:-1.0}
+    mem_limit: ${REDIS_MEMORY_LIMIT:-512m}
+    pids_limit: 128
+    tmpfs:
+      - /tmp:uid=999,gid=1000,mode=0700
     volumes:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
+      start_period: 5s
       retries: 10
+    networks:
+      - data
 
   minio:
-    image: minio/minio:latest
+    <<: *app-security
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    user: "1000:1000"
     command: ["server", "/data", "--console-address", ":9001"]
+    cpus: ${MINIO_CPU_LIMIT:-1.0}
+    mem_limit: ${MINIO_MEMORY_LIMIT:-1g}
+    pids_limit: 256
     environment:
-      MINIO_ROOT_USER: videolens
-      MINIO_ROOT_PASSWORD: videolens-development
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-videolens}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-videolens-development}
     ports:
-      - "9001:9001"
+      - "127.0.0.1:9001:9001"
+    tmpfs:
+      - /tmp:uid=1000,gid=1000,mode=0700
     volumes:
       - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    networks:
+      - data
+      - console
 
   minio-init:
-    image: minio/mc:latest
+    cap_drop:
+      - ALL
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    user: "1000:1000"
+    read_only: true
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      MC_CONFIG_DIR: /tmp/.mc
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-videolens}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-videolens-development}
+    tmpfs:
+      - /tmp:uid=1000,gid=1000,mode=0700
+    pids_limit: 64
     depends_on:
-      - minio
-    entrypoint: >
-      /bin/sh -c "until mc alias set local http://minio:9000 videolens videolens-development;
-      do sleep 2; done; mc mb --ignore-existing local/videolens"
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        mc mb --ignore-existing local/videolens
+    networks:
+      - data
+
+networks:
+  edge:
+  console:
+  data:
+    internal: true
 
 volumes:
   redis_data:

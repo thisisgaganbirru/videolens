@@ -100,6 +100,25 @@ checked into the repo intentionally (not a secret) so every debug build —
 local or CI — signs with the same identity, letting a freshly downloaded
 APK install as an update over an existing one.
 
+**Do not run the mobile build locally.** The commands above are documented so
+you know what CI does, not so an agent runs them here. `npm run build:mobile`,
+`npm run android:sync`, `cap sync`, and anything under `frontend/android/`
+(`./gradlew assembleDebug`, `testDebugUnitTest`) are **CI's job**. GitHub
+Actions builds the APK on every push to `dev` and publishes it to Releases,
+which is where the owner downloads and installs it — a local APK is never the
+artifact anyone uses. Running these here only burns session minutes on a
+gradle build whose output is thrown away.
+
+`.claude/settings.local.json` denies these commands as a backstop, but the
+rule is what governs: if you find yourself wanting to verify an Android
+change, push it and read the CI result instead. If something genuinely cannot
+be checked any other way, stop and ask the owner rather than working around
+the deny.
+
+This does **not** restrict the web build — `npm run build`, `npx tsc
+--noEmit`, and `npm run dev` are all fine and are how frontend work gets
+verified.
+
 ### MCP server (`cd mcp`)
 
 ```bash
@@ -121,11 +140,47 @@ docker compose up --build
 
 Frontend at `:3000`, backend at `:8000`, MinIO console at `:9001`.
 
-### CI (`.github/workflows/ci.yml`)
+### CI (`.github/workflows/`)
 
-Three jobs: `backend` (compileall + unittest discover + import check),
-`frontend` (tsc + build + build:mobile), `android` (gradle assemble +
-test, uploads APK artifact, publishes a GitHub Release on push to `dev`).
+Eight workflows in a caller/reusable split. Three **callers** decide when
+things run; four **reusables** hold the actual steps so no build logic is
+written twice; one job publishes the Android release.
+
+| Trigger | Runs |
+|---|---|
+| PR into `dev`/`main` | application checks, container checks, Android checks |
+| push to `dev` | the same three, plus a dev-channel container publish, plus the Android APK build and prerelease |
+| push to `main` | the same three, plus a production-channel container publish |
+
+The reusables: `reusable-application-checks.yml` (backend compileall +
+unittest discover + import check; frontend `tsc --noEmit` + `build` +
+`build:mobile`), `reusable-android-checks.yml` (gradle `assembleDebug` +
+`testDebugUnitTest`), `reusable-container-checks.yml` (Dockerfile lint,
+image build, Grype scan), `reusable-container-publish.yml` (multi-arch
+push to GHCR with in-registry SBOM and provenance attestations).
+
+Images are deliberately **not** signed. Cosign's keyless mode was removed
+because it writes a permanent, undeletable entry to Rekor, the public
+transparency log — and keyless signatures cannot be kept without it, since
+the short-lived certificate is only verifiable through that log. The SBOM and
+provenance attestations stay: BuildKit attaches those to the image index in
+the destination registry, so they never leave it. Because `provenance:
+mode=max` records build arguments, never pass a secret via `build-args` —
+use the `secrets` input.
+
+Two properties worth preserving if you touch these:
+
+- **Exactly one job in the whole set has `contents: write`** — the release
+  job in `android-development-build.yml`. Everything else is `contents:
+  read`. The Android build steps live in a reusable precisely so the PR and
+  `main` paths can run the same build without ever holding a write token.
+- **`target_commitish: ${{ github.sha }}` on the release step is
+  load-bearing.** Without it GitHub creates the tag at the default branch
+  (`main`) while the APK is built from `dev`, so the tag points at code that
+  is not in the artifact. This shipped broken once; don't drop it.
+
+Full reference — trigger table, tag scheme, signing, the container channels
+— is `docs/container-workflows.md`. Read it before editing a workflow.
 
 ## Architecture
 

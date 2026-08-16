@@ -1,0 +1,97 @@
+name: Reusable Android checks
+
+# Single definition of the Android build. Called three ways:
+#   pull-request-checks.yml   -> pre-merge gate, upload_apk: false
+#   production-environment.yml -> main validation, upload_apk: false
+#   android-development-build.yml -> dev, upload_apk: true, then a separate
+#     release job in that workflow consumes the artifact.
+# This workflow never creates a tag or a release; it is capped at contents: read.
+
+on:
+  workflow_call:
+    inputs:
+      upload_apk:
+        description: Upload the debug APK and version manifest as a workflow artifact for a downstream release job
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      version_name:
+        description: Application version name read from frontend/package.json
+        value: ${{ jobs.android.outputs.version_name }}
+      version_sha:
+        description: Short commit SHA the APK was built from
+        value: ${{ jobs.android.outputs.version_sha }}
+      artifact_name:
+        description: Name of the uploaded APK artifact, empty unless upload_apk is true
+        value: ${{ jobs.android.outputs.artifact_name }}
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android
+    runs-on: ubuntu-latest
+    outputs:
+      version_name: ${{ steps.version.outputs.name }}
+      version_sha: ${{ steps.version.outputs.sha }}
+      artifact_name: ${{ steps.version.outputs.artifact }}
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+      - run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+      - run: npm ci
+      - run: npm run android:sync
+      - id: version
+        run: |
+          name="$(node -p "require('./package.json').version")"
+          sha="$(git rev-parse --short HEAD)"
+          {
+            echo "name=${name}"
+            echo "sha=${sha}"
+            echo "artifact=videolens-ai-v${name}-code${{ github.run_number }}-${sha}-debug"
+          } >> "$GITHUB_OUTPUT"
+      - run: |
+          ./gradlew assembleDebug testDebugUnitTest \
+            -PappVersionName=${{ steps.version.outputs.name }} \
+            -PappVersionCode=${{ github.run_number }} \
+            -PbuildRef=${{ steps.version.outputs.sha }}
+        working-directory: frontend/android
+      - name: Write version manifest
+        # Read by the app's in-app update check
+        # (frontend/infrastructure/updateCheck.ts). A separate JSON asset
+        # instead of parsing the release tag string, so the app doesn't depend
+        # on the tag naming scheme staying stable.
+        if: inputs.upload_apk
+        run: |
+          cat > android/app/build/outputs/apk/debug/version.json <<JSON
+          {
+            "versionCode": ${{ github.run_number }},
+            "versionName": "${{ steps.version.outputs.name }}",
+            "commit": "${{ steps.version.outputs.sha }}",
+            "releaseUrl": "https://github.com/${{ github.repository }}/releases/tag/dev-v${{ steps.version.outputs.name }}-build${{ github.run_number }}"
+          }
+          JSON
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: inputs.upload_apk
+        with:
+          name: ${{ steps.version.outputs.artifact }}
+          path: |
+            frontend/android/app/build/outputs/apk/debug/*.apk
+            frontend/android/app/build/outputs/apk/debug/version.json
+          if-no-files-found: error
+          retention-days: 30
