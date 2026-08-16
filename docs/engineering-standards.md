@@ -270,6 +270,17 @@ version decision, not a mechanical fix.
 > the tree cannot run Docker or Gradle, so no image build, no Grype run, and
 > no Capacitor sync has been executed against the new pins. Only a green
 > PR #12 closes this.
+>
+> **Status 2026-08-16: mostly resolved, one accepted exception, still open.**
+> CI has now actually run. The Node/Android side is clear and eight of the
+> nine backend CVEs are gone. **One** remains — `CVE-2026-15308` against the
+> `python` binary — and it is unfixable by any version move, because its fix
+> version does not exist as an image. It is now covered by a scoped, dated,
+> self-documenting Grype ignore rule (see *The one outstanding CVE* below).
+> **The entry still does not close**: `containers / backend` had not yet gone
+> green at the time of writing, and the exception is time-limited by
+> construction. Closing this needs a green PR #12 *and* eventual removal of
+> the ignore rule.
 
 Three failures, one root cause. Both pinned runtime majors are old enough that
 the fixes for their high-severity CVEs exist only in later majors:
@@ -279,6 +290,10 @@ the fixes for their high-severity CVEs exist only in later majors:
 | `containers / backend` | `python:3.11-slim` ships 3.11.16. Nine High CVEs against the `python` binary, fixed only in 3.13 / 3.14 / 3.15. |
 | `containers / frontend` | `node:20-alpine` ships 20.20.2. Three High CVEs, fixed only in 22.23.2 / 24.18.1 / 26.5.1. |
 | `android / Android` | `[fatal] The Capacitor CLI requires NodeJS >=22.0.0`. `reusable-android-checks.yml` pins Node 20. |
+
+*Outcome as of 2026-08-16: rows 2 and 3 are resolved by the Node 24 move. Row
+1 is down from nine CVEs to one — `CVE-2026-15308`, which no version move can
+resolve. See "The one outstanding CVE" below.*
 
 Two things make this worth writing down rather than just fixing:
 
@@ -429,6 +444,52 @@ surface a "no manifest files found" warning in the Dependabot UI. That was
 judged better than deleting the safety net, but it has not been observed
 either way.
 
+#### The one outstanding CVE
+
+The rescan (run `31916904370`) confirmed the version move worked: Node and
+Android are clear, and the backend is down to a **single** High finding. Every
+other finding in that report is Medium and does not reach the cutoff.
+
+```
+NAME    INSTALLED  FIXED IN  TYPE    VULNERABILITY   SEVERITY  EPSS         RISK
+python  3.13.15    3.15.0    binary  CVE-2026-15308  High      0.6% (47th)  0.5
+```
+
+This one is structurally different from the other nine, which is why it gets an
+exception rather than another bump. **Its fix version is unreleased.** Docker
+Hub on 2026-08-16: `python:3.13-slim` 200, `python:3.14-slim` 200,
+`python:3.15-slim` **404**. There is no image carrying the fix, and 3.14 does
+not carry it either. The original entry's argument — "a digest bump cannot
+resolve any of it, but a major move can" — runs out here: *no* move resolves
+it. `only-fixed: true`, which normally guarantees every reported finding is
+actionable, admitted this one on the strength of a fix version that exists only
+in an advisory.
+
+The owner approved a scoped exception. It is a single Grype ignore rule in the
+repo-root **`.grype.yaml`**, pinned to `vulnerability: CVE-2026-15308` +
+`package.name: python` + `package.type: binary`. Grype ANDs those criteria, so
+it cannot suppress another CVE, another package, or a non-binary package named
+`python`. Full rationale, the measured risk, and the removal condition live in
+comments in that file and in `docs/container-workflows.md`.
+
+**The threshold was not loosened**, which the original entry explicitly warned
+against and which still stands. `severity-cutoff: high` and `only-fixed: true`
+are unchanged. Dropping the cutoff to `critical` would have been a one-line
+green, at the cost of silencing every future High across both images forever —
+a permanent blind spot bought with a temporary, measured, low-EPSS problem.
+
+Two things keep this open rather than resolved:
+
+1. **CI has not gone green yet.** The rule was written without the ability to
+   run Docker or Grype; that it matches the reported finding is reasoning from
+   Grype's matching source, not an observation.
+2. **The exception is meant to expire and nothing enforces that.** Grype ignore
+   rules have no TTL, and a rule that has stopped matching is indistinguishable
+   from one still needed. A staleness check is feasible (assert every rule in
+   `.grype.yaml` appears in the scan's `ignoredMatches`) and is recorded as a
+   follow-up in `docs/container-workflows.md` — deliberately not built in the
+   same pass as the rule.
+
 ### `mcp/` has no CI job
 
 Even once the branch merges, nothing would `tsc` or build it. The stale
@@ -555,3 +616,4 @@ Re-verify before fixing; do not treat the line numbers as authoritative.
 - 2026-08-15 · stale-ref agent · corrected the three `ci.yml` references invalidated by the workflow rewrite (deleted `ci.yml` -> caller/reusable workflow set) at "No security scanning of any kind in CI" and "Branch protection is unverified"; left the historical `ci.yml:21` citation under "Unpinned backend dependencies" and the meta-note under "Known issues with this register" unchanged as defensible historical audit text
 - 2026-08-15 · runtime-bump agent · recorded the Node 20->24 (newest LTS) / Python 3.11->3.13 bump under "Container base images are past end-of-life", plus the collapse from eight runtime declarations to one per runtime (`/.nvmrc`, `/.python-version`, one `ARG` per Dockerfile), the CI drift checks, the openssl floor check, and the Dependabot coverage traded away; entry deliberately left OPEN — only a green PR #12 closes it
 - 2026-08-15 · git-commit agent · committed and pushed the Node 24 / Python 3.13 fix onto PR #12; the entry above stays OPEN here — closing it is a judgement call for whoever reads the CI result, not a mechanical follow-on to the push
+- 2026-08-16 · grype-exception agent · recorded the rescan outcome under "Container base images are past end-of-life" (Node/Android clear, backend down to one High) and added "The one outstanding CVE" covering the scoped `CVE-2026-15308` ignore rule, why `severity-cutoff`/`only-fixed` were left untouched, and the missing expiry enforcement; entry left OPEN — CI has not gone green
