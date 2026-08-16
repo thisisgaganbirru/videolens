@@ -36,6 +36,12 @@ jobs:
         uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
         with:
           cache-db: true
+          # Repo-root Grype config carrying documented, per-CVE exceptions.
+          # Passed explicitly rather than relying on cwd auto-detection: Grype
+          # hard-errors on a missing `-c` path but silently skips a config it
+          # merely failed to auto-detect, so this makes a renamed or deleted
+          # config a red job instead of a quietly widened gate.
+          config: .grype.yaml
           fail-build: true
           image: videolens/${{ matrix.service }}:check
           only-fixed: true

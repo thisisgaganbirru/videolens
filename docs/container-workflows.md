@@ -135,6 +135,63 @@ console has a loopback host port.
   (`'openssl>=3.5.7-r0'`), or the shell reads `>` as redirection and drops it
   silently.
 
+### The vulnerability gate and its one exception
+
+The gate lives entirely in `reusable-container-checks.yml`:
+`severity-cutoff: high`, `only-fixed: true`, `fail-build: true`. Exceptions
+live in the repo-root **`.grype.yaml`**, never in those three settings.
+
+**`.grype.yaml` is at the repo root because that is `$GITHUB_WORKSPACE`** —
+where `actions/checkout` puts the tree, and therefore Grype's working
+directory (the action runs Grype through `exec.exec` with no `cwd` override).
+It is nonetheless passed **explicitly** via the action's `config:` input rather
+than left to auto-detection. That is deliberate and worth keeping: Grype's
+config loader (`anchore/fangs`) hard-errors — `file does not exist` — on a
+missing file given via `-c`, but `continue`s silently past a file it merely
+failed to auto-detect. Explicit wiring turns a renamed or deleted config into a
+red job instead of a quietly widened gate that looks identical to a working
+one. Setting `config:` disables auto-detection, which is fine — this is the
+only Grype config in the repo.
+
+The single exception, added 2026-08-16:
+
+| Field | Value |
+|---|---|
+| CVE | `CVE-2026-15308` |
+| Package | `python` 3.13.15, type `binary` (backend image only) |
+| Severity / EPSS / risk | High / 0.6% (47th pct) / 0.5 |
+| Fix version | 3.15.0 — **unreleased** |
+
+**Why it is ignored rather than fixed:** there is nothing to upgrade to.
+Checked against the Docker Hub registry on 2026-08-16 — `python:3.13-slim`
+200, `python:3.14-slim` 200, `python:3.15-slim` **404**. 3.14 does not carry
+the fix either. `only-fixed: true` normally guarantees every reported finding
+is actionable; here it admitted one on the strength of a fix version that has
+been assigned but never shipped.
+
+**Why the gate was not weakened instead.** Dropping `severity-cutoff` to
+`critical` would have turned the job green in one line, and was rejected: it
+silences this CVE by also silencing every future High across both images,
+permanently and invisibly. That trades a known, measured, temporary problem
+for an unbounded blind spot. `only-fixed: true` was likewise left alone —
+flipping it off would widen the gate rather than narrow it. An ignore rule is
+the only mechanism here that is *specific*: Grype ANDs every criterion, so
+pinning `vulnerability` + `package.name` + `package.type` suppresses exactly
+one CVE on one package of one type and cannot mask anything else. `type:
+binary` in particular keeps it off any pip-installed package named `python`,
+and `include-aliases` is left at its default `false` so related IDs are not
+swept in.
+
+**Removal condition:** delete the rule the moment a Python base image carrying
+the fix exists — 3.15.0, or any earlier release that backports it — and move
+`backend/Dockerfile`'s `PYTHON_IMAGE` and `/.python-version` to it in the same
+change. This is the "pin the newest LTS major" policy being temporarily
+unsatisfiable, not a standing allowance.
+
+Nothing currently *tells* anyone when that condition is met. Grype ignore rules
+have no expiry, and a rule whose CVE has stopped being reported is
+indistinguishable from one still doing work — see *Known issues*.
+
 ### Runtime versions
 
 **Policy: pin the newest LTS major, never `latest`.** Current: **Node 24**,
@@ -263,6 +320,7 @@ jobs.
 - `.github/workflows/reusable-application-checks.yml` and
   `.github/workflows/reusable-android-checks.yml` (version-file inputs and the
   two drift-check steps)
+- `/.grype.yaml` (the vulnerability-gate exception list)
 - `docker-compose.yml` and `scripts/workspace.ps1`
 - `backend/requirements.in` and `backend/requirements.txt`
 - `backend/railway.json` and `frontend/railway.json`
@@ -285,6 +343,21 @@ jobs.
   arm64 proof.
 - GitHub environment protection and branch protection are repository settings,
   not files, and must be configured by a repository administrator.
+- **The `CVE-2026-15308` ignore rule has no expiry and nothing watches it.**
+  Grype ignore rules are unconditional; once the upstream fix ships and the
+  base image moves, the rule stops matching anything and becomes dead config
+  that still reads as a live exception. Nothing fails, so nobody looks. A
+  staleness check is possible — Grype's JSON output carries an
+  `ignoredMatches` array, so a step could assert that every rule in
+  `.grype.yaml` actually applied to something and fail when one does not. It
+  was deliberately **not** built in the same pass as the rule itself; see the
+  cost note in `mem/20260816-grype-cve-exception.md`. Until it exists, the
+  removal condition is enforced by the comment in `.grype.yaml` and by whoever
+  next bumps the Python major.
+- The `.grype.yaml` rule itself is **unverified against a real scan**. The
+  agent that wrote it could run neither Docker nor Grype, so that the rule
+  matches the reported finding is reasoning from Grype's own matching source,
+  not an observation. The first green `containers / backend` job is the proof.
 - Railway's source integration can begin a dev deploy independently of the
   GitHub validation lane. If strict pre-deploy gating is required, configure
   Railway check-suite waiting after these workflow names exist on the remote.
@@ -297,3 +370,5 @@ jobs.
 - 2026-08-15 · ci-fixes agent · removed keyless Cosign signing and its Rekor public-transparency-log emission, dropped the now-unused `id-token: write` from all three publication-path workflows, kept in-registry provenance/SBOM attestations with a `build-args` caveat, and enabled generated GitHub release notes (`releases.json` stays an index — the action exposes no body output)
 - 2026-08-15 · runtime-bump agent · moved the runtimes to Node 24 (newest LTS) / Python 3.13 with registry-resolved digests and recompiled the hashed lock at `--python-version 3.13`; centralized each major to one place (`/.nvmrc`, `/.python-version` consumed via `node-version-file`/`python-version-file`; a single global `ARG` per Dockerfile feeding every `FROM`), added CI drift checks covering the `ARG` and the `ensurepip` path, and documented the LTS-not-`latest` policy, why the digest cannot live in the version file, and the Dependabot coverage traded away
 - 2026-08-15 · git-commit agent · landed the runtime bump and the version-file centralization as two commits on `chore/ci-container-pipeline`; the Dockerfile digest and its `ARG` could not be split across the two, so both rode in the first
+- 2026-08-16 · grype-exception agent · added the repo-root `.grype.yaml` with a single package-and-type-scoped ignore for `CVE-2026-15308` (fix 3.15.0 unreleased, `python:3.15-slim` 404) and wired it via the scan action's `config:` input so a missing config fails loudly; documented why the gate was not weakened, the removal condition, and the missing staleness check
+- 2026-08-16 · git-commit agent · landed the Grype exception on `chore/ci-container-pipeline` as its own commit, separate from an unrelated `CLAUDE.md` correction; PR #12 into `dev` is the first real scan of the rule
