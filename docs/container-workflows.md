@@ -309,6 +309,61 @@ workflow therefore publishes release-ready images but does **not** pretend to
 deploy them. Provision and configure production API, worker, frontend, Redis,
 and object storage first; then add an explicit deployment job as separate work.
 
+### Railway service configuration gotchas (dashboard-only, not in git)
+
+Two settings live only in the Railway dashboard — nothing in this repo
+enforces or documents them by default, so they're easy to get wrong when a
+service is (re)created and easy to forget when debugging a deploy failure
+that has nothing to do with application code. Both were discovered the hard
+way debugging the `dev` rollout after PR #12: three build-stage failures
+(the cache-mount saga above), then two more failures *after* the build
+started succeeding, from these two settings.
+
+- **Config-as-Code file path.** Railway auto-detects a file literally named
+  `railway.json` in a service's root directory. It does **not** discover
+  `backend/railway.worker.json` automatically just because the repo has it —
+  that filename has to be explicitly set per-service under *Settings →
+  Config-as-code → Railway Config File*. Without it, `videolens-worker`
+  silently fell back to reading `backend/railway.json` — the **backend's**
+  config — which set `healthcheckPath: /api/health`. The worker runs
+  `python -m arq app.worker.WorkerSettings` with no HTTP server at all, so
+  that healthcheck could never succeed, and the deploy always failed with
+  `1/1 replicas never became healthy!` even though the worker process itself
+  started and connected to Redis cleanly every time (visible in `deploy`
+  logs, invisible in the failure status). Fix: set the worker's Config File
+  path to `/backend/railway.worker.json` in its Railway settings.
+- **The `PORT` variable, not the domain's target port, drives healthchecks.**
+  Per [Railway's healthcheck docs](https://docs.railway.com/deployments/healthchecks#configure-the-healthcheck-port):
+  "Railway will inject a `PORT` environment variable that your application
+  should listen on. This variable's value is **also used when performing
+  health checks**... Not listening on the `PORT` variable or omitting it
+  when using target ports can result in your health check returning a
+  `service unavailable` error." `backend/Dockerfile` hardcoded
+  `--port 8000` and never read `$PORT`, and no `PORT` variable was set on
+  `videolens-backend` — so Railway's healthcheck probed a port nothing was
+  listening on. The app itself logged a clean `Application startup
+  complete` on every failed attempt, which is what made this hard to
+  diagnose from logs alone: **`NETWORK_RX_GB` metrics stuck at exactly 0
+  across every sample** was the actual proof the healthcheck requests never
+  reached the container at all, as opposed to reaching it and being
+  rejected. Two things were needed together: an explicit `PORT=8000`
+  variable on the service (immediate fix), and `backend/Dockerfile`'s `CMD`
+  changed to `["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port
+  ${PORT:-8000}"]` so the app honors `$PORT` itself and doesn't depend on
+  the dashboard variable staying in sync (the `${PORT:-8000}` fallback keeps
+  local/Compose runs, which don't set `PORT`, working unchanged). This
+  mirrors what `frontend/Dockerfile` already did — `ENV PORT=3000`, read by
+  Next.js's `server.js` — which is why the frontend's healthcheck never had
+  this problem and worked on the very first successful build.
+  - **Setting the target port on the public domain (Networking → Edit Port)
+    does not fix this.** That setting is a red herring for healthcheck
+    purposes specifically — it changes where the public domain routes
+    *after* a deploy is already live, not what the deploy-time healthcheck
+    probes. A misconfigured target port (this project's was `8080` against
+    an actual `8000` listener) is a real bug worth fixing on its own, but
+    fixing it alone left the healthcheck failing identically, because the
+    healthcheck was never reading that setting in the first place.
+
 `PRODUCTION_API_BASE_URL` is required by the **frontend** publication leg only,
 because only the frontend image compiles a backend URL in. If the GitHub
 `production` environment does not define it, the frontend leg fails loudly at
@@ -332,6 +387,9 @@ jobs.
 - `docker-compose.yml` and `scripts/workspace.ps1`
 - `backend/requirements.in` and `backend/requirements.txt`
 - `backend/railway.json` and `frontend/railway.json`
+- `frontend/package.json` / `frontend/package-lock.json` (`version`) and
+  `videolens-backend`'s Railway dashboard settings (`PORT` variable,
+  Config-as-Code path is `videolens-worker`'s, not committed to this repo)
 - `.github/workflows/*.yml` and `.github/dependabot.yml`
 
 ## Known issues
@@ -432,3 +490,4 @@ jobs.
 - 2026-08-16 · main session · plain `id=` was not enough: Railway rejected it as missing "the cacheKey prefix from its id" on the very next `dev` deploy. Switched all four cache mounts to Railway's required `id=s/<scope>` format per its Dockerfile docs, using descriptive scope names instead of a real Railway service ID since `backend/Dockerfile` is shared by two services; corrected the Known-issues entry above to match — merged as PR #14, landed on `dev`
 - 2026-08-16 · main session · descriptive `s/`-prefixed scope names were also rejected with the identical "missing the cacheKey prefix" error — a third `dev` deploy failure. Railway needs the literal registered service UUID, not just the `s/` syntax; switched all four cache mounts to the real `videolens-backend` / `videolens-frontend` service IDs and documented the source/infra coupling this creates plus what breaks it (project recreation, service re-add) — merged as PR #15, landed on `dev`
 - 2026-08-16 · main session · PR #15 fixed `videolens-backend` and `videolens-frontend` but `videolens-worker` — which builds the same `backend/Dockerfile` under a different real service ID — failed the same way, proving the ID must match whichever service is actually building and can't be templated (env vars are invalid syntax in a cache mount ID per Railway's docs). Removed cache mounts from `backend/Dockerfile` entirely (plus the now-pointless `docker-clean` removal) since no single static ID can satisfy two different services; `frontend/Dockerfile`, built by one service, keeps its real-ID npm cache mount
+- 2026-08-16 · main session · with builds fixed (PR #16 merged), Railway `dev` deploys hit two more failures unrelated to cache mounts. `videolens-worker` was reading the auto-detected `backend/railway.json` instead of `backend/railway.worker.json` (no per-service Config-as-Code path was ever set), inheriting a healthcheck path that can never succeed for a service with no HTTP server — fixed via the Railway dashboard, not a repo change. `videolens-backend`'s healthcheck failed even after the app logged a clean startup every time; a red herring (the public domain's target port, `8080` vs the actual `8000`) was found and fixed first but did not resolve it, since Railway's healthcheck reads the `PORT` variable, not the domain's target port — confirmed by `NETWORK_RX_GB` metrics stuck at exactly 0 across every failed attempt, proving the probe never reached the container. Fixed with a `PORT=8000` dashboard variable plus a durable code fix: `backend/Dockerfile`'s `CMD` now honors `${PORT:-8000}` via `sh -c exec`, matching the pattern `frontend/Dockerfile` already used (`ENV PORT=3000`, read by Next.js) — which is why the frontend never hit this. Documented both dashboard-only gotchas under a new *Railway service configuration gotchas* section since neither is enforced or visible from this repo. Bundled with retroactively bumping `frontend/package.json`/`package-lock.json` to `2.0.0` to reflect PR #12's CI/CD rewrite, which had shipped without a version bump
