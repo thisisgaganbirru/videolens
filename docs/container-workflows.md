@@ -364,26 +364,41 @@ jobs.
   This is not hypothetical: PR #12 merging to `dev` triggered an immediate
   Railway build of `backend/Dockerfile` and `frontend/Dockerfile` before any
   GitHub workflow had run against them, and that build failed — see below.
-- **Railway requires cache mount IDs in its own `s/<scope>` format**, not
-  plain BuildKit `id=`. All three `RUN --mount=type=cache,target=...` lines
-  (pip, apt x2, npm) originally omitted `id=` entirely, which plain `docker
-  build`/`buildx` accept fine but Railway's build backend ("Metal") rejected
-  as `dockerfile invalid: ... is missing an id argument`. Adding a bare
-  `id=pip-cache` etc. was not enough either — Metal then rejected it as
-  `missing the cacheKey prefix from its id`. Per [Railway's Dockerfile
-  docs](https://docs.railway.com/builds/dockerfiles#cache-mounts) the
-  required format is `id=s/<service id>-<target path>` (the docs use the
-  literal Railway service ID; this repo instead uses a stable descriptive
-  name — `s/videolens-backend-pip`, `s/videolens-backend-apt-cache`,
-  `s/videolens-backend-apt-lib`, `s/videolens-frontend-npm` — since
-  `backend/Dockerfile` is shared by two services with different real
-  Railway service IDs, and hardcoding a real GUID that only matches one of
-  them into version-controlled source is worse than a readable made-up
-  scope). This broke all three Railway `dev` services (backend, worker —
-  same Dockerfile — and frontend) on the first two deploys after PR #12.
-  Worth checking again the next time either Dockerfile's cache mounts
-  change, since GitHub's container checks build with standard BuildKit and
-  will not catch a Railway-specific format requirement like this.
+- **Railway requires cache mount IDs to embed a real Railway service ID**,
+  not plain BuildKit `id=` and not an arbitrary `s/`-prefixed label. Three
+  attempts were needed to land this:
+  1. No `id=` at all → `dockerfile invalid: ... is missing an id argument`.
+  2. A bare descriptive `id=pip-cache` → `missing the cacheKey prefix from
+     its id`.
+  3. A descriptive `id=s/videolens-backend-pip` (matching the `s/` prefix
+     shown in [Railway's Dockerfile
+     docs](https://docs.railway.com/builds/dockerfiles#cache-mounts) but not
+     a real service ID) → the exact same `missing the cacheKey prefix from
+     its id` error. This means Railway is not just checking for an `s/`
+     prefix; it needs an actual registered Railway service ID after it.
+
+  The mounts now use the literal service UUID:
+  `id=s/ffbdad16-bd3a-4561-90b3-0ad5c6a3e901-<target path>` in
+  `backend/Dockerfile` (`videolens-backend`'s ID; `videolens-worker` builds
+  the same Dockerfile under a different real ID —
+  `4d66df43-d4a1-41cb-9b36-0a6ef35b0720` — and shares this cache scope
+  rather than getting its own, since the two services already share the
+  same image and dependencies) and
+  `id=s/c8f38ea2-9c6a-40fc-ba16-a249b3108561-<target path>` in
+  `frontend/Dockerfile` (`videolens-frontend`'s ID).
+
+  **This couples version-controlled source to this specific Railway
+  project's internal service IDs** — a real trade-off, not a style choice.
+  If the project is ever recreated, forked to a new Railway project, or a
+  service is deleted and re-added (new ID), these values go stale; nothing
+  currently detects that, since GitHub's container checks build with
+  standard BuildKit and never see Railway's Metal-specific `s/` validation
+  at all. If that happens, expect the same `missing the cacheKey prefix`
+  error again and re-resolve the IDs from `railway list-services` (or
+  equivalent) rather than guessing.
+
+  This broke all three Railway `dev` services (backend, worker — same
+  Dockerfile — and frontend) across the first two deploys after PR #12.
 
 ## Changelog
 
@@ -396,4 +411,5 @@ jobs.
 - 2026-08-16 · grype-exception agent · added the repo-root `.grype.yaml` with a single package-and-type-scoped ignore for `CVE-2026-15308` (fix 3.15.0 unreleased, `python:3.15-slim` 404) and wired it via the scan action's `config:` input so a missing config fails loudly; documented why the gate was not weakened, the removal condition, and the missing staleness check
 - 2026-08-16 · git-commit agent · landed the Grype exception on `chore/ci-container-pipeline` as its own commit, separate from an unrelated `CLAUDE.md` correction; PR #12 into `dev` is the first real scan of the rule
 - 2026-08-16 · main session · fixed Railway `dev` build failures (backend, worker, frontend) caused by anonymous BuildKit cache mounts that Railway's Metal builder rejects; added explicit `id=` to each `--mount=type=cache` in `backend/Dockerfile` and `frontend/Dockerfile`; documented the gap under Known issues since GitHub's container checks use standard BuildKit and would not have caught it — merged as PR #13, landed on `dev`
-- 2026-08-16 · main session · plain `id=` was not enough: Railway rejected it as missing "the cacheKey prefix from its id" on the very next `dev` deploy. Switched all four cache mounts to Railway's required `id=s/<scope>` format per its Dockerfile docs, using descriptive scope names instead of a real Railway service ID since `backend/Dockerfile` is shared by two services; corrected the Known-issues entry above to match
+- 2026-08-16 · main session · plain `id=` was not enough: Railway rejected it as missing "the cacheKey prefix from its id" on the very next `dev` deploy. Switched all four cache mounts to Railway's required `id=s/<scope>` format per its Dockerfile docs, using descriptive scope names instead of a real Railway service ID since `backend/Dockerfile` is shared by two services; corrected the Known-issues entry above to match — merged as PR #14, landed on `dev`
+- 2026-08-16 · main session · descriptive `s/`-prefixed scope names were also rejected with the identical "missing the cacheKey prefix" error — a third `dev` deploy failure. Railway needs the literal registered service UUID, not just the `s/` syntax; switched all four cache mounts to the real `videolens-backend` / `videolens-frontend` service IDs and documented the source/infra coupling this creates plus what breaks it (project recreation, service re-add)
