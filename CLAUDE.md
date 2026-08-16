@@ -156,8 +156,17 @@ The reusables: `reusable-application-checks.yml` (backend compileall +
 unittest discover + import check; frontend `tsc --noEmit` + `build` +
 `build:mobile`), `reusable-android-checks.yml` (gradle `assembleDebug` +
 `testDebugUnitTest`), `reusable-container-checks.yml` (Dockerfile lint,
-image build, Grype scan), `reusable-container-publish.yml` (signed
-multi-arch push to GHCR, keyless cosign on the digest).
+image build, Grype scan), `reusable-container-publish.yml` (multi-arch
+push to GHCR with in-registry SBOM and provenance attestations).
+
+Images are deliberately **not** signed. Cosign's keyless mode was removed
+because it writes a permanent, undeletable entry to Rekor, the public
+transparency log — and keyless signatures cannot be kept without it, since
+the short-lived certificate is only verifiable through that log. The SBOM and
+provenance attestations stay: BuildKit attaches those to the image index in
+the destination registry, so they never leave it. Because `provenance:
+mode=max` records build arguments, never pass a secret via `build-args` —
+use the `secrets` input.
 
 Two properties worth preserving if you touch these:
 
