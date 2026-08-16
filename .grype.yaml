@@ -1,0 +1,55 @@
+# Grype configuration for the CI container vulnerability gate.
+#
+# Consumed by the "Scan fixable high and critical vulnerabilities" step in
+# .github/workflows/reusable-container-checks.yml, which passes this file
+# explicitly through the scan action's `config` input. The path is repo root
+# because that is the checkout root ($GITHUB_WORKSPACE) and therefore Grype's
+# working directory.
+#
+# The gate itself is NOT configured here. `severity-cutoff: high`,
+# `only-fixed: true` and `fail-build: true` stay in the workflow and must not
+# be weakened. This file carries only narrowly-scoped, documented, temporary
+# exceptions. Lowering the cutoff instead of writing an entry here would trade
+# one known low-risk finding for a permanent blind spot across both images.
+#
+# Grype ANDs every criterion in a rule, so each entry below suppresses exactly
+# one CVE on exactly one package of one type, and nothing else.
+
+ignore:
+  # --------------------------------------------------------------------------
+  # CVE-2026-15308 - python 3.13.15, package type `binary` (backend image)
+  # Added: 2026-08-16. Approved by the repo owner as a time-limited exception.
+  #
+  # Why it is ignored: the fix does not exist yet in any shippable form.
+  # Grype names 3.15.0 as the earliest fixed version. Checked directly against
+  # the Docker Hub registry on 2026-08-16:
+  #     python:3.13-slim -> 200
+  #     python:3.14-slim -> 200
+  #     python:3.15-slim -> 404
+  # There is no image to upgrade to, and 3.14 does not carry the fix either.
+  # `only-fixed: true` is admitting this finding on the strength of a fix
+  # version that has been assigned but never released.
+  #
+  # Measured risk: High severity, but EPSS 0.6% (47th percentile) and a Grype
+  # risk score of 0.5 - the lowest-consequence way to hold this open while a
+  # fixed interpreter ships.
+  #
+  # REMOVAL CONDITION - delete this rule as soon as a Python base image
+  # carrying the fix exists (3.15.0, or any earlier release that backports it),
+  # and bump `backend/Dockerfile`'s PYTHON_IMAGE plus `/.python-version` to it.
+  # This is the standing "pin the newest LTS major" policy being temporarily
+  # unsatisfiable, not a permanent allowance. If this comment is more than a
+  # few months old, re-check the registry before assuming it still applies.
+  #
+  # Scope note: `include-aliases` is deliberately left off (defaults to false),
+  # so this does not extend to aliased/related vulnerability IDs. `type: binary`
+  # keeps it off any pip-installed package that happens to be named `python`.
+  - vulnerability: CVE-2026-15308
+    package:
+      name: python
+      type: binary
+    reason: >-
+      Fix version 3.13.15 -> 3.15.0 is unreleased; python:3.15-slim returned 404
+      from the Docker Hub registry on 2026-08-16 and 3.14 does not carry the fix,
+      so no upgradable base image exists. EPSS 0.6% (47th pct), risk 0.5.
+      Time-limited exception - remove once a fixed Python image ships.

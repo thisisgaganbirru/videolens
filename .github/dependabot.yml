@@ -1,0 +1,41 @@
+version: 2
+updates:
+  # Docker ecosystem coverage is NOT uniform across these three directories.
+  # Dependabot's Dockerfile parser matches literal `FROM image:tag@sha256:...`
+  # references. Both application Dockerfiles now declare their base image once,
+  # through a global `ARG` (`FROM ${PYTHON_IMAGE}` / `FROM ${NODE_IMAGE}`), so
+  # the literal no longer sits on the FROM line.
+  #
+  # These two entries are kept deliberately rather than deleted:
+  #   - if Dependabot does resolve an ARG default, coverage continues unchanged;
+  #   - if it does not, they are inert, and they resume working the moment
+  #     anyone reverts to a literal FROM without needing to remember this file.
+  # Either way the runtime majors are upgraded manually and deliberately — see
+  # docs/container-workflows.md, "Runtime versions". Do not treat a silent
+  # Dependabot as evidence the base images are current.
+  - package-ecosystem: docker
+    directory: /backend
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /frontend
+    schedule:
+      interval: weekly
+  # This one is unaffected: docker-compose.yml still pins redis, minio/minio,
+  # and minio/mc as literal digests, and those remain automatically bumped.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly

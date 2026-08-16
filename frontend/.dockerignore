@@ -1,3 +1,10 @@
-node_modules
-.next
-.env*
+.env
+.env.*
+.next/
+android/
+coverage/
+node_modules/
+out/
+*.md
+*.tsbuildinfo
+railway*.json
