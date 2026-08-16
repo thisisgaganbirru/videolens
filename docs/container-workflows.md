@@ -99,9 +99,17 @@ console has a loopback host port.
   `python-version` pin in `reusable-application-checks.yml` and the
   `python:<major.minor>-slim` tag in `backend/Dockerfile`. Move all three
   together or the lock will refuse to install on the runtime that CI uses.
-- Dockerfiles use pinned base-image digests and multi-stage/cache-mounted
-  builds. Runtime images exclude package managers and build tooling where
-  possible.
+- Dockerfiles use pinned base-image digests and multi-stage builds. Runtime
+  images exclude package managers and build tooling where possible.
+  `frontend/Dockerfile` also uses a BuildKit cache mount for `npm ci`, with
+  Railway's required `id=s/<real service id>-<target path>` format (see
+  *Known issues* — Railway rejects plain `id=` and even `s/`-prefixed
+  labels that aren't a real registered service ID). `backend/Dockerfile`
+  has none: it is built by two different Railway services
+  (`videolens-backend`, `videolens-worker`) under two different real
+  service IDs, and Railway validates the mount's embedded ID against
+  whichever service is actually building, so no single static ID in a
+  shared Dockerfile can satisfy both — see *Known issues*.
 - Container checks run Dockerfile validation, cached native builds, and fail on
   fixable high or critical vulnerabilities.
 - Publications build `linux/amd64` and `linux/arm64`, attach maximum provenance
@@ -364,41 +372,51 @@ jobs.
   This is not hypothetical: PR #12 merging to `dev` triggered an immediate
   Railway build of `backend/Dockerfile` and `frontend/Dockerfile` before any
   GitHub workflow had run against them, and that build failed — see below.
-- **Railway requires cache mount IDs to embed a real Railway service ID**,
-  not plain BuildKit `id=` and not an arbitrary `s/`-prefixed label. Three
-  attempts were needed to land this:
+- **Railway cache mount IDs must embed the real Railway service ID of the
+  service actually building, and that ID cannot be templated** — this took
+  four `dev` deploy failures in a row after PR #12 to fully characterize:
   1. No `id=` at all → `dockerfile invalid: ... is missing an id argument`.
   2. A bare descriptive `id=pip-cache` → `missing the cacheKey prefix from
      its id`.
   3. A descriptive `id=s/videolens-backend-pip` (matching the `s/` prefix
      shown in [Railway's Dockerfile
      docs](https://docs.railway.com/builds/dockerfiles#cache-mounts) but not
-     a real service ID) → the exact same `missing the cacheKey prefix from
-     its id` error. This means Railway is not just checking for an `s/`
-     prefix; it needs an actual registered Railway service ID after it.
+     a real service ID) → the identical `missing the cacheKey prefix from
+     its id` error. Railway is not just checking for an `s/` prefix; it
+     needs an actual registered Railway service ID after it.
+  4. The literal ID of `videolens-backend`
+     (`ffbdad16-bd3a-4561-90b3-0ad5c6a3e901`) in **both** the pip and apt
+     mounts in `backend/Dockerfile` → `videolens-backend` and
+     `videolens-frontend` (own ID, `c8f38ea2-9c6a-40fc-ba16-a249b3108561`)
+     both built successfully, but `videolens-worker` — which builds the
+     *same* `backend/Dockerfile` under its own real ID
+     (`4d66df43-d4a1-41cb-9b36-0a6ef35b0720`) — failed with the same
+     `missing the cacheKey prefix` error on a mount ID containing
+     `videolens-backend`'s ID instead of its own. So the check validates
+     the embedded ID against whichever service is *currently building*, not
+     just "any real ID in this project". `RAILWAY_SERVICE_ID` can't fix
+     this either — [Railway's own docs](https://docs.railway.com/builds/dockerfiles#cache-mounts)
+     state environment variables are invalid syntax in a cache mount ID, so
+     there is no way to parameterize a single static Dockerfile per
+     building service.
 
-  The mounts now use the literal service UUID:
-  `id=s/ffbdad16-bd3a-4561-90b3-0ad5c6a3e901-<target path>` in
-  `backend/Dockerfile` (`videolens-backend`'s ID; `videolens-worker` builds
-  the same Dockerfile under a different real ID —
-  `4d66df43-d4a1-41cb-9b36-0a6ef35b0720` — and shares this cache scope
-  rather than getting its own, since the two services already share the
-  same image and dependencies) and
-  `id=s/c8f38ea2-9c6a-40fc-ba16-a249b3108561-<target path>` in
-  `frontend/Dockerfile` (`videolens-frontend`'s ID).
+  **Resolution:** `backend/Dockerfile` has no cache mounts at all — pip
+  and apt installs are plain `RUN` with no `--mount=type=cache`, and the
+  now-pointless `rm -f /etc/apt/apt.conf.d/docker-clean` (only needed to
+  make an apt cache mount persist) was removed with them. This is the only
+  structurally correct option for a Dockerfile built by two services with
+  two different real IDs — there's no fix that preserves caching for both.
+  `frontend/Dockerfile`, built by exactly one service, keeps its npm cache
+  mount with `videolens-frontend`'s literal ID.
 
-  **This couples version-controlled source to this specific Railway
-  project's internal service IDs** — a real trade-off, not a style choice.
-  If the project is ever recreated, forked to a new Railway project, or a
-  service is deleted and re-added (new ID), these values go stale; nothing
-  currently detects that, since GitHub's container checks build with
-  standard BuildKit and never see Railway's Metal-specific `s/` validation
-  at all. If that happens, expect the same `missing the cacheKey prefix`
-  error again and re-resolve the IDs from `railway list-services` (or
-  equivalent) rather than guessing.
-
-  This broke all three Railway `dev` services (backend, worker — same
-  Dockerfile — and frontend) across the first two deploys after PR #12.
+  This does couple `frontend/Dockerfile` to this specific Railway project's
+  internal service ID — a real trade-off, not a style choice. If the
+  project is recreated, forked, or the frontend service is deleted and
+  re-added (new ID), that value goes stale; nothing currently detects it,
+  since GitHub's container checks build with standard BuildKit and never
+  see Railway's Metal-specific `s/` validation at all. If that happens,
+  expect the same `missing the cacheKey prefix` error and re-resolve the ID
+  from Railway rather than guessing.
 
 ## Changelog
 
@@ -412,4 +430,5 @@ jobs.
 - 2026-08-16 · git-commit agent · landed the Grype exception on `chore/ci-container-pipeline` as its own commit, separate from an unrelated `CLAUDE.md` correction; PR #12 into `dev` is the first real scan of the rule
 - 2026-08-16 · main session · fixed Railway `dev` build failures (backend, worker, frontend) caused by anonymous BuildKit cache mounts that Railway's Metal builder rejects; added explicit `id=` to each `--mount=type=cache` in `backend/Dockerfile` and `frontend/Dockerfile`; documented the gap under Known issues since GitHub's container checks use standard BuildKit and would not have caught it — merged as PR #13, landed on `dev`
 - 2026-08-16 · main session · plain `id=` was not enough: Railway rejected it as missing "the cacheKey prefix from its id" on the very next `dev` deploy. Switched all four cache mounts to Railway's required `id=s/<scope>` format per its Dockerfile docs, using descriptive scope names instead of a real Railway service ID since `backend/Dockerfile` is shared by two services; corrected the Known-issues entry above to match — merged as PR #14, landed on `dev`
-- 2026-08-16 · main session · descriptive `s/`-prefixed scope names were also rejected with the identical "missing the cacheKey prefix" error — a third `dev` deploy failure. Railway needs the literal registered service UUID, not just the `s/` syntax; switched all four cache mounts to the real `videolens-backend` / `videolens-frontend` service IDs and documented the source/infra coupling this creates plus what breaks it (project recreation, service re-add)
+- 2026-08-16 · main session · descriptive `s/`-prefixed scope names were also rejected with the identical "missing the cacheKey prefix" error — a third `dev` deploy failure. Railway needs the literal registered service UUID, not just the `s/` syntax; switched all four cache mounts to the real `videolens-backend` / `videolens-frontend` service IDs and documented the source/infra coupling this creates plus what breaks it (project recreation, service re-add) — merged as PR #15, landed on `dev`
+- 2026-08-16 · main session · PR #15 fixed `videolens-backend` and `videolens-frontend` but `videolens-worker` — which builds the same `backend/Dockerfile` under a different real service ID — failed the same way, proving the ID must match whichever service is actually building and can't be templated (env vars are invalid syntax in a cache mount ID per Railway's docs). Removed cache mounts from `backend/Dockerfile` entirely (plus the now-pointless `docker-clean` removal) since no single static ID can satisfy two different services; `frontend/Dockerfile`, built by one service, keeps its real-ID npm cache mount
