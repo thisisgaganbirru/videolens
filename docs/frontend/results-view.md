@@ -7,10 +7,25 @@ Renders a completed run's analysis across four tabs: Notes (markdown), Summary, 
 
 **Transcript/on-screen-text tabs**: render as a timestamped timeline (`TimelineView`) when segment data (`transcript_segments`/`screen_text_segments`) is present, falling back to the flat `transcript`/`screen_text` string otherwise (both are always returned by the backend, but segments are the richer view when Gemini provides them).
 
-**Actions**: copy the current tab's content to clipboard and share it (native
-`Share` API via Capacitor on native platforms, `navigator.share` on web where
-supported — hidden entirely if neither is available). **Download report
-(.md)** builds one complete Markdown document containing the generated title,
+**Actions** are split by what they act on, which is why they sit in two
+different places. **Copy** and **share** operate on *the tab you are looking
+at*, so they live as icon buttons in the top-right of the `.result-head` title
+band, which spans all four tabs; stacked under the panel they read as
+belonging to the last panel's content. Share uses the native `Share` API via
+Capacitor on native platforms and `navigator.share` on web, and is hidden
+entirely when neither is available. Copy swaps its icon to a check and tints
+it with `--color-accent` (`.icon-action[data-state="copied"]`) — the icon-only
+equivalent of the old button relabelling itself "copied" — and its
+`aria-label` changes with it so the confirmation is not colour-only.
+
+`.icon-action` deliberately shares the `all: unset` base, 2.75rem touch
+target, pill focus ring and 1.05rem glyph size with `.theme-toggle` /
+`.menu-toggle` / `.menu-close` rather than defining a second icon-button
+treatment.
+
+**Download report (.md)** stays a full-width button in `.actions` below the
+panel, because unlike the other two it ignores the active tab: it
+builds one complete Markdown document containing the generated title,
 available source metadata and caption, summary, notes, timestamped transcript,
 and timestamped on-screen text. Older results without timestamp segments fall
 back to their flat transcript/on-screen-text fields. The filename is slugified
@@ -61,13 +76,18 @@ column width as a hit target.
   mockup shows — `ScreenTextSegment` has no field distinguishing an overlay from
   other on-screen text, so the mockup's one-tagged-row-of-three was sample
   variety, not data.
-- The generated-title band above the tabs has no shared class; it's styled
-  inline to align with `.tab-list`'s gutter. A `.result-title` class would be
-  the place if it needs centralising.
-- Not visually verified — no browser/screenshot tooling was available.
+- ~~The generated-title band above the tabs has no shared class~~ Fixed — it is
+  `.result-head` now, which owns the gutter padding and the `flex-shrink: 0`
+  the `<h2>` used to carry inline. The `<h2>` keeps only its typography.
+- Not visually verified. The icon-action change was typechecked
+  (`npx tsc --noEmit`) and built (`npm run build`) clean, and `.icon-action`
+  reuses a treatment already verified on `.theme-toggle`/`.menu-toggle`, but
+  no screenshot was taken — the title band's new two-column layout is
+  unexercised visually.
 
 **Tests**: none (see `run-analysis-hook.md`).
 
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported ResultsView + SourceCard; de-boxed the source card, wired .disclosure and role=tabpanel, rebuilt SourceCard.preview with six states
+- 2026-08-16 · main session · moved copy and share out of `.actions` into icon buttons in the top-right of a new `.result-head` title band, reusing the existing `.theme-toggle`/`.menu-toggle` icon-button treatment via `.icon-action`; download report stays a full-width button below, since it is the one action that ignores the active tab
