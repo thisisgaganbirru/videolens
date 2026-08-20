@@ -5,11 +5,14 @@ import { Capacitor } from "@capacitor/core";
 import { Share } from "@capacitor/share";
 import {
   CalendarDays,
+  Check,
   ChevronDown,
+  Copy,
   ExternalLink,
   Eye,
   Heart,
   MessageCircle,
+  Share2,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -360,9 +363,39 @@ export default function ResultsView({
 
   return (
     <>
-      <h2 className="min-w-0 shrink-0 break-words px-[var(--space-md)] pb-[var(--space-xs)] pt-[var(--space-sm)] text-[0.95rem] font-semibold leading-[1.35] text-[var(--color-ink)]">
-        {result.title}
-      </h2>
+      {/* Copy and share sit up here rather than in `.actions` below: they act
+          on whichever tab is showing, so they belong with the title band that
+          spans all four tabs, not stacked under the panel content where they
+          read as part of the last panel. Download stays below — it produces
+          one whole-report file regardless of the active tab. */}
+      <div className="result-head">
+        <h2 className="min-w-0 break-words text-[0.95rem] font-semibold leading-[1.35] text-[var(--color-ink)]">
+          {result.title}
+        </h2>
+        <div className="result-actions">
+          <button
+            type="button"
+            onClick={copyContent}
+            className="icon-action"
+            data-state={copied ? "copied" : undefined}
+            aria-label={copied ? "Copied to clipboard" : "Copy this tab"}
+            title={copied ? "copied" : "copy"}
+          >
+            {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+          </button>
+          {canShare && (
+            <button
+              type="button"
+              onClick={() => void shareContent()}
+              className="icon-action"
+              aria-label="Share this tab"
+              title="share"
+            >
+              <Share2 aria-hidden="true" />
+            </button>
+          )}
+        </div>
+      </div>
 
       <div className="tab-list" role="tablist" aria-label="Analysis results">
         {TABS.map((tab) => (
@@ -531,19 +564,6 @@ export default function ResultsView({
           <button type="button" onClick={() => downloadMarkdown(result, sourceMetadata)} className="btn btn-secondary">
             download report (.md)
           </button>
-          <button
-            type="button"
-            onClick={copyContent}
-            className="btn btn-secondary"
-            data-state={copied ? "copied" : undefined}
-          >
-            {copied ? "copied" : "copy"}
-          </button>
-          {canShare && (
-            <button type="button" onClick={() => void shareContent()} className="btn btn-secondary">
-              share
-            </button>
-          )}
         </div>
       </div>
     </>

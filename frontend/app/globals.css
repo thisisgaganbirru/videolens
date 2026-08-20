@@ -352,7 +352,8 @@ h3 {
   /* ---- nav icon buttons (theme toggle, drawer open/close) ---- */
   .theme-toggle,
   .menu-toggle,
-  .menu-close {
+  .menu-close,
+  .icon-action {
     all: unset;
     cursor: pointer;
     display: inline-flex;
@@ -367,15 +368,23 @@ h3 {
   }
   .theme-toggle:focus-visible,
   .menu-toggle:focus-visible,
-  .menu-close:focus-visible {
+  .menu-close:focus-visible,
+  .icon-action:focus-visible {
     outline: 2px solid var(--color-focus);
     outline-offset: 2px;
   }
   .theme-toggle svg,
   .menu-toggle svg,
-  .menu-close svg {
+  .menu-close svg,
+  .icon-action svg {
     width: 1.05rem;
     height: 1.05rem;
+  }
+  /* Same confirmation the old text button gave by swapping its label to
+     "copied" — the icon swaps to a check, and this tints it so the change
+     reads at a glance rather than only on close inspection. */
+  .icon-action[data-state="copied"] {
+    color: var(--color-accent);
   }
   /* Which glyph shows is decided by the attribute the blocking script in
      layout.tsx stamps, not by React state — that keeps the toggle free of any
@@ -1085,6 +1094,30 @@ h3 {
     background: var(--color-accent);
     padding: 0.08rem 0.45rem;
     margin-bottom: 0.2rem;
+  }
+
+  /* The results title band. Carries the padding the `<h2>` used to hold itself,
+     plus `flex-shrink: 0` — it is a direct child of `.results` (a flex column),
+     and without it the band compresses and throws off the measured heights
+     below, the same trap documented in `app-shell-layout.md`. */
+  .result-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-xs);
+    flex-shrink: 0;
+    min-width: 0;
+    padding: var(--space-sm) var(--space-md) var(--space-xs);
+  }
+  .result-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.1rem;
+    flex-shrink: 0;
+    /* The 2.75rem touch targets are taller than the title's line box, so pull
+       them back into the band's own padding instead of letting them set its
+       height — the title stays optically aligned with the tab row below. */
+    margin: calc(var(--space-2xs) * -1) calc(var(--space-2xs) * -1) 0 0;
   }
 
   .actions {
