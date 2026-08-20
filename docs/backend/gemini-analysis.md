@@ -12,6 +12,26 @@ Uploads the normalized media file to Gemini, waits for it to finish processing, 
 
 **Configuration error**: if no BYOK key is given and `GEMINI_API_KEY` isn't set, raises `GeminiConfigurationError` — caught by `ProcessRunUseCase` and stored as the run's error message verbatim (it's already a caller-safe message).
 
+**`summary` vs `markdown`**: these are two different reads of the same video, not
+one field in two formats, and the only thing enforcing that is the prompt —
+`VideoAnalysis` declares both as bare `str` with no `Field(description=...)`, so
+Gemini sees nothing but the field name from the schema itself. `summary` is a
+2-4 sentence plain-prose abstract with no markdown at all, answering whether the
+video is worth watching; `markdown` is structured notes with headings and bullets,
+complete enough to replace watching it. The prompt says explicitly that they are
+read side by side and must not be two versions of the same paragraph.
+
+Before 2026-08-20 the two bullets read only "a natural language summary of what
+the video covers" and "well-formatted markdown notes combining speech and visual
+context" — nothing about length, depth, or audience — so on a short clip the two
+fields collapsed into near-duplicates. If you edit this prompt, keep the contrast
+between the two explicit; the UI shows them as adjacent tabs (TL;DR and Notes),
+which makes any overlap immediately visible.
+
 **Known issue**: none identified specific to this adapter — retry/timeout/cleanup behavior all looks intentional.
 
 **Tests**: none currently — this adapter isn't unit tested (would require mocking the `google.genai` client).
+
+## Changelog
+
+- 2026-08-20 · main session · sharpened the summary/markdown prompt bullets so the two fields are distinct reads (short prose abstract vs complete structured notes) instead of the same content in two formats
