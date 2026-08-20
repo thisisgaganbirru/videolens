@@ -18,11 +18,13 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ScreenTextSegment, SourceMetadata, TranscriptSegment, VideoAnalysis } from "@/domain/entities";
 
+// Order is the reading order we want people to take: the shortest read first,
+// then the full notes, then the two raw sources behind them.
 const TABS = [
-  { key: "markdown", label: "notes" },
-  { key: "summary", label: "summary" },
-  { key: "transcript", label: "transcript" },
-  { key: "screen_text", label: "on-screen text" },
+  { key: "summary", label: "TL;DR" },
+  { key: "markdown", label: "Notes" },
+  { key: "transcript", label: "Transcript" },
+  { key: "screen_text", label: "On-Screen" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -333,7 +335,7 @@ export default function ResultsView({
   result: VideoAnalysis;
   sourceMetadata?: SourceMetadata | null;
 }) {
-  const [active, setActive] = useState<TabKey>("markdown");
+  const [active, setActive] = useState<TabKey>("summary");
   const [copied, setCopied] = useState(false);
   const [canShare, setCanShare] = useState(false);
 
