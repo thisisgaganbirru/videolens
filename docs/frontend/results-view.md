@@ -1,6 +1,27 @@
 # Results view
 
-Renders a completed run's analysis across four tabs: Notes (markdown), Summary, Transcript, On-screen text.
+Renders a completed run's analysis across four tabs: TL;DR (`summary`), Notes
+(`markdown`), Transcript, On-Screen.
+
+**Tab order and labels**: TL;DR opens by default and sits first because it is the
+shortest read — the thing you want in front of someone the moment a run finishes.
+Notes follows, then the two raw sources behind it. The labels are Title Case here
+while the rest of the shell is lowercase, and "TL;DR" rather than "Summary"
+deliberately: "summary" gave no signal that it was the *short* read, so it read as
+a peer of Notes rather than a quicker version of it — the same confusion the
+backend prompt now guards against (see `../backend/gemini-analysis.md`). Only the
+`label` strings changed; the `key` values feed `result-tab-${key}` /
+`result-panel-${key}` ids and the aria wiring, so they stay as they are. The four
+panels remain in their original source order — only one is displayed at a time, so
+DOM order among them is not observable.
+
+**Tab layout**: `.tab-list` is a four-column grid (`grid-auto-flow: column` +
+`grid-auto-columns: 1fr`), not the scrolling flex row it used to be. All four tabs
+are visible at once on a phone, and each active underline spans an identical share
+of the bottom rule. The auto-flow form avoids hard-coding the count in CSS as well
+as in `TABS`. `.tab` keeps `white-space: nowrap` but drops to `0.25rem` of side
+padding, since the grid column supplies the spacing and wide inline padding would
+push the longest label out of a quarter-width column on a narrow screen.
 
 **Files**
 - `frontend/components/ResultsView.tsx` — everything (purely presentational, takes `result: VideoAnalysis` and an optional `sourceMetadata?: SourceMetadata | null` as props; no hook needed since it holds no cross-component state).
@@ -79,11 +100,12 @@ column width as a hit target.
 - ~~The generated-title band above the tabs has no shared class~~ Fixed — it is
   `.result-head` now, which owns the gutter padding and the `flex-shrink: 0`
   the `<h2>` used to carry inline. The `<h2>` keeps only its typography.
-- Not visually verified. The icon-action change was typechecked
-  (`npx tsc --noEmit`) and built (`npm run build`) clean, and `.icon-action`
-  reuses a treatment already verified on `.theme-toggle`/`.menu-toggle`, but
-  no screenshot was taken — the title band's new two-column layout is
-  unexercised visually.
+- Not visually verified. The icon-action change and the tab grid were both
+  typechecked (`npx tsc --noEmit`) and built (`npm run build`) clean, but no
+  screenshot was taken — the title band's two-column layout and the four
+  equal-width tab columns are unexercised visually. The tab widths in
+  particular are worth a look on the narrowest phone: "Transcript" is the
+  longest label and has to fit a quarter of the content width at 0.82rem.
 
 **Tests**: none (see `run-analysis-hook.md`).
 
@@ -91,3 +113,4 @@ column width as a hit target.
 
 - 2026-08-15 · frontend agent · ported ResultsView + SourceCard; de-boxed the source card, wired .disclosure and role=tabpanel, rebuilt SourceCard.preview with six states
 - 2026-08-16 · main session · moved copy and share out of `.actions` into icon buttons in the top-right of a new `.result-head` title band, reusing the existing `.theme-toggle`/`.menu-toggle` icon-button treatment via `.icon-action`; download report stays a full-width button below, since it is the one action that ignores the active tab
+- 2026-08-20 · main session · renamed the tabs (TL;DR/Notes/Transcript/On-Screen), moved TL;DR first and made it the default, and replaced the scrolling flex tab row with a four-column equal-width grid

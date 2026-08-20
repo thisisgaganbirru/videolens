@@ -996,11 +996,16 @@ h3 {
   }
 
   /* ---- result tabs ---- */
+  /* Four equal columns rather than a scrolling flex row: every tab is visible
+     at once on a phone, and each active underline spans an identical share of
+     the rule. `grid-auto-flow: column` + `grid-auto-columns: 1fr` rather than
+     `repeat(4, 1fr)` so the count is not hard-coded here as well as in TABS.
+     No gap, so the underlines read as segments of the one bottom rule. */
   .tab-list {
-    display: flex;
-    gap: var(--space-2xs);
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
     padding: 0 var(--space-md);
-    overflow-x: auto;
     flex-shrink: 0;
     border-bottom: var(--rule-w) solid var(--color-rule);
   }
@@ -1010,7 +1015,11 @@ h3 {
     font-family: inherit;
     font-size: 0.82rem;
     color: var(--color-muted);
-    padding: 0.85rem 0.9rem;
+    /* Side padding is deliberately small: the grid column supplies the spacing
+       now, and a wide inline padding would push the longest label out of a
+       quarter-width column on a narrow phone. */
+    padding: 0.85rem 0.25rem;
+    text-align: center;
     white-space: nowrap;
     border-bottom: 2px solid transparent;
     transition: color var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out);
@@ -1871,7 +1880,7 @@ h3 {
   }
 
   .tab {
-    padding: 0.75rem 1rem;
+    padding: 0.75rem 0.25rem;
   }
   .line {
     grid-template-columns: 3.6rem 1fr;
