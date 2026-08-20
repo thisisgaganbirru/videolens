@@ -387,6 +387,26 @@ started succeeding, from these two settings.
     an actual `8000` listener) is a real bug worth fixing on its own, but
     fixing it alone left the healthcheck failing identically, because the
     healthcheck was never reading that setting in the first place.
+- **A dashboard variable silently overrides the Dockerfile's `ENV`.** The dev
+  backend and worker carried `TEMP_DIR` set to a Windows path
+  (`C:/Users/.../AppData/Local/Temp/videolens`), which beat the
+  `TEMP_DIR=/tmp/videolens` in `backend/Dockerfile`. Every declaration of it
+  in the repo was correct, so nothing in code review, CI or tests could see
+  it. It did not fail at boot either — `C:` is a legal directory name on
+  Linux, so the startup `os.makedirs` succeeded and downloads landed in a
+  junk relative directory; FFmpeg was the first thing strict enough to reject
+  it, failing runs with `Protocol not found` at the normalize step. Fixed by
+  deleting the variable from both services (the image already creates and
+  chowns `/tmp/videolens` for the non-root user it runs as, so no override is
+  wanted) and by a startup guard in `validate_temp_dir` that now refuses a
+  non-absolute or unwritable path — see `docs/backend/media-validation.md`.
+
+**The pattern across all three of these:** configuration that exists only in
+the Railway dashboard, overrides what the repo declares, and is therefore
+invisible to git, CI and code review. Each one surfaced as a symptom several
+steps removed from its cause. When a deployed service misbehaves in a way the
+repo cannot explain, check its dashboard variables and Config-as-Code path
+before re-reading the code.
 
 `PRODUCTION_API_BASE_URL` is required by the **frontend** publication leg only,
 because only the frontend image compiles a backend URL in. If the GitHub

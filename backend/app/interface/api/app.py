@@ -1,5 +1,4 @@
 import logging
-import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -17,12 +16,15 @@ from .routes import router
 
 configure_logging()
 logger = logging.getLogger(__name__)
-os.makedirs(container.settings.temp_dir, exist_ok=True)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     container.media.validate_tools()
+    # Creates the directory too, so this replaces the bare `os.makedirs` that
+    # used to run at import. That call is what made a bad TEMP_DIR invisible:
+    # it succeeded on any string Linux accepts as a directory name.
+    container.media.validate_temp_dir()
     settings = container.settings
     if settings.queue_enabled:
         await container.run_repository.ping()
