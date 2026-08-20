@@ -5,6 +5,7 @@ from ...container import container
 
 async def startup(ctx: dict) -> None:
     container.media.validate_tools()
+    container.media.validate_temp_dir()
     settings = container.settings
     if not settings.queue_enabled or not container.object_store.enabled:
         raise RuntimeError("Worker requires Redis and S3-compatible object storage.")
