@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import type { MediaSource } from "@/domain/entities";
+import type { SharedUrl } from "@/application/useSharedUrl";
 
 const ACCEPTED_EXTENSIONS = [".mp3", ".mp4", ".mov"];
 const MAX_FILE_SIZE_MB = 200;
@@ -16,6 +17,11 @@ interface UploadFormProps {
    *  request (so a rejection does not wipe the typed URL), which means it is
    *  the form that has to show the wait. */
   submitting?: boolean;
+  /** The most recent link shared into the app, or null. A new object per
+   *  arrival, so re-sharing the same link still fills the field. `HomeScreen`
+   *  owns the listener and has already returned the shell to a fresh intake by
+   *  the time this lands; all this component does is take the value. */
+  sharedUrl?: SharedUrl | null;
 }
 
 function validateFile(file: File): string | null {
@@ -56,7 +62,7 @@ function readMediaDuration(file: File): Promise<number> {
   });
 }
 
-export default function UploadForm({ onSubmit, disabled, submitting }: UploadFormProps) {
+export default function UploadForm({ onSubmit, disabled, submitting, sharedUrl }: UploadFormProps) {
   const busy = disabled || submitting;
   const [url, setUrl] = useState("");
   const [dragActive, setDragActive] = useState(false);
@@ -77,24 +83,16 @@ export default function UploadForm({ onSubmit, disabled, submitting }: UploadFor
     setAcceptedTerms(
       window.localStorage.getItem(MEDIA_TERMS_ACCEPTANCE_KEY) === "accepted"
     );
-
-    const consumeSharedUrl = () => {
-      const params = new URLSearchParams(window.location.search);
-      const nativeText = window.localStorage.getItem("videolens-shared-text") || "";
-      const shared =
-        params.get("url") ||
-        params.get("text")?.match(/https?:\/\/\S+/)?.[0] ||
-        nativeText.match(/https?:\/\/\S+/)?.[0];
-      if (shared) {
-        setUrl(shared);
-        window.localStorage.removeItem("videolens-shared-text");
-      }
-    };
-
-    consumeSharedUrl();
-    window.addEventListener("videolens-share", consumeSharedUrl);
-    return () => window.removeEventListener("videolens-share", consumeSharedUrl);
   }, []);
+
+  /* Runs on mount too, which is the case that matters: a share arriving over a
+     finished result remounts this form (HomeScreen resets the run), and the
+     link has to be waiting in the field when it comes back. */
+  useEffect(() => {
+    if (!sharedUrl) return;
+    setUrl(sharedUrl.url);
+    setError(null);
+  }, [sharedUrl]);
 
   const handleFile = useCallback(
     async (file: File) => {

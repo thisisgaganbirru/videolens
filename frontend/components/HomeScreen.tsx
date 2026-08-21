@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import AppNav from "@/components/AppNav";
 import UploadForm from "@/components/UploadForm";
@@ -10,6 +10,7 @@ import ApiKeyPanel from "@/components/panels/ApiKeyPanel";
 import HistoryPanel from "@/components/panels/HistoryPanel";
 import VersionLogPanel from "@/components/panels/VersionLogPanel";
 import { useAnalysisRun } from "@/application/useAnalysisRun";
+import { useSharedUrl } from "@/application/useSharedUrl";
 import { goToMainTab, useMainTab, type MainTab } from "@/application/useMainTab";
 
 /**
@@ -35,6 +36,26 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
     reset,
     openRun,
   } = useAnalysisRun();
+
+  const sharedUrl = useSharedUrl();
+
+  /* A link shared into the app is a request to analyze *that*, so it takes the
+     screen over: whatever tab is showing, and whatever run is on it, gives way
+     to a fresh intake with the link filled in. The analysis is not started for
+     the user — an accidental share should not spend a run — so the only thing
+     left to do is press analyze.
+
+     This has to live here rather than in `UploadForm`, which is mounted only
+     while the run state is idle. When it owned the share listener, a link
+     shared while a finished result was up reached nobody: it stayed in
+     localStorage until a back press remounted the form, which is why the app
+     went on showing the previous video's results and then produced the old link
+     as a prefill on the way out. */
+  useEffect(() => {
+    if (!sharedUrl) return;
+    goToMainTab("analyze");
+    reset();
+  }, [sharedUrl, reset]);
 
   /* An error while the pipeline is on screen can only come from the poll's
      catch — `submit` now stays on idle until the server answers, and `openRun`
@@ -65,7 +86,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
             <div className="home-center">
               <div className="intake">
                 <p className="card-label">new analysis</p>
-                <UploadForm onSubmit={submit} submitting={submitting} />
+                <UploadForm onSubmit={submit} submitting={submitting} sharedUrl={sharedUrl} />
                 {/* Back at idle with an error means the submit was rejected, or
                     a history row would not open. Either way the control that
                     failed is still on screen — and, since `submit` no longer
