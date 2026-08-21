@@ -32,6 +32,13 @@ export function useAnalysisRun() {
      closure inside the same tick a second submit could arrive in; a ref is
      read at call time, which is what a re-entrancy guard needs. */
   const submittingRef = useRef(false);
+  /* Bumped by every intent that replaces what is on screen — `submit`,
+     `openRun`, `reset`. A request that was already in flight when the next
+     intent arrived resolves into a screen that has moved on, so each one drops
+     its result if the counter no longer matches the value it captured. Without
+     it, a link shared mid-submit is undone a moment later by the 202 for the
+     run the user just abandoned. */
+  const generationRef = useRef(0);
 
   useEffect(() => {
     return () => {
@@ -97,11 +104,14 @@ export function useAnalysisRun() {
       setSourceMetadata(null);
       setStage(null);
       setSourceKind(source.url ? "url" : "file");
+      const generation = ++generationRef.current;
       try {
         const run = await runsGateway.createRun(source);
+        if (generationRef.current !== generation) return;
         setStatus(run.status);
         pollRun(run.run_id);
       } catch (err) {
+        if (generationRef.current !== generation) return;
         fail(err, SUBMIT_FALLBACK);
       } finally {
         submittingRef.current = false;
@@ -112,6 +122,15 @@ export function useAnalysisRun() {
   );
 
   const reset = useCallback(() => {
+    /* Stop the poll first. It is `setStatus(run.status)` on a timer, so leaving
+       it running meant "analyze another file" bounced straight back to the
+       pipeline on the next tick — the interval outlived the state it was
+       driving. */
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    generationRef.current += 1;
     setStatus("idle");
     setStage(null);
     setSourceKind("file");
@@ -123,15 +142,20 @@ export function useAnalysisRun() {
 
   const openRun = useCallback(
     async (runId: string) => {
-      if (pollRef.current) clearInterval(pollRef.current);
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
       setError(null);
       setErrorKind(null);
       setResult(null);
       setSourceMetadata(null);
       setSourceKind("file");
       setStatus("processing");
+      const generation = ++generationRef.current;
       try {
         const run = await runsGateway.getRun(runId);
+        if (generationRef.current !== generation) return;
         setStatus(run.status);
         setStage(run.stage);
         if (run.source_metadata) setSourceMetadata(run.source_metadata);
@@ -144,6 +168,7 @@ export function useAnalysisRun() {
           pollRun(runId);
         }
       } catch (err) {
+        if (generationRef.current !== generation) return;
         setStatus("idle");
         fail(err, OPEN_FALLBACK);
       }
