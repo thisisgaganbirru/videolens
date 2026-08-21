@@ -18,20 +18,33 @@ def _media_binary(settings: Settings, name: str) -> str:
         if os.path.isfile(candidate):
             return candidate
         raise MediaValidationError(
-            f"{name} was not found in the configured FFMPEG_LOCATION directory."
+            "This file couldn't be processed.",
+            log_detail=f"{name} was not found in the configured FFMPEG_LOCATION directory.",
         )
 
     discovered = shutil.which(name)
     if discovered:
         return discovered
     raise MediaValidationError(
-        "FFmpeg is not available to the backend. Install FFmpeg or configure FFMPEG_LOCATION."
+        "This file couldn't be processed.",
+        log_detail=(
+            f"{name} is not on PATH and FFMPEG_LOCATION is unset. Install FFmpeg or "
+            "set FFMPEG_LOCATION."
+        ),
     )
 
 
 def validate_media_tools(settings: Settings) -> None:
     _media_binary(settings, "ffmpeg")
     _media_binary(settings, "ffprobe")
+
+
+def _clock(seconds: float) -> str:
+    """`m:ss`, matching how the frontend prints every other timestamp. "240s
+    exceeds the 180s limit" is a measurement; "4:00, the limit is 3:00" is the
+    same fact in the units the person was looking at."""
+    total = max(0, round(seconds))
+    return f"{total // 60}:{total % 60:02d}"
 
 
 async def probe_duration_seconds(settings: Settings, path: str) -> float:
@@ -44,15 +57,22 @@ async def probe_duration_seconds(settings: Settings, path: str) -> float:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout, _ = await proc.communicate()
+    stdout, stderr = await proc.communicate()
     if proc.returncode != 0 or not stdout.strip():
         raise MediaValidationError(
-            "Could not read the media file. It may be corrupted or in an unsupported format."
+            "This file couldn't be read. It may be corrupted or in a format we don't support.",
+            log_detail=(
+                f"ffprobe exited {proc.returncode}: "
+                + stderr.decode(errors="ignore")[-500:]
+            ),
         )
     try:
         return float(stdout.strip())
     except ValueError as exc:
-        raise MediaValidationError("Could not determine media duration.") from exc
+        raise MediaValidationError(
+            "This file couldn't be read. It may be corrupted or in a format we don't support.",
+            log_detail=f"ffprobe returned an unparseable duration: {stdout!r}",
+        ) from exc
 
 
 async def enforce_duration_cap(settings: Settings, run_id: str, path: str) -> None:
@@ -64,8 +84,8 @@ async def enforce_duration_cap(settings: Settings, run_id: str, path: str) -> No
     if duration > settings.max_duration_seconds:
         cleanup_run_dir(settings, run_id)
         raise MediaValidationError(
-            f"Media is {duration:.0f}s long, which exceeds the "
-            f"{settings.max_duration_seconds}s limit."
+            f"This video is {_clock(duration)} long. The limit is "
+            f"{_clock(settings.max_duration_seconds)}."
         )
 
 
@@ -107,6 +127,10 @@ async def normalize_media(settings: Settings, src_path: str, run_dir: str) -> st
     _, stderr = await proc.communicate()
     if proc.returncode != 0:
         raise MediaValidationError(
-            "Failed to process media file: " + stderr.decode(errors="ignore")[-500:]
+            "This file couldn't be processed.",
+            log_detail=(
+                f"ffmpeg exited {proc.returncode}: "
+                + stderr.decode(errors="ignore")[-2000:]
+            ),
         )
     return normalized_path

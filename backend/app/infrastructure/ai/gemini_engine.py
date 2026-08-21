@@ -6,7 +6,7 @@ from google import genai
 from google.genai import types
 
 from ...domain.entities import VideoAnalysis
-from ...domain.errors import GeminiConfigurationError
+from ...domain.errors import AnalysisUnavailableError, GeminiConfigurationError
 from ...domain.ports import StageCallback
 from ..config import Settings
 
@@ -60,8 +60,11 @@ class GeminiEngine:
 
         if not self._settings.gemini_api_key.strip():
             raise GeminiConfigurationError(
-                "Gemini API key is not configured. Add GEMINI_API_KEY to backend/.env "
-                "and restart the backend."
+                "Analysis is temporarily unavailable.",
+                log_detail=(
+                    "GEMINI_API_KEY is not set and the caller supplied no key of their "
+                    "own. Set GEMINI_API_KEY on the API and worker services."
+                ),
             )
         if self._client is None:
             self._client = genai.Client(api_key=self._settings.gemini_api_key)
@@ -115,6 +118,24 @@ class GeminiEngine:
             except Exception:
                 pass
 
+    # 429 and 5xx are the API saying "not now" - the request was well-formed and
+    # the media was fine, so the honest advice is to wait rather than to go and
+    # re-pick a file. Everything else stays an unexpected error and is masked by
+    # ProcessRunUseCase, which logs the traceback.
+    _TRANSIENT_STATUS = frozenset({429, 500, 502, 503, 504})
+
+    @classmethod
+    def _as_domain_error(cls, exc: Exception) -> Exception:
+        status = getattr(exc, "code", None)
+        if status in cls._TRANSIENT_STATUS:
+            message = (
+                "Too many requests right now. Try again in a moment."
+                if status == 429
+                else "Gemini is busy right now. This usually clears within a minute."
+            )
+            return AnalysisUnavailableError(message, log_detail=f"{type(exc).__name__}: {exc}")
+        return exc
+
     async def analyze_with_retry(
         self,
         video_path: str,
@@ -131,4 +152,4 @@ class GeminiEngine:
                 if attempt < attempts - 1:
                     await asyncio.sleep(2)
         assert last_error is not None
-        raise last_error
+        raise self._as_domain_error(last_error)
