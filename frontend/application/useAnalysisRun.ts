@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MediaSource, RunStatus, SourceMetadata, VideoAnalysis } from "@/domain/entities";
-import { classifyGatewayError, type GatewayErrorKind } from "@/application/gatewayError";
+import { classifyGatewayError } from "@/application/gatewayError";
 import { runsGateway } from "@/infrastructure/container";
 
 const POLL_INTERVAL_MS = 3000;
@@ -23,9 +23,6 @@ export function useAnalysisRun() {
   const [result, setResult] = useState<VideoAnalysis | null>(null);
   const [sourceMetadata, setSourceMetadata] = useState<SourceMetadata | null>(null);
   const [error, setError] = useState<string | null>(null);
-  /* null when the error came from the run itself (a `failed` status carries the
-     backend's own reason, which is not a transport classification at all). */
-  const [errorKind, setErrorKind] = useState<GatewayErrorKind | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   /* Mirrors `submitting` for the guard below. State is read from a stale
@@ -47,9 +44,7 @@ export function useAnalysisRun() {
   }, []);
 
   const fail = useCallback((err: unknown, fallback: string) => {
-    const failure = classifyGatewayError(err, fallback);
-    setError(failure.message);
-    setErrorKind(failure.kind);
+    setError(classifyGatewayError(err, fallback).message);
   }, []);
 
   const pollRun = useCallback(
@@ -65,7 +60,6 @@ export function useAnalysisRun() {
             if (pollRef.current) clearInterval(pollRef.current);
           } else if (run.status === "failed") {
             setError(run.error || "Video analysis failed.");
-            setErrorKind(null);
             if (pollRef.current) clearInterval(pollRef.current);
           }
         } catch (err) {
@@ -99,7 +93,6 @@ export function useAnalysisRun() {
       submittingRef.current = true;
       setSubmitting(true);
       setError(null);
-      setErrorKind(null);
       setResult(null);
       setSourceMetadata(null);
       setStage(null);
@@ -137,7 +130,6 @@ export function useAnalysisRun() {
     setResult(null);
     setSourceMetadata(null);
     setError(null);
-    setErrorKind(null);
   }, []);
 
   const openRun = useCallback(
@@ -147,7 +139,6 @@ export function useAnalysisRun() {
         pollRef.current = null;
       }
       setError(null);
-      setErrorKind(null);
       setResult(null);
       setSourceMetadata(null);
       setSourceKind("file");
@@ -163,7 +154,6 @@ export function useAnalysisRun() {
           setResult(run.result);
         } else if (run.status === "failed") {
           setError(run.error || "Video analysis failed.");
-          setErrorKind(null);
         } else {
           pollRun(runId);
         }
@@ -183,7 +173,6 @@ export function useAnalysisRun() {
     result,
     sourceMetadata,
     error,
-    errorKind,
     submitting,
     submit,
     reset,

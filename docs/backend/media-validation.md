@@ -55,3 +55,7 @@ creates per-run subdirectories as before.
 **Known issue / non-issue**: none currently identified beyond what's already handled — this is one of the more defensively-written areas of the codebase.
 
 **Tests**: `backend/tests/infrastructure/media/test_ytdlp_downloader.py` covers URL validation (including the SSRF rejection case, via a mocked `socket.getaddrinfo`), cookie-option building, and download-error message rewriting. No test coverage for `ffmpeg.py` or `uploads.py` directly (they require an actual ffmpeg binary / real file I/O).
+
+## Changelog
+
+- 2026-08-21 · main session · every message rewritten for the person on screen; yt-dlp/FFmpeg stderr and the FFMPEG_LOCATION / YTDLP_COOKIES_* hints moved to log_detail. See ../error-messaging.md

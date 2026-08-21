@@ -30,7 +30,6 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
     result,
     sourceMetadata,
     error,
-    errorKind,
     submitting,
     submit,
     reset,
@@ -97,11 +96,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     which is drawn for a full-view failure with an action of its
                     own. */}
                 {error && (
-                  <p
-                    role="alert"
-                    data-error-kind={errorKind ?? undefined}
-                    className="error-note mt-[var(--space-xs)]"
-                  >
+                  <p role="alert" className="error-note mt-[var(--space-xs)]">
                     {error}
                   </p>
                 )}
@@ -132,7 +127,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                      touch. The same flag stops `RunStatusView` pulsing and
                      removes its "you can leave this open" note, so this block is
                      the only thing on screen describing the failure. */
-                  <div role="alert" data-error-kind={errorKind ?? undefined} className="error-block">
+                  <div role="alert" className="error-block">
                     {/* The lead says what happened to the *run*; the gateway's
                         message already says why the request failed, so
                         repeating "lost contact" here would be the same

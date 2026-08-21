@@ -28,6 +28,12 @@ fields collapsed into near-duplicates. If you edit this prompt, keep the contras
 between the two explicit; the UI shows them as adjacent tabs (TL;DR and Notes),
 which makes any overlap immediately visible.
 
+**Transient failures**: `_as_domain_error` maps 429/500/502/503/504 onto
+`AnalysisUnavailableError` so a busy model is not reported as an unknown
+failure — see `../error-messaging.md`. The retry loop around it is still 2
+attempts with a flat 2s sleep, which is too short to outlast the demand spike
+Google's own 503 describes; that is tracked as a known issue there.
+
 **Known issue**: none identified specific to this adapter — retry/timeout/cleanup behavior all looks intentional.
 
 **Tests**: none currently — this adapter isn't unit tested (would require mocking the `google.genai` client).
@@ -35,3 +41,4 @@ which makes any overlap immediately visible.
 ## Changelog
 
 - 2026-08-20 · main session · sharpened the summary/markdown prompt bullets so the two fields are distinct reads (short prose abstract vs complete structured notes) instead of the same content in two formats
+- 2026-08-21 · main session · classified 429/5xx as AnalysisUnavailableError, and moved the GEMINI_API_KEY hint out of the user-facing message into log_detail

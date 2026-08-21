@@ -26,3 +26,4 @@ No frontend test runner is configured for this project; verification here has re
 ## Changelog
 
 - 2026-08-21 · main session · made reset() clear the poll interval, and added the generation counter that drops a superseded submit/openRun response
+- 2026-08-21 · main session · dropped the errorKind state, which existed only to feed a data-error-kind attribute that nothing styled or read
