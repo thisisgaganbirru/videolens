@@ -57,7 +57,7 @@ export default function HistoryPanel({ onOpenRun }: { onOpenRun: (runId: string)
        that answered gets its own `detail`, a server that never answered gets
        told so — and is never overwritten here. */
     return (
-      <div role="alert" data-error-kind={error.kind} className="error-inline">
+      <div role="alert" className="error-inline">
         <p>{error.message}</p>
         <button
           type="button"

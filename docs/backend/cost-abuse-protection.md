@@ -16,3 +16,7 @@ Three independent layers bound how much this app can spend on Gemini calls, sinc
 **Known issue**: none — this is a deliberately layered design and the trade-offs (documented in code comments already) look sound. The one thing worth knowing operationally: none of these layers replace setting a hard budget alert directly on the Gemini API key itself in Google Cloud/AI Studio — that's the only backstop enforced completely outside this app's own code (see root `README.md`, "Cost protection").
 
 **Tests**: `backend/tests/infrastructure/quota/test_daily_budget.py` (local-mode cap logic), `backend/tests/interface/api/test_rate_limiter.py` (`client_ip` only), `backend/tests/domain/test_policies.py` (`quota_key_from_headers`).
+
+## Changelog
+
+- 2026-08-21 · main session · rate-limit responses now carry `detail` like every other error (slowapi's stock `error` key meant the UI showed a bare 429 fallback), and the daily-cap message points at BYOK

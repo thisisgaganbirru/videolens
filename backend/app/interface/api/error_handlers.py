@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
 from ...domain.errors import (
+    AnalysisUnavailableError,
     InvalidSourceError,
     MediaValidationError,
     QuotaExceededError,
@@ -15,6 +16,7 @@ _STATUS_BY_ERROR = {
     TermsNotAcceptedError: 400,
     InvalidSourceError: 400,
     MediaValidationError: 400,
+    AnalysisUnavailableError: 503,
     QuotaExceededError: 503,
     RunSchedulingError: 503,
     RunNotFoundError: 404,
