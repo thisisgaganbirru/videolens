@@ -11,6 +11,9 @@ exception, listed so it isn't mistaken for a stray file:
 
 - `container-workflows.md` — local/dev/production workflow boundaries,
   hardened container behavior, image publication, and operator requirements.
+- `error-messaging.md` — how a failure becomes a sentence on screen and where
+  the operator's half of it goes. Spans backend and frontend, so it is filed
+  here rather than under either.
 - `engineering-standards.md` — cross-cutting, not a per-feature reference. A
   repo-wide engineering-hygiene register audited 2026-08-15. Dependency
   reproducibility and container vulnerability gates are now implemented;
@@ -47,3 +50,4 @@ someone else's entry.
 ## Changelog
 
 - 2026-08-15 · main session · indexed the environment-separated container workflow reference and updated the standards status
+- 2026-08-21 · main session · indexed the cross-cutting error-messaging reference

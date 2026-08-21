@@ -56,7 +56,8 @@ class CreateRunUseCase:
         # Gemini spend).
         if not gemini_api_key and not await self._spend_cap.try_consume():
             raise QuotaExceededError(
-                "VideoLens AI has reached its analysis limit for today. Please try again tomorrow."
+                "VideoLens AI has reached its limit for today. Add your own Gemini key "
+                "from the menu to keep going, or try again tomorrow."
             )
 
         run_id = str(uuid.uuid4())
@@ -93,4 +94,4 @@ class CreateRunUseCase:
             self._media.cleanup_run_dir(run_id)
             if source_key:
                 await self._storage.delete_source(source_key)
-            raise RunSchedulingError("Could not queue the analysis run.") from exc
+            raise RunSchedulingError("VideoLens is having trouble right now. Try again in a moment.") from exc

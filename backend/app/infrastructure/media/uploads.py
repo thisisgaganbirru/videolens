@@ -65,7 +65,8 @@ async def save_upload(settings: Settings, run_id: str, upload: UploadedFile) -> 
     ext = os.path.splitext(upload.filename or "")[1].lower()
     if ext not in settings.allowed_extensions:
         raise MediaValidationError(
-            f"Unsupported file type '{ext or 'unknown'}'. Only .mp3, .mp4, and .mov are accepted."
+            f"Only .mp3, .mp4 and .mov files are supported - this one is "
+            f"{ext or 'an unknown type'}."
         )
 
     run_dir = create_run_dir(settings, run_id)
@@ -80,7 +81,7 @@ async def save_upload(settings: Settings, run_id: str, upload: UploadedFile) -> 
                 total += len(chunk)
                 if total > max_bytes:
                     raise MediaValidationError(
-                        f"File exceeds the {settings.max_file_size_mb}MB size limit."
+                        f"That file is over the {settings.max_file_size_mb}MB limit."
                     )
                 out_file.write(chunk)
     except MediaValidationError:
@@ -91,6 +92,6 @@ async def save_upload(settings: Settings, run_id: str, upload: UploadedFile) -> 
 
     if total == 0:
         _cleanup_dir(run_dir)
-        raise MediaValidationError("Uploaded file is empty.")
+        raise MediaValidationError("That file is empty.")
 
     return SavedUpload(path=dest_path, run_dir=run_dir)

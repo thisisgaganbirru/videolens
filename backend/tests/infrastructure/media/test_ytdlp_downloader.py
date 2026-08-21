@@ -10,7 +10,7 @@ from app.domain.errors import MediaValidationError
 from app.infrastructure.config import Settings
 from app.infrastructure.media.ytdlp_downloader import (
     _cookie_options,
-    _download_error_message,
+    _download_failure,
     _validate_public_url,
     download_url,
 )
@@ -31,11 +31,11 @@ class PublicUrlValidationTests(unittest.TestCase):
             (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 80))
         ]
 
-        with self.assertRaisesRegex(MediaValidationError, "private-network"):
+        with self.assertRaisesRegex(MediaValidationError, "private network"):
             _validate_public_url("http://localhost/media")
 
     def test_rejects_non_http_url(self) -> None:
-        with self.assertRaisesRegex(MediaValidationError, "HTTP or HTTPS"):
+        with self.assertRaisesRegex(MediaValidationError, "http:// or https://"):
             _validate_public_url("file:///etc/passwd")
 
     def test_builds_browser_cookie_options(self) -> None:
@@ -45,20 +45,42 @@ class PublicUrlValidationTests(unittest.TestCase):
             {"cookiesfrombrowser": ("chrome", None, None, None)},
         )
 
-    def test_shortens_instagram_authentication_error(self) -> None:
-        message = _download_error_message(
-            DownloadError("Instagram sent an empty media response. Long diagnostic text.")
+    def test_instagram_login_wall_becomes_a_plain_sentence(self) -> None:
+        message, detail = _download_failure(
+            DownloadError(
+                "Instagram sent an empty media response. Check if this post is "
+                "accessible in your browser without being logged-in. If it is not, "
+                "then use --cookies-from-browser or --cookies for the authentication."
+            )
         )
 
-        self.assertIn("login cookies", message)
-        self.assertNotIn("Long diagnostic", message)
+        self.assertEqual(
+            message, "This post isn't public - Instagram only serves it to signed-in viewers."
+        )
+        # yt-dlp's own advice is for whoever runs yt-dlp, so it belongs in the
+        # log and must not survive into the message shown on a phone.
+        self.assertNotIn("--cookies", message)
+        self.assertIn("--cookies-from-browser", detail)
 
-    def test_removes_terminal_colors_from_download_error(self) -> None:
-        message = _download_error_message(
+    def test_youtube_bot_check_becomes_a_plain_sentence(self) -> None:
+        message, detail = _download_failure(
+            DownloadError("Sign in to confirm you're not a bot. Use --cookies-from-browser.")
+        )
+
+        self.assertEqual(message, "YouTube is blocking automated downloads from this server.")
+        self.assertIn("not a bot", detail)
+
+    def test_unrecognised_failure_keeps_its_detail_out_of_the_message(self) -> None:
+        message, detail = _download_failure(
             DownloadError("\x1b[0;31mERROR:\x1b[0m merging failed")
         )
 
-        self.assertEqual(message, "Could not download media from this URL. merging failed")
+        self.assertEqual(
+            message,
+            "This link couldn't be downloaded. It may be private, deleted, or region-locked.",
+        )
+        # ANSI colours stripped, "ERROR: " prefix dropped, text preserved for the log.
+        self.assertEqual(detail, "merging failed")
 
 
 class SourceMetadataExtractionTests(unittest.IsolatedAsyncioTestCase):
