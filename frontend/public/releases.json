@@ -1,6 +1,12 @@
 {
   "releases": [
     {
+      "name": "VideoLens AI dev build v2.0.9 (#19)",
+      "tag": "dev-v2.0.9-build19",
+      "publishedAt": "2026-08-23T06:55:07Z",
+      "url": "https://github.com/thisisgaganbirru/videolens/releases/tag/dev-v2.0.9-build19"
+    },
+    {
       "name": "VideoLens AI dev build v2.0.9 (#18)",
       "tag": "dev-v2.0.9-build18",
       "publishedAt": "2026-08-21T08:38:10Z",
