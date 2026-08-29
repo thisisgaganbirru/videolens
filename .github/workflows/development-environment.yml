@@ -1,0 +1,42 @@
+name: Development environment
+
+on:
+  push:
+    branches: [dev]
+    paths-ignore:
+      # The release job commits these two files back to `dev` after every
+      # build. Ignoring them here is what replaces the old `[skip ci]` marker:
+      # it stops the manifest commit re-triggering this workflow (the infinite
+      # build loop the marker existed to prevent) while still letting the
+      # commit receive check runs. `[skip ci]` suppressed *every* workflow, so
+      # the new head of `dev` had no checks at all - and `main` requires checks
+      # on the head, which made a `dev` -> `main` PR permanently unmergeable.
+      - frontend/public/releases.json
+      - frontend/public/version.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: dev-environment
+  cancel-in-progress: true
+
+jobs:
+  application:
+    if: github.ref == 'refs/heads/dev'
+    uses: ./.github/workflows/reusable-application-checks.yml
+  containers:
+    if: github.ref == 'refs/heads/dev'
+    uses: ./.github/workflows/reusable-container-checks.yml
+  publish:
+    if: github.ref == 'refs/heads/dev'
+    needs: [application, containers]
+    uses: ./.github/workflows/reusable-container-publish.yml
+    with:
+      environment: dev
+      channel: dev
+      revision: ${{ github.sha }}
+      api_base_url: https://videolens-backend-dev.up.railway.app
+    secrets: inherit
