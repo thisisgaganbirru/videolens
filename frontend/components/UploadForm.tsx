@@ -1,7 +1,9 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import type { MediaSource } from "@/domain/entities";
+import type { Capability, MediaSource } from "@/domain/entities";
+import { CapabilityCallout } from "@/components/CapabilityNotice";
+import { isNoticeable } from "@/application/useCapabilities";
 
 const ACCEPTED_EXTENSIONS = [".mp3", ".mp4", ".mov"];
 const MAX_FILE_SIZE_MB = 200;
@@ -16,6 +18,10 @@ interface UploadFormProps {
    *  request (so a rejection does not wipe the typed URL), which means it is
    *  the form that has to show the wait. */
   submitting?: boolean;
+  /** The deployment's `url_download` row, when it has one and it is not ok.
+   *  Comes from `HomeScreen` rather than a hook of this component's own — see
+   *  the note there on why the report is fetched exactly once. */
+  urlCapability?: Capability | null;
 }
 
 function validateFile(file: File): string | null {
@@ -56,7 +62,12 @@ function readMediaDuration(file: File): Promise<number> {
   });
 }
 
-export default function UploadForm({ onSubmit, disabled, submitting }: UploadFormProps) {
+export default function UploadForm({
+  onSubmit,
+  disabled,
+  submitting,
+  urlCapability,
+}: UploadFormProps) {
   const busy = disabled || submitting;
   const [url, setUrl] = useState("");
   const [dragActive, setDragActive] = useState(false);
@@ -147,6 +158,22 @@ export default function UploadForm({ onSubmit, disabled, submitting }: UploadFor
     setError("Accept the media-use terms before analysis.");
   };
 
+  /* URL downloads are the one capability with a consequence the user can act
+     on *at this control*, so it is said here rather than only in the summary
+     strip above. It warns and never blocks: the probe reads a yt-dlp build
+     date and whether a configured cookie file exists, neither of which proves
+     the specific link the user is about to paste will fail. Disabling the
+     field on that evidence would refuse URLs that work. */
+  const urlNotice = urlCapability && isNoticeable(urlCapability.state) ? urlCapability : null;
+
+  /* Wired as a description of the field rather than announced by a live
+     region: it reaches a screen-reader user at the moment they focus the input
+     — which is when it matters — instead of competing with the summary strip's
+     announcement on load. */
+  const describedBy = [error ? "intake-error" : null, urlNotice ? "url-capability" : null]
+    .filter(Boolean)
+    .join(" ");
+
   /* No surface, no frame, no card: this control sits directly inside
      HomeScreen's `.intake` (which already renders the "new analysis"
      micro-label). Structure is the field's own edge, the rule of the
@@ -169,7 +196,7 @@ export default function UploadForm({ onSubmit, disabled, submitting }: UploadFor
           autoComplete="url"
           disabled={busy}
           aria-invalid={error ? "true" : undefined}
-          aria-describedby={error ? "intake-error" : undefined}
+          aria-describedby={describedBy || undefined}
           className="field"
         />
         <button
@@ -181,6 +208,15 @@ export default function UploadForm({ onSubmit, disabled, submitting }: UploadFor
           {pendingKind === "url" && submitting ? "sending…" : "analyze url"}
         </button>
       </form>
+
+      {urlNotice && (
+        <div id="url-capability" className="cap-field-note">
+          <CapabilityCallout
+            capability={urlNotice}
+            lead={urlNotice.state === "unavailable" ? "URL runs are unavailable" : "URL runs may fail"}
+          />
+        </div>
+      )}
 
       <div className="divider" aria-hidden="true">
         or

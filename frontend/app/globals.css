@@ -791,6 +791,219 @@ h3 {
   }
 
   /* ========================================================================
+     CAPABILITIES - what this deployment says about itself (GET
+     /api/capabilities), shown only when part of it is degraded or
+     unavailable. There is deliberately no healthy rendering: a permanent
+     "all systems operational" strip is chrome that tells a user nothing they
+     can act on.
+     ======================================================================== */
+
+  /* Same left-ruled, boxless geometry as .error-inline above, because this is
+     the same kind of object - a scoped condition inside a view that is
+     otherwise fine - and a second idiom for it would give the app two ways to
+     say "read this". It is deliberately NOT .error-block: that is the single
+     bordered object in a boxless system, sized for a whole view having failed.
+
+     Severity is carried by the rule's ink and by the words, never by a new
+     hue. The palette declares exactly one danger token and no warning token,
+     and adding an amber here is how a disciplined two-accent system becomes a
+     traffic light. `degraded` therefore keeps the neutral --color-rule-2 - the
+     same restraint .status[data-tone="stalled"] uses when it declines to be a
+     fourth severity - and separates itself from `ok` by ink weight instead. */
+  .cap-notice {
+    max-width: var(--measure);
+    border-left: calc(var(--rule-w) * 2) solid var(--color-rule-2);
+    padding-left: var(--space-sm);
+  }
+  .cap-notice[data-state="unavailable"] {
+    border-left-color: var(--color-danger);
+  }
+
+  /* Spacing belongs to the three wrappers, not to .cap-notice, so the
+     announcing slot in the intake collapses to nothing when the deployment is
+     healthy. The slot itself carries no rules at all - in particular no
+     `:empty { display: none }`, which would take the aria-live region out of
+     the accessibility tree and stop it ever announcing the report it exists to
+     announce. An empty div is already zero-height; that is enough. */
+  .cap-slot > .cap-notice {
+    margin-bottom: var(--space-sm);
+  }
+  .cap-field-note {
+    margin-top: var(--space-2xs);
+  }
+  .cap-panel-note {
+    margin-bottom: var(--space-sm);
+  }
+
+  /* The whole line is the disclosure control. `all: unset` and rebuilt, the
+     way .reset-link and button.col-label already turn a <button> into a piece
+     of text without inheriting a control's chrome. */
+  .cap-summary {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    font-family: inherit;
+    display: flex;
+    width: 100%;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    padding: var(--space-2xs) 0;
+  }
+  .cap-summary:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  /* Kept even though the app's other text-buttons have none: this one is the
+     first thing on the intake and is reached on touch, where there is no hover
+     to confirm the press. Tone-agnostic so it works over all three line inks. */
+  .cap-summary:active {
+    opacity: 0.7;
+  }
+
+  .cap-summary-lines {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+  }
+
+  /* One line per severity rather than a sentence. At 34rem of monospace a
+     sentence naming three capabilities wraps to three lines anyway; a readout
+     says the same thing in less space and scans without being read. */
+  .cap-line {
+    display: block;
+    font-size: 0.78rem;
+    line-height: 1.55;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--color-ink-2);
+  }
+  .cap-line[data-tone="bad"] {
+    color: var(--color-danger);
+  }
+  .cap-line[data-tone="warn"] {
+    color: var(--color-ink);
+  }
+  .cap-line strong {
+    font-weight: 600;
+  }
+
+  .cap-more {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex-shrink: 0;
+    font-size: 0.68rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-accent);
+  }
+  .cap-chevron {
+    width: 0.85rem;
+    height: 0.85rem;
+    transition: transform var(--dur-short) var(--ease-out);
+  }
+  .cap-summary[aria-expanded="true"] .cap-chevron {
+    transform: rotate(180deg);
+  }
+
+  .cap-detail {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    padding: var(--space-2xs) 0 var(--space-xs);
+    border-top: var(--rule-w) solid var(--color-rule);
+  }
+  /* Has to beat the flex display above. The region stays in the DOM while
+     collapsed so `aria-controls` never points at an element that isn't there. */
+  .cap-detail[hidden] {
+    display: none;
+  }
+
+  .cap-rows {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+  .cap-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+  }
+  .cap-row-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+  .cap-name {
+    font-size: 0.74rem;
+    color: var(--color-ink);
+  }
+
+  /* The state word sits in the micro-label register the rest of the app uses
+     for structural marks (.col-label, .history-group), at .history-group's
+     size so this introduces no new smallest type.
+
+     `ok` and `off` (which is what `disabled` renders as) share the muted ink
+     on purpose. An unconfigured optional dependency is not a lesser kind of
+     broken, and a green tick beside it would make it look like one - while a
+     red one would say the deployment is faulty for being shaped the way it was
+     configured to be shaped. */
+  .cap-state {
+    font-size: 0.6rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+  .cap-row[data-tone="warn"] .cap-state {
+    color: var(--color-ink);
+  }
+  .cap-row[data-tone="bad"] .cap-state {
+    color: var(--color-danger);
+  }
+
+  /* "this row was read off configuration, not checked". Outlined and muted, so
+     it reads as a qualifier on the state word beside it rather than as a fifth
+     severity. It is a visible tag and not a `title` tooltip because a caveat
+     you have to hover to find is a caveat that was hidden. */
+  .cap-unverified {
+    font-size: 0.6rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+    padding: 0.05rem 0.3rem;
+    box-shadow: inset 0 0 0 var(--rule-w) var(--color-rule-2);
+  }
+
+  .cap-row-detail {
+    font-size: 0.72rem;
+    line-height: 1.6;
+    color: var(--color-muted);
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .cap-legend {
+    margin: 0;
+    padding-top: var(--space-2xs);
+    border-top: var(--rule-w) solid var(--color-rule);
+    font-size: 0.68rem;
+    line-height: 1.6;
+    color: var(--color-muted);
+  }
+  .cap-legend strong {
+    color: var(--color-ink-2);
+    font-weight: 500;
+  }
+
+  /* ========================================================================
      CONTROLS
      ======================================================================== */
 
@@ -1853,6 +2066,7 @@ h3 {
   .nav-tab,
   .tab,
   .btn,
+  .cap-summary,
   .history-row {
     min-height: 2.75rem;
     /* Both axes, because WCAG 2.5.5 asks for both and — unlike `.text-link` —
@@ -1933,6 +2147,9 @@ h3 {
   }
   .reset-link:hover,
   .disclosure:hover {
+    color: var(--color-focus);
+  }
+  .cap-summary:hover .cap-more {
     color: var(--color-focus);
   }
   .history-row:hover {

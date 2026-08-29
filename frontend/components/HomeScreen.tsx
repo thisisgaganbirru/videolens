@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import AppNav from "@/components/AppNav";
+import CapabilityNotice from "@/components/CapabilityNotice";
 import UploadForm from "@/components/UploadForm";
 import RunStatusView from "@/components/RunStatusView";
 import ResultsView, { SourceCard } from "@/components/ResultsView";
@@ -10,6 +11,7 @@ import ApiKeyPanel from "@/components/panels/ApiKeyPanel";
 import HistoryPanel from "@/components/panels/HistoryPanel";
 import VersionLogPanel from "@/components/panels/VersionLogPanel";
 import { useAnalysisRun } from "@/application/useAnalysisRun";
+import { useCapabilities } from "@/application/useCapabilities";
 import { goToMainTab, useMainTab, type MainTab } from "@/application/useMainTab";
 
 /**
@@ -35,6 +37,14 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
     reset,
     openRun,
   } = useAnalysisRun();
+
+  /* Called here, once, rather than in the three components that consume it.
+     This component is never unmounted by a tab switch (the tabs are a
+     `pushState` query param), so one call is one request per app load; three
+     calls in three conditionally-rendered children would be one request per
+     tab visit. The two contextual notices therefore take props instead of
+     reaching for the hook themselves. */
+  const { notice, urlDownload, dailyBudget } = useCapabilities();
 
   /* An error while the pipeline is on screen can only come from the poll's
      catch — `submit` now stays on idle until the server answers, and `openRun`
@@ -65,7 +75,20 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
             <div className="home-center">
               <div className="intake">
                 <p className="card-label">new analysis</p>
-                <UploadForm onSubmit={submit} submitting={submitting} />
+                {/* Always in the DOM, empty and zero-height when the deployment
+                    is healthy, so the polite live region exists *before* the
+                    report lands and can announce it. A conditionally-rendered
+                    live region announces nothing, and a permanently visible
+                    "all systems operational" strip is chrome that tells the
+                    user nothing they can act on. */}
+                <div className="cap-slot" aria-live="polite">
+                  {notice && <CapabilityNotice report={notice} />}
+                </div>
+                <UploadForm
+                  onSubmit={submit}
+                  submitting={submitting}
+                  urlCapability={urlDownload}
+                />
                 {/* Back at idle with an error means the submit was rejected, or
                     a history row would not open. Either way the control that
                     failed is still on screen — and, since `submit` no longer
@@ -198,7 +221,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
           <p className="col-label">API key</p>
           <div className="surface">
             <div className="pane">
-              <ApiKeyPanel />
+              <ApiKeyPanel budgetCapability={dailyBudget} />
             </div>
           </div>
         </section>

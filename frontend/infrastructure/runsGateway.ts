@@ -1,8 +1,8 @@
 import type { MediaSource, RunCreateResponse, RunListResponse, RunStatusResponse } from "@/domain/entities";
 import { ApiError, NetworkError } from "@/domain/errors";
 import type { ApiKeyStore, RunsGateway } from "@/domain/ports";
+import { API_BASE_URL } from "./apiBase";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 const CLIENT_ID_KEY = "videolens-client-id";
 
 /* The one place in the app that knows the difference between "the server said
