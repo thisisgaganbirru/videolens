@@ -8,6 +8,7 @@ from .entities import (
     AnalysisCompleteness,
     Capability,
     CaptionTrack,
+    ReleaseIndex,
     Run,
     RunStatus,
     SavedUpload,
@@ -156,3 +157,12 @@ class CapabilityProbe(Protocol):
 
     async def check(self) -> Capability: ...
 
+
+class ReleaseCatalog(Protocol):
+    """Where the app's own release history comes from.
+
+    A port because the answer is a GitHub read today and need not stay one:
+    the frontend only needs the index, not the provider.
+    """
+
+    async def fetch(self) -> ReleaseIndex: ...
