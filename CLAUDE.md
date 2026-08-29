@@ -273,8 +273,8 @@ adapter every hook imports from (e.g. one `ApiKeyStore` backing both
 - **`infrastructure/`** — one adapter per external system:
   `runsGateway.ts` (`FetchRunsGateway`, builds `X-Client-ID`/
   `X-Gemini-Api-Key` headers), `apiKeyStore.ts` (`LocalStorageApiKeyStore`),
-  `versionLogGateway.ts` (`GithubVersionLogGateway`), `updateCheck.ts`
-  (`GithubUpdateChecker`, native-Android-only via `@capacitor/app`),
+  `versionLogGateway.ts` (`FetchVersionLogGateway`), `updateCheck.ts`
+  (`ApiUpdateChecker`, native-Android-only via `@capacitor/app`),
   `container.ts`.
 - **`application/`** — one hook per state/orchestration concern:
   `useAnalysisRun.ts` (core state machine: submit/poll/open-from-history/

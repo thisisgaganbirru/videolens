@@ -24,15 +24,6 @@ on:
         required: false
         default: ""
         type: string
-      web_base_url:
-        description: >-
-          Deployed web app origin compiled in as NEXT_PUBLIC_WEB_BASE_URL. The
-          installed app fetches /version.json from here to discover newer
-          builds. Required whenever upload_apk is true; without it the update
-          banner is silently disabled (updateCheck.ts no-ops).
-        required: false
-        default: ""
-        type: string
     outputs:
       version_name:
         description: Application version name read from frontend/package.json
@@ -66,7 +57,6 @@ jobs:
         working-directory: .
         env:
           API_BASE_URL: ${{ inputs.api_base_url }}
-          WEB_BASE_URL: ${{ inputs.web_base_url }}
           UPLOAD_APK: ${{ inputs.upload_apk }}
         run: |
           # Both failures below are silent at runtime, which is why they are
@@ -78,10 +68,6 @@ jobs:
           if [ "$UPLOAD_APK" = "true" ]; then
             test -n "$API_BASE_URL" || {
               echo "api_base_url is required when upload_apk is true: this APK is published to real devices and must know where the backend lives." >&2
-              exit 1
-            }
-            test -n "$WEB_BASE_URL" || {
-              echo "web_base_url is required when upload_apk is true: without it the installed app cannot discover newer builds and the update banner never appears." >&2
               exit 1
             }
           fi
@@ -106,7 +92,6 @@ jobs:
       - run: npm run android:sync
         env:
           NEXT_PUBLIC_API_BASE_URL: ${{ inputs.api_base_url }}
-          NEXT_PUBLIC_WEB_BASE_URL: ${{ inputs.web_base_url }}
       - id: version
         run: |
           name="$(node -p "require('./package.json').version")"

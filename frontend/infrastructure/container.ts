@@ -5,13 +5,13 @@
 import { LocalStorageApiKeyStore } from "./apiKeyStore";
 import { FetchCapabilitiesGateway } from "./capabilitiesGateway";
 import { FetchRunsGateway } from "./runsGateway";
-import { GithubUpdateChecker } from "./updateCheck";
+import { ApiUpdateChecker } from "./updateCheck";
 import { WebShareUrlSource } from "./sharedUrlSource";
-import { StaticVersionLogGateway } from "./versionLogGateway";
+import { FetchVersionLogGateway } from "./versionLogGateway";
 
 export const apiKeyStore = new LocalStorageApiKeyStore();
 export const runsGateway = new FetchRunsGateway(apiKeyStore);
 export const capabilitiesGateway = new FetchCapabilitiesGateway();
-export const versionLogGateway = new StaticVersionLogGateway();
-export const updateChecker = new GithubUpdateChecker();
+export const versionLogGateway = new FetchVersionLogGateway();
+export const updateChecker = new ApiUpdateChecker();
 export const sharedUrlSource = new WebShareUrlSource();
