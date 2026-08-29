@@ -5,6 +5,7 @@ The "Analyze" tab's entry point: paste a public media URL, or drag/drop/browse a
 **Files**
 - `frontend/components/UploadForm.tsx` — the form itself (no dedicated hook; this component's local state is presentational/form-validation only, not app-wide state, so it wasn't pulled into `application/`).
 - `frontend/application/useSharedUrl.ts` — where the share intake went; the form only receives the result. See `share-intake.md`.
+- `frontend/components/CapabilityNotice.tsx` — `CapabilityCallout`, the one-line deployment notice this form renders under the URL row. See `capability-reporting.md`.
 
 **Client-side pre-validation** (backend re-validates authoritatively regardless):
 - File: extension allowlist (`.mp3`/`.mp4`/`.mov`), `MAX_FILE_SIZE_MB` (200), and a best-effort duration check (`readMediaDuration`, via a hidden `<video>`/`<audio>` element's `loadedmetadata` event) against `MAX_DURATION_SECONDS` (180) — wrapped in try/catch since this can fail on some browsers/files, in which case it's silently skipped ("Backend performs authoritative validation").
@@ -12,7 +13,41 @@ The "Analyze" tab's entry point: paste a public media URL, or drag/drop/browse a
 
 **Terms acceptance**: a checkbox, persisted in `localStorage` (`videolens-media-terms-v1`) so it stays checked across sessions once accepted. Required before either submit path is enabled.
 
+**The `url_download` capability notice.** The form takes an optional
+`urlCapability` prop — the deployment's `url_download` row, handed down by
+`HomeScreen` (which fetches the whole report once; see
+`capability-reporting.md` for why the prop rather than a hook here). When that
+row is `degraded` or `unavailable` a single line renders directly beneath the
+URL row and above the `or` divider:
+
+> **URL runs may fail** — yt-dlp 2026.07.04; configured cookie file is missing; login-walled sources will fail
+
+The lead is the frontend's; everything after the dash is the backend's own
+`detail`, verbatim — same rule `HistoryPanel` follows for gateway errors. The
+lead exists because the row's *name* does not survive the move out of the
+capability table: "the cookie file is missing" means nothing beside a URL field
+without it.
+
+Two things about it are deliberate:
+
+- **It warns; it never blocks.** The field stays enabled at every state,
+  including `unavailable`. The probe reads a yt-dlp build date and whether a
+  configured cookie file exists — neither proves the link the user is about to
+  paste will fail, and disabling on that evidence refuses URLs that work.
+- **It is wired as `aria-describedby` on `#media-url`, not announced.** It
+  reaches a screen-reader user when they focus the input, which is when it
+  matters, rather than competing with the intake strip's live-region
+  announcement on load. `describedBy` composes it with the existing
+  `intake-error` id rather than replacing it — a validation error and a
+  deployment notice can both be live at once.
+
 **Native share-target handling**: **not here any more** — see `share-intake.md`. This component used to own the whole path (a mount-time read of `?url=`/`?text=`/`localStorage`, plus a `videolens-share` listener), which broke the moment a link was shared while a result was on screen: this component is mounted only while the run state is idle, so the event reached nobody. It now takes a `sharedUrl` prop (`{ url, receivedAt }`, a fresh object per arrival) and does one thing with it — put the link in the field and clear any error. `HomeScreen` owns the listener and has already reset the run by the time the prop lands.
+
+The two props arrive from the same place for different reasons: `sharedUrl` is
+an *instruction* (fill the field with this), `urlCapability` is a *caveat* (URL
+runs may not work here). Both come from `HomeScreen` because both concern
+something outside this form's mount lifetime — see `share-intake.md` and
+`capability-reporting.md`.
 
 **Layout** (Terminal redesign — see `design-direction-terminal.md`): **no
 surface, no frame, no card.** It sits optically centred in `.home-center`,
@@ -60,8 +95,9 @@ this component's `submitting` prop:
 `useRunHistory`), so a backend that is *down* says "Can't reach the server…"
 instead of "Could not submit media." — the latter is now only the
 genuinely-unknown fallback. A server that answered shows its own `detail`
-verbatim. `HomeScreen` puts the resulting `errorKind` on `data-error-kind`,
-matching `HistoryPanel`.
+verbatim. (The `errorKind` this used to surface as a `data-error-kind`
+attribute was dropped on 2026-08-21 — nothing styled or read it; see
+`../error-messaging.md`.)
 
 ## Where the Analyze tab's errors land
 
@@ -118,6 +154,12 @@ retry button that wasn't there. Split by what the user is actually looking at:
   the `htmlFor`/`id` association is intact and the error is wired via
   `aria-describedby`.
 - Best-effort duration check as documented above.
+- The `url_download` notice appears *below* the analyze button rather than
+  above the field. Above would put it between the `new analysis` label and the
+  input, which reads as a heading for the form; below keeps it attached to the
+  control it qualifies, at the cost of being read after the field on a purely
+  visual scan. The `aria-describedby` wiring is what makes that safe
+  non-visually.
 
 **Tests**: none (see `run-analysis-hook.md`). The intake's failure paths have now
 been exercised in a real browser (Playwright/Chromium against `next start`, all
@@ -135,3 +177,5 @@ unchanged. Touch targets measured with `getBoundingClientRect`: `analyze url`
 - 2026-08-15 · frontend agent (error block weight) · split HomeScreen's one error branch in two — idle demoted to an inline note in UploadForm's own error slot, poll-death promoted to a full .error-block with a start-over button inside it; requested an `.error-note` class
 - 2026-08-15 · frontend agent (run lifecycle errors) · adopted `.error-note` (dropped the inlined duplicate), stopped `submit` transitioning before the 202 so a failed submit keeps the typed URL, added a scoped `sending…` busy state with a ref-guarded double-submit block, and routed submit/open errors through the shared `classifyGatewayError`
 - 2026-08-21 · main session · handed the share intake to HomeScreen/useSharedUrl; this component now just takes a `sharedUrl` prop
+- 2026-08-29 · frontend agent · added the optional `urlCapability` prop and the `url_download` callout under the URL row (warns, never blocks; wired as `aria-describedby` alongside `intake-error`) — see `capability-reporting.md`
+- 2026-08-29 · frontend agent · reconciled the capability strip and caption-only note against the dev-side results-view restructure

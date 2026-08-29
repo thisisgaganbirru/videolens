@@ -16,7 +16,41 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { ScreenTextSegment, SourceMetadata, TranscriptSegment, VideoAnalysis } from "@/domain/entities";
+import type {
+  AnalysisCompleteness,
+  ScreenTextSegment,
+  SourceMetadata,
+  TranscriptSegment,
+  VideoAnalysis,
+} from "@/domain/entities";
+
+/* ---- caption-only runs ----
+   When every download route for a URL fails, the backend salvages the run by
+   analyzing the subtitle track instead. The result then looks like any other
+   successful analysis with an empty on-screen-text section — and a reader who
+   sees a transcript and no screen text concludes the video had none. It had no
+   frames at all. Two corrections, and only two:
+
+     1. one line under the title band, where the impression of the result
+        forms;
+     2. the on-screen-text empty state, which is the exact place the false
+        inference happens.
+
+   The transcript tab deliberately gets nothing of its own. The line above is
+   in the pane header, outside the scroller, so it is still on screen while the
+   transcript is read; a second copy there would be the same sentence twice.
+
+   Both strings are shared with the downloadable report, because the report is
+   the copy that outlives the session. */
+const CAPTIONS_ONLY_LEAD = "Caption track only.";
+/* Second sentence names *the transcript* rather than warning about captions in
+   the abstract: the transcript is the thing a reader quotes, and naming it here
+   is what lets the transcript tab stay unannotated. */
+const CAPTIONS_ONLY_BODY =
+  "The video could not be downloaded, so this analysis read its captions and never saw a frame. Auto-generated captions mishear words, so the transcript is approximate.";
+const CAPTIONS_ONLY_NO_SCREEN_TEXT =
+  "No frames were analyzed — this run read the caption track only, so on-screen text was never looked for.";
+const FULL_NO_SCREEN_TEXT = "No on-screen text was detected.";
 
 // Order is the reading order we want people to take: the shortest read first,
 // then the full notes, then the two raw sources behind them.
@@ -109,8 +143,21 @@ function timelineMarkdown(segments: TimelineSegment[], fallback: string, emptyMe
     .join("\n\n");
 }
 
-function buildMarkdownReport(result: VideoAnalysis, sourceMetadata?: SourceMetadata | null) {
+function buildMarkdownReport(
+  result: VideoAnalysis,
+  sourceMetadata?: SourceMetadata | null,
+  completeness: AnalysisCompleteness = "full",
+) {
+  const captionsOnly = completeness === "captions_only";
   const sections = [`# ${singleLine(result.title)}`];
+
+  /* Directly under the title, for the same reason the on-screen note sits
+     beside it: the file is read top-down and this qualifies everything below
+     it. Leaving it out would export the exact false claim the UI now corrects,
+     into the copy the user keeps. */
+  if (captionsOnly) {
+    sections.push(`> **${CAPTIONS_ONLY_LEAD}** ${CAPTIONS_ONLY_BODY}`);
+  }
 
   if (sourceMetadata) {
     const sourceDetails = [
@@ -147,20 +194,26 @@ function buildMarkdownReport(result: VideoAnalysis, sourceMetadata?: SourceMetad
     `## On-screen Text\n\n${timelineMarkdown(
       result.screen_text_segments ?? [],
       result.screen_text,
-      "No on-screen text was detected.",
+      captionsOnly ? CAPTIONS_ONLY_NO_SCREEN_TEXT : FULL_NO_SCREEN_TEXT,
     )}`,
   );
 
   return `${sections.join("\n\n")}\n`;
 }
 
-function downloadMarkdown(result: VideoAnalysis, sourceMetadata?: SourceMetadata | null) {
+function downloadMarkdown(
+  result: VideoAnalysis,
+  sourceMetadata?: SourceMetadata | null,
+  completeness: AnalysisCompleteness = "full",
+) {
   const filename = `${result.title || "videolens-notes"}`
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
 
-  const blob = new Blob([buildMarkdownReport(result, sourceMetadata)], { type: "text/markdown;charset=utf-8" });
+  const blob = new Blob([buildMarkdownReport(result, sourceMetadata, completeness)], {
+    type: "text/markdown;charset=utf-8",
+  });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -331,10 +384,13 @@ export function SourceCard({ metadata }: { metadata: SourceMetadata }) {
 export default function ResultsView({
   result,
   sourceMetadata,
+  completeness = "full",
 }: {
   result: VideoAnalysis;
   sourceMetadata?: SourceMetadata | null;
+  completeness?: AnalysisCompleteness;
 }) {
+  const captionsOnly = completeness === "captions_only";
   const [active, setActive] = useState<TabKey>("summary");
   const [copied, setCopied] = useState(false);
   const [canShare, setCanShare] = useState(false);
@@ -398,6 +454,26 @@ export default function ResultsView({
           )}
         </div>
       </div>
+
+      {/* A sibling of `.result-head`, above `.tab-list`, on purpose: it
+          qualifies all four panels, so it belongs to the pane's fixed header
+          rather than to any one of them, and in the `fixed` frame that header
+          is the part that does not scroll away. It stays *outside* the title
+          band rather than inside it — that band is a two-column row (title
+          left, copy/share right), and a full-width note has no column there. Nothing renders at all on a `full` run — the
+          normal path must be pixel-identical to before, the same restraint the
+          capability strip applies when the deployment is healthy.
+
+          A plain <p>, not role="alert" and not a live region: the run
+          succeeded. This is a qualifier arriving with brand-new content the
+          user has just navigated to, and read in order it lands right after
+          the title — announcing it as an error would be both wrong and louder
+          than the fact deserves. */}
+      {captionsOnly && (
+        <p className="completeness-note">
+          <strong>{CAPTIONS_ONLY_LEAD}</strong> {CAPTIONS_ONLY_BODY}
+        </p>
+      )}
 
       <div className="tab-list" role="tablist" aria-label="Analysis results">
         {TABS.map((tab) => (
@@ -553,17 +629,26 @@ export default function ResultsView({
           id="result-panel-screen_text"
           aria-labelledby="result-tab-screen_text"
         >
+          {/* The one place the caption-only run actively lies if left alone:
+              an empty section under a tab called "On-Screen" reads as "the
+              video had none". `screen_text` is empty here because the caption
+              instruction forbids describing visuals the model cannot see, not
+              because anything was searched and came up empty. */}
           <TimelineView
             segments={result.screen_text_segments || []}
             fallback={result.screen_text}
-            emptyMessage="No on-screen text was detected."
+            emptyMessage={captionsOnly ? CAPTIONS_ONLY_NO_SCREEN_TEXT : FULL_NO_SCREEN_TEXT}
             label="Timestamped on-screen text"
             marker="on-screen"
           />
         </div>
 
         <div className="actions">
-          <button type="button" onClick={() => downloadMarkdown(result, sourceMetadata)} className="btn btn-secondary">
+          <button
+            type="button"
+            onClick={() => downloadMarkdown(result, sourceMetadata, completeness)}
+            className="btn btn-secondary"
+          >
             download report (.md)
           </button>
         </div>

@@ -4,7 +4,7 @@ The one-viewport frame every tab renders inside, in the Terminal design
 direction (see `design-direction-terminal.md` for what's locked and why).
 
 **Files**
-- `frontend/components/HomeScreen.tsx` — the shell for one tab: nav band, active view, footer band. Takes the tab as a prop; `RoutedHomeScreen` (same file) is the variant that reads it from the URL.
+- `frontend/components/HomeScreen.tsx` — the shell for one tab: nav band, active view, footer band. Takes the tab as a prop; `RoutedHomeScreen` (same file) is the variant that reads it from the URL. Also the single caller of `useCapabilities()` — see `capability-reporting.md`.
 - `frontend/components/AppNav.tsx` — the whole nav band as one component: brand, the four tab links, the mobile drawer, the theme toggle. Rendered by `HomeScreen` **and** `LegalShell`.
 - `frontend/application/useMainTab.ts` — the tab as a property of the URL: `MAIN_TABS`, `mainTabHref`, `goToMainTab`, `useMainTab`.
 - `frontend/app/page.tsx` — the `<Suspense>` boundary `useSearchParams` requires on a statically rendered route.
@@ -261,6 +261,14 @@ every nav in the app. Do not collapse this back into one rule.
   visits, two fetches. Unchanged by the routing work — the panels were and are
   conditionally rendered, so they unmount on tab change either way. Fixing it
   means caching in `useRunHistory` or keeping every panel mounted.
+- **The shell is what makes `useCapabilities()` a single fetch.** `HomeScreen`
+  is not unmounted by a tab switch (the tabs are a `pushState` query param), so
+  its `useEffect([])` runs once per app *load*, not once per tab visit. That is
+  why `UploadForm` and `ApiKeyPanel` take capability rows as props instead of
+  calling the hook themselves — both are conditionally rendered, so a hook in
+  either would refetch on every visit, the same way `useRunHistory` does. If a
+  future change ever makes the shell remount per tab, that assumption breaks
+  silently and the report starts refetching.
 - `.label-count` exists in `globals.css` but has no caller — the mockup's
   "6 runs" counter. Wiring it needs the run count in `HomeScreen`, which today
   means either a second uncached `useRunHistory` fetch or lifting the hook and
@@ -296,5 +304,6 @@ back/forward was measured and the Capacitor mapping is read from
 - 2026-08-15 · frontend agent (pipeline review) · wired --radius-pill (was a dead 2px token against three hard-coded 999px), added --measure, dropped dead --font-mono and the dead .pull rule the sweep missed, made the wordmark glyph survive Safari <17.4 via @supports; logged the aspirational --z-* scale and the brittle tab-alignment selector as known gaps
 - 2026-08-15 · frontend agent (offline chrome) · deleted .page-shell and --content-width once /offline moved onto .shell (last callers); renamed .legal-title → .page-title as it now serves offline too; recorded --safe-top as an intentionally unwired token. Shell/nav/footer geometry unchanged — see legal-offline-routes.md
 - 2026-08-15 · frontend agent (url tabs + light default) · moved the active tab into the URL (`/?view=…`) via application/useMainTab.ts + a Suspense boundary in app/page.tsx; extracted the whole nav band into components/AppNav.tsx so LegalShell renders the same four tabs (measured identical to `/` at 1440x900 and 390x844); `.nav-links > button` → `.nav-tab` and the tab-alignment selector → `.tab-view`; `data-menu-open` moved from `.shell` to `.nav-wrap`; first visit with nothing stored now defaults to LIGHT and the theme-color meta follows the theme instead of prefers-color-scheme
+- 2026-08-29 · frontend agent · `HomeScreen` now calls `useCapabilities()` once and owns the always-present `.cap-slot` live region inside `.intake`; the slot is zero-height and carries no CSS on a healthy deployment, so the idle Analyze layout is unchanged (measured identical). New `.cap-*` block in globals.css sits after `.error-inline`
 - 2026-08-15 · doc-accuracy agent · marked two Known issues fixed against live code: `/offline` now renders `<AppNav activeTab={null} />` (was brand-only), and `.page-end`'s negative `margin-bottom` closes the 16px flow-vs-fixed footer gap at 390px (was open) — both cross-checked against `legal-offline-routes.md`, which had already recorded the fixes and flagged this doc as stale
 - 2026-08-16 · main session · wired `--safe-top` into `.nav-wrap`'s `padding-top` after a user screenshot on a physical Android device (`build8`) showed the nav pill sitting flush against the status bar; not caught by the earlier Playwright emulation pass since Chromium doesn't produce a nonzero `env(safe-area-inset-top)`. Not re-verified on device by this agent — only reasoned from the same `max()` pattern already used for the other three safe-area sides

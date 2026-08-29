@@ -8,7 +8,7 @@
 # path near the bottom of this file, which hardcodes the same minor. The digest
 # has to be a literal here and cannot move into .python-version: it is a content
 # hash, not something derivable from a version string.
-ARG PYTHON_IMAGE=python:3.13-slim@sha256:ffb752e139c0a19692a43af8d8523b274222dd68eebad5d583b45c2201c6e30a
+ARG PYTHON_IMAGE=python:3.13-slim@sha256:7ce4b6dfe35e55397b7cda544f8a13f191b7ae28dc5aad71fe664dbc9bc2623f
 
 FROM ${PYTHON_IMAGE} AS wheels
 
@@ -32,7 +32,15 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONUNBUFFERED=1 \
     TEMP_DIR=/tmp/videolens
 
+# `apt-get upgrade` on top of a digest-pinned base looks redundant, and for
+# most packages it is. It is here because Debian publishes a security fix to
+# the archive days before the python:3.13-slim image is rebuilt to include it,
+# and the container scan gates on fixable highs - so the image is reproducibly
+# pinned to a base that is reproducibly out of date. Upgrading closes that
+# window without unpinning anything: the base digest still fixes the starting
+# point, this only pulls forward packages Debian has already fixed.
 RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends ffmpeg \
     && groupadd --gid 10001 videolens \
     && useradd --uid 10001 --gid 10001 --no-log-init --create-home videolens
