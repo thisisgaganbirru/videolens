@@ -96,6 +96,11 @@ class Capability(BaseModel):
     state: CapabilityState
     detail: str
     probed: bool
+    # Operator-only half, excluded from serialization: this report is served
+    # unauthenticated, so component versions, deployment topology and live
+    # quota counts must not travel with it. Same split as
+    # `UserFacingError.log_detail`, for the same reason.
+    log_detail: Optional[str] = Field(default=None, exclude=True)
 
 
 class CapabilityReport(BaseModel):

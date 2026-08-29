@@ -41,19 +41,28 @@ class MediaToolsProbe:
                 path = await asyncio.to_thread(_media_binary, self._settings, binary)
             except Exception as exc:  # noqa: BLE001 - message is already caller-safe
                 return Capability(
-                    name=self.name, state=CapabilityState.UNAVAILABLE, detail=str(exc), probed=True
+                    name=self.name,
+                    state=CapabilityState.UNAVAILABLE,
+                    detail="Media processing is unavailable.",
+                    probed=True,
+                    log_detail=str(exc),
                 )
             version = await self._version_of(path)
             if version is None:
                 return Capability(
                     name=self.name,
                     state=CapabilityState.UNAVAILABLE,
-                    detail=f"{binary} was found at {path} but did not run.",
+                    detail="Media processing is unavailable.",
                     probed=True,
+                    log_detail=f"{binary} was found at {path} but did not run.",
                 )
             versions.append(f"{binary} {version}")
         return Capability(
-            name=self.name, state=CapabilityState.OK, detail=", ".join(versions), probed=True
+            name=self.name,
+            state=CapabilityState.OK,
+            detail="Media processing is available.",
+            probed=True,
+            log_detail=", ".join(versions),
         )
 
     @staticmethod
@@ -93,22 +102,25 @@ class RunStoreProbe:
             return Capability(
                 name=self.name,
                 state=CapabilityState.OK,
-                detail=(
-                    "In-process store. Runs are lost on restart and are not shared "
-                    "across replicas."
-                ),
+                detail="Runs are not saved and will be lost if the server restarts.",
                 probed=False,
+                log_detail="in-process store; not durable, not shared across replicas",
             )
         reachable = await self._runs.ping()
         if not reachable:
             return Capability(
                 name=self.name,
                 state=CapabilityState.UNAVAILABLE,
-                detail="Redis did not respond to a ping.",
+                detail="Runs cannot be saved right now.",
                 probed=True,
+                log_detail="redis did not respond to a ping",
             )
         return Capability(
-            name=self.name, state=CapabilityState.OK, detail="Redis reachable.", probed=True
+            name=self.name,
+            state=CapabilityState.OK,
+            detail="Runs are being saved.",
+            probed=True,
+            log_detail="redis reachable",
         )
 
 
@@ -129,8 +141,9 @@ class ObjectStoreProbe:
             return Capability(
                 name=self.name,
                 state=CapabilityState.DISABLED,
-                detail="Not configured. Uploads stay on local disk and are processed in-process.",
+                detail="Uploads are handled without external storage.",
                 probed=False,
+                log_detail="object storage not configured; uploads stay on local disk",
             )
         try:
             await self._storage.check_bucket()
@@ -138,11 +151,16 @@ class ObjectStoreProbe:
             return Capability(
                 name=self.name,
                 state=CapabilityState.UNAVAILABLE,
-                detail="The configured bucket could not be reached. See server logs.",
+                detail="Upload storage is unreachable.",
                 probed=True,
+                log_detail="head_bucket failed; see the logged exception",
             )
         return Capability(
-            name=self.name, state=CapabilityState.OK, detail="Bucket reachable.", probed=True
+            name=self.name,
+            state=CapabilityState.OK,
+            detail="Upload storage is available.",
+            probed=True,
+            log_detail="bucket reachable",
         )
 
 
@@ -171,39 +189,50 @@ class UrlDownloadProbe:
                 probed=True,
             )
 
-        notes = [f"yt-dlp {ytdlp_version}"]
+        notes: list[str] = []
+        operator_notes = [f"yt-dlp {ytdlp_version}"]
         state = CapabilityState.OK
 
         age_days = self._release_age_days(ytdlp_version)
         if age_days is not None and age_days > _YTDLP_STALE_AFTER_DAYS:
             state = CapabilityState.DEGRADED
-            notes.append(
+            operator_notes.append(
                 f"released {age_days} days ago; extractors for major sites are likely stale"
             )
+            notes.append("Link downloads may fail on major sites.")
 
         cookie_file = self._settings.ytdlp_cookies_file.strip()
         browser = self._settings.ytdlp_cookies_from_browser.strip()
         if cookie_file and browser:
-            notes.append("two conflicting cookie sources are configured")
+            operator_notes.append("two conflicting cookie sources are configured")
             return Capability(
                 name=self.name,
                 state=CapabilityState.DEGRADED,
-                detail="; ".join(notes),
+                detail="Links behind a login will fail.",
                 probed=True,
+                log_detail="; ".join(operator_notes),
             )
         if cookie_file:
             resolved = os.path.abspath(os.path.expanduser(cookie_file))
             if os.path.isfile(resolved):
-                notes.append("cookie file present")
+                operator_notes.append("cookie file present")
             else:
                 state = CapabilityState.DEGRADED
-                notes.append("configured cookie file is missing; login-walled sources will fail")
+                operator_notes.append("configured cookie file is missing")
+                notes.append("Links behind a login will fail.")
         elif browser:
-            notes.append(f"cookies from browser: {browser}")
+            operator_notes.append(f"cookies from browser: {browser}")
         else:
-            notes.append("no cookies configured; login-walled sources will fail")
+            operator_notes.append("no cookies configured")
+            notes.append("Links behind a login will fail.")
 
-        return Capability(name=self.name, state=state, detail="; ".join(notes), probed=True)
+        return Capability(
+            name=self.name,
+            state=state,
+            detail=" ".join(notes) or "Link downloads are available.",
+            probed=True,
+            log_detail="; ".join(operator_notes),
+        )
 
     def _release_age_days(self, version: str) -> int | None:
         """yt-dlp versions are YYYY.MM.DD. Anything else is not aged."""
@@ -232,20 +261,19 @@ class AnalysisEngineProbe:
             return Capability(
                 name=self.name,
                 state=CapabilityState.OK,
-                detail=(
-                    f"Shared key configured for {model}. Not verified - validating it "
-                    "would spend quota."
-                ),
+                detail="Analysis is configured. Not verified - checking would spend quota.",
                 probed=False,
+                log_detail=f"shared key configured for {model}; not probed",
             )
         return Capability(
             name=self.name,
             state=CapabilityState.DEGRADED,
             detail=(
-                f"No shared key configured for {model}. Callers who bring their own key "
+                "No shared analysis key is configured. Callers who bring their own key "
                 "still work; everyone else fails at analysis."
             ),
             probed=False,
+            log_detail=f"no shared key configured for {model}",
         )
 
 
@@ -281,6 +309,7 @@ class DailyBudgetProbe:
         return Capability(
             name=self.name,
             state=CapabilityState.OK,
-            detail=f"{remaining} shared runs remaining today.",
+            detail="Shared runs are available today.",
             probed=True,
+            log_detail=f"{remaining} shared runs remaining today",
         )
