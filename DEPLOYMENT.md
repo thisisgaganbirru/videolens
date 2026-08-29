@@ -151,9 +151,13 @@ in Railway's variable store, never here):
   project. Workspace-level spend limit: soft $15 / hard $25.
 - **Project**: `videolens` (`7ad439b2-a26e-4e54-9233-f2c54afdece5`),
   `isPublic: false`, `prDeploys: false`.
-- **Environments**: `production` (empty, not yet built out) and `dev`
-  (`35fc5dbc-478a-4ebc-9ca8-ea5a75a9b267`) — the active test environment,
-  linked locally via `railway status`.
+- **Environments**: `dev` (`35fc5dbc-478a-4ebc-9ca8-ea5a75a9b267`), the
+  active test environment linked locally via `railway status`, and
+  `production` (`e30dcf31-667e-43e1-b8c2-94882b8a9716`), created 2026-08-29
+  by forking `dev`. `dev` tracks branch `dev`; `production` tracks `main`.
+  Both have autodeploy and **Wait for CI** enabled — see
+  `docs/railway-environments.md` for the trigger semantics and the three ways
+  a deploy silently does not happen.
 - **`dev` services**, each source-wired to `thisisgaganbirru/videolens`
   branch `dev`, `deploy.sleepApplication: true` (scale to zero when idle):
   - `videolens-backend` — `/backend` — `https://videolens-backend-dev.up.railway.app`
@@ -162,9 +166,17 @@ in Railway's variable store, never here):
   - `videolens-frontend` — `/frontend` — `https://videolens-frontend-dev.up.railway.app`
   - `Redis` — managed, wired via `${{Redis.REDIS_URL}}`, private network only
   - `videolens-dev-media` — S3-compatible bucket, region `iad`
-- **Status (verified 2026-08-15)**: the dev worker and Redis are running; the
-  HTTP services may sleep when idle. The `production` environment exists but
-  has no service instances and must not be treated as deployed.
+- **`production` services**: the same four, forked from `dev` with variables
+  carried over, then corrected where they named the environment —
+  `NEXT_PUBLIC_API_BASE_URL` (frontend) and `ALLOWED_ORIGINS` (backend) both
+  now point at the production URLs:
+  - `videolens-backend` — `https://videolens-backend-production.up.railway.app`
+  - `videolens-frontend` — `https://videolens-frontend-production.up.railway.app`
+  - `videolens-worker`, `Redis` — as in `dev`
+- **Status (verified 2026-08-29)**: both environments are deployed and
+  healthy. The production backend serves `/api/health` 200 and reports
+  `mode: distributed` with every capability `ok`. HTTP services sleep when
+  idle and wake on request.
 
 ### Environment-specific automation
 
@@ -175,9 +187,13 @@ has its own Android debug-release workflow. The `main` branch publishes signed
 production images only after the protected GitHub `production` environment
 allows it and `PRODUCTION_API_BASE_URL` is configured.
 
-No GitHub workflow deploys Railway production yet because there are no
-production service instances to target. See `docs/container-workflows.md` for
-the source files, tags, gates, and operator setup.
+No GitHub workflow deploys Railway at all, in either environment, and that is
+by design: Railway builds from the repository itself and the published images
+are an archive. `Wait for CI` is what ties them together — Railway holds a
+push-triggered deploy until every workflow on that commit succeeds, so a
+commit failing the container scan never reaches a running service. See
+`docs/railway-environments.md` for the topology and `docs/container-workflows.md`
+for the source files, tags, gates, and operator setup.
 
 ### Backend & Worker Variables
 
