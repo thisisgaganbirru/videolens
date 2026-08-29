@@ -36,6 +36,7 @@ class ProcessRunUseCase:
         gemini_api_key: str | None = None,
     ) -> None:
         await self._runs.set_status(run_id, RunStatus.PROCESSING)
+        metadata = None
         try:
             if source_key:
                 run_dir = self._media.create_run_dir(run_id)
@@ -49,7 +50,8 @@ class ProcessRunUseCase:
                 saved_path = downloaded.path
                 run_dir = downloaded.run_dir
                 if downloaded.metadata is not None:
-                    await self._runs.set_source_metadata(run_id, downloaded.metadata)
+                    metadata = downloaded.metadata
+                    await self._runs.set_source_metadata(run_id, metadata)
                 await self._media.enforce_duration_cap(run_id, saved_path)
 
             if not saved_path or not run_dir:
@@ -61,8 +63,15 @@ class ProcessRunUseCase:
             async def on_stage(stage: str) -> None:
                 await self._runs.set_stage(run_id, stage)
 
+            # The publisher's own title/caption/stats are context the pixels do
+            # not carry - names, jargon, and spellings the audio only says out
+            # loud. Only URL runs have it; uploads pass None and the engine
+            # falls back to analyzing the media alone.
             result = await self._analysis.analyze_with_retry(
-                normalized_path, on_stage=on_stage, api_key=gemini_api_key
+                normalized_path,
+                on_stage=on_stage,
+                api_key=gemini_api_key,
+                metadata=metadata,
             )
             await self._runs.set_result(run_id, result)
         except MediaValidationError as exc:

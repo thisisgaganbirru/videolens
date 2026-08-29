@@ -64,6 +64,7 @@ class AnalysisEngine(Protocol):
         video_path: str,
         on_stage: Optional[StageCallback] = None,
         api_key: str | None = None,
+        metadata: Optional[SourceMetadata] = None,
     ) -> VideoAnalysis: ...
 
 
