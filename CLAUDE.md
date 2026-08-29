@@ -78,12 +78,36 @@ a competing instruction source alongside this file. Next emits both files
 together, so disabling generation is the only way to suppress just that one.
 Agent instructions for this repo live here, in the root `CLAUDE.md`, only.
 
-`npm run lint` is currently **broken and has been for a while** — Next 16
-removed `next lint`, so the script resolves `lint` as a directory
-(`no such directory: frontend/lint`). Unrelated to any recent change; the fix is
-`npx @next/codemod@latest next-lint-to-eslint-cli`. CI does not run it (the
-frontend job is `tsc --noEmit` + `build` + `build:mobile`), so this is not
-gating anything today.
+`npm run lint` **works again** as of 2026-08-29. It was broken for a long
+while — Next 16 removed `next lint`, so the script resolved `lint` as a
+directory (`no such directory: frontend/lint`) — and was repaired by running
+`npx @next/codemod@latest next-lint-to-eslint-cli`, which rewrote the script to
+`eslint .`, added `eslint` + `eslint-config-next` as devDependencies, and
+created `frontend/eslint.config.mjs`.
+
+Two things about that config are hand-written and load-bearing:
+
+- **`android/**` is ignored.** The codemod's default ignores miss it, and the
+  Capacitor native project holds 80 `.js` files — Gradle intermediates plus the
+  web bundle `cap sync` copies into `app/src/main/assets/public/`. None of it is
+  hand-written. Without the ignore, `eslint .` reports ~8,940 problems, of which
+  7 are in code anyone here writes. `public/sw.js` is ignored for the same
+  reason (generated from `sw/sw.template.js` on every build, and gitignored).
+- **`@next/next/no-html-link-for-pages` is off for `app/offline/**` only.** That
+  page is served from the service-worker cache with the network down, where a
+  client-side RSC navigation cannot resolve, so its links are plain `<a>` on
+  purpose — see `docs/frontend/legal-offline-routes.md`. The rule stays on
+  everywhere else.
+
+`npm run lint` currently **exits 1** with 5 errors and 1 warning, all
+pre-existing: five `react-hooks/set-state-in-effect` (`useGeminiApiKey.ts`,
+`ResultsView.tsx` ×2, `UploadForm.tsx` ×2) and one `@next/next/no-img-element`
+(`ResultsView.tsx`). Most of the five are the read-`localStorage`-after-hydration
+pattern this app needs to avoid a hydration mismatch on a static export; they
+were deliberately **not** "fixed", because silencing the rule or rewriting the
+effects is a behavioural decision for the owner, not lint tidying. CI still does
+not run it (the frontend job is `tsc --noEmit` + `build` + `build:mobile`), so
+this is not gating anything today.
 
 ### Android (`cd frontend`)
 
