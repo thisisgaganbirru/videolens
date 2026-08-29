@@ -8,7 +8,7 @@
 # path near the bottom of this file, which hardcodes the same minor. The digest
 # has to be a literal here and cannot move into .python-version: it is a content
 # hash, not something derivable from a version string.
-ARG PYTHON_IMAGE=python:3.13-slim@sha256:ffb752e139c0a19692a43af8d8523b274222dd68eebad5d583b45c2201c6e30a
+ARG PYTHON_IMAGE=python:3.13-slim@sha256:7ce4b6dfe35e55397b7cda544f8a13f191b7ae28dc5aad71fe664dbc9bc2623f
 
 FROM ${PYTHON_IMAGE} AS wheels
 
