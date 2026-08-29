@@ -51,7 +51,7 @@ class RunStoreProbeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(capability.state, CapabilityState.OK)
         self.assertFalse(capability.probed)
-        self.assertIn("lost on restart", capability.detail)
+        self.assertIn("lost if the server restarts", capability.detail)
         # ping() returns True unconditionally in local mode, so calling it
         # would have produced a green light that proves nothing.
         self.assertEqual(runs.pings, 0)
@@ -104,21 +104,25 @@ class UrlDownloadProbeTests(unittest.IsolatedAsyncioTestCase):
     async def test_reports_the_ytdlp_version(self) -> None:
         capability = await UrlDownloadProbe(self._settings()).check()
 
-        self.assertIn("yt-dlp", capability.detail)
+        # The build string is operator detail and must not be in the response.
+        self.assertNotIn("yt-dlp", capability.detail)
+        self.assertIn("yt-dlp", capability.log_detail)
         self.assertTrue(capability.probed)
 
     async def test_no_cookies_configured_is_still_ok_but_says_so(self) -> None:
         capability = await UrlDownloadProbe(self._settings(), today=date(2000, 1, 1)).check()
 
         self.assertEqual(capability.state, CapabilityState.OK)
-        self.assertIn("no cookies configured", capability.detail)
+        self.assertIn("behind a login will fail", capability.detail)
+        self.assertIn("no cookies configured", capability.log_detail)
 
     async def test_a_missing_cookie_file_degrades_the_capability(self) -> None:
         settings = self._settings(ytdlp_cookies_file="/nope/cookies.txt")
         capability = await UrlDownloadProbe(settings, today=date(2000, 1, 1)).check()
 
         self.assertEqual(capability.state, CapabilityState.DEGRADED)
-        self.assertIn("missing", capability.detail)
+        self.assertIn("behind a login will fail", capability.detail)
+        self.assertIn("missing", capability.log_detail)
 
     async def test_a_present_cookie_file_is_ok(self) -> None:
         with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as handle:
@@ -129,7 +133,7 @@ class UrlDownloadProbeTests(unittest.IsolatedAsyncioTestCase):
             capability = await UrlDownloadProbe(settings, today=date(2000, 1, 1)).check()
 
             self.assertEqual(capability.state, CapabilityState.OK)
-            self.assertIn("cookie file present", capability.detail)
+            self.assertIn("cookie file present", capability.log_detail)
         finally:
             os.unlink(path)
 
@@ -140,16 +144,17 @@ class UrlDownloadProbeTests(unittest.IsolatedAsyncioTestCase):
         capability = await UrlDownloadProbe(settings, today=date(2000, 1, 1)).check()
 
         self.assertEqual(capability.state, CapabilityState.DEGRADED)
-        self.assertIn("conflicting cookie sources", capability.detail)
-        # The variable names are operator config and must not reach a screen.
+        self.assertIn("conflicting cookie sources", capability.log_detail)
+        # Operator config must never reach a screen.
         self.assertNotIn("YTDLP", capability.detail)
+        self.assertNotIn("cookie", capability.detail.lower())
 
     async def test_a_stale_ytdlp_build_degrades_the_capability(self) -> None:
         # Far-future "today" makes whatever version is installed look ancient.
         capability = await UrlDownloadProbe(self._settings(), today=date(2099, 1, 1)).check()
 
         self.assertEqual(capability.state, CapabilityState.DEGRADED)
-        self.assertIn("stale", capability.detail)
+        self.assertIn("stale", capability.log_detail)
 
 
 class AnalysisEngineProbeTests(unittest.IsolatedAsyncioTestCase):
@@ -161,6 +166,7 @@ class AnalysisEngineProbeTests(unittest.IsolatedAsyncioTestCase):
         # claim to have checked it.
         self.assertFalse(capability.probed)
         self.assertIn("Not verified", capability.detail)
+        self.assertNotIn("gemini", capability.detail.lower())
 
     async def test_a_missing_key_is_degraded_because_byok_still_works(self) -> None:
         capability = await AnalysisEngineProbe(Settings(gemini_api_key="")).check()
@@ -180,7 +186,10 @@ class DailyBudgetProbeTests(unittest.IsolatedAsyncioTestCase):
         capability = await DailyBudgetProbe(FakeSpendCap(17)).check()
 
         self.assertEqual(capability.state, CapabilityState.OK)
-        self.assertIn("17", capability.detail)
+        # The live count is a cost-exhaustion oracle - it tells an attacker
+        # exactly how much budget is left to burn. Log only.
+        self.assertNotIn("17", capability.detail)
+        self.assertIn("17", capability.log_detail)
 
     async def test_an_exhausted_budget_is_unavailable(self) -> None:
         capability = await DailyBudgetProbe(FakeSpendCap(0)).check()
