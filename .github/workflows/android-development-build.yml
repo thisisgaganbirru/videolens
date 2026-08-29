@@ -3,6 +3,16 @@ name: Android development build
 on:
   push:
     branches: [dev]
+    paths-ignore:
+      # The release job commits these two files back to `dev` after every
+      # build. Ignoring them here is what replaces the old `[skip ci]` marker:
+      # it stops the manifest commit re-triggering this workflow (the infinite
+      # build loop the marker existed to prevent) while still letting the
+      # commit receive check runs. `[skip ci]` suppressed *every* workflow, so
+      # the new head of `dev` had no checks at all - and `main` requires checks
+      # on the head, which made a `dev` -> `main` PR permanently unmergeable.
+      - frontend/public/releases.json
+      - frontend/public/version.json
   workflow_dispatch:
 
 permissions:
@@ -123,7 +133,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add frontend/public/releases.json frontend/public/version.json
-          git commit -m "Update release manifest for v${{ needs.android.outputs.version_name }} build ${{ github.run_number }} [skip ci]"
+          git commit -m "Update release manifest for v${{ needs.android.outputs.version_name }} build ${{ github.run_number }}"
           for attempt in 1 2 3; do
             if git push origin HEAD:dev; then
               exit 0
