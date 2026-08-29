@@ -184,7 +184,7 @@ class UrlDownloadProbe:
         cookie_file = self._settings.ytdlp_cookies_file.strip()
         browser = self._settings.ytdlp_cookies_from_browser.strip()
         if cookie_file and browser:
-            notes.append("both YTDLP_COOKIES_FILE and YTDLP_COOKIES_FROM_BROWSER are set")
+            notes.append("two conflicting cookie sources are configured")
             return Capability(
                 name=self.name,
                 state=CapabilityState.DEGRADED,
@@ -242,8 +242,8 @@ class AnalysisEngineProbe:
             name=self.name,
             state=CapabilityState.DEGRADED,
             detail=(
-                f"No shared key configured for {model}. Callers supplying their own key "
-                "(X-Gemini-Api-Key) still work; everyone else fails at analysis."
+                f"No shared key configured for {model}. Callers who bring their own key "
+                "still work; everyone else fails at analysis."
             ),
             probed=False,
         )

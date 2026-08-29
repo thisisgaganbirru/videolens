@@ -140,7 +140,9 @@ class UrlDownloadProbeTests(unittest.IsolatedAsyncioTestCase):
         capability = await UrlDownloadProbe(settings, today=date(2000, 1, 1)).check()
 
         self.assertEqual(capability.state, CapabilityState.DEGRADED)
-        self.assertIn("both", capability.detail)
+        self.assertIn("conflicting cookie sources", capability.detail)
+        # The variable names are operator config and must not reach a screen.
+        self.assertNotIn("YTDLP", capability.detail)
 
     async def test_a_stale_ytdlp_build_degrades_the_capability(self) -> None:
         # Far-future "today" makes whatever version is installed look ancient.
@@ -164,7 +166,8 @@ class AnalysisEngineProbeTests(unittest.IsolatedAsyncioTestCase):
         capability = await AnalysisEngineProbe(Settings(gemini_api_key="")).check()
 
         self.assertEqual(capability.state, CapabilityState.DEGRADED)
-        self.assertIn("X-Gemini-Api-Key", capability.detail)
+        self.assertIn("bring their own key", capability.detail)
+        self.assertNotIn("X-Gemini-Api-Key", capability.detail)
 
     async def test_never_includes_the_key_itself(self) -> None:
         capability = await AnalysisEngineProbe(Settings(gemini_api_key="AIzaSecretValue")).check()
