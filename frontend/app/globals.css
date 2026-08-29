@@ -1196,6 +1196,48 @@ h3 {
     box-shadow: inset 0 0 0 var(--rule-w) var(--color-rule-2);
   }
 
+  /* ---- what the analysis could actually look at ----
+     Rendered only when a run came back `captions_only`: every download route
+     failed, so the backend analyzed the subtitle track and there were no
+     frames. Nothing renders on the normal path, which is the same rule
+     .cap-notice follows on a healthy deployment — a permanent "this analysis
+     saw the video" band would be chrome.
+
+     Same left-ruled, boxless geometry as .error-inline and .cap-notice, and
+     restated rather than shared for the reason the third instance of it always
+     is: those two are namespaced to a panel failure and to
+     /api/capabilities, and borrowing either would couple this to a feature it
+     has nothing to do with.
+
+     Neutral --color-rule-2, never --color-danger. The run SUCCEEDED; the
+     salvage is the good outcome and the caveat is a qualifier on scope, much
+     closer to .cap-unverified's "read off configuration, not checked" than to
+     a fault. Danger ink here would say the result is broken, and the palette
+     still declares exactly one danger token and no warning token.
+
+     0.78rem matches .cap-line: below .prose's 0.86rem reading size because
+     this is a qualifier and not content, and no new type size. */
+  .completeness-note {
+    flex-shrink: 0;
+    max-width: var(--measure);
+    /* The gutter the title band and .tab-list already use, so all three hang
+       off one left edge. */
+    margin: 0 var(--space-md) var(--space-sm);
+    /* 2px, matching .error-inline: at the 1px structural hairline with no fill
+       behind it a rule this short reads as a stray divider. */
+    border-left: calc(var(--rule-w) * 2) solid var(--color-rule-2);
+    padding: var(--space-2xs) 0 var(--space-2xs) var(--space-sm);
+    font-size: 0.78rem;
+    line-height: 1.6;
+    color: var(--color-ink-2);
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .completeness-note strong {
+    color: var(--color-ink);
+    font-weight: 600;
+  }
+
   /* ---- result tabs ---- */
   .tab-list {
     display: flex;
