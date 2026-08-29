@@ -1,9 +1,6 @@
 import asyncio
-import ipaddress
 import os
 import re
-import socket
-from urllib.parse import urlparse
 
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
@@ -12,36 +9,10 @@ from ...domain.entities import SavedUpload, SourceMetadata
 from ...domain.errors import MediaValidationError
 from ..config import Settings
 from .ffmpeg import _media_binary
+from .net import validate_public_url
 from .uploads import _cleanup_dir, create_run_dir
 
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
-
-
-def _validate_public_url(url: str) -> None:
-    if len(url) > 2048:
-        raise MediaValidationError("That link is too long.")
-
-    parsed = urlparse(url)
-    if (
-        parsed.scheme not in {"http", "https"}
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-    ):
-        raise MediaValidationError("Enter a valid public http:// or https:// link.")
-
-    try:
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-        addresses = socket.getaddrinfo(parsed.hostname, port, type=socket.SOCK_STREAM)
-    except (socket.gaierror, ValueError) as exc:
-        raise MediaValidationError(
-            "That link's site couldn't be found - check for a typo.", log_detail=str(exc)
-        ) from exc
-
-    for address in addresses:
-        ip = ipaddress.ip_address(address[4][0])
-        if not ip.is_global:
-            raise MediaValidationError("That link points to a private network address.")
 
 
 def _cookie_options(settings: Settings) -> dict:
@@ -66,6 +37,27 @@ def _cookie_options(settings: Settings) -> dict:
     if browser:
         return {"cookiesfrombrowser": (browser, None, None, None)}
     return {}
+
+
+def _source_metadata_from_info(info: dict, url: str) -> SourceMetadata:
+    """Map yt-dlp's info dict onto the domain model.
+
+    Shared with the caption fallback, which reaches the same dict through
+    `extract_info(download=False)` - the publisher's own post metadata is
+    available whether or not the media bytes are.
+    """
+    return SourceMetadata(
+        platform=info.get("extractor_key") or "unknown",
+        source_url=url,
+        title=info.get("title"),
+        uploader=info.get("uploader"),
+        uploader_url=info.get("uploader_url"),
+        description=info.get("description"),
+        upload_date=info.get("upload_date"),
+        like_count=info.get("like_count"),
+        view_count=info.get("view_count"),
+        comment_count=info.get("comment_count"),
+    )
 
 
 # Matched against yt-dlp's own wording. Each entry turns one recognised failure
@@ -111,7 +103,7 @@ def _download_failure(exc: DownloadError) -> tuple[str, str]:
 
 
 async def download_url(settings: Settings, run_id: str, url: str) -> SavedUpload:
-    await asyncio.to_thread(_validate_public_url, url)
+    await asyncio.to_thread(validate_public_url, url)
     cookie_options = _cookie_options(settings)
     ffmpeg_path = _media_binary(settings, "ffmpeg")
     run_dir = create_run_dir(settings, run_id)
@@ -156,18 +148,7 @@ async def download_url(settings: Settings, run_id: str, url: str) -> SavedUpload
             raise MediaValidationError(
                 f"Download exceeds the {settings.max_file_size_mb}MB size limit."
             )
-        metadata = SourceMetadata(
-            platform=info.get("extractor_key") or "unknown",
-            source_url=url,
-            title=info.get("title"),
-            uploader=info.get("uploader"),
-            uploader_url=info.get("uploader_url"),
-            description=info.get("description"),
-            upload_date=info.get("upload_date"),
-            like_count=info.get("like_count"),
-            view_count=info.get("view_count"),
-            comment_count=info.get("comment_count"),
-        )
+        metadata = _source_metadata_from_info(info, url)
         return SavedUpload(path=path, run_dir=run_dir, metadata=metadata)
     except MediaValidationError:
         _cleanup_dir(run_dir)

@@ -26,6 +26,19 @@ class ScreenTextSegment(BaseModel):
     text: str
 
 
+class AnalysisCompleteness(str, Enum):
+    """What the analysis was actually able to look at.
+
+    Deliberately *not* a field on `VideoAnalysis`: that model is handed to
+    Gemini as its `response_schema`, so anything added to it becomes something
+    the model fills in. This is a fact the server knows and the model must not
+    be asked to assert.
+    """
+
+    FULL = "full"
+    CAPTIONS_ONLY = "captions_only"
+
+
 class VideoAnalysis(BaseModel):
     title: str
     summary: str
@@ -59,6 +72,36 @@ class Run(BaseModel):
     result: Optional[VideoAnalysis] = None
     error: Optional[str] = None
     source_metadata: Optional[SourceMetadata] = None
+    completeness: AnalysisCompleteness = AnalysisCompleteness.FULL
+
+
+class CapabilityState(str, Enum):
+    OK = "ok"
+    DEGRADED = "degraded"
+    UNAVAILABLE = "unavailable"
+    DISABLED = "disabled"
+
+
+class Capability(BaseModel):
+    """One thing the service needs in order to accept work, and whether it is
+    actually there right now.
+
+    `probed` is the honest half of this record: True means the check really
+    exercised the dependency, False means it only read configuration. A health
+    report that cannot tell those apart eventually reports "ok" for something
+    that has never once worked.
+    """
+
+    name: str
+    state: CapabilityState
+    detail: str
+    probed: bool
+
+
+class CapabilityReport(BaseModel):
+    state: CapabilityState
+    mode: str
+    capabilities: list[Capability]
 
 
 @dataclass(frozen=True)
@@ -71,4 +114,19 @@ class Principal:
 class SavedUpload:
     path: str
     run_dir: str
+    metadata: Optional[SourceMetadata] = None
+
+
+@dataclass
+class CaptionTrack:
+    """A subtitle track recovered when the media itself could not be fetched.
+
+    Carries no timing: the pipeline only reaches for this once the video is
+    already unavailable, so the goal is a usable transcript, not a second-rate
+    imitation of the full analysis.
+    """
+
+    text: str
+    language: str
+    automatic: bool
     metadata: Optional[SourceMetadata] = None

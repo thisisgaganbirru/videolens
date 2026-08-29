@@ -1,7 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { MediaSource, RunStatus, SourceMetadata, VideoAnalysis } from "@/domain/entities";
+import type {
+  AnalysisCompleteness,
+  MediaSource,
+  RunStatus,
+  SourceMetadata,
+  VideoAnalysis,
+} from "@/domain/entities";
 import { classifyGatewayError } from "@/application/gatewayError";
 import { runsGateway } from "@/infrastructure/container";
 
@@ -21,6 +27,11 @@ export function useAnalysisRun() {
   const [stage, setStage] = useState<string | null>(null);
   const [sourceKind, setSourceKind] = useState<"file" | "url">("file");
   const [result, setResult] = useState<VideoAnalysis | null>(null);
+  /* Set only alongside `result`, never on a `processing` tick. It describes
+     what the finished analysis was able to look at, so it is meaningless
+     before there is one and would otherwise read `full` (the wire default)
+     while the run was still deciding. */
+  const [completeness, setCompleteness] = useState<AnalysisCompleteness>("full");
   const [sourceMetadata, setSourceMetadata] = useState<SourceMetadata | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -57,6 +68,7 @@ export function useAnalysisRun() {
           if (run.source_metadata) setSourceMetadata(run.source_metadata);
           if (run.status === "complete") {
             setResult(run.result);
+            setCompleteness(run.completeness ?? "full");
             if (pollRef.current) clearInterval(pollRef.current);
           } else if (run.status === "failed") {
             setError(run.error || "Video analysis failed.");
@@ -94,6 +106,7 @@ export function useAnalysisRun() {
       setSubmitting(true);
       setError(null);
       setResult(null);
+      setCompleteness("full");
       setSourceMetadata(null);
       setStage(null);
       setSourceKind(source.url ? "url" : "file");
@@ -128,6 +141,7 @@ export function useAnalysisRun() {
     setStage(null);
     setSourceKind("file");
     setResult(null);
+    setCompleteness("full");
     setSourceMetadata(null);
     setError(null);
   }, []);
@@ -140,6 +154,7 @@ export function useAnalysisRun() {
       }
       setError(null);
       setResult(null);
+      setCompleteness("full");
       setSourceMetadata(null);
       setSourceKind("file");
       setStatus("processing");
@@ -152,6 +167,7 @@ export function useAnalysisRun() {
         if (run.source_metadata) setSourceMetadata(run.source_metadata);
         if (run.status === "complete") {
           setResult(run.result);
+          setCompleteness(run.completeness ?? "full");
         } else if (run.status === "failed") {
           setError(run.error || "Video analysis failed.");
         } else {
@@ -171,6 +187,7 @@ export function useAnalysisRun() {
     stage,
     sourceKind,
     result,
+    completeness,
     sourceMetadata,
     error,
     submitting,

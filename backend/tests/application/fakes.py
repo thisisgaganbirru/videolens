@@ -4,7 +4,14 @@ tracking so tests can assert on how a use case drove its dependencies."""
 
 from datetime import datetime, timezone
 
-from app.domain.entities import Run, RunStatus, SavedUpload, SourceMetadata
+from app.domain.entities import (
+    AnalysisCompleteness,
+    CaptionTrack,
+    Run,
+    RunStatus,
+    SavedUpload,
+    SourceMetadata,
+)
 
 
 class FakeRunRepository:
@@ -32,9 +39,12 @@ class FakeRunRepository:
     async def set_stage(self, run_id: str, stage: str) -> None:
         self.runs[run_id].stage = stage
 
-    async def set_result(self, run_id: str, result) -> None:
+    async def set_result(
+        self, run_id: str, result, completeness=AnalysisCompleteness.FULL
+    ) -> None:
         self.runs[run_id].status = RunStatus.COMPLETE
         self.runs[run_id].result = result
+        self.runs[run_id].completeness = completeness
 
     async def set_source_metadata(self, run_id: str, metadata: SourceMetadata) -> None:
         self.runs[run_id].source_metadata = metadata
@@ -61,6 +71,9 @@ class FakeMediaProcessor:
         self.enforce_duration_error: Exception | None = None
         self.download_error: Exception | None = None
         self.download_metadata: SourceMetadata | None = None
+        self.captions: CaptionTrack | None = None
+        self.caption_calls: list[str] = []
+        self.captions_error: Exception | None = None
 
     def validate_tools(self) -> None:
         self.validated = True
@@ -88,6 +101,12 @@ class FakeMediaProcessor:
         return SavedUpload(
             path=f"/tmp/{run_id}/download.mp4", run_dir=f"/tmp/{run_id}", metadata=self.download_metadata
         )
+
+    async def fetch_captions(self, url: str) -> CaptionTrack | None:
+        self.caption_calls.append(url)
+        if self.captions_error:
+            raise self.captions_error
+        return self.captions
 
     async def normalize_media(self, src_path: str, run_dir: str) -> str:
         self.normalize_calls.append((src_path, run_dir))
@@ -180,9 +199,20 @@ class FakeAnalysisEngine:
         self.error = error
         self.calls: list[tuple[str, str | None]] = []
         self.stages_seen: list[str] = []
+        self.metadata_seen: list[SourceMetadata | None] = []
+        self.caption_calls: list[CaptionTrack] = []
+        self.caption_result = None
+        self.caption_error: Exception | None = None
 
-    async def analyze_with_retry(self, video_path: str, on_stage=None, api_key: str | None = None):
+    async def analyze_with_retry(
+        self,
+        video_path: str,
+        on_stage=None,
+        api_key: str | None = None,
+        metadata: SourceMetadata | None = None,
+    ):
         self.calls.append((video_path, api_key))
+        self.metadata_seen.append(metadata)
         if on_stage:
             await on_stage("uploading_to_gemini")
             self.stages_seen.append("uploading_to_gemini")
@@ -191,6 +221,12 @@ class FakeAnalysisEngine:
         if self.error:
             raise self.error
         return self.result
+
+    async def analyze_captions(self, captions, api_key: str | None = None):
+        self.caption_calls.append(captions)
+        if self.caption_error:
+            raise self.caption_error
+        return self.caption_result or self.result
 
 
 class FakeUploadedFile:

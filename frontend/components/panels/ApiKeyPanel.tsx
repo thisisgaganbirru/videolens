@@ -2,9 +2,27 @@
 
 import { ExternalLink } from "lucide-react";
 import { useGeminiApiKey } from "@/application/useGeminiApiKey";
+import { isNoticeable } from "@/application/useCapabilities";
+import { CapabilityCallout } from "@/components/CapabilityNotice";
+import type { Capability } from "@/domain/entities";
 
-export default function ApiKeyPanel() {
+/** `budgetCapability` is the deployment's `daily_budget` row, passed down from
+ *  `HomeScreen` (see the note there on the single fetch). It is surfaced here
+ *  and nowhere else because this panel is the *answer* to it: an exhausted
+ *  shared budget does not stop a bring-your-own-key run, so the one screen
+ *  where that fact changes what the user should do is the one holding the key
+ *  field. It renders with no `lead` — the backend's own sentence already says
+ *  both halves ("exhausted" and "BYOK runs are unaffected"), and the rule this
+ *  codebase follows for server-written sentences is to show them, not
+ *  paraphrase them. */
+export default function ApiKeyPanel({
+  budgetCapability,
+}: {
+  budgetCapability?: Capability | null;
+}) {
   const { value, saved, update, save, clear } = useGeminiApiKey();
+  const budgetNotice =
+    budgetCapability && isNoticeable(budgetCapability.state) ? budgetCapability : null;
 
   return (
     <div className="apikey-form">
@@ -12,6 +30,11 @@ export default function ApiKeyPanel() {
           filler — it is what makes pasting a key here a reasonable thing to
           do. It names localStorage and the header by name on purpose. */}
       <p className="card-label mb-1">Optional</p>
+      {budgetNotice && (
+        <div className="cap-panel-note">
+          <CapabilityCallout capability={budgetNotice} />
+        </div>
+      )}
       <p className="prose">
         Paste your own Gemini API key to run on your own quota instead of the shared
         one. It is stored only in this browser&apos;s <strong>localStorage</strong> and is sent

@@ -119,25 +119,41 @@ exists, but it can only reach the pure key-derivation functions above the
 Fix: a `build_limiter(settings: Settings) -> Limiter` factory called from
 `container.py`. Blast radius: 3 files plus 1 test.
 
-### `CONTRIBUTING.md` tells contributors to run a command that always fails
+### `CONTRIBUTING.md` tells contributors to run a command that always fails — PARTIALLY FIXED 2026-08-29
+
+The command is no longer *broken*; it is still *red*. A contributor following
+the checklist gets a real lint run with 6 pre-existing errors and a non-zero
+exit, not a "no such directory" crash. Whether that counts as fixed depends on
+whether those five get resolved — see the end of this entry.
 
 `CONTRIBUTING.md:30` lists `npm run lint` under a heading claiming these are
-the checks CI runs. It always fails —
+the checks CI runs. It used to always fail —
 `Invalid project directory provided, no such directory: .../frontend/lint` —
-and CI does not run it at all (the frontend job is `tsc --noEmit` + `build` +
-`build:mobile`).
+because Next 16 removed `next lint` and the script resolved `lint` as a
+directory. CI still does not run it (the frontend job is `tsc --noEmit` +
+`build` + `build:mobile`), but the command a contributor is told to run now
+works.
 
-Root `CLAUDE.md` already documents the cause (Next 16 removed `next lint`, so
-the script resolves `lint` as a directory), but `CONTRIBUTING.md` is what an
-external contributor reads first, and a repo about to go public whose
-documented first-run checklist fails on step three reads as unmaintained.
+**Fixed** by running `npx @next/codemod@latest next-lint-to-eslint-cli`, which
+rewrote the script to `eslint .`, installed `eslint` + `eslint-config-next` as
+devDependencies, and created `frontend/eslint.config.mjs`. The audit's warning
+that there was "nothing to migrate *to*" was correct about the starting state
+and wrong about the consequence — the codemod installs ESLint itself.
 
-Worse than the `CLAUDE.md` note suggests: `frontend/package.json:26-36` has
-**no `eslint` and no `eslint-config-next` dependency**, and there is no
-`.eslintrc*` or `eslint.config.*` anywhere in the repo. So the
-`next-lint-to-eslint-cli` codemod that `CLAUDE.md` names as the fix has nothing
-to migrate *to* — ESLint has to be installed from scratch, which makes this
-finding entangled with the linter gate below rather than a one-line doc edit.
+Two hand edits were needed on top of the codemod's output, both recorded in
+that file and in root `CLAUDE.md`: ignoring `android/**` and `public/sw.js`
+(both generated; without them `eslint .` reports ~8,940 problems, 8,940 of them
+in files nobody here writes), and turning `@next/next/no-html-link-for-pages`
+off for `app/offline/**` only, where plain `<a>` is a documented correctness
+requirement.
+
+`npm run lint` now exits **1** with 6 errors and 1 warning, all pre-existing and
+all in `frontend/` app source: five `react-hooks/set-state-in-effect`
+(`useGeminiApiKey.ts`, `ResultsView.tsx` ×2, `UploadForm.tsx` ×2) and one
+`@next/next/no-img-element` (`ResultsView.tsx`). Deliberately **not** fixed —
+most of the five are the read-`localStorage`-after-hydration pattern this static
+export needs, and rewriting them (or muting the rule) is a behavioural call for
+the owner, not lint tidying. That decision is the remaining open item here.
 
 ### `mcp/` is documented as shipped but exists only on an unmerged branch
 
@@ -171,19 +187,34 @@ until the merge.)
 Each of these maps to a defect above. That mapping is the argument for adding
 them — none is being proposed because a checklist somewhere says to.
 
-### No linter in any of the three codebases
+### No linter in any of the three codebases — PARTIALLY FIXED 2026-08-29
 
-No `eslint` or ESLint config in `frontend/` or `mcp/`. No `ruff`, `flake8`,
-`pylint`, or `mypy` in `backend/` — and **no `pyproject.toml`, `setup.cfg`, or
-`.ruff.toml` at all**, so there is nowhere for Python tool config to live yet.
-CI runs only `compileall` + `unittest` + `tsc`.
+~~No `eslint` or ESLint config in `frontend/`~~ — `frontend/` now has ESLint 9
+flat config (`eslint.config.mjs`, `eslint-config-next` core-web-vitals +
+typescript) and a working `npm run lint`; see the CONTRIBUTING finding above for
+what it reports and what was deliberately left. `eslint-plugin-import` was
+**not** added — that was the audit's suggestion, not the codemod's output, and
+adding rules on top of a linter that is not yet in CI would widen the diff
+without widening the gate.
 
-This is the gate that would have caught the layering violations.
+Still open:
 
-Fix: ruff with `select = ["E","F","I","TID","UP","B"]` plus a banned-api rule
-encoding the layering invariant; ESLint 9 flat config with
-`eslint-config-next` + `eslint-plugin-import`. **The first `--fix` pass is a
-large mechanical diff — defer past the redesign.**
+- **`mcp/`** has no ESLint config (and lives on the unmerged
+  `feature/mcp-server` branch).
+- **`backend/`** has no `ruff`, `flake8`, `pylint`, or `mypy` — and still **no
+  `pyproject.toml`, `setup.cfg`, or `.ruff.toml`**, so there is nowhere for
+  Python tool config to live yet.
+- **Nothing is in CI.** The frontend job is still `tsc --noEmit` + `build` +
+  `build:mobile`; `npm run lint` currently exits 1, so wiring it into CI is
+  blocked on the five `react-hooks/set-state-in-effect` errors being decided
+  one way or the other.
+
+This is the gate that would have caught the layering violations, and the Python
+half — the half that would actually have caught them — is untouched.
+
+Fix for the remainder: ruff with `select = ["E","F","I","TID","UP","B"]` plus a
+banned-api rule encoding the layering invariant. **The first `ruff --fix` pass
+is a large mechanical diff.**
 
 ### No type checking on the Python side
 
@@ -616,4 +647,6 @@ Re-verify before fixing; do not treat the line numbers as authoritative.
 - 2026-08-15 · stale-ref agent · corrected the three `ci.yml` references invalidated by the workflow rewrite (deleted `ci.yml` -> caller/reusable workflow set) at "No security scanning of any kind in CI" and "Branch protection is unverified"; left the historical `ci.yml:21` citation under "Unpinned backend dependencies" and the meta-note under "Known issues with this register" unchanged as defensible historical audit text
 - 2026-08-15 · runtime-bump agent · recorded the Node 20->24 (newest LTS) / Python 3.11->3.13 bump under "Container base images are past end-of-life", plus the collapse from eight runtime declarations to one per runtime (`/.nvmrc`, `/.python-version`, one `ARG` per Dockerfile), the CI drift checks, the openssl floor check, and the Dependabot coverage traded away; entry deliberately left OPEN — only a green PR #12 closes it
 - 2026-08-15 · git-commit agent · committed and pushed the Node 24 / Python 3.13 fix onto PR #12; the entry above stays OPEN here — closing it is a judgement call for whoever reads the CI result, not a mechanical follow-on to the push
+- 2026-08-29 · frontend agent · closed the `CONTRIBUTING.md`/`npm run lint` finding (codemod run, ESLint 9 flat config added, `android/**` + `public/sw.js` ignored, `no-html-link-for-pages` scoped off for `app/offline/**`) and marked the linter gate PARTIALLY FIXED — `frontend/` only; `mcp/`, `backend/` ruff, and CI wiring all stay open, the last blocked on pre-existing `react-hooks/set-state-in-effect` errors nobody has decided on
 - 2026-08-16 · grype-exception agent · recorded the rescan outcome under "Container base images are past end-of-life" (Node/Android clear, backend down to one High) and added "The one outstanding CVE" covering the scoped `CVE-2026-15308` ignore rule, why `severity-cutoff`/`only-fixed` were left untouched, and the missing expiry enforcement; entry left OPEN — CI has not gone green
+- 2026-08-29 · main session · merged dev: the count is 6 errors + 1 warning, not 5 + 1 — dev's PR #26 `UploadForm.tsx` share effect trips the same `set-state-in-effect` rule, and `dev` has no eslint config to have caught it
