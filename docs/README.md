@@ -14,6 +14,9 @@ exception, listed so it isn't mistaken for a stray file:
 - `error-messaging.md` — how a failure becomes a sentence on screen and where
   the operator's half of it goes. Spans backend and frontend, so it is filed
   here rather than under either.
+- `railway-environments.md` — the two Railway environments, which branch
+  feeds each, how `Wait for CI` gates deploys, and the three ways a deploy
+  silently does not happen. Read before changing a trigger branch.
 - `engineering-standards.md` — cross-cutting, not a per-feature reference. A
   repo-wide engineering-hygiene register audited 2026-08-15. Dependency
   reproducibility and container vulnerability gates are now implemented;
@@ -51,3 +54,4 @@ someone else's entry.
 
 - 2026-08-15 · main session · indexed the environment-separated container workflow reference and updated the standards status
 - 2026-08-21 · main session · indexed the cross-cutting error-messaging reference
+- 2026-08-29 · main session · indexed `railway-environments.md`
