@@ -32,7 +32,15 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONUNBUFFERED=1 \
     TEMP_DIR=/tmp/videolens
 
+# `apt-get upgrade` on top of a digest-pinned base looks redundant, and for
+# most packages it is. It is here because Debian publishes a security fix to
+# the archive days before the python:3.13-slim image is rebuilt to include it,
+# and the container scan gates on fixable highs - so the image is reproducibly
+# pinned to a base that is reproducibly out of date. Upgrading closes that
+# window without unpinning anything: the base digest still fixes the starting
+# point, this only pulls forward packages Debian has already fixed.
 RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends ffmpeg \
     && groupadd --gid 10001 videolens \
     && useradd --uid 10001 --gid 10001 --no-log-init --create-home videolens
