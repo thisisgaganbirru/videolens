@@ -1,9 +1,6 @@
 import asyncio
-import ipaddress
 import os
 import re
-import socket
-from urllib.parse import urlparse
 
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
@@ -12,34 +9,10 @@ from ...domain.entities import SavedUpload, SourceMetadata
 from ...domain.errors import MediaValidationError
 from ..config import Settings
 from .ffmpeg import _media_binary
+from .net import validate_public_url
 from .uploads import _cleanup_dir, create_run_dir
 
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
-
-
-def _validate_public_url(url: str) -> None:
-    if len(url) > 2048:
-        raise MediaValidationError("URL is too long.")
-
-    parsed = urlparse(url)
-    if (
-        parsed.scheme not in {"http", "https"}
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-    ):
-        raise MediaValidationError("Enter a valid public HTTP or HTTPS media URL.")
-
-    try:
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-        addresses = socket.getaddrinfo(parsed.hostname, port, type=socket.SOCK_STREAM)
-    except (socket.gaierror, ValueError) as exc:
-        raise MediaValidationError("The URL host could not be found.") from exc
-
-    for address in addresses:
-        ip = ipaddress.ip_address(address[4][0])
-        if not ip.is_global:
-            raise MediaValidationError("Local and private-network URLs are not allowed.")
 
 
 def _cookie_options(settings: Settings) -> dict:
@@ -71,7 +44,7 @@ def _download_error_message(exc: DownloadError) -> str:
 
 
 async def download_url(settings: Settings, run_id: str, url: str) -> SavedUpload:
-    await asyncio.to_thread(_validate_public_url, url)
+    await asyncio.to_thread(validate_public_url, url)
     cookie_options = _cookie_options(settings)
     ffmpeg_path = _media_binary(settings, "ffmpeg")
     run_dir = create_run_dir(settings, run_id)

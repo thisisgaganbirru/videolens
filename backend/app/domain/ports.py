@@ -65,6 +65,19 @@ class MediaProcessor(Protocol):
     async def normalize_media(self, src_path: str, run_dir: str) -> str: ...
 
 
+class SourceResolver(Protocol):
+    """One route to the media behind a URL. Several may exist for the same
+    source; the chain that owns them decides the order and moves on to the
+    next when one fails."""
+
+    @property
+    def name(self) -> str: ...
+
+    def can_handle(self, url: str) -> bool: ...
+
+    async def fetch(self, run_id: str, url: str) -> SavedUpload: ...
+
+
 class AnalysisEngine(Protocol):
     async def analyze_with_retry(
         self,

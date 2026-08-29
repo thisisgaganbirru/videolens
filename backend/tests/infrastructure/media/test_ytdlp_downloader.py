@@ -1,5 +1,4 @@
 import os
-import socket
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
@@ -11,33 +10,11 @@ from app.infrastructure.config import Settings
 from app.infrastructure.media.ytdlp_downloader import (
     _cookie_options,
     _download_error_message,
-    _validate_public_url,
     download_url,
 )
 
 
-class PublicUrlValidationTests(unittest.TestCase):
-    @patch("app.infrastructure.media.ytdlp_downloader.socket.getaddrinfo")
-    def test_accepts_public_https_url(self, getaddrinfo) -> None:
-        getaddrinfo.return_value = [
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))
-        ]
-
-        _validate_public_url("https://example.com/video/123")
-
-    @patch("app.infrastructure.media.ytdlp_downloader.socket.getaddrinfo")
-    def test_rejects_private_network_target(self, getaddrinfo) -> None:
-        getaddrinfo.return_value = [
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 80))
-        ]
-
-        with self.assertRaisesRegex(MediaValidationError, "private-network"):
-            _validate_public_url("http://localhost/media")
-
-    def test_rejects_non_http_url(self) -> None:
-        with self.assertRaisesRegex(MediaValidationError, "HTTP or HTTPS"):
-            _validate_public_url("file:///etc/passwd")
-
+class CookieAndErrorHandlingTests(unittest.TestCase):
     def test_builds_browser_cookie_options(self) -> None:
         settings = Settings(ytdlp_cookies_file="", ytdlp_cookies_from_browser="chrome")
         self.assertEqual(
@@ -95,7 +72,7 @@ class SourceMetadataExtractionTests(unittest.IsolatedAsyncioTestCase):
             downloader = self._mock_downloader(info, downloaded_path)
 
             with patch(
-                "app.infrastructure.media.ytdlp_downloader._validate_public_url"
+                "app.infrastructure.media.ytdlp_downloader.validate_public_url"
             ), patch(
                 "app.infrastructure.media.ytdlp_downloader._media_binary", return_value="/usr/bin/ffmpeg"
             ), patch(
@@ -126,7 +103,7 @@ class SourceMetadataExtractionTests(unittest.IsolatedAsyncioTestCase):
             downloader = self._mock_downloader(info, downloaded_path)
 
             with patch(
-                "app.infrastructure.media.ytdlp_downloader._validate_public_url"
+                "app.infrastructure.media.ytdlp_downloader.validate_public_url"
             ), patch(
                 "app.infrastructure.media.ytdlp_downloader._media_binary", return_value="/usr/bin/ffmpeg"
             ), patch(
