@@ -13,7 +13,7 @@ Does the actual work for one run: get the source media onto disk, validate/norma
    - For path (b), if the download returned a `SourceMetadata` (yt-dlp's own post metadata — title, uploader, caption, upload date, like/view/comment counts; see `docs/backend/media-validation.md`), it's persisted immediately via `RunRepository.set_source_metadata` — before normalize/analyze — so it's visible on `GET /api/runs/{id}` even if a later stage fails. File-upload runs never have this (`SavedUpload.metadata` is `None` for uploads).
 3. If no usable path/dir resulted, raise `MediaValidationError("No media source was provided.")`.
 4. Stage → `"normalizing"`, then `MediaProcessor.normalize_media`.
-5. `AnalysisEngine.analyze_with_retry`, with an `on_stage` callback that relays Gemini's own stages (`"uploading_to_gemini"`, `"analyzing"`) into `RunRepository.set_stage`.
+5. `AnalysisEngine.analyze_with_retry`, with an `on_stage` callback that relays Gemini's own stages (`"uploading_to_gemini"`, `"analyzing"`) into `RunRepository.set_stage`, and the `SourceMetadata` from step 2 when there was one. The metadata is both persisted onto the run *and* passed to the engine — persisting it makes it visible in the UI, passing it makes the analysis better (see `docs/backend/gemini-analysis.md`). Upload and S3 paths pass `None`.
 6. `RunRepository.set_result` on success.
 
 **Error handling — three distinct paths**, all terminal (none re-raise out of `execute`):
@@ -25,3 +25,6 @@ Does the actual work for one run: get the source media onto disk, validate/norma
 **Known issue**: the local (non-distributed) job queue has no persistence — an in-flight run is just an `asyncio.create_task`. A server restart mid-run drops it silently; the run stays `PROCESSING` forever with nothing to resume or fail it. Distributed mode doesn't have this problem (arq re-delivers on worker restart).
 
 **Tests**: `backend/tests/application/test_process_run.py` — covers all three source-acquisition paths, all three error paths (including that the masked-message path really doesn't leak the original exception text), and that cleanup still runs even if `delete_source` itself throws.
+
+## Changelog
+- 2026-08-29 · main session · the pipeline now forwards `SourceMetadata` to the analysis engine as well as persisting it

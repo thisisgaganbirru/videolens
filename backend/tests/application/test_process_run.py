@@ -62,6 +62,27 @@ class ProcessRunUseCaseTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.runs.runs["run-1"].source_metadata, self.media.download_metadata)
 
+    async def test_passes_source_metadata_to_the_analysis_engine(self) -> None:
+        self.media.download_metadata = SourceMetadata(
+            platform="YouTube", source_url="https://x.test/v.mp4", title="Clip"
+        )
+
+        await self.use_case.execute("run-1", source_url="https://x.test/v.mp4")
+
+        self.assertEqual(self.analysis.metadata_seen, [self.media.download_metadata])
+
+    async def test_analyzes_uploads_without_any_source_metadata(self) -> None:
+        await self.use_case.execute("run-1", saved_path="/tmp/run-1/upload.mp4", run_dir="/tmp/run-1")
+
+        self.assertEqual(self.analysis.metadata_seen, [None])
+
+    async def test_analyzes_without_metadata_when_the_download_returns_none(self) -> None:
+        self.media.download_metadata = None
+
+        await self.use_case.execute("run-1", source_url="https://x.test/v.mp4")
+
+        self.assertEqual(self.analysis.metadata_seen, [None])
+
     async def test_uses_a_pre_saved_path_directly_without_re_validating_duration(self) -> None:
         await self.use_case.execute("run-1", saved_path="/tmp/run-1/upload.mp4", run_dir="/tmp/run-1")
 

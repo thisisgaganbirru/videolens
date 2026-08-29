@@ -180,9 +180,17 @@ class FakeAnalysisEngine:
         self.error = error
         self.calls: list[tuple[str, str | None]] = []
         self.stages_seen: list[str] = []
+        self.metadata_seen: list[SourceMetadata | None] = []
 
-    async def analyze_with_retry(self, video_path: str, on_stage=None, api_key: str | None = None):
+    async def analyze_with_retry(
+        self,
+        video_path: str,
+        on_stage=None,
+        api_key: str | None = None,
+        metadata: SourceMetadata | None = None,
+    ):
         self.calls.append((video_path, api_key))
+        self.metadata_seen.append(metadata)
         if on_stage:
             await on_stage("uploading_to_gemini")
             self.stages_seen.append("uploading_to_gemini")
