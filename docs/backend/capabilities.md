@@ -10,6 +10,21 @@ Answers "which parts of this deployment actually work right now, and was that ac
 - `backend/app/interface/api/routes.py` — the route.
 - `backend/app/container.py` — probe list and order.
 
+## Two audiences, one report
+
+`/api/capabilities` is **unauthenticated**, and the capability strip renders `detail` verbatim, so everything in the response is public. `Capability` therefore carries the same split as `UserFacingError`: `detail` is written for whoever is looking at the app, and `log_detail` is `Field(exclude=True)` — it never serializes, and `GetCapabilitiesUseCase` writes it to one log line per report instead.
+
+What that keeps off the wire, and why each one mattered:
+
+| Kept private | Why |
+|---|---|
+| The live remaining-run count | A cost-exhaustion oracle. The daily cap exists to bound Gemini spend; publishing its current value tells anyone exactly how much to burn and confirms when it is gone. |
+| `ffmpeg` / `yt-dlp` build strings | Exact versions to match against known advisories. |
+| The Gemini model name, Redis/bucket reachability wording, replica topology | Deployment shape nobody outside needs. |
+| `YTDLP_COOKIES_FILE`, `YTDLP_COOKIES_FROM_BROWSER`, `X-Gemini-Api-Key` | Setting names, per `../error-messaging.md`. |
+
+The user-facing half still carries the consequence — "Links behind a login will fail", "Runs are not saved and will be lost if the server restarts" — because that is what changes what someone does next. `backend/tests/application/test_get_capabilities.py::SerializationTests` locks the invariant at the boundary rather than probe by probe.
+
 ## The `probed` flag is the point
 
 The failure this design exists to avoid: a health check that reports `ok` for something that has never once worked, because it only ever read configuration. `probed: false` means "this row reflects settings, not a live check" and is never dressed up as verification.
@@ -47,3 +62,4 @@ Unchanged and still separate:
 ## Changelog
 - 2026-08-29 · main session · added the capability report, its six probes, `DailyBudget.remaining()`, and `S3ObjectStore.check_bucket()`
 - 2026-08-29 · frontend agent · marked the "frontend does not consume this" gap closed and pointed it at docs/frontend/capability-reporting.md; no backend code touched
+- 2026-08-29 · main session · split `detail` from `log_detail` so the unauthenticated report stops publishing versions, topology and the live budget count
