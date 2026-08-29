@@ -17,8 +17,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 
 WORKDIR /build
 COPY requirements.txt ./
-RUN --mount=type=cache,target=/root/.cache/pip \
-    python -m pip wheel --require-hashes --wheel-dir=/wheels -r requirements.txt
+RUN python -m pip wheel --require-hashes --wheel-dir=/wheels -r requirements.txt
 
 FROM ${PYTHON_IMAGE} AS runtime
 
@@ -33,10 +32,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONUNBUFFERED=1 \
     TEMP_DIR=/tmp/videolens
 
-RUN rm -f /etc/apt/apt.conf.d/docker-clean
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update \
+RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && groupadd --gid 10001 videolens \
     && useradd --uid 10001 --gid 10001 --no-log-init --create-home videolens
@@ -56,4 +52,4 @@ USER 10001:10001
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

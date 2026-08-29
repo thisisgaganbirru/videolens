@@ -67,7 +67,7 @@ class FetchTests(unittest.IsolatedAsyncioTestCase):
 
     @patch("app.infrastructure.media.net.socket.getaddrinfo", return_value=PRIVATE_ADDRESS)
     async def test_refuses_a_url_that_resolves_into_private_space(self, _dns) -> None:
-        with self.assertRaisesRegex(MediaValidationError, "private-network"):
+        with self.assertRaisesRegex(MediaValidationError, "private network"):
             await self.resolver.fetch("run-1", "http://metadata.test/clip.mp4")
 
     @patch("app.infrastructure.media.net.socket.getaddrinfo", return_value=PUBLIC_ADDRESS)
@@ -76,7 +76,7 @@ class FetchTests(unittest.IsolatedAsyncioTestCase):
         # No Content-Length, so the cap can only be enforced while reading.
         build_opener.return_value.open.return_value = _response(b"x" * (2 * 1024 * 1024))
 
-        with self.assertRaisesRegex(MediaValidationError, "size limit"):
+        with self.assertRaisesRegex(MediaValidationError, "over the 1MB limit"):
             await self.resolver.fetch("run-1", "https://cdn.test/clip.mp4")
 
     @patch("app.infrastructure.media.net.socket.getaddrinfo", return_value=PUBLIC_ADDRESS)
@@ -85,7 +85,7 @@ class FetchTests(unittest.IsolatedAsyncioTestCase):
         response = _response(b"x", headers={"Content-Length": str(50 * 1024 * 1024)})
         build_opener.return_value.open.return_value = response
 
-        with self.assertRaisesRegex(MediaValidationError, "size limit"):
+        with self.assertRaisesRegex(MediaValidationError, "over the 1MB limit"):
             await self.resolver.fetch("run-1", "https://cdn.test/clip.mp4")
         response.read.assert_not_called()
 
@@ -96,8 +96,13 @@ class FetchTests(unittest.IsolatedAsyncioTestCase):
             "https://cdn.test/clip.mp4", 404, "Not Found", {}, None
         )
 
-        with self.assertRaisesRegex(MediaValidationError, "HTTP 404"):
+        with self.assertRaises(MediaValidationError) as caught:
             await self.resolver.fetch("run-1", "https://cdn.test/clip.mp4")
+
+        # The status code is operator detail, so it belongs in the log rather
+        # than on a phone screen.
+        self.assertNotIn("404", str(caught.exception))
+        self.assertIn("404", caught.exception.log_detail)
 
     @patch("app.infrastructure.media.net.socket.getaddrinfo", return_value=PUBLIC_ADDRESS)
     @patch("app.infrastructure.media.resolvers.direct_http.urllib.request.build_opener")
@@ -117,6 +122,7 @@ class FetchTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(MediaValidationError) as caught:
             await self.resolver.fetch("run-1", "https://cdn.test/clip.mp4")
         self.assertNotIn("internal-host", str(caught.exception))
+        self.assertIn("internal-host", caught.exception.log_detail)
 
     @patch("app.infrastructure.media.net.socket.getaddrinfo", return_value=PUBLIC_ADDRESS)
     @patch("app.infrastructure.media.resolvers.direct_http.urllib.request.build_opener")
@@ -135,7 +141,7 @@ class RedirectValidationTests(unittest.TestCase):
 
         # Validating only the URL the caller typed would let a public host
         # bounce the fetch to the cloud metadata endpoint.
-        with self.assertRaisesRegex(MediaValidationError, "private-network"):
+        with self.assertRaisesRegex(MediaValidationError, "private network"):
             handler.redirect_request(
                 MagicMock(), MagicMock(), 302, "Found", {}, "http://169.254.169.254/latest/meta-data"
             )

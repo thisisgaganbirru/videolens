@@ -22,6 +22,9 @@ class MediaService:
     def validate_tools(self) -> None:
         ffmpeg.validate_media_tools(self._settings)
 
+    def validate_temp_dir(self) -> None:
+        uploads.validate_temp_dir(self._settings)
+
     def create_run_dir(self, run_id: str) -> str:
         return uploads.create_run_dir(self._settings, run_id)
 

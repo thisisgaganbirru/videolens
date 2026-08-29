@@ -1,13 +1,13 @@
 import logging
-import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import _rate_limit_exceeded_handler
+from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
+from starlette.requests import Request
 
 from ...container import container
 from ...infrastructure.logging_config import configure_logging
@@ -17,12 +17,15 @@ from .routes import router
 
 configure_logging()
 logger = logging.getLogger(__name__)
-os.makedirs(container.settings.temp_dir, exist_ok=True)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     container.media.validate_tools()
+    # Creates the directory too, so this replaces the bare `os.makedirs` that
+    # used to run at import. That call is what made a bad TEMP_DIR invisible:
+    # it succeeded on any string Linux accepts as a directory name.
+    container.media.validate_temp_dir()
     settings = container.settings
     if settings.queue_enabled:
         await container.run_repository.ping()
@@ -40,9 +43,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await container.close()
 
 
+async def _rate_limited(request: Request, exc: Exception) -> JSONResponse:
+    """slowapi's stock handler answers `{"error": ...}`, but every other error
+    in this API answers `{"detail": ...}` and that is the key the frontend
+    reads - so a rate-limited caller used to be shown the bare fallback
+    "Could not create run (429)" instead of anything about rate limiting."""
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "You're going a bit fast. Wait a minute and try again."},
+    )
+
+
 app = FastAPI(title="VideoLens AI", lifespan=lifespan)
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, _rate_limited)
 app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(
     CORSMiddleware,

@@ -187,7 +187,10 @@ h3 {
   .nav-wrap {
     flex-shrink: 0;
     z-index: 10;
-    padding-top: var(--space-sm);
+    /* On native Android/iOS the status bar sits right where the pill would
+       otherwise start; --safe-top is 0 in a normal browser tab, so this
+       only adds space where a status bar actually needs clearing. */
+    padding-top: max(var(--space-sm), var(--safe-top));
     margin-inline: calc(var(--space-2xs) * -1);
   }
 
@@ -349,7 +352,8 @@ h3 {
   /* ---- nav icon buttons (theme toggle, drawer open/close) ---- */
   .theme-toggle,
   .menu-toggle,
-  .menu-close {
+  .menu-close,
+  .icon-action {
     all: unset;
     cursor: pointer;
     display: inline-flex;
@@ -364,15 +368,23 @@ h3 {
   }
   .theme-toggle:focus-visible,
   .menu-toggle:focus-visible,
-  .menu-close:focus-visible {
+  .menu-close:focus-visible,
+  .icon-action:focus-visible {
     outline: 2px solid var(--color-focus);
     outline-offset: 2px;
   }
   .theme-toggle svg,
   .menu-toggle svg,
-  .menu-close svg {
+  .menu-close svg,
+  .icon-action svg {
     width: 1.05rem;
     height: 1.05rem;
+  }
+  /* Same confirmation the old text button gave by swapping its label to
+     "copied" — the icon swaps to a check, and this tints it so the change
+     reads at a glance rather than only on close inspection. */
+  .icon-action[data-state="copied"] {
+    color: var(--color-accent);
   }
   /* Which glyph shows is decided by the attribute the blocking script in
      layout.tsx stamps, not by React state — that keeps the toggle free of any
@@ -1239,11 +1251,16 @@ h3 {
   }
 
   /* ---- result tabs ---- */
+  /* Four equal columns rather than a scrolling flex row: every tab is visible
+     at once on a phone, and each active underline spans an identical share of
+     the rule. `grid-auto-flow: column` + `grid-auto-columns: 1fr` rather than
+     `repeat(4, 1fr)` so the count is not hard-coded here as well as in TABS.
+     No gap, so the underlines read as segments of the one bottom rule. */
   .tab-list {
-    display: flex;
-    gap: var(--space-2xs);
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
     padding: 0 var(--space-md);
-    overflow-x: auto;
     flex-shrink: 0;
     border-bottom: var(--rule-w) solid var(--color-rule);
   }
@@ -1253,7 +1270,11 @@ h3 {
     font-family: inherit;
     font-size: 0.82rem;
     color: var(--color-muted);
-    padding: 0.85rem 0.9rem;
+    /* Side padding is deliberately small: the grid column supplies the spacing
+       now, and a wide inline padding would push the longest label out of a
+       quarter-width column on a narrow phone. */
+    padding: 0.85rem 0.25rem;
+    text-align: center;
     white-space: nowrap;
     border-bottom: 2px solid transparent;
     transition: color var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out);
@@ -1337,6 +1358,30 @@ h3 {
     background: var(--color-accent);
     padding: 0.08rem 0.45rem;
     margin-bottom: 0.2rem;
+  }
+
+  /* The results title band. Carries the padding the `<h2>` used to hold itself,
+     plus `flex-shrink: 0` — it is a direct child of `.results` (a flex column),
+     and without it the band compresses and throws off the measured heights
+     below, the same trap documented in `app-shell-layout.md`. */
+  .result-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-xs);
+    flex-shrink: 0;
+    min-width: 0;
+    padding: var(--space-sm) var(--space-md) var(--space-xs);
+  }
+  .result-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.1rem;
+    flex-shrink: 0;
+    /* The 2.75rem touch targets are taller than the title's line box, so pull
+       them back into the band's own padding instead of letting them set its
+       height — the title stays optically aligned with the tab row below. */
+    margin: calc(var(--space-2xs) * -1) calc(var(--space-2xs) * -1) 0 0;
   }
 
   .actions {
@@ -2090,7 +2135,7 @@ h3 {
   }
 
   .tab {
-    padding: 0.75rem 1rem;
+    padding: 0.75rem 0.25rem;
   }
   .line {
     grid-template-columns: 3.6rem 1fr;

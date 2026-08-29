@@ -185,11 +185,15 @@ shape the next one will take:
   classes; with that gone it was a second, competing width alongside
   `--shell-width` with nothing referencing it.
 
-`--safe-top` is the live exception and is left alone deliberately: `.shell`
-applies `--safe-left/right/bottom` but not top, because `.nav-wrap`'s own
-`padding-top` stands in for it. It is currently a token with no callers.
-Wiring it means changing the nav's vertical position on every route, which is
-a design change, not tidying.
+`--safe-top` was wired into `.nav-wrap`'s `padding-top` (`max(--space-sm,
+--safe-top)`) after a real device (Android, punch-hole/status-bar camera)
+showed the nav pill sitting flush against the status bar — `--space-sm`
+alone is a fixed design-space value, not a stand-in for a status bar height
+that varies per device, so it only ever cleared the status bar by
+coincidence on devices where it happened to be tall enough. `.shell` still
+does not apply `--safe-top` directly; `.nav-wrap` remains the one place that
+carries the app's top clearance, same as before, just now actually reading
+the safe-area inset instead of a token that had no callers.
 
 `.wordmark::before` declares `content: "▮"` plainly and then upgrades to the
 alt-text form `content: "▮" / ""` under `@supports (content: "x" / "")`. The alt
@@ -273,6 +277,16 @@ every nav in the app. Do not collapse this back into one rule.
 - When measuring against the mockup, note its nav sits ~24px lower than the
   app's. That is the mockup's own demo chrome (`.page`/`.viewport` preview
   frame plus the WEB|MOBILE switch), **not** an app regression — don't "fix" it.
+- ~~**The nav pill sits flush against the device status bar on native
+  Android.**~~ Fixed — user-reported via a screenshot on `build8`. Not caught
+  by the earlier Playwright pass because Chromium emulation doesn't produce a
+  nonzero `env(safe-area-inset-top)`, so it only ever showed up on a physical
+  device. `--safe-top` now feeds `.nav-wrap`'s `padding-top`; see "Token
+  discipline" above. Not re-verified on device by the agent that made the
+  change — only reasoned from the same `max(--space-sm, --safe-X)` pattern
+  already proven correct for `--safe-bottom`/`--safe-left`/`--safe-right` in
+  this file. Confirm on-device that the pill now clears the status bar with
+  visible breathing room, not just contact.
 
 **Tests**: none (see `run-analysis-hook.md`); verified via `npx tsc --noEmit`,
 `npm run build`, and `npm run build:mobile`, plus a Playwright/Chromium pass
@@ -292,3 +306,4 @@ back/forward was measured and the Capacitor mapping is read from
 - 2026-08-15 · frontend agent (url tabs + light default) · moved the active tab into the URL (`/?view=…`) via application/useMainTab.ts + a Suspense boundary in app/page.tsx; extracted the whole nav band into components/AppNav.tsx so LegalShell renders the same four tabs (measured identical to `/` at 1440x900 and 390x844); `.nav-links > button` → `.nav-tab` and the tab-alignment selector → `.tab-view`; `data-menu-open` moved from `.shell` to `.nav-wrap`; first visit with nothing stored now defaults to LIGHT and the theme-color meta follows the theme instead of prefers-color-scheme
 - 2026-08-29 · frontend agent · `HomeScreen` now calls `useCapabilities()` once and owns the always-present `.cap-slot` live region inside `.intake`; the slot is zero-height and carries no CSS on a healthy deployment, so the idle Analyze layout is unchanged (measured identical). New `.cap-*` block in globals.css sits after `.error-inline`
 - 2026-08-15 · doc-accuracy agent · marked two Known issues fixed against live code: `/offline` now renders `<AppNav activeTab={null} />` (was brand-only), and `.page-end`'s negative `margin-bottom` closes the 16px flow-vs-fixed footer gap at 390px (was open) — both cross-checked against `legal-offline-routes.md`, which had already recorded the fixes and flagged this doc as stale
+- 2026-08-16 · main session · wired `--safe-top` into `.nav-wrap`'s `padding-top` after a user screenshot on a physical Android device (`build8`) showed the nav pill sitting flush against the status bar; not caught by the earlier Playwright emulation pass since Chromium doesn't produce a nonzero `env(safe-area-inset-top)`. Not re-verified on device by this agent — only reasoned from the same `max()` pattern already used for the other three safe-area sides

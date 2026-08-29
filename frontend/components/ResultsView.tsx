@@ -5,11 +5,14 @@ import { Capacitor } from "@capacitor/core";
 import { Share } from "@capacitor/share";
 import {
   CalendarDays,
+  Check,
   ChevronDown,
+  Copy,
   ExternalLink,
   Eye,
   Heart,
   MessageCircle,
+  Share2,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -28,7 +31,8 @@ import type {
    sees a transcript and no screen text concludes the video had none. It had no
    frames at all. Two corrections, and only two:
 
-     1. one line beside the title, where the impression of the result forms;
+     1. one line under the title band, where the impression of the result
+        forms;
      2. the on-screen-text empty state, which is the exact place the false
         inference happens.
 
@@ -48,11 +52,13 @@ const CAPTIONS_ONLY_NO_SCREEN_TEXT =
   "No frames were analyzed — this run read the caption track only, so on-screen text was never looked for.";
 const FULL_NO_SCREEN_TEXT = "No on-screen text was detected.";
 
+// Order is the reading order we want people to take: the shortest read first,
+// then the full notes, then the two raw sources behind them.
 const TABS = [
-  { key: "markdown", label: "notes" },
-  { key: "summary", label: "summary" },
-  { key: "transcript", label: "transcript" },
-  { key: "screen_text", label: "on-screen text" },
+  { key: "summary", label: "TL;DR" },
+  { key: "markdown", label: "Notes" },
+  { key: "transcript", label: "Transcript" },
+  { key: "screen_text", label: "On-Screen" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -385,7 +391,7 @@ export default function ResultsView({
   completeness?: AnalysisCompleteness;
 }) {
   const captionsOnly = completeness === "captions_only";
-  const [active, setActive] = useState<TabKey>("markdown");
+  const [active, setActive] = useState<TabKey>("summary");
   const [copied, setCopied] = useState(false);
   const [canShare, setCanShare] = useState(false);
 
@@ -415,14 +421,46 @@ export default function ResultsView({
 
   return (
     <>
-      <h2 className="min-w-0 shrink-0 break-words px-[var(--space-md)] pb-[var(--space-xs)] pt-[var(--space-sm)] text-[0.95rem] font-semibold leading-[1.35] text-[var(--color-ink)]">
-        {result.title}
-      </h2>
+      {/* Copy and share sit up here rather than in `.actions` below: they act
+          on whichever tab is showing, so they belong with the title band that
+          spans all four tabs, not stacked under the panel content where they
+          read as part of the last panel. Download stays below — it produces
+          one whole-report file regardless of the active tab. */}
+      <div className="result-head">
+        <h2 className="min-w-0 break-words text-[0.95rem] font-semibold leading-[1.35] text-[var(--color-ink)]">
+          {result.title}
+        </h2>
+        <div className="result-actions">
+          <button
+            type="button"
+            onClick={copyContent}
+            className="icon-action"
+            data-state={copied ? "copied" : undefined}
+            aria-label={copied ? "Copied to clipboard" : "Copy this tab"}
+            title={copied ? "copied" : "copy"}
+          >
+            {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+          </button>
+          {canShare && (
+            <button
+              type="button"
+              onClick={() => void shareContent()}
+              className="icon-action"
+              aria-label="Share this tab"
+              title="share"
+            >
+              <Share2 aria-hidden="true" />
+            </button>
+          )}
+        </div>
+      </div>
 
-      {/* Between the title and the tabs on purpose: it qualifies all four
-          panels, so it belongs to the pane's fixed header rather than to any
-          one of them, and in the `fixed` frame that header is the part that
-          does not scroll away. Nothing renders at all on a `full` run — the
+      {/* A sibling of `.result-head`, above `.tab-list`, on purpose: it
+          qualifies all four panels, so it belongs to the pane's fixed header
+          rather than to any one of them, and in the `fixed` frame that header
+          is the part that does not scroll away. It stays *outside* the title
+          band rather than inside it — that band is a two-column row (title
+          left, copy/share right), and a full-width note has no column there. Nothing renders at all on a `full` run — the
           normal path must be pixel-identical to before, the same restraint the
           capability strip applies when the deployment is healthy.
 
@@ -592,10 +630,10 @@ export default function ResultsView({
           aria-labelledby="result-tab-screen_text"
         >
           {/* The one place the caption-only run actively lies if left alone:
-              an empty section under a tab called "on-screen text" reads as
-              "the video had none". `screen_text` is empty here because the
-              caption instruction forbids describing visuals the model cannot
-              see, not because anything was searched and came up empty. */}
+              an empty section under a tab called "On-Screen" reads as "the
+              video had none". `screen_text` is empty here because the caption
+              instruction forbids describing visuals the model cannot see, not
+              because anything was searched and came up empty. */}
           <TimelineView
             segments={result.screen_text_segments || []}
             fallback={result.screen_text}
@@ -613,19 +651,6 @@ export default function ResultsView({
           >
             download report (.md)
           </button>
-          <button
-            type="button"
-            onClick={copyContent}
-            className="btn btn-secondary"
-            data-state={copied ? "copied" : undefined}
-          >
-            {copied ? "copied" : "copy"}
-          </button>
-          {canShare && (
-            <button type="button" onClick={() => void shareContent()} className="btn btn-secondary">
-              share
-            </button>
-          )}
         </div>
       </div>
     </>

@@ -83,3 +83,4 @@ against paper: pill 5.26:1 / 5.53:1, stalled step label 10.8:1 / 10.83:1.
 
 - 2026-08-15 · frontend agent · ported RunStatusView to the centred .run-state pipeline; returns a fragment (.run-state > .status is a direct-child selector)
 - 2026-08-15 · frontend agent (run lifecycle errors) · added `connectionLost`: a stalled pill tone, a stalled (dashed, unanimated) step state, and suppression of the "you can leave this open" note, so the view stops claiming progress once polling dies
+- 2026-08-21 · main session · recovery advice now keyed on the stage the run died at rather than on sourceKind, and the dead data-error-kind attribute removed. See ../error-messaging.md
