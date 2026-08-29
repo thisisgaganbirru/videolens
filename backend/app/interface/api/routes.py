@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from starlette.requests import Request
 
 from ...container import container
-from ...domain.entities import CapabilityReport, Principal
+from ...domain.entities import CapabilityReport, Principal, ReleaseIndex
 from .dependencies import get_principal
 from .rate_limiter import limiter
 from .schemas import RunCreateResponse, RunListResponse, RunStatusResponse, RunSummary
@@ -40,6 +40,17 @@ async def capabilities() -> CapabilityReport:
     not an error.
     """
     return await container.get_capabilities_use_case.execute()
+
+
+@router.get("/api/releases", response_model=ReleaseIndex)
+async def releases() -> ReleaseIndex:
+    """The app's own release history, read server-side.
+
+    Exists because the repository is private: a browser calling GitHub's API
+    gets a 404 and a token cannot ship in client-side JavaScript. Reading it
+    here is what lets CI stop committing a static manifest back into the repo.
+    """
+    return await container.get_releases_use_case.execute()
 
 
 @router.post("/api/runs", response_model=RunCreateResponse, status_code=202)

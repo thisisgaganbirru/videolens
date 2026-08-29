@@ -55,3 +55,4 @@ someone else's entry.
 - 2026-08-15 · main session · indexed the environment-separated container workflow reference and updated the standards status
 - 2026-08-21 · main session · indexed the cross-cutting error-messaging reference
 - 2026-08-29 · main session · indexed `railway-environments.md`
+- 2026-08-29 · main session · added `backend/releases.md` for the new `GET /api/releases` endpoint

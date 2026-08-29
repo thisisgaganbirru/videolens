@@ -30,11 +30,12 @@ and `FetchRunsGateway`'s request headers).
   headers. Implements `RunsGateway`.
 - `apiKeyStore.ts` — `LocalStorageApiKeyStore`: reads/writes the
   bring-your-own-key value in `localStorage`. Implements `ApiKeyStore`.
-- `versionLogGateway.ts` — `GithubVersionLogGateway`: fetches the release
-  list for the in-app "Releases" panel. Implements `VersionLogGateway`.
-- `updateCheck.ts` — `GithubUpdateChecker`: the native-Android-only update
-  check (`@capacitor/app` + GitHub releases + `version.json` manifest).
-  Implements `UpdateChecker`.
+- `versionLogGateway.ts` — `FetchVersionLogGateway`: reads the backend's
+  `GET /api/releases` for the in-app "Releases" panel, mapping the endpoint's
+  snake_case rows to `VersionLogEntry`. Implements `VersionLogGateway`.
+- `updateCheck.ts` — `ApiUpdateChecker`: the native-Android-only update
+  check (`@capacitor/app` for the installed build number, `GET /api/releases`
+  for the newest one). Implements `UpdateChecker`.
 - `sharedUrlSource.ts` — `WebShareUrlSource`: the link handed to the app from
   outside it, from either the Android share intent (`localStorage` +
   the `videolens-share` event) or the manifest's `share_target` query params.
