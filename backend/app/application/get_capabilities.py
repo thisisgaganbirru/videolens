@@ -51,6 +51,17 @@ class GetCapabilitiesUseCase:
             capabilities = [
                 self._resolve(probe, result) for probe, result in zip(self._probes, results)
             ]
+            # The operator half never leaves the process: this report is served
+            # unauthenticated, so versions, topology and quota counts go to the
+            # log instead of into the response.
+            details = [
+                f"{c.name}={c.state.value}({c.log_detail})"
+                for c in capabilities
+                if c.log_detail
+            ]
+            if details:
+                logger.info("Capability report: %s", "; ".join(details))
+
             report = CapabilityReport(
                 state=self._overall(capabilities),
                 mode=self._mode,

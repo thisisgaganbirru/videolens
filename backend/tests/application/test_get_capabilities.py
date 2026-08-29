@@ -126,3 +126,29 @@ class GetCapabilitiesUseCaseTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SerializationTests(unittest.IsolatedAsyncioTestCase):
+    """The report is served unauthenticated, so the operator half must never
+    reach the wire. This is the invariant, tested at the boundary that
+    actually enforces it rather than on any one probe."""
+
+    async def test_log_detail_never_appears_in_the_serialized_report(self) -> None:
+        class LeakyProbe(FakeProbe):
+            async def check(self) -> Capability:
+                return Capability(
+                    name=self._name,
+                    state=CapabilityState.OK,
+                    detail="Media processing is available.",
+                    probed=True,
+                    log_detail="ffmpeg 8.1.1; 200 shared runs remaining; redis reachable",
+                )
+
+        report = await _use_case([LeakyProbe("media_tools", CapabilityState.OK)]).execute()
+        wire = report.model_dump_json()
+
+        self.assertNotIn("log_detail", wire)
+        self.assertNotIn("8.1.1", wire)
+        self.assertNotIn("200 shared runs", wire)
+        # The operator half is still reachable in-process, for the log line.
+        self.assertIn("ffmpeg 8.1.1", report.capabilities[0].log_detail)
