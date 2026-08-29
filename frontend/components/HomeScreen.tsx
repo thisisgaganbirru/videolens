@@ -29,6 +29,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
     stage,
     sourceKind,
     result,
+    completeness,
     sourceMetadata,
     error,
     errorKind,
@@ -192,7 +193,11 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
               <div className="right-col">
                 <p className="col-label">Results</p>
                 <div className="results">
-                  <ResultsView result={result} sourceMetadata={sourceMetadata} />
+                  <ResultsView
+                    result={result}
+                    sourceMetadata={sourceMetadata}
+                    completeness={completeness}
+                  />
                 </div>
               </div>
             </div>

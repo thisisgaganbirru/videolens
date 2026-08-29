@@ -41,15 +41,39 @@ export interface SourceMetadata {
   comment_count?: number | null;
 }
 
+/** What the analysis was actually able to look at.
+ *
+ *  `captions_only` is the salvage path: every download route for a URL failed
+ *  (a platform serving `HTTP 403` on the media while serving subtitles fine is
+ *  the reproducible case), so the backend analyzed the subtitle track instead
+ *  of failing the run. There were no frames — `screen_text` is empty because
+ *  nothing was ever looked at, not because nothing was there.
+ *
+ *  A closed union, matching `RunStatus` above rather than the deliberately
+ *  widened `CapabilityState` below. The widening there exists because that
+ *  endpoint renders every row it receives, so an unrecognised one must still
+ *  appear. This field is the opposite: the UI says nothing unless the value is
+ *  literally `captions_only`, so an unknown future value already falls to the
+ *  quiet, safe default with no type-level licence needed. */
+export type AnalysisCompleteness = "full" | "captions_only";
+
 export interface RunStatusResponse {
   run_id: string;
   status: RunStatus;
   stage: string | null;
   result: VideoAnalysis | null;
   source_metadata?: SourceMetadata | null;
+  /** Optional on the wire: a backend older than the caption fallback omits it
+   *  entirely, and the gateway casts rather than validates. Absent means
+   *  `full`. */
+  completeness?: AnalysisCompleteness;
   error: string | null;
 }
 
+/** Deliberately has no `completeness`: `GET /api/runs` does not return one, and
+ *  a history row cannot honestly claim a caveat it was never told about.
+ *  Deriving one client-side would be inventing it. If history should mark
+ *  caption-only runs, the backend has to send it here first. */
 export interface RunSummary {
   run_id: string;
   status: RunStatus;
