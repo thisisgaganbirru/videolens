@@ -25,6 +25,14 @@ class S3ObjectStore:
     def enabled(self) -> bool:
         return self._settings.object_storage_enabled
 
+    async def check_bucket(self) -> None:
+        """Contact the bucket. Raises if the endpoint, credentials, or bucket
+        name are wrong - which is the whole point: having the four settings
+        filled in says nothing about whether they are correct."""
+        if not self.enabled:
+            raise RuntimeError("Object storage is not configured.")
+        await asyncio.to_thread(self._client().head_bucket, Bucket=self._settings.s3_bucket)
+
     async def upload_source(self, run_id: str, path: str) -> str:
         if not self.enabled:
             raise RuntimeError("Object storage is not configured.")

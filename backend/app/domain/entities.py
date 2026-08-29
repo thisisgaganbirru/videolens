@@ -61,6 +61,35 @@ class Run(BaseModel):
     source_metadata: Optional[SourceMetadata] = None
 
 
+class CapabilityState(str, Enum):
+    OK = "ok"
+    DEGRADED = "degraded"
+    UNAVAILABLE = "unavailable"
+    DISABLED = "disabled"
+
+
+class Capability(BaseModel):
+    """One thing the service needs in order to accept work, and whether it is
+    actually there right now.
+
+    `probed` is the honest half of this record: True means the check really
+    exercised the dependency, False means it only read configuration. A health
+    report that cannot tell those apart eventually reports "ok" for something
+    that has never once worked.
+    """
+
+    name: str
+    state: CapabilityState
+    detail: str
+    probed: bool
+
+
+class CapabilityReport(BaseModel):
+    state: CapabilityState
+    mode: str
+    capabilities: list[Capability]
+
+
 @dataclass(frozen=True)
 class Principal:
     subject: str

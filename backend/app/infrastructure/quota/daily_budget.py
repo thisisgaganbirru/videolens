@@ -46,6 +46,22 @@ class DailyBudget:
         self._memory[key] = count
         return count <= self._settings.daily_run_cap
 
+    async def remaining(self) -> int | None:
+        """Runs still available under today's cap, or None when uncapped.
+
+        Read-only on purpose: health reporting must never consume the budget
+        it is reporting on.
+        """
+        if self._settings.daily_run_cap <= 0:
+            return None
+        key = self._key()
+        if self._settings.queue_enabled:
+            raw = await self._client().get(key)
+            used = int(raw) if raw else 0
+        else:
+            used = self._memory.get(key, 0)
+        return max(0, self._settings.daily_run_cap - used)
+
     async def close(self) -> None:
         if self._redis is not None:
             await self._redis.aclose()
