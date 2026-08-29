@@ -4,7 +4,7 @@ from typing import Optional
 
 from redis.asyncio import Redis
 
-from ...domain.entities import Run, RunStatus, SourceMetadata, VideoAnalysis
+from ...domain.entities import AnalysisCompleteness, Run, RunStatus, SourceMetadata, VideoAnalysis
 from ..config import Settings
 
 # Cap on how many run_ids the per-owner history index retains, independent of
@@ -96,6 +96,7 @@ class RunStore:
         status: RunStatus | None = None,
         stage: str | None = None,
         result: VideoAnalysis | None = None,
+        completeness: AnalysisCompleteness | None = None,
         source_metadata: SourceMetadata | None = None,
         error: str | None = None,
     ) -> None:
@@ -108,6 +109,8 @@ class RunStore:
             run.stage = stage
         if result is not None:
             run.result = result
+        if completeness is not None:
+            run.completeness = completeness
         if source_metadata is not None:
             run.source_metadata = source_metadata
         if error is not None:
@@ -121,8 +124,15 @@ class RunStore:
     async def set_stage(self, run_id: str, stage: str) -> None:
         await self._update(run_id, stage=stage)
 
-    async def set_result(self, run_id: str, result: VideoAnalysis) -> None:
-        await self._update(run_id, status=RunStatus.COMPLETE, result=result)
+    async def set_result(
+        self,
+        run_id: str,
+        result: VideoAnalysis,
+        completeness: AnalysisCompleteness = AnalysisCompleteness.FULL,
+    ) -> None:
+        await self._update(
+            run_id, status=RunStatus.COMPLETE, result=result, completeness=completeness
+        )
 
     async def set_source_metadata(self, run_id: str, metadata: SourceMetadata) -> None:
         await self._update(run_id, source_metadata=metadata)

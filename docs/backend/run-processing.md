@@ -14,7 +14,11 @@ Does the actual work for one run: get the source media onto disk, validate/norma
 3. If no usable path/dir resulted, raise `MediaValidationError("No media source was provided.")`.
 4. Stage → `"normalizing"`, then `MediaProcessor.normalize_media`.
 5. `AnalysisEngine.analyze_with_retry`, with an `on_stage` callback that relays Gemini's own stages (`"uploading_to_gemini"`, `"analyzing"`) into `RunRepository.set_stage`, and the `SourceMetadata` from step 2 when there was one. The metadata is both persisted onto the run *and* passed to the engine — persisting it makes it visible in the UI, passing it makes the analysis better (see `docs/backend/gemini-analysis.md`). Upload and S3 paths pass `None`.
-6. `RunRepository.set_result` on success.
+6. `RunRepository.set_result` on success, with `AnalysisCompleteness.FULL`.
+
+**Caption fallback (URL runs only)**: if step 2(b) raises `MediaValidationError` — every resolver in the chain failed — the pipeline tries `MediaProcessor.fetch_captions` before giving up. Platforms serve subtitles from a different pipeline than media bytes, so a 403 on the video very often coexists with a perfectly available caption track. On success the run completes with stage `analyzing_captions`, `AnalysisCompleteness.CAPTIONS_ONLY`, and a text-only analysis (`AnalysisEngine.analyze_captions`, see `docs/backend/gemini-analysis.md`); `SourceMetadata` recovered alongside the captions is persisted too. Verified end-to-end against a YouTube URL that returns `HTTP 403` on download.
+
+Any failure inside the fallback returns False and the **original download error** is re-raised — the caption attempt is a bonus and its own problems must never replace the diagnosis of why the download failed. Upload and S3 runs never enter this path (there is no URL to fetch captions from).
 
 **Error handling — three distinct paths**, all terminal (none re-raise out of `execute`):
 - `MediaValidationError` / `GeminiConfigurationError` → stored verbatim as `run.error` (these already carry a caller-safe message).

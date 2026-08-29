@@ -5,7 +5,7 @@ from typing import Optional
 from google import genai
 from google.genai import types
 
-from ...domain.entities import SourceMetadata, VideoAnalysis
+from ...domain.entities import CaptionTrack, SourceMetadata, VideoAnalysis
 from ...domain.errors import GeminiConfigurationError
 from ...domain.ports import StageCallback
 from ..config import Settings
@@ -43,6 +43,26 @@ Return your analysis in the requested structured format:
 - screen_text: the important on-screen text, in the order it appears
 - screen_text_segments: timestamped visible-text segments with start_seconds, end_seconds, and text
 - markdown: well-formatted markdown notes combining speech and visual context"""
+
+
+CAPTION_SYSTEM_INSTRUCTION = """You are analyzing the caption/subtitle track of a video whose
+media file could not be retrieved. You have the words only - no audio, no frames.
+
+Work from the transcript text you are given and:
+- Reproduce it as the transcript, cleaned of duplicated caption lines but not reworded.
+- Write a title and a summary of what the video covers.
+- Write markdown notes organizing what was said.
+
+Hard constraints, because you cannot see or hear anything:
+- Leave screen_text empty and screen_text_segments empty. You have no visual information, and
+  inventing on-screen text would be fabrication.
+- Leave transcript_segments empty unless the caption text itself carries reliable timing.
+- Never describe visuals, actions, settings, or anything a viewer would see. If the words imply
+  something is being shown, say that the speaker refers to it - do not describe it.
+- Auto-generated captions contain mishearings and no punctuation. Where a word is clearly a
+  transcription error, you may note the likely intent, but do not silently rewrite the transcript.
+
+State in the summary that this analysis is based on the caption track alone."""
 
 
 class GeminiEngine:
@@ -126,6 +146,41 @@ class GeminiEngine:
                 await client.aio.files.delete(name=uploaded.name)
             except Exception:
                 pass
+
+    async def analyze_captions(
+        self, captions: CaptionTrack, api_key: str | None = None
+    ) -> VideoAnalysis:
+        """Text-only analysis of a recovered subtitle track.
+
+        No file upload and no polling - there is nothing to upload. Uses its
+        own system instruction because the normal one asks for on-screen text
+        and visual context, neither of which exists here; asking for them
+        anyway is an invitation to invent them.
+        """
+        client = self._get_client(api_key)
+        parts = [
+            f"Caption track language: {captions.language}"
+            + (" (auto-generated)" if captions.automatic else " (publisher-provided)"),
+            f"<captions>\n{captions.text}\n</captions>",
+        ]
+        source_context = build_source_context(captions.metadata)
+        if source_context:
+            parts.append(source_context)
+
+        response = await client.aio.models.generate_content(
+            model=self._settings.gemini_model,
+            contents=parts,
+            config=types.GenerateContentConfig(
+                system_instruction=CAPTION_SYSTEM_INSTRUCTION,
+                response_mime_type="application/json",
+                response_schema=VideoAnalysis,
+            ),
+        )
+        if isinstance(response.parsed, VideoAnalysis):
+            return response.parsed
+        if not response.text:
+            raise RuntimeError("Gemini returned an empty response.")
+        return VideoAnalysis(**json.loads(response.text))
 
     async def analyze_with_retry(
         self,

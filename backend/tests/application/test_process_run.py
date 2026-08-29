@@ -2,7 +2,13 @@ import os
 import unittest
 
 from app.application.process_run import ProcessRunUseCase
-from app.domain.entities import RunStatus, SourceMetadata, VideoAnalysis
+from app.domain.entities import (
+    AnalysisCompleteness,
+    CaptionTrack,
+    RunStatus,
+    SourceMetadata,
+    VideoAnalysis,
+)
 from app.domain.errors import GeminiConfigurationError, MediaValidationError
 
 from .fakes import (
@@ -14,6 +20,12 @@ from .fakes import (
 )
 
 ANALYSIS = VideoAnalysis(title="T", summary="S", transcript="Tx", screen_text="", markdown="# T")
+CAPTIONS = CaptionTrack(
+    text="hello world",
+    language="en",
+    automatic=True,
+    metadata=SourceMetadata(platform="Youtube", source_url="https://x.test/v", title="Clip"),
+)
 
 
 class ProcessRunUseCaseTests(unittest.IsolatedAsyncioTestCase):
@@ -82,6 +94,80 @@ class ProcessRunUseCaseTests(unittest.IsolatedAsyncioTestCase):
         await self.use_case.execute("run-1", source_url="https://x.test/v.mp4")
 
         self.assertEqual(self.analysis.metadata_seen, [None])
+
+    async def test_falls_back_to_captions_when_every_download_route_fails(self) -> None:
+        self.media.download_error = MediaValidationError("HTTP Error 403: Forbidden")
+        self.media.captions = CAPTIONS
+
+        await self.use_case.execute("run-1", source_url="https://x.test/v")
+
+        run = self.runs.runs["run-1"]
+        self.assertEqual(run.status, RunStatus.COMPLETE)
+        self.assertEqual(run.completeness, AnalysisCompleteness.CAPTIONS_ONLY)
+        self.assertEqual(self.analysis.caption_calls, [CAPTIONS])
+        self.assertEqual(run.stage, "analyzing_captions")
+        # The media path was never reached, so nothing was normalized.
+        self.assertEqual(self.media.normalize_calls, [])
+        self.assertEqual(self.media.cleaned_up, ["run-1"])
+
+    async def test_a_successful_analysis_is_marked_full(self) -> None:
+        await self.use_case.execute("run-1", source_url="https://x.test/v")
+
+        self.assertEqual(self.runs.runs["run-1"].completeness, AnalysisCompleteness.FULL)
+
+    async def test_never_looks_for_captions_when_the_download_succeeds(self) -> None:
+        await self.use_case.execute("run-1", source_url="https://x.test/v")
+
+        self.assertEqual(self.media.caption_calls, [])
+
+    async def test_reports_the_download_error_when_no_captions_exist(self) -> None:
+        self.media.download_error = MediaValidationError("HTTP Error 403: Forbidden")
+        self.media.captions = None
+
+        await self.use_case.execute("run-1", source_url="https://x.test/v")
+
+        run = self.runs.runs["run-1"]
+        self.assertEqual(run.status, RunStatus.FAILED)
+        self.assertEqual(run.error, "HTTP Error 403: Forbidden")
+
+    async def test_a_broken_caption_fetch_does_not_replace_the_download_diagnosis(self) -> None:
+        # The caption attempt is a bonus. Its own failure must not become the
+        # explanation the user reads - that would hide why the download failed.
+        self.media.download_error = MediaValidationError("Configure cookies for Instagram.")
+        self.media.captions_error = RuntimeError("subtitle endpoint exploded")
+
+        await self.use_case.execute("run-1", source_url="https://x.test/v")
+
+        run = self.runs.runs["run-1"]
+        self.assertEqual(run.status, RunStatus.FAILED)
+        self.assertEqual(run.error, "Configure cookies for Instagram.")
+
+    async def test_a_failing_caption_analysis_also_falls_back_to_the_download_error(self) -> None:
+        self.media.download_error = MediaValidationError("HTTP Error 403: Forbidden")
+        self.media.captions = CAPTIONS
+        self.analysis.caption_error = RuntimeError("gemini refused")
+
+        await self.use_case.execute("run-1", source_url="https://x.test/v")
+
+        self.assertEqual(self.runs.runs["run-1"].error, "HTTP Error 403: Forbidden")
+
+    async def test_persists_metadata_recovered_alongside_the_captions(self) -> None:
+        self.media.download_error = MediaValidationError("HTTP Error 403: Forbidden")
+        self.media.captions = CAPTIONS
+
+        await self.use_case.execute("run-1", source_url="https://x.test/v")
+
+        self.assertEqual(self.runs.runs["run-1"].source_metadata, CAPTIONS.metadata)
+
+    async def test_uploads_never_attempt_the_caption_fallback(self) -> None:
+        self.media.captions = CAPTIONS
+        self.analysis.error = MediaValidationError("normalize blew up")
+
+        await self.use_case.execute("run-1", saved_path="/tmp/run-1/upload.mp4", run_dir="/tmp/run-1")
+
+        # There is no URL to fetch captions from; the run just fails.
+        self.assertEqual(self.media.caption_calls, [])
+        self.assertEqual(self.runs.runs["run-1"].status, RunStatus.FAILED)
 
     async def test_uses_a_pre_saved_path_directly_without_re_validating_duration(self) -> None:
         await self.use_case.execute("run-1", saved_path="/tmp/run-1/upload.mp4", run_dir="/tmp/run-1")

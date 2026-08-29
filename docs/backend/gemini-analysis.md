@@ -21,6 +21,12 @@ The block is treated as hostile input throughout, because it is arbitrary text f
 
 A useful side effect: because the model is told to flag disagreement, the summary can note where the video differs from what the publisher claimed.
 
+**Caption-only analysis**: `analyze_captions(captions, api_key)` is a second, separate entry point used when the media could not be downloaded at all (see `docs/backend/run-processing.md`). It is text-only — no file upload, no `_wait_until_active` polling, no retry wrapper — and runs under its own `CAPTION_SYSTEM_INSTRUCTION` rather than the normal one.
+
+A separate instruction is the whole point. The main prompt asks for on-screen text and visual context; asking for those when the model has only words is an invitation to invent them. The caption instruction therefore *forbids* describing visuals, requires `screen_text`/`screen_text_segments` to stay empty, warns that auto-captions contain mishearings, and requires the summary to state that the analysis came from captions alone. Verified live: a real caption-only run returned `screen_text: ''` and a summary opening "Based on the caption track alone".
+
+The `<source_metadata>` block is attached here too, on the same terms.
+
 **BYOK vs shared client**: a caller-supplied API key gets its own `genai.Client`, constructed fresh every call and never cached. The shared server key's client (`self._client`) is a single instance cached for the adapter's lifetime (adapter itself is a container-level singleton, so effectively one client per process). This separation is deliberate — the shared-key cache must never accidentally end up holding someone else's credential.
 
 **Configuration error**: if no BYOK key is given and `GEMINI_API_KEY` isn't set, raises `GeminiConfigurationError` — caught by `ProcessRunUseCase` and stored as the run's error message verbatim (it's already a caller-safe message).
@@ -31,3 +37,4 @@ A useful side effect: because the model is told to flag disagreement, the summar
 
 ## Changelog
 - 2026-08-29 · main session · added `source_context.py` and fed publisher metadata into the prompt as explicitly-untrusted context
+- 2026-08-29 · main session · added `analyze_captions` and `CAPTION_SYSTEM_INSTRUCTION` for the caption-only salvage path

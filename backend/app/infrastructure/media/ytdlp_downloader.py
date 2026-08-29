@@ -32,6 +32,27 @@ def _cookie_options(settings: Settings) -> dict:
     return {}
 
 
+def _source_metadata_from_info(info: dict, url: str) -> SourceMetadata:
+    """Map yt-dlp's info dict onto the domain model.
+
+    Shared with the caption fallback, which reaches the same dict through
+    `extract_info(download=False)` - the publisher's own post metadata is
+    available whether or not the media bytes are.
+    """
+    return SourceMetadata(
+        platform=info.get("extractor_key") or "unknown",
+        source_url=url,
+        title=info.get("title"),
+        uploader=info.get("uploader"),
+        uploader_url=info.get("uploader_url"),
+        description=info.get("description"),
+        upload_date=info.get("upload_date"),
+        like_count=info.get("like_count"),
+        view_count=info.get("view_count"),
+        comment_count=info.get("comment_count"),
+    )
+
+
 def _download_error_message(exc: DownloadError) -> str:
     message = ANSI_ESCAPE.sub("", str(exc)).removeprefix("ERROR: ")
     if "Instagram sent an empty media response" in message:
@@ -89,18 +110,7 @@ async def download_url(settings: Settings, run_id: str, url: str) -> SavedUpload
             raise MediaValidationError(
                 f"Download exceeds the {settings.max_file_size_mb}MB size limit."
             )
-        metadata = SourceMetadata(
-            platform=info.get("extractor_key") or "unknown",
-            source_url=url,
-            title=info.get("title"),
-            uploader=info.get("uploader"),
-            uploader_url=info.get("uploader_url"),
-            description=info.get("description"),
-            upload_date=info.get("upload_date"),
-            like_count=info.get("like_count"),
-            view_count=info.get("view_count"),
-            comment_count=info.get("comment_count"),
-        )
+        metadata = _source_metadata_from_info(info, url)
         return SavedUpload(path=path, run_dir=run_dir, metadata=metadata)
     except MediaValidationError:
         _cleanup_dir(run_dir)
