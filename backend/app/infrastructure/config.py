@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     auth_audience: str = ""
     allow_anonymous: bool = True
 
+    github_repo: str = "thisisgaganbirru/videolens"
+    github_token: str = ""
+
     ytdlp_cookies_file: str = ""
     ytdlp_cookies_from_browser: str = ""
     ffmpeg_location: str = ""

@@ -3,16 +3,6 @@ name: Android development build
 on:
   push:
     branches: [dev]
-    paths-ignore:
-      # The release job commits these two files back to `dev` after every
-      # build. Ignoring them here is what replaces the old `[skip ci]` marker:
-      # it stops the manifest commit re-triggering this workflow (the infinite
-      # build loop the marker existed to prevent) while still letting the
-      # commit receive check runs. `[skip ci]` suppressed *every* workflow, so
-      # the new head of `dev` had no checks at all - and `main` requires checks
-      # on the head, which made a `dev` -> `main` PR permanently unmergeable.
-      - frontend/public/releases.json
-      - frontend/public/version.json
   workflow_dispatch:
 
 permissions:
@@ -32,10 +22,7 @@ jobs:
       # (development-environment.yml). This APK is installed on real devices,
       # so it cannot fall back to localhost.
       api_base_url: https://videolens-backend-dev.up.railway.app
-      # Where the installed app fetches /version.json from to discover newer
-      # builds. Must be the deployed web app, not this APK's own bundle: the
-      # bundled copy is frozen at build time and can never describe a newer one.
-      web_base_url: https://videolens-frontend-dev.up.railway.app
+
 
   release:
     name: Publish dev release
@@ -73,74 +60,3 @@ jobs:
             release-assets/version.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Update release manifest
-        # The repo is private, so the in-app "Releases" tab can't call GitHub's
-        # API from the browser (unauthenticated calls 404, and a token can't
-        # safely live in client-side JS). This job - which just published the
-        # release above using the ambient, zero-setup token every Actions run
-        # already gets - also updates a static frontend/public/releases.json and
-        # commits it straight to dev. The frontend then reads that as a
-        # same-origin static file (frontend/infrastructure/versionLogGateway.ts).
-        # No credential of any kind is introduced for this.
-        working-directory: frontend
-        run: |
-          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${RELEASE_TAG}"
-          PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          VERSION_CODE="${{ github.run_number }}"
-          VERSION_NAME="${{ needs.android.outputs.version_name }}"
-          VERSION_SHA="${{ needs.android.outputs.version_sha }}"
-          export RELEASE_URL PUBLISHED_AT VERSION_CODE VERSION_NAME VERSION_SHA
-          node <<'NODE'
-          const fs = require("fs");
-          const path = "public/releases.json";
-          const entry = {
-            name: process.env.RELEASE_NAME,
-            tag: process.env.RELEASE_TAG,
-            publishedAt: process.env.PUBLISHED_AT,
-            url: process.env.RELEASE_URL,
-          };
-          const manifest = fs.existsSync(path) ? JSON.parse(fs.readFileSync(path, "utf8")) : { releases: [] };
-          const releases = manifest.releases.filter((release) => release.tag !== entry.tag);
-          releases.unshift(entry);
-          releases.sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt));
-          fs.writeFileSync(path, JSON.stringify({ releases: releases.slice(0, 20) }, null, 2) + "\n");
-
-          // Same shape as the release asset of the same name, but served by the
-          // deployed web app instead of GitHub. The installed Android app polls
-          // this to discover newer builds: the repo is private, so it cannot ask
-          // GitHub's API, and the copy inside its own APK is frozen at build
-          // time (frontend/infrastructure/updateCheck.ts).
-          fs.writeFileSync(
-            "public/version.json",
-            JSON.stringify(
-              {
-                versionCode: Number(process.env.VERSION_CODE),
-                versionName: process.env.VERSION_NAME,
-                commit: process.env.VERSION_SHA,
-                releaseUrl: process.env.RELEASE_URL,
-              },
-              null,
-              2,
-            ) + "\n",
-          );
-          NODE
-      - name: Commit release manifest
-        run: |
-          if git diff --quiet -- frontend/public/releases.json frontend/public/version.json; then
-            echo "No manifest changes to commit."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add frontend/public/releases.json frontend/public/version.json
-          git commit -m "Update release manifest for v${{ needs.android.outputs.version_name }} build ${{ github.run_number }}"
-          for attempt in 1 2 3; do
-            if git push origin HEAD:dev; then
-              exit 0
-            fi
-            echo "Push rejected, rebasing onto latest dev (attempt $attempt)..."
-            git fetch origin dev
-            git rebase origin/dev
-          done
-          echo "Could not push the release manifest after 3 attempts." >&2
-          exit 1
