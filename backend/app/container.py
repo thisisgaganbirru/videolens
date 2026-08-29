@@ -5,6 +5,7 @@ application code never import from here."""
 
 from .application.create_run import CreateRunUseCase
 from .application.get_capabilities import GetCapabilitiesUseCase
+from .application.get_releases import GetReleasesUseCase
 from .application.get_run import GetRunUseCase
 from .application.list_runs import ListRunsUseCase
 from .application.process_run import ProcessRunUseCase
@@ -22,6 +23,7 @@ from .infrastructure.health.probes import (
 )
 from .infrastructure.media.service import MediaService
 from .infrastructure.persistence.run_repository import RunStore
+from .infrastructure.releases.github_releases import GithubReleaseCatalog
 from .infrastructure.queue.job_queue import RunQueue
 from .infrastructure.quota.daily_budget import DailyBudget
 from .infrastructure.storage.s3_object_store import S3ObjectStore
@@ -41,6 +43,7 @@ class Container:
         self.spend_cap = DailyBudget(settings)
         self.key_vault = ByokKeyStore(settings)
         self.jwt_verifier = JwtVerifier(settings)
+        self.release_catalog = GithubReleaseCatalog(settings)
 
         # Use cases.
         self.process_run_use_case = ProcessRunUseCase(
@@ -68,6 +71,7 @@ class Container:
             stale_after_seconds=settings.worker_job_timeout_seconds + 120,
         )
         self.list_runs_use_case = ListRunsUseCase(runs=self.run_repository)
+        self.get_releases_use_case = GetReleasesUseCase(catalog=self.release_catalog)
         # Probe order is the order they appear in the response: the media
         # pipeline first, then the things a run depends on downstream.
         self.get_capabilities_use_case = GetCapabilitiesUseCase(

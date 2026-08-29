@@ -49,7 +49,16 @@ Each of these presents as "Railway just didn't deploy", with no error anywhere o
 
 **1. A failed workflow on the commit, including one you already re-ran.** A re-run does not erase the original. `workflow_dispatch` succeeding later leaves the earlier `push` run reading `failure`, and Wait for CI still sees the failure. A commit that failed CI once can never deploy; it needs a new commit.
 
-**2. A bot-authored commit awaiting workflow approval.** The Android release job commits the release manifest back to `dev`. GitHub queues that commit's checks as `action_required` until someone approves them, and until then Wait for CI has no success to wait on, so the deploy is skipped. See `container-workflows.md` for why that commit no longer carries `[skip ci]`.
+**2. A bot-authored commit — which behaves in two *opposite* ways.** GitHub deliberately does not trigger workflows from pushes made with `GITHUB_TOKEN`, so a commit pushed by `github-actions[bot]` has no runs of its own. What happens next depends on something unrelated — whether a PR happens to be open at that moment:
+
+| | Workflow runs | Railway |
+|---|---|---|
+| Bot commit, **no** open PR | none | **deploys, ungated** — Wait for CI has nothing to wait for |
+| Bot commit, **open** PR | one, stuck at `action_required` | **skipped** until a human approves |
+
+Both were observed on 2026-08-29: `df08bee` deployed with no checks at all; `09e39f9` sat skipped awaiting approval because PR #28 was open. So the same release step either ships unvalidated or stalls a deploy, and which one you get is incidental.
+
+This is retired as of the `GET /api/releases` endpoint — the release manifest is no longer committed to the repo, so no bot commit exists to behave either way. See `backend/releases.md`.
 
 **3. An unrelated failing workflow on the same SHA.** Wait for CI reads *every* workflow on the commit, not only the pipeline. A failing Dependabot run counts. Two `docker in /.` Dependabot runs failed on `3b7dc14` and contributed to production skipping it.
 
@@ -70,7 +79,7 @@ Under the current model this costs nothing, because Railway builds each environm
 
 ## Known issues
 
-- **Wait for CI has two standing ways to stall production**: the bot manifest commit needing approval, and any unrelated failing workflow on the SHA. Neither is a Railway fault; both are consequences of gating on "every workflow green".
+- **Wait for CI treats "no workflow runs" as pass, not as skip.** A commit nothing runs on deploys ungated. That was how the bot manifest commit reached `dev` without checks; with the manifest commit gone, the remaining way to hit this is a commit whose every workflow is path-filtered out.
 - **The `docker in /.` Dependabot entry has failing runs** (`3b7dc14`). Not yet diagnosed. Because Wait for CI counts every workflow, a chronically failing scheduled job would block deploys indefinitely.
 - **`connect_service_source` cannot express this topology.** Any automation of branch mapping has to go through the dashboard or Railway's own per-environment API, not that call.
 
