@@ -5,7 +5,9 @@ required) so use cases never import a framework or a driver library."""
 from typing import Awaitable, Callable, Optional, Protocol
 
 from .entities import (
+    AnalysisCompleteness,
     Capability,
+    CaptionTrack,
     Run,
     RunStatus,
     SavedUpload,
@@ -38,7 +40,12 @@ class RunRepository(Protocol):
 
     async def set_stage(self, run_id: str, stage: str) -> None: ...
 
-    async def set_result(self, run_id: str, result: VideoAnalysis) -> None: ...
+    async def set_result(
+        self,
+        run_id: str,
+        result: VideoAnalysis,
+        completeness: AnalysisCompleteness = AnalysisCompleteness.FULL,
+    ) -> None: ...
 
     async def set_source_metadata(self, run_id: str, metadata: SourceMetadata) -> None: ...
 
@@ -61,6 +68,8 @@ class MediaProcessor(Protocol):
     async def enforce_duration_cap(self, run_id: str, path: str) -> None: ...
 
     async def download_url(self, run_id: str, url: str) -> SavedUpload: ...
+
+    async def fetch_captions(self, url: str) -> Optional[CaptionTrack]: ...
 
     async def normalize_media(self, src_path: str, run_dir: str) -> str: ...
 
@@ -85,6 +94,12 @@ class AnalysisEngine(Protocol):
         on_stage: Optional[StageCallback] = None,
         api_key: str | None = None,
         metadata: Optional[SourceMetadata] = None,
+    ) -> VideoAnalysis: ...
+
+    async def analyze_captions(
+        self,
+        captions: CaptionTrack,
+        api_key: str | None = None,
     ) -> VideoAnalysis: ...
 
 

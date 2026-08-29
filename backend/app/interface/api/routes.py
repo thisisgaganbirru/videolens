@@ -92,5 +92,6 @@ async def get_run(
         stage=run.stage,
         result=run.result,
         source_metadata=run.source_metadata,
+        completeness=run.completeness,
         error=run.error,
     )

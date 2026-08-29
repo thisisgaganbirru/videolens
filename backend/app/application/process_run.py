@@ -1,7 +1,7 @@
 import logging
 import os
 
-from ..domain.entities import RunStatus
+from ..domain.entities import AnalysisCompleteness, RunStatus
 from ..domain.errors import GeminiConfigurationError, MediaValidationError
 from ..domain.ports import AnalysisEngine, MediaProcessor, ObjectStore, RunRepository
 
@@ -26,6 +26,33 @@ class ProcessRunUseCase:
         self._storage = storage
         self._analysis = analysis
 
+    async def _analyze_captions(
+        self, run_id: str, source_url: str, gemini_api_key: str | None
+    ) -> bool:
+        """Salvage a failed download via the subtitle track.
+
+        Returns True when the run was completed from captions. Any failure
+        here returns False so the caller re-raises the *original* download
+        error - the caption attempt is a bonus, and its own problems must not
+        replace the diagnosis of why the download failed.
+        """
+        try:
+            captions = await self._media.fetch_captions(source_url)
+            if captions is None:
+                return False
+            await self._runs.set_stage(run_id, "analyzing_captions")
+            result = await self._analysis.analyze_captions(captions, api_key=gemini_api_key)
+            if captions.metadata is not None:
+                await self._runs.set_source_metadata(run_id, captions.metadata)
+            await self._runs.set_result(run_id, result, AnalysisCompleteness.CAPTIONS_ONLY)
+            logger.info("Run %s recovered from captions after the download failed", run_id)
+            return True
+        except GeminiConfigurationError:
+            raise
+        except Exception:
+            logger.exception("Caption fallback failed for run %s", run_id)
+            return False
+
     async def execute(
         self,
         run_id: str,
@@ -38,20 +65,29 @@ class ProcessRunUseCase:
         await self._runs.set_status(run_id, RunStatus.PROCESSING)
         metadata = None
         try:
-            if source_key:
-                run_dir = self._media.create_run_dir(run_id)
-                extension = os.path.splitext(source_key)[1].lower()
-                saved_path = os.path.join(run_dir, f"source{extension}")
-                await self._storage.download_source(source_key, saved_path)
-                await self._media.enforce_duration_cap(run_id, saved_path)
-            elif source_url:
+            if source_url and not source_key:
                 await self._runs.set_stage(run_id, "downloading")
-                downloaded = await self._media.download_url(run_id, source_url)
+                try:
+                    downloaded = await self._media.download_url(run_id, source_url)
+                except MediaValidationError as exc:
+                    # Every download route failed. Captions are served by a
+                    # different pipeline on these platforms, so they are often
+                    # still reachable when the media bytes are not - a real
+                    # transcript beats "please try again".
+                    if await self._analyze_captions(run_id, source_url, gemini_api_key):
+                        return
+                    raise exc
                 saved_path = downloaded.path
                 run_dir = downloaded.run_dir
                 if downloaded.metadata is not None:
                     metadata = downloaded.metadata
                     await self._runs.set_source_metadata(run_id, metadata)
+                await self._media.enforce_duration_cap(run_id, saved_path)
+            elif source_key:
+                run_dir = self._media.create_run_dir(run_id)
+                extension = os.path.splitext(source_key)[1].lower()
+                saved_path = os.path.join(run_dir, f"source{extension}")
+                await self._storage.download_source(source_key, saved_path)
                 await self._media.enforce_duration_cap(run_id, saved_path)
 
             if not saved_path or not run_dir:

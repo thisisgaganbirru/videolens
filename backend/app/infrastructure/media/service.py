@@ -1,7 +1,7 @@
-from ...domain.entities import SavedUpload
+from ...domain.entities import CaptionTrack, SavedUpload
 from ...domain.ports import UploadedFile
 from ..config import Settings
-from . import ffmpeg, uploads
+from . import captions, ffmpeg, uploads
 from .resolvers import DirectHttpResolver, ResolverChain, YtDlpResolver
 
 
@@ -36,6 +36,9 @@ class MediaService:
 
     async def download_url(self, run_id: str, url: str) -> SavedUpload:
         return await self._resolvers.fetch(run_id, url)
+
+    async def fetch_captions(self, url: str) -> CaptionTrack | None:
+        return await captions.fetch_captions(self._settings, url)
 
     async def normalize_media(self, src_path: str, run_dir: str) -> str:
         return await ffmpeg.normalize_media(self._settings, src_path, run_dir)
