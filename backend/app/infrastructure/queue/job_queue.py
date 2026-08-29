@@ -25,6 +25,11 @@ class RunQueue:
         self._key_vault = key_vault
         self._pool = None
         self._local_limit = asyncio.Semaphore(settings.worker_max_jobs)
+        # The event loop only holds a *weak* reference to a task, so a local
+        # run whose task nobody keeps can be garbage-collected mid-flight -
+        # the coroutine simply stops and the run sits in PROCESSING forever.
+        # Holding the task until it finishes is the documented fix.
+        self._local_tasks: set[asyncio.Task] = set()
 
     async def enqueue(
         self,
@@ -61,7 +66,9 @@ class RunQueue:
                     gemini_api_key=gemini_api_key,
                 )
 
-        asyncio.create_task(run_locally())
+        task = asyncio.create_task(run_locally())
+        self._local_tasks.add(task)
+        task.add_done_callback(self._local_tasks.discard)
 
     async def close(self) -> None:
         if self._pool is not None:

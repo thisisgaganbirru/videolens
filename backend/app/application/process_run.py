@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 
@@ -6,6 +7,10 @@ from ..domain.errors import GeminiConfigurationError, MediaValidationError
 from ..domain.ports import AnalysisEngine, MediaProcessor, ObjectStore, RunRepository
 
 logger = logging.getLogger("videolens")
+
+RUN_INTERRUPTED_MESSAGE = (
+    "Analysis was interrupted before it finished. Please try again."
+)
 
 
 class ProcessRunUseCase:
@@ -114,6 +119,18 @@ class ProcessRunUseCase:
             await self._runs.set_error(run_id, str(exc))
         except GeminiConfigurationError as exc:
             await self._runs.set_error(run_id, str(exc))
+        except asyncio.CancelledError:
+            # arq cancels the coroutine when `job_timeout` expires, and
+            # CancelledError is a BaseException - so the catch-all below never
+            # sees it. Without this the run sits in PROCESSING until its TTL
+            # expires, days later, with nothing to explain it. Best-effort:
+            # the write may not land if the loop is already tearing down,
+            # which is what the read-time staleness check backstops.
+            try:
+                await self._runs.set_error(run_id, RUN_INTERRUPTED_MESSAGE)
+            except BaseException:  # noqa: BLE001 - never mask the cancellation
+                pass
+            raise
         except Exception:
             logger.exception("Run %s failed", run_id)
             await self._runs.set_error(run_id, "Media analysis failed. Please try again.")
