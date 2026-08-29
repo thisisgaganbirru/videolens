@@ -20,7 +20,7 @@ export default function VersionLogPanel() {
      control that caused it; nothing here was user-triggered, so that definition
      does not describe this either. The rung that can be made to fit honestly is
      this one, and it fits by supplying the thing that was actually missing:
-     `/releases.json` fails when the device is offline, and offline ends. Until
+     the release fetch fails when the device is offline, and offline ends. Until
      now the only recovery was a full reload or the accident of switching tabs
      and back. This is also the same object HistoryPanel renders one tab over —
      a fetch-on-mount gateway list with the same four states — so it gets the

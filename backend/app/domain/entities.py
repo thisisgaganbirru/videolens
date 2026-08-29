@@ -109,6 +109,31 @@ class CapabilityReport(BaseModel):
     capabilities: list[Capability]
 
 
+class ReleaseEntry(BaseModel):
+    name: str
+    tag: str
+    published_at: str
+    url: str
+
+
+class LatestRelease(BaseModel):
+    """What an installed APK needs to decide whether it is out of date.
+
+    `version_code` is the Android build number, which is the only field the
+    update check compares - `version_name` and `url` exist to describe the
+    update once one is found.
+    """
+
+    version_code: int
+    version_name: str
+    url: str
+
+
+class ReleaseIndex(BaseModel):
+    releases: list[ReleaseEntry]
+    latest: Optional[LatestRelease] = None
+
+
 @dataclass(frozen=True)
 class Principal:
     subject: str
