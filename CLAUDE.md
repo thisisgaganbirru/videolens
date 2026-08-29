@@ -99,10 +99,11 @@ Two things about that config are hand-written and load-bearing:
   purpose — see `docs/frontend/legal-offline-routes.md`. The rule stays on
   everywhere else.
 
-`npm run lint` currently **exits 1** with 5 errors and 1 warning, all
-pre-existing: five `react-hooks/set-state-in-effect` (`useGeminiApiKey.ts`,
-`ResultsView.tsx` ×2, `UploadForm.tsx` ×2) and one `@next/next/no-img-element`
-(`ResultsView.tsx`). Most of the five are the read-`localStorage`-after-hydration
+`npm run lint` currently **exits 1** with 6 errors and 1 warning, all
+pre-existing: six `react-hooks/set-state-in-effect` (`useGeminiApiKey.ts`,
+`ResultsView.tsx` ×2, `UploadForm.tsx` ×3 — the third arrived with the shared-link
+effect from PR #26, which `dev` had no ESLint config to catch) and one
+`@next/next/no-img-element` (`ResultsView.tsx`). Most of the five are the read-`localStorage`-after-hydration
 pattern this app needs to avoid a hydration mismatch on a static export; they
 were deliberately **not** "fixed", because silencing the rule or rewriting the
 effects is a behavioural decision for the owner, not lint tidying. CI still does

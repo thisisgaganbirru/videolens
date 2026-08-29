@@ -20,7 +20,7 @@ class PublicUrlValidationTests(unittest.TestCase):
     def test_rejects_private_network_target(self, getaddrinfo) -> None:
         getaddrinfo.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 80))]
 
-        with self.assertRaisesRegex(MediaValidationError, "private-network"):
+        with self.assertRaisesRegex(MediaValidationError, "private network"):
             validate_public_url("http://localhost/media")
 
     @patch("app.infrastructure.media.net.socket.getaddrinfo")
@@ -31,15 +31,15 @@ class PublicUrlValidationTests(unittest.TestCase):
             (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 443)),
         ]
 
-        with self.assertRaisesRegex(MediaValidationError, "private-network"):
+        with self.assertRaisesRegex(MediaValidationError, "private network"):
             validate_public_url("https://dual.test/clip.mp4")
 
     def test_rejects_non_http_url(self) -> None:
-        with self.assertRaisesRegex(MediaValidationError, "HTTP or HTTPS"):
+        with self.assertRaisesRegex(MediaValidationError, "http:// or https://"):
             validate_public_url("file:///etc/passwd")
 
     def test_rejects_embedded_credentials(self) -> None:
-        with self.assertRaisesRegex(MediaValidationError, "HTTP or HTTPS"):
+        with self.assertRaisesRegex(MediaValidationError, "http:// or https://"):
             validate_public_url("https://user:pw@example.com/clip.mp4")
 
     def test_rejects_an_overlong_url(self) -> None:
@@ -48,7 +48,7 @@ class PublicUrlValidationTests(unittest.TestCase):
 
     @patch("app.infrastructure.media.net.socket.getaddrinfo", side_effect=socket.gaierror)
     def test_reports_an_unresolvable_host(self, _dns) -> None:
-        with self.assertRaisesRegex(MediaValidationError, "could not be found"):
+        with self.assertRaisesRegex(MediaValidationError, "couldn't be found"):
             validate_public_url("https://nope.invalid/clip.mp4")
 
 

@@ -3,7 +3,12 @@ import logging
 import os
 
 from ..domain.entities import AnalysisCompleteness, RunStatus
-from ..domain.errors import GeminiConfigurationError, MediaValidationError
+from ..domain.errors import (
+    AnalysisUnavailableError,
+    GeminiConfigurationError,
+    MediaValidationError,
+    UserFacingError,
+)
 from ..domain.ports import AnalysisEngine, MediaProcessor, ObjectStore, RunRepository
 
 logger = logging.getLogger("videolens")
@@ -52,11 +57,21 @@ class ProcessRunUseCase:
             await self._runs.set_result(run_id, result, AnalysisCompleteness.CAPTIONS_ONLY)
             logger.info("Run %s recovered from captions after the download failed", run_id)
             return True
-        except GeminiConfigurationError:
+        except (GeminiConfigurationError, AnalysisUnavailableError):
+            # Neither is the caption path's fault, and both have honest advice
+            # of their own ("unavailable", "try again shortly") that beats
+            # re-reporting why the download failed.
             raise
         except Exception:
             logger.exception("Caption fallback failed for run %s", run_id)
             return False
+
+    @staticmethod
+    def _log_failure(run_id: str, exc: UserFacingError) -> None:
+        if exc.log_detail:
+            logger.error("Run %s failed: %s | %s", run_id, exc, exc.log_detail)
+        else:
+            logger.error("Run %s failed: %s", run_id, exc)
 
     async def execute(
         self,
@@ -115,9 +130,12 @@ class ProcessRunUseCase:
                 metadata=metadata,
             )
             await self._runs.set_result(run_id, result)
-        except MediaValidationError as exc:
-            await self._runs.set_error(run_id, str(exc))
-        except GeminiConfigurationError as exc:
+        except (MediaValidationError, AnalysisUnavailableError, GeminiConfigurationError) as exc:
+            # The message is written for the person on the screen; anything an
+            # operator would need is on `log_detail` and stops here. Storing it
+            # would put it straight back on the phone, which is the whole thing
+            # this split exists to prevent.
+            self._log_failure(run_id, exc)
             await self._runs.set_error(run_id, str(exc))
         except asyncio.CancelledError:
             # arq cancels the coroutine when `job_timeout` expires, and
@@ -133,7 +151,7 @@ class ProcessRunUseCase:
             raise
         except Exception:
             logger.exception("Run %s failed", run_id)
-            await self._runs.set_error(run_id, "Media analysis failed. Please try again.")
+            await self._runs.set_error(run_id, "The analysis didn't finish. Please try again.")
         finally:
             if source_key:
                 try:

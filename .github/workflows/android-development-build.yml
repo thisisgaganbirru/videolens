@@ -18,6 +18,14 @@ jobs:
     uses: ./.github/workflows/reusable-android-checks.yml
     with:
       upload_apk: true
+      # Same dev backend the dev frontend image is compiled against
+      # (development-environment.yml). This APK is installed on real devices,
+      # so it cannot fall back to localhost.
+      api_base_url: https://videolens-backend-dev.up.railway.app
+      # Where the installed app fetches /version.json from to discover newer
+      # builds. Must be the deployed web app, not this APK's own bundle: the
+      # bundled copy is frozen at build time and can never describe a newer one.
+      web_base_url: https://videolens-frontend-dev.up.railway.app
 
   release:
     name: Publish dev release
@@ -68,7 +76,10 @@ jobs:
         run: |
           RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${RELEASE_TAG}"
           PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          export RELEASE_URL PUBLISHED_AT
+          VERSION_CODE="${{ github.run_number }}"
+          VERSION_NAME="${{ needs.android.outputs.version_name }}"
+          VERSION_SHA="${{ needs.android.outputs.version_sha }}"
+          export RELEASE_URL PUBLISHED_AT VERSION_CODE VERSION_NAME VERSION_SHA
           node <<'NODE'
           const fs = require("fs");
           const path = "public/releases.json";
@@ -83,16 +94,35 @@ jobs:
           releases.unshift(entry);
           releases.sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt));
           fs.writeFileSync(path, JSON.stringify({ releases: releases.slice(0, 20) }, null, 2) + "\n");
+
+          // Same shape as the release asset of the same name, but served by the
+          // deployed web app instead of GitHub. The installed Android app polls
+          // this to discover newer builds: the repo is private, so it cannot ask
+          // GitHub's API, and the copy inside its own APK is frozen at build
+          // time (frontend/infrastructure/updateCheck.ts).
+          fs.writeFileSync(
+            "public/version.json",
+            JSON.stringify(
+              {
+                versionCode: Number(process.env.VERSION_CODE),
+                versionName: process.env.VERSION_NAME,
+                commit: process.env.VERSION_SHA,
+                releaseUrl: process.env.RELEASE_URL,
+              },
+              null,
+              2,
+            ) + "\n",
+          );
           NODE
       - name: Commit release manifest
         run: |
-          if git diff --quiet -- frontend/public/releases.json; then
+          if git diff --quiet -- frontend/public/releases.json frontend/public/version.json; then
             echo "No manifest changes to commit."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add frontend/public/releases.json
+          git add frontend/public/releases.json frontend/public/version.json
           git commit -m "Update release manifest for v${{ needs.android.outputs.version_name }} build ${{ github.run_number }} [skip ci]"
           for attempt in 1 2 3; do
             if git push origin HEAD:dev; then

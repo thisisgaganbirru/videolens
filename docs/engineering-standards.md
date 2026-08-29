@@ -122,7 +122,7 @@ Fix: a `build_limiter(settings: Settings) -> Limiter` factory called from
 ### `CONTRIBUTING.md` tells contributors to run a command that always fails — PARTIALLY FIXED 2026-08-29
 
 The command is no longer *broken*; it is still *red*. A contributor following
-the checklist gets a real lint run with 5 pre-existing errors and a non-zero
+the checklist gets a real lint run with 6 pre-existing errors and a non-zero
 exit, not a "no such directory" crash. Whether that counts as fixed depends on
 whether those five get resolved — see the end of this entry.
 
@@ -147,7 +147,7 @@ in files nobody here writes), and turning `@next/next/no-html-link-for-pages`
 off for `app/offline/**` only, where plain `<a>` is a documented correctness
 requirement.
 
-`npm run lint` now exits **1** with 5 errors and 1 warning, all pre-existing and
+`npm run lint` now exits **1** with 6 errors and 1 warning, all pre-existing and
 all in `frontend/` app source: five `react-hooks/set-state-in-effect`
 (`useGeminiApiKey.ts`, `ResultsView.tsx` ×2, `UploadForm.tsx` ×2) and one
 `@next/next/no-img-element` (`ResultsView.tsx`). Deliberately **not** fixed —
@@ -647,5 +647,6 @@ Re-verify before fixing; do not treat the line numbers as authoritative.
 - 2026-08-15 · stale-ref agent · corrected the three `ci.yml` references invalidated by the workflow rewrite (deleted `ci.yml` -> caller/reusable workflow set) at "No security scanning of any kind in CI" and "Branch protection is unverified"; left the historical `ci.yml:21` citation under "Unpinned backend dependencies" and the meta-note under "Known issues with this register" unchanged as defensible historical audit text
 - 2026-08-15 · runtime-bump agent · recorded the Node 20->24 (newest LTS) / Python 3.11->3.13 bump under "Container base images are past end-of-life", plus the collapse from eight runtime declarations to one per runtime (`/.nvmrc`, `/.python-version`, one `ARG` per Dockerfile), the CI drift checks, the openssl floor check, and the Dependabot coverage traded away; entry deliberately left OPEN — only a green PR #12 closes it
 - 2026-08-15 · git-commit agent · committed and pushed the Node 24 / Python 3.13 fix onto PR #12; the entry above stays OPEN here — closing it is a judgement call for whoever reads the CI result, not a mechanical follow-on to the push
-- 2026-08-29 · frontend agent · closed the `CONTRIBUTING.md`/`npm run lint` finding (codemod run, ESLint 9 flat config added, `android/**` + `public/sw.js` ignored, `no-html-link-for-pages` scoped off for `app/offline/**`) and marked the linter gate PARTIALLY FIXED — `frontend/` only; `mcp/`, `backend/` ruff, and CI wiring all stay open, the last blocked on 5 pre-existing `react-hooks/set-state-in-effect` errors nobody has decided on
+- 2026-08-29 · frontend agent · closed the `CONTRIBUTING.md`/`npm run lint` finding (codemod run, ESLint 9 flat config added, `android/**` + `public/sw.js` ignored, `no-html-link-for-pages` scoped off for `app/offline/**`) and marked the linter gate PARTIALLY FIXED — `frontend/` only; `mcp/`, `backend/` ruff, and CI wiring all stay open, the last blocked on pre-existing `react-hooks/set-state-in-effect` errors nobody has decided on
 - 2026-08-16 · grype-exception agent · recorded the rescan outcome under "Container base images are past end-of-life" (Node/Android clear, backend down to one High) and added "The one outstanding CVE" covering the scoped `CVE-2026-15308` ignore rule, why `severity-cutoff`/`only-fixed` were left untouched, and the missing expiry enforcement; entry left OPEN — CI has not gone green
+- 2026-08-29 · main session · merged dev: the count is 6 errors + 1 warning, not 5 + 1 — dev's PR #26 `UploadForm.tsx` share effect trips the same `set-state-in-effect` rule, and `dev` has no eslint config to have caught it

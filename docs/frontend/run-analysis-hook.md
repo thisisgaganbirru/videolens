@@ -24,9 +24,17 @@ than validates. Reset to `"full"` by `submit`, `reset` and `openRun` alongside
 
 **openRun(runId)**: used by the History panel to resume viewing a past run. Clears any active poll first, optimistically sets status to processing, fetches the run once - if it's still in progress, starts polling it like a normal submit; if it's already complete or failed, just shows the result or error directly without polling.
 
-Nothing worth flagging as a defect here - this is a straightforward state machine that mirrors the backend's status/stage contract exactly.
+**reset()**: returns every field to its idle value **and clears the poll interval**. Clearing it was missing until 2026-08-21, which made `reset` a lie: the interval kept calling `setStatus(run.status)` every 3 seconds, so `analyze another file` during a live run bounced back to the pipeline on the next tick. It surfaced when `HomeScreen` started calling `reset` to clear the screen for an incoming shared link (`share-intake.md`).
+
+**Superseded requests are dropped**: `submit`, `openRun` and `reset` each bump a `generationRef` counter, and the two async ones capture it and return early if it changed while they were awaiting. Without this, a request already on the wire resolves into a screen that has moved on — a link shared mid-submit was undone a moment later by the 202 for the run the user had just abandoned. A run created by an abandoned submit still exists server-side and stays reachable from History; only the screen ignores it.
+
+Beyond those, this is a straightforward state machine that mirrors the backend's status/stage contract exactly.
 
 No frontend test runner is configured for this project; verification here has relied on `tsc --noEmit` plus `next build` plus manual review, not automated unit tests.
 
 ## Changelog
+
+- 2026-08-21 · main session · made reset() clear the poll interval, and added the generation counter that drops a superseded submit/openRun response
+- 2026-08-21 · main session · dropped the errorKind state, which existed only to feed a data-error-kind attribute that nothing styled or read
 - 2026-08-29 · frontend agent · added `completeness` to the hook's state, set only alongside `result` and defaulted to `full` when the field is absent
+- 2026-08-29 · frontend agent · reconciled the capability strip and caption-only note against the dev-side results-view restructure

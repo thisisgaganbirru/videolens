@@ -8,7 +8,7 @@ import type {
   SourceMetadata,
   VideoAnalysis,
 } from "@/domain/entities";
-import { classifyGatewayError, type GatewayErrorKind } from "@/application/gatewayError";
+import { classifyGatewayError } from "@/application/gatewayError";
 import { runsGateway } from "@/infrastructure/container";
 
 const POLL_INTERVAL_MS = 3000;
@@ -34,15 +34,19 @@ export function useAnalysisRun() {
   const [completeness, setCompleteness] = useState<AnalysisCompleteness>("full");
   const [sourceMetadata, setSourceMetadata] = useState<SourceMetadata | null>(null);
   const [error, setError] = useState<string | null>(null);
-  /* null when the error came from the run itself (a `failed` status carries the
-     backend's own reason, which is not a transport classification at all). */
-  const [errorKind, setErrorKind] = useState<GatewayErrorKind | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   /* Mirrors `submitting` for the guard below. State is read from a stale
      closure inside the same tick a second submit could arrive in; a ref is
      read at call time, which is what a re-entrancy guard needs. */
   const submittingRef = useRef(false);
+  /* Bumped by every intent that replaces what is on screen — `submit`,
+     `openRun`, `reset`. A request that was already in flight when the next
+     intent arrived resolves into a screen that has moved on, so each one drops
+     its result if the counter no longer matches the value it captured. Without
+     it, a link shared mid-submit is undone a moment later by the 202 for the
+     run the user just abandoned. */
+  const generationRef = useRef(0);
 
   useEffect(() => {
     return () => {
@@ -51,9 +55,7 @@ export function useAnalysisRun() {
   }, []);
 
   const fail = useCallback((err: unknown, fallback: string) => {
-    const failure = classifyGatewayError(err, fallback);
-    setError(failure.message);
-    setErrorKind(failure.kind);
+    setError(classifyGatewayError(err, fallback).message);
   }, []);
 
   const pollRun = useCallback(
@@ -70,7 +72,6 @@ export function useAnalysisRun() {
             if (pollRef.current) clearInterval(pollRef.current);
           } else if (run.status === "failed") {
             setError(run.error || "Video analysis failed.");
-            setErrorKind(null);
             if (pollRef.current) clearInterval(pollRef.current);
           }
         } catch (err) {
@@ -104,17 +105,19 @@ export function useAnalysisRun() {
       submittingRef.current = true;
       setSubmitting(true);
       setError(null);
-      setErrorKind(null);
       setResult(null);
       setCompleteness("full");
       setSourceMetadata(null);
       setStage(null);
       setSourceKind(source.url ? "url" : "file");
+      const generation = ++generationRef.current;
       try {
         const run = await runsGateway.createRun(source);
+        if (generationRef.current !== generation) return;
         setStatus(run.status);
         pollRun(run.run_id);
       } catch (err) {
+        if (generationRef.current !== generation) return;
         fail(err, SUBMIT_FALLBACK);
       } finally {
         submittingRef.current = false;
@@ -125,6 +128,15 @@ export function useAnalysisRun() {
   );
 
   const reset = useCallback(() => {
+    /* Stop the poll first. It is `setStatus(run.status)` on a timer, so leaving
+       it running meant "analyze another file" bounced straight back to the
+       pipeline on the next tick — the interval outlived the state it was
+       driving. */
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    generationRef.current += 1;
     setStatus("idle");
     setStage(null);
     setSourceKind("file");
@@ -132,21 +144,24 @@ export function useAnalysisRun() {
     setCompleteness("full");
     setSourceMetadata(null);
     setError(null);
-    setErrorKind(null);
   }, []);
 
   const openRun = useCallback(
     async (runId: string) => {
-      if (pollRef.current) clearInterval(pollRef.current);
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
       setError(null);
-      setErrorKind(null);
       setResult(null);
       setCompleteness("full");
       setSourceMetadata(null);
       setSourceKind("file");
       setStatus("processing");
+      const generation = ++generationRef.current;
       try {
         const run = await runsGateway.getRun(runId);
+        if (generationRef.current !== generation) return;
         setStatus(run.status);
         setStage(run.stage);
         if (run.source_metadata) setSourceMetadata(run.source_metadata);
@@ -155,11 +170,11 @@ export function useAnalysisRun() {
           setCompleteness(run.completeness ?? "full");
         } else if (run.status === "failed") {
           setError(run.error || "Video analysis failed.");
-          setErrorKind(null);
         } else {
           pollRun(runId);
         }
       } catch (err) {
+        if (generationRef.current !== generation) return;
         setStatus("idle");
         fail(err, OPEN_FALLBACK);
       }
@@ -175,7 +190,6 @@ export function useAnalysisRun() {
     completeness,
     sourceMetadata,
     error,
-    errorKind,
     submitting,
     submit,
     reset,

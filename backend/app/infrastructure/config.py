@@ -1,5 +1,23 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# The Capacitor Android WebView serves the bundled Next.js export from the
+# APK itself, under the hostname "localhost" - nothing is listening on a
+# port, no traffic leaves the device, it is just the naming scheme Chrome
+# uses to identify the page it is rendering. That makes every API call
+# cross-origin, stamped with this as the `Origin` header.
+#
+# Unlike a deployed frontend's origin, these are fixed constants of the
+# native shell rather than a per-deployment detail, so they belong in code
+# instead of `ALLOWED_ORIGINS`. Leaving them to configuration means every
+# new environment ships an APK that silently fails its CORS preflight with
+# a 400, which `fetch` cannot distinguish from an offline server - the app
+# just says "Can't reach the server."
+#
+# `https` is Capacitor's default `androidScheme`; `http` covers a config
+# that overrides it. Both are the app talking to its own backend, which is
+# why they are allowed unconditionally.
+NATIVE_APP_ORIGINS = ("https://localhost", "http://localhost")
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -38,7 +56,8 @@ class Settings(BaseSettings):
 
     @property
     def allowed_origin_list(self) -> list[str]:
-        return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+        configured = [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+        return configured + [o for o in NATIVE_APP_ORIGINS if o not in configured]
 
     @property
     def queue_enabled(self) -> bool:

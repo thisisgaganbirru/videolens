@@ -69,19 +69,19 @@ class ResolverChainTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(used.fetches), 1)
 
     async def test_reports_the_primary_resolvers_error_when_every_route_fails(self) -> None:
-        # yt-dlp's curated guidance ("configure cookies…") is far more useful
-        # than a fallback's generic 404, so the first failure is the one the
-        # caller sees.
-        first = FakeResolver("yt-dlp", error=MediaValidationError("Configure cookies for Instagram."))
+        # The primary resolver is the one that recognised the failure -
+        # yt-dlp can tell "private" from "region locked" - while a fallback
+        # only knows it got a status code. The specific diagnosis wins.
+        first = FakeResolver("yt-dlp", error=MediaValidationError("This video is private."))
         second = FakeResolver("direct-http", error=MediaValidationError("HTTP 404"))
 
-        with self.assertRaisesRegex(MediaValidationError, "Configure cookies"):
+        with self.assertRaisesRegex(MediaValidationError, "is private"):
             await ResolverChain([first, second]).fetch("run-1", "https://x.test/v.mp4")
 
     async def test_reports_a_clear_error_when_no_resolver_claims_the_url(self) -> None:
         chain = ResolverChain([FakeResolver("a", handles=False)])
 
-        with self.assertRaisesRegex(MediaValidationError, "No downloader"):
+        with self.assertRaisesRegex(MediaValidationError, "couldn't be downloaded"):
             await chain.fetch("run-1", "gopher://x.test/v")
 
     async def test_preserves_metadata_from_whichever_resolver_succeeds(self) -> None:

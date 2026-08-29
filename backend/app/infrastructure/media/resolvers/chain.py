@@ -52,9 +52,15 @@ class ResolverChain:
             return saved
 
         if primary_error is not None:
-            # The first resolver's message is the one that reaches the caller.
-            # It is the primary path and carries the curated, actionable
-            # diagnostics (the login-cookie guidance, for one); a fallback
-            # failing afterwards usually just says "404".
+            # The first resolver's error is the one that reaches the caller. It
+            # is the primary path, so it is the one that actually recognised
+            # the failure - yt-dlp can tell "private video" from "region
+            # locked" from "blocked automated download", and each maps to
+            # different advice. A fallback failing afterwards only knows it got
+            # a status code, so reporting the last error would trade a specific
+            # diagnosis for a generic one.
             raise primary_error
-        raise MediaValidationError("No downloader could handle this URL.")
+        raise MediaValidationError(
+            "This link couldn't be downloaded.",
+            log_detail=f"No resolver claimed {url}",
+        )

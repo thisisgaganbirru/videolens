@@ -31,10 +31,38 @@ The `<source_metadata>` block is attached here too, on the same terms.
 
 **Configuration error**: if no BYOK key is given and `GEMINI_API_KEY` isn't set, raises `GeminiConfigurationError` — caught by `ProcessRunUseCase` and stored as the run's error message verbatim (it's already a caller-safe message).
 
+**`summary` vs `markdown`**: these are two different reads of the same video, not
+one field in two formats, and the only thing enforcing that is the prompt —
+`VideoAnalysis` declares both as bare `str` with no `Field(description=...)`, so
+Gemini sees nothing but the field name from the schema itself. `summary` is a
+2-4 sentence plain-prose abstract with no markdown at all, answering whether the
+video is worth watching; `markdown` is structured notes with headings and bullets,
+complete enough to replace watching it. The prompt says explicitly that they are
+read side by side and must not be two versions of the same paragraph.
+
+Before 2026-08-20 the two bullets read only "a natural language summary of what
+the video covers" and "well-formatted markdown notes combining speech and visual
+context" — nothing about length, depth, or audience — so on a short clip the two
+fields collapsed into near-duplicates. If you edit this prompt, keep the contrast
+between the two explicit; the UI shows them as adjacent tabs (TL;DR and Notes),
+which makes any overlap immediately visible.
+
+**Transient failures**: `_as_domain_error` maps 429/500/502/503/504 onto
+`AnalysisUnavailableError` so a busy model is not reported as an unknown
+failure — see `../error-messaging.md`. The retry loop around it is still 2
+attempts with a flat 2s sleep, which is too short to outlast the demand spike
+Google's own 503 describes; that is tracked as a known issue there.
+
 **Known issue**: none identified specific to this adapter — retry/timeout/cleanup behavior all looks intentional.
+
+**Transient failures**: `_as_domain_error` maps 429 and 5xx onto `AnalysisUnavailableError` — the request was well-formed and the media was fine, so the honest advice is to wait rather than re-pick a file. `analyze_captions` routes through the same mapping, and `ProcessRunUseCase` re-raises it out of the caption fallback rather than reporting the download error, since "Gemini is busy" is truer than "this link couldn't be downloaded".
 
 **Tests**: `backend/tests/infrastructure/ai/test_source_context.py` covers the block builder — field selection, truncation, date formatting, engagement counts, line flattening, fence-forgery stripping, and that the source URL never appears. `GeminiEngine` itself is still not unit tested (would require mocking the `google.genai` client), which is why the prompt-building logic was pulled out into a module that can be.
 
 ## Changelog
+
+- 2026-08-20 · main session · sharpened the summary/markdown prompt bullets so the two fields are distinct reads (short prose abstract vs complete structured notes) instead of the same content in two formats
+- 2026-08-21 · main session · classified 429/5xx as AnalysisUnavailableError, and moved the GEMINI_API_KEY hint out of the user-facing message into log_detail
 - 2026-08-29 · main session · added `source_context.py` and fed publisher metadata into the prompt as explicitly-untrusted context
 - 2026-08-29 · main session · added `analyze_captions` and `CAPTION_SYSTEM_INSTRUCTION` for the caption-only salvage path
+- 2026-08-29 · main session · merged dev: routed `analyze_captions` through `_as_domain_error` so a busy-Gemini caption run says so instead of blaming the link

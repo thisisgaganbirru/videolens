@@ -67,7 +67,10 @@ class DirectHttpResolver:
             raise
         except Exception as exc:  # noqa: BLE001 - urllib errors name internal hosts
             _cleanup_dir(run_dir)
-            raise MediaValidationError("Could not download media from this URL.") from exc
+            raise MediaValidationError(
+                "This link couldn't be downloaded.",
+                log_detail=f"{type(exc).__name__}: {exc}",
+            ) from exc
         # No metadata: a bare file on a web server carries no publisher
         # information, which is exactly why this is the fallback and not the
         # primary path.
@@ -85,14 +88,15 @@ class DirectHttpResolver:
             response = opener.open(request, timeout=_TIMEOUT_SECONDS)
         except urllib.error.HTTPError as exc:
             raise MediaValidationError(
-                f"The server returned HTTP {exc.code} for this media URL."
+                "That link's server refused the download.",
+                log_detail=f"HTTP {exc.code} {exc.reason} for {url}",
             ) from exc
 
         with response:
             declared = response.headers.get("Content-Length")
             if declared and declared.isdigit() and int(declared) > max_bytes:
                 raise MediaValidationError(
-                    f"Media exceeds the {self._settings.max_file_size_mb}MB size limit."
+                    f"That file is over the {self._settings.max_file_size_mb}MB limit."
                 )
 
             total = 0
@@ -101,10 +105,10 @@ class DirectHttpResolver:
                     total += len(chunk)
                     if total > max_bytes:
                         raise MediaValidationError(
-                            f"Media exceeds the {self._settings.max_file_size_mb}MB size limit."
+                            f"That file is over the {self._settings.max_file_size_mb}MB limit."
                         )
                     out_file.write(chunk)
 
         if total == 0:
-            raise MediaValidationError("The media URL returned an empty file.")
+            raise MediaValidationError("That link returned an empty file.")
         return destination

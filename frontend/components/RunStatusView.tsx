@@ -23,6 +23,25 @@ const SHARED_STEPS: PipelineStep[] = [
   { stage: "analyzing", label: "analyzing" },
 ];
 
+/* What to try next, chosen by *where the run died* rather than by what was
+   submitted. The two differ, and the old `sourceKind` version got it wrong in
+   the case that matters most: a run that downloaded, normalized and uploaded
+   fine before Gemini returned 503 was told to "try a different URL", when a
+   different URL would have failed in exactly the same place. Anything at or
+   after the Gemini upload is ours, and saying so beats sending someone off to
+   re-do work that was already good. */
+function recoveryAdvice(stage: string | null | undefined, sourceKind: SourceKind): string {
+  if (stage === "uploading_to_gemini" || stage === "analyzing") {
+    return "Nothing's wrong with your file — this one's on our side. Try again in a moment.";
+  }
+  if (stage === "downloading") {
+    return "Try a different link, or download the video and upload the file instead.";
+  }
+  /* `normalizing`, or no stage at all: the media itself is the suspect, and
+     the only thing we know about it is which way it arrived. */
+  return sourceKind === "url" ? "Try a different link." : "Try a different file.";
+}
+
 const STATUS_LABEL: Record<RunStatus, string> = {
   queued: "queued",
   processing: "processing",
@@ -136,11 +155,7 @@ export default function RunStatusView({
           {/* the spec's `.error-block p:last-of-type` reserves space for the
               mockup's retry button; HomeScreen owns the reset link here, so
               the reserved gap is cancelled locally rather than in globals */}
-          <p className="mb-0">
-            {sourceKind === "url"
-              ? "Try a different URL, or upload the file directly instead."
-              : "Try the file again, or paste a public link instead."}
-          </p>
+          <p className="mb-0">{recoveryAdvice(stage, sourceKind)}</p>
         </div>
       ) : status === "complete" || connectionLost ? null : (
         /* Suppressed while stalled rather than reworded. "You can leave this

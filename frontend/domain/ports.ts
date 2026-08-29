@@ -48,3 +48,18 @@ export type UpdateInfo = {
 export interface UpdateChecker {
   checkForUpdate(): Promise<UpdateInfo | null>;
 }
+
+/**
+ * A URL handed to the app from outside it — an Android share intent, or the
+ * PWA manifest's `share_target` query params.
+ *
+ * `take()` consumes: the same share is never returned twice, so a remount or a
+ * back navigation cannot replay a link the user already dealt with.
+ */
+export interface SharedUrlSource {
+  /** The pending shared URL, or `null` if there is none. Consuming. */
+  take(): string | null;
+  /** Notifies when a share lands while the app is already open. Returns an
+   *  unsubscribe function. */
+  subscribe(listener: () => void): () => void;
+}

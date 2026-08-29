@@ -21,8 +21,8 @@ and `FetchRunsGateway`'s request headers).
 - `errors.ts` — `ApiError`.
 - `ports.ts` — the interfaces infrastructure adapters implement and hooks
   depend on: `RunsGateway`, `ApiKeyStore`, `VersionLogGateway`,
-  `UpdateChecker` (plus their associated `VersionLogEntry`/`UpdateInfo`
-  types).
+  `UpdateChecker`, `SharedUrlSource` (plus their associated
+  `VersionLogEntry`/`UpdateInfo` types).
 
 **`infrastructure/`** — concrete adapters, one per external system.
 - `runsGateway.ts` — `FetchRunsGateway`: talks to the backend's
@@ -35,6 +35,11 @@ and `FetchRunsGateway`'s request headers).
 - `updateCheck.ts` — `GithubUpdateChecker`: the native-Android-only update
   check (`@capacitor/app` + GitHub releases + `version.json` manifest).
   Implements `UpdateChecker`.
+- `sharedUrlSource.ts` — `WebShareUrlSource`: the link handed to the app from
+  outside it, from either the Android share intent (`localStorage` +
+  the `videolens-share` event) or the manifest's `share_target` query params.
+  Consuming — see `docs/frontend/share-intake.md`. Implements
+  `SharedUrlSource`.
 - `container.ts` — builds one instance of each adapter above and exports
   them; every hook imports from here instead of constructing an adapter
   itself.
@@ -49,6 +54,9 @@ needs. Each hook owns its `useState`/`useEffect` and calls out to
 - `useRunHistory.ts` — fetches the caller's run history.
 - `useVersionLog.ts` — fetches the release list.
 - `useUpdateCheck.ts` — wraps the native update check for `UpdateBanner`.
+- `useSharedUrl.ts` — the latest URL shared into the app. Lives here rather
+  than in `UploadForm` because a share has to be handled whatever is on
+  screen, and the intake is mounted only while the run state is idle.
 - `useMainTab.ts` — which of the four shell destinations is showing, held
   in the URL as `/?view=…` rather than in a component's `useState`. Reading
   and writing that URL is orchestration, so it sits here; `domain/` and

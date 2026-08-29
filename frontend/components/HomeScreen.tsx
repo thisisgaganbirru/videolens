@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import AppNav from "@/components/AppNav";
 import CapabilityNotice from "@/components/CapabilityNotice";
@@ -12,6 +12,7 @@ import HistoryPanel from "@/components/panels/HistoryPanel";
 import VersionLogPanel from "@/components/panels/VersionLogPanel";
 import { useAnalysisRun } from "@/application/useAnalysisRun";
 import { useCapabilities } from "@/application/useCapabilities";
+import { useSharedUrl } from "@/application/useSharedUrl";
 import { goToMainTab, useMainTab, type MainTab } from "@/application/useMainTab";
 
 /**
@@ -32,7 +33,6 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
     completeness,
     sourceMetadata,
     error,
-    errorKind,
     submitting,
     submit,
     reset,
@@ -46,6 +46,26 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      tab visit. The two contextual notices therefore take props instead of
      reaching for the hook themselves. */
   const { notice, urlDownload, dailyBudget } = useCapabilities();
+
+  const sharedUrl = useSharedUrl();
+
+  /* A link shared into the app is a request to analyze *that*, so it takes the
+     screen over: whatever tab is showing, and whatever run is on it, gives way
+     to a fresh intake with the link filled in. The analysis is not started for
+     the user — an accidental share should not spend a run — so the only thing
+     left to do is press analyze.
+
+     This has to live here rather than in `UploadForm`, which is mounted only
+     while the run state is idle. When it owned the share listener, a link
+     shared while a finished result was up reached nobody: it stayed in
+     localStorage until a back press remounted the form, which is why the app
+     went on showing the previous video's results and then produced the old link
+     as a prefill on the way out. */
+  useEffect(() => {
+    if (!sharedUrl) return;
+    goToMainTab("analyze");
+    reset();
+  }, [sharedUrl, reset]);
 
   /* An error while the pipeline is on screen can only come from the poll's
      catch — `submit` now stays on idle until the server answers, and `openRun`
@@ -88,6 +108,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                 <UploadForm
                   onSubmit={submit}
                   submitting={submitting}
+                  sharedUrl={sharedUrl}
                   urlCapability={urlDownload}
                 />
                 {/* Back at idle with an error means the submit was rejected, or
@@ -100,11 +121,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     which is drawn for a full-view failure with an action of its
                     own. */}
                 {error && (
-                  <p
-                    role="alert"
-                    data-error-kind={errorKind ?? undefined}
-                    className="error-note mt-[var(--space-xs)]"
-                  >
+                  <p role="alert" className="error-note mt-[var(--space-xs)]">
                     {error}
                   </p>
                 )}
@@ -135,7 +152,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                      touch. The same flag stops `RunStatusView` pulsing and
                      removes its "you can leave this open" note, so this block is
                      the only thing on screen describing the failure. */
-                  <div role="alert" data-error-kind={errorKind ?? undefined} className="error-block">
+                  <div role="alert" className="error-block">
                     {/* The lead says what happened to the *run*; the gateway's
                         message already says why the request failed, so
                         repeating "lost contact" here would be the same

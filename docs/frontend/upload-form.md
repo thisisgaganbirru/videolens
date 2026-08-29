@@ -3,7 +3,8 @@
 The "Analyze" tab's entry point: paste a public media URL, or drag/drop/browse a local file. URL is the primary path (listed first, larger emphasis) with file upload as secondary.
 
 **Files**
-- `frontend/components/UploadForm.tsx` — everything (no dedicated hook; this component's local state is presentational/form-validation only, not app-wide state, so it wasn't pulled into `application/`).
+- `frontend/components/UploadForm.tsx` — the form itself (no dedicated hook; this component's local state is presentational/form-validation only, not app-wide state, so it wasn't pulled into `application/`).
+- `frontend/application/useSharedUrl.ts` — where the share intake went; the form only receives the result. See `share-intake.md`.
 - `frontend/components/CapabilityNotice.tsx` — `CapabilityCallout`, the one-line deployment notice this form renders under the URL row. See `capability-reporting.md`.
 
 **Client-side pre-validation** (backend re-validates authoritatively regardless):
@@ -40,7 +41,13 @@ Two things about it are deliberate:
   `intake-error` id rather than replacing it — a validation error and a
   deployment notice can both be live at once.
 
-**Native share-target handling**: on mount, checks for a shared URL arriving three possible ways — a `?url=` query param, a `?text=` param containing a URL, or `localStorage.getItem("videolens-shared-text")` (set by the native Android share-intent handler) — and also listens for a `"videolens-share"` window event for shares that arrive after initial mount. This is what makes "Share to VideoLens AI" work from other Android apps.
+**Native share-target handling**: **not here any more** — see `share-intake.md`. This component used to own the whole path (a mount-time read of `?url=`/`?text=`/`localStorage`, plus a `videolens-share` listener), which broke the moment a link was shared while a result was on screen: this component is mounted only while the run state is idle, so the event reached nobody. It now takes a `sharedUrl` prop (`{ url, receivedAt }`, a fresh object per arrival) and does one thing with it — put the link in the field and clear any error. `HomeScreen` owns the listener and has already reset the run by the time the prop lands.
+
+The two props arrive from the same place for different reasons: `sharedUrl` is
+an *instruction* (fill the field with this), `urlCapability` is a *caveat* (URL
+runs may not work here). Both come from `HomeScreen` because both concern
+something outside this form's mount lifetime — see `share-intake.md` and
+`capability-reporting.md`.
 
 **Layout** (Terminal redesign — see `design-direction-terminal.md`): **no
 surface, no frame, no card.** It sits optically centred in `.home-center`,
@@ -88,8 +95,9 @@ this component's `submitting` prop:
 `useRunHistory`), so a backend that is *down* says "Can't reach the server…"
 instead of "Could not submit media." — the latter is now only the
 genuinely-unknown fallback. A server that answered shows its own `detail`
-verbatim. `HomeScreen` puts the resulting `errorKind` on `data-error-kind`,
-matching `HistoryPanel`.
+verbatim. (The `errorKind` this used to surface as a `data-error-kind`
+attribute was dropped on 2026-08-21 — nothing styled or read it; see
+`../error-messaging.md`.)
 
 ## Where the Analyze tab's errors land
 
@@ -168,4 +176,6 @@ unchanged. Touch targets measured with `getBoundingClientRect`: `analyze url`
 - 2026-08-15 · frontend agent · ported UploadForm to the unboxed .intake; returns a fragment since HomeScreen supplies the wrapper
 - 2026-08-15 · frontend agent (error block weight) · split HomeScreen's one error branch in two — idle demoted to an inline note in UploadForm's own error slot, poll-death promoted to a full .error-block with a start-over button inside it; requested an `.error-note` class
 - 2026-08-15 · frontend agent (run lifecycle errors) · adopted `.error-note` (dropped the inlined duplicate), stopped `submit` transitioning before the 202 so a failed submit keeps the typed URL, added a scoped `sending…` busy state with a ref-guarded double-submit block, and routed submit/open errors through the shared `classifyGatewayError`
+- 2026-08-21 · main session · handed the share intake to HomeScreen/useSharedUrl; this component now just takes a `sharedUrl` prop
 - 2026-08-29 · frontend agent · added the optional `urlCapability` prop and the `url_download` callout under the URL row (warns, never blocks; wired as `aria-describedby` alongside `intake-error`) — see `capability-reporting.md`
+- 2026-08-29 · frontend agent · reconciled the capability strip and caption-only note against the dev-side results-view restructure

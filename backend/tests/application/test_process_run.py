@@ -10,7 +10,11 @@ from app.domain.entities import (
     SourceMetadata,
     VideoAnalysis,
 )
-from app.domain.errors import GeminiConfigurationError, MediaValidationError
+from app.domain.errors import (
+    AnalysisUnavailableError,
+    GeminiConfigurationError,
+    MediaValidationError,
+)
 
 from .fakes import (
     FakeAnalysisEngine,
@@ -219,6 +223,42 @@ class ProcessRunUseCaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run.status, RunStatus.FAILED)
         self.assertEqual(run.error, "no api key configured")
 
+    async def test_log_detail_is_never_stored_on_the_run(self) -> None:
+        """The whole point of the two-field error: `log_detail` carries the
+        operator's half (a config key, a library's stderr) and must stop at the
+        log. Storing it would put it straight back on the caller's screen."""
+        self.media.download_error = MediaValidationError(
+            "This link couldn't be downloaded.",
+            log_detail="YTDLP_COOKIES_FILE points at '/srv/cookies.txt', which does not exist.",
+        )
+        await self.use_case.execute("run-1", source_url="https://x.test/v.mp4")
+
+        run = self.runs.runs["run-1"]
+        self.assertEqual(run.status, RunStatus.FAILED)
+        self.assertEqual(run.error, "This link couldn't be downloaded.")
+        self.assertNotIn("YTDLP_COOKIES_FILE", run.error)
+
+    async def test_transient_analysis_failure_keeps_its_own_message(self) -> None:
+        """A busy model is not a bad file, so it must not fall through to the
+        generic catch-all - the caller is told to wait, not to re-pick media."""
+        use_case = self._make_use_case(
+            analysis=FakeAnalysisEngine(
+                error=AnalysisUnavailableError(
+                    "Gemini is busy right now. This usually clears within a minute.",
+                    log_detail="ServerError: 503 UNAVAILABLE",
+                )
+            )
+        )
+        await self.runs.create("run-4", "client:owner")
+        await use_case.execute("run-4", saved_path="/tmp/run-4/upload.mp4", run_dir="/tmp/run-4")
+
+        run = self.runs.runs["run-4"]
+        self.assertEqual(run.status, RunStatus.FAILED)
+        self.assertEqual(
+            run.error, "Gemini is busy right now. This usually clears within a minute."
+        )
+        self.assertNotIn("503", run.error)
+
     async def test_unexpected_exception_is_masked_with_a_generic_error_message(self) -> None:
         use_case = self._make_use_case(analysis=FakeAnalysisEngine(error=RuntimeError("stack trace with secrets")))
         await self.runs.create("run-3", "client:owner")
@@ -226,7 +266,7 @@ class ProcessRunUseCaseTests(unittest.IsolatedAsyncioTestCase):
 
         run = self.runs.runs["run-3"]
         self.assertEqual(run.status, RunStatus.FAILED)
-        self.assertEqual(run.error, "Media analysis failed. Please try again.")
+        self.assertEqual(run.error, "The analysis didn't finish. Please try again.")
         self.assertNotIn("secrets", run.error)
 
     async def test_cleanup_still_runs_even_if_deleting_the_source_object_fails(self) -> None:

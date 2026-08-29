@@ -20,12 +20,19 @@ def _cookie_options(settings: Settings) -> dict:
     browser = settings.ytdlp_cookies_from_browser.strip().lower()
     if cookie_file and browser:
         raise MediaValidationError(
-            "Configure only one yt-dlp cookie source: a cookie file or a browser."
+            "This link couldn't be downloaded.",
+            log_detail=(
+                "Configure only one yt-dlp cookie source: YTDLP_COOKIES_FILE or "
+                "YTDLP_COOKIES_FROM_BROWSER, not both."
+            ),
         )
     if cookie_file:
         resolved = os.path.abspath(os.path.expanduser(cookie_file))
         if not os.path.isfile(resolved):
-            raise MediaValidationError("The configured yt-dlp cookie file was not found.")
+            raise MediaValidationError(
+                "This link couldn't be downloaded.",
+                log_detail=f"YTDLP_COOKIES_FILE points at {resolved!r}, which does not exist.",
+            )
         return {"cookiefile": resolved}
     if browser:
         return {"cookiesfrombrowser": (browser, None, None, None)}
@@ -53,15 +60,46 @@ def _source_metadata_from_info(info: dict, url: str) -> SourceMetadata:
     )
 
 
-def _download_error_message(exc: DownloadError) -> str:
-    message = ANSI_ESCAPE.sub("", str(exc)).removeprefix("ERROR: ")
-    if "Instagram sent an empty media response" in message:
-        return (
-            "Instagram did not return media for this request. The post may require login "
-            "cookies, or Instagram may be blocking logged-out downloads. Configure "
-            "YTDLP_COOKIES_FROM_BROWSER for local use or YTDLP_COOKIES_FILE on the server."
-        )
-    return f"Could not download media from this URL. {message}"
+# Matched against yt-dlp's own wording. Each entry turns one recognised failure
+# into a sentence that names the cause in the user's terms — the raw text goes
+# to the log instead, because it is written for whoever runs yt-dlp ("use
+# --cookies-from-browser", "Confirm you are on the latest version using
+# yt-dlp -U") and reaches someone holding a phone.
+_KNOWN_DOWNLOAD_FAILURES = (
+    (
+        "Instagram sent an empty media response",
+        "This post isn't public - Instagram only serves it to signed-in viewers.",
+    ),
+    (
+        "Sign in to confirm you",
+        "YouTube is blocking automated downloads from this server.",
+    ),
+    (
+        "This video is private",
+        "This video is private.",
+    ),
+    (
+        "Video unavailable",
+        "This video is no longer available.",
+    ),
+    (
+        "not available in your country",
+        "This video isn't available in this server's region.",
+    ),
+)
+
+_GENERIC_DOWNLOAD_FAILURE = (
+    "This link couldn't be downloaded. It may be private, deleted, or region-locked."
+)
+
+
+def _download_failure(exc: DownloadError) -> tuple[str, str]:
+    """Split one yt-dlp failure into (what the user sees, what the log gets)."""
+    detail = ANSI_ESCAPE.sub("", str(exc)).removeprefix("ERROR: ")
+    for marker, message in _KNOWN_DOWNLOAD_FAILURES:
+        if marker in detail:
+            return message, detail
+    return _GENERIC_DOWNLOAD_FAILURE, detail
 
 
 async def download_url(settings: Settings, run_id: str, url: str) -> SavedUpload:
@@ -74,7 +112,7 @@ async def download_url(settings: Settings, run_id: str, url: str) -> SavedUpload
     def progress_hook(status: dict) -> None:
         downloaded = status.get("downloaded_bytes") or 0
         if downloaded > max_bytes:
-            raise DownloadError(f"Download exceeds the {settings.max_file_size_mb}MB size limit.")
+            raise DownloadError(f"The video is over the {settings.max_file_size_mb}MB limit.")
 
     def run_download() -> tuple[str, dict]:
         options = {
@@ -117,7 +155,10 @@ async def download_url(settings: Settings, run_id: str, url: str) -> SavedUpload
         raise
     except DownloadError as exc:
         _cleanup_dir(run_dir)
-        raise MediaValidationError(_download_error_message(exc)) from exc
+        message, detail = _download_failure(exc)
+        raise MediaValidationError(message, log_detail=detail) from exc
     except Exception as exc:
         _cleanup_dir(run_dir)
-        raise MediaValidationError("Could not download media from this URL.") from exc
+        raise MediaValidationError(
+            _GENERIC_DOWNLOAD_FAILURE, log_detail=f"{type(exc).__name__}: {exc}"
+        ) from exc

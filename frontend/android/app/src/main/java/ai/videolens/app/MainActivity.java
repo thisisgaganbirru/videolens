@@ -28,6 +28,12 @@ public class MainActivity extends BridgeActivity {
             return;
         }
 
+        // Consume it. Android re-delivers the launch intent to a re-created
+        // activity (process death, an uncovered config change), and the web side
+        // now treats an arriving share as a request to clear the screen - so a
+        // replayed one would wipe a result the user is reading.
+        intent.removeExtra(Intent.EXTRA_TEXT);
+
         String script = "localStorage.setItem('videolens-shared-text', "
             + JSONObject.quote(sharedText)
             + "); window.dispatchEvent(new Event('videolens-share'));";
