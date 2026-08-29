@@ -60,7 +60,13 @@ class Container:
             spend_cap=self.spend_cap,
             distributed=settings.queue_enabled,
         )
-        self.get_run_use_case = GetRunUseCase(runs=self.run_repository)
+        # A run that has not been touched in longer than a whole job could
+        # take is treated as abandoned. Margin over the worker timeout so a
+        # job that is merely slow is never declared dead.
+        self.get_run_use_case = GetRunUseCase(
+            runs=self.run_repository,
+            stale_after_seconds=settings.worker_job_timeout_seconds + 120,
+        )
         self.list_runs_use_case = ListRunsUseCase(runs=self.run_repository)
         # Probe order is the order they appear in the response: the media
         # pipeline first, then the things a run depends on downstream.

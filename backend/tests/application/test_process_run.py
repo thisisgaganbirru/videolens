@@ -1,7 +1,8 @@
+import asyncio
 import os
 import unittest
 
-from app.application.process_run import ProcessRunUseCase
+from app.application.process_run import RUN_INTERRUPTED_MESSAGE, ProcessRunUseCase
 from app.domain.entities import (
     AnalysisCompleteness,
     CaptionTrack,
@@ -168,6 +169,21 @@ class ProcessRunUseCaseTests(unittest.IsolatedAsyncioTestCase):
         # There is no URL to fetch captions from; the run just fails.
         self.assertEqual(self.media.caption_calls, [])
         self.assertEqual(self.runs.runs["run-1"].status, RunStatus.FAILED)
+
+    async def test_a_cancelled_job_marks_the_run_failed_and_still_cancels(self) -> None:
+        # arq cancels the coroutine on job_timeout. CancelledError is a
+        # BaseException, so without an explicit branch the run would sit in
+        # PROCESSING until its TTL expired.
+        self.analysis.error = asyncio.CancelledError()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await self.use_case.execute("run-1", source_url="https://x.test/v.mp4")
+
+        run = self.runs.runs["run-1"]
+        self.assertEqual(run.status, RunStatus.FAILED)
+        self.assertEqual(run.error, RUN_INTERRUPTED_MESSAGE)
+        # Cleanup still ran despite the cancellation propagating.
+        self.assertEqual(self.media.cleaned_up, ["run-1"])
 
     async def test_uses_a_pre_saved_path_directly_without_re_validating_duration(self) -> None:
         await self.use_case.execute("run-1", saved_path="/tmp/run-1/upload.mp4", run_dir="/tmp/run-1")
