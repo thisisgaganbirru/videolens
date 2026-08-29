@@ -87,6 +87,26 @@ and retrieving it would require a second authenticated API call against the
 release `id`. That was judged not worth the coupling — a body field that is
 sometimes empty would render blank sections in the panel.
 
+### Why the manifest commit no longer carries `[skip ci]`
+
+The release job commits `releases.json` and `version.json` back to `dev`. That
+commit used to end in `[skip ci]`, to stop it re-triggering the build that
+created it.
+
+It also stopped *every other* workflow, which had a consequence nobody had
+reason to look for: the new head of `dev` carried **no check runs at all**.
+`main`'s branch protection requires status checks on the head of the branch
+being merged, and `dev` is the head of the promotion PR — so every Android
+build left `dev` -> `main` permanently unmergeable, and every attempt to
+retrigger produced another unchecked head. PR #28 sat blocked for six days on
+exactly this.
+
+The guard is now `paths-ignore` on the two workflows that trigger on push to
+`dev`, naming those two files. That prevents the build loop just as precisely,
+while letting the manifest commit receive the checks a promotion PR needs. If
+you add another workflow triggering on push to `dev`, it needs the same
+`paths-ignore` block or the loop comes back.
+
 ## Local workspace
 
 Create `backend/.env` from `backend/.env.example`, then use:
@@ -536,3 +556,4 @@ jobs.
 - 2026-08-16 · main session · fixed the Android build never receiving `NEXT_PUBLIC_API_BASE_URL`: `npm run android:sync` ran with it unset, so every APK ever published compiled in `runsGateway.ts`'s `http://localhost:8000` fallback and could not reach the backend from a device ("Can't reach the server"), with CI green throughout because the APK builds fine. Added an `api_base_url` input to `reusable-android-checks.yml` wired into the sync step's env, passed the dev Railway URL from `android-development-build.yml`, and added a validation step that fails when `upload_apk: true` without it — the PR/`main` gate callers omit it deliberately since their APK is discarded. Note this is only the client half; the backend's `ALLOWED_ORIGINS` must also admit the Capacitor WebView origin (`https://localhost`), which is a Railway dashboard value, not a repo change
 - 2026-08-16 · main session · PR #15 fixed `videolens-backend` and `videolens-frontend` but `videolens-worker` — which builds the same `backend/Dockerfile` under a different real service ID — failed the same way, proving the ID must match whichever service is actually building and can't be templated (env vars are invalid syntax in a cache mount ID per Railway's docs). Removed cache mounts from `backend/Dockerfile` entirely (plus the now-pointless `docker-clean` removal) since no single static ID can satisfy two different services; `frontend/Dockerfile`, built by one service, keeps its real-ID npm cache mount
 - 2026-08-16 · main session · with builds fixed (PR #16 merged), Railway `dev` deploys hit two more failures unrelated to cache mounts. `videolens-worker` was reading the auto-detected `backend/railway.json` instead of `backend/railway.worker.json` (no per-service Config-as-Code path was ever set), inheriting a healthcheck path that can never succeed for a service with no HTTP server — fixed via the Railway dashboard, not a repo change. `videolens-backend`'s healthcheck failed even after the app logged a clean startup every time; a red herring (the public domain's target port, `8080` vs the actual `8000`) was found and fixed first but did not resolve it, since Railway's healthcheck reads the `PORT` variable, not the domain's target port — confirmed by `NETWORK_RX_GB` metrics stuck at exactly 0 across every failed attempt, proving the probe never reached the container. Fixed with a `PORT=8000` dashboard variable plus a durable code fix: `backend/Dockerfile`'s `CMD` now honors `${PORT:-8000}` via `sh -c exec`, matching the pattern `frontend/Dockerfile` already used (`ENV PORT=3000`, read by Next.js) — which is why the frontend never hit this. Documented both dashboard-only gotchas under a new *Railway service configuration gotchas* section since neither is enforced or visible from this repo. Bundled with retroactively bumping `frontend/package.json`/`package-lock.json` to `2.0.0` to reflect PR #12's CI/CD rewrite, which had shipped without a version bump
+- 2026-08-29 · main session · replaced the manifest commit's `[skip ci]` with a `paths-ignore` guard; the marker was leaving `dev` with an unchecked head and made `dev` -> `main` permanently unmergeable
