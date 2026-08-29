@@ -4,7 +4,14 @@ required) so use cases never import a framework or a driver library."""
 
 from typing import Awaitable, Callable, Optional, Protocol
 
-from .entities import Run, RunStatus, SavedUpload, SourceMetadata, VideoAnalysis
+from .entities import (
+    Capability,
+    Run,
+    RunStatus,
+    SavedUpload,
+    SourceMetadata,
+    VideoAnalysis,
+)
 
 StageCallback = Callable[[str], Awaitable[None]]
 
@@ -110,3 +117,14 @@ class KeyVault(Protocol):
 
 class TokenVerifier(Protocol):
     def decode(self, token: str) -> dict: ...
+
+
+class CapabilityProbe(Protocol):
+    """One health check. Adapters own the knowledge of what "working"
+    means for their dependency; the application layer only aggregates."""
+
+    @property
+    def name(self) -> str: ...
+
+    async def check(self) -> Capability: ...
+

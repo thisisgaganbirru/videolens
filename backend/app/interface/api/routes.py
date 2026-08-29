@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from starlette.requests import Request
 
 from ...container import container
-from ...domain.entities import Principal
+from ...domain.entities import CapabilityReport, Principal
 from .dependencies import get_principal
 from .rate_limiter import limiter
 from .schemas import RunCreateResponse, RunListResponse, RunStatusResponse, RunSummary
@@ -27,6 +27,19 @@ async def readiness() -> dict:
         "redis": redis_ready,
         "object_storage": container.object_store.enabled,
     }
+
+
+@router.get("/api/capabilities", response_model=CapabilityReport)
+async def capabilities() -> CapabilityReport:
+    """Per-dependency health, deliberately separate from `/api/readiness`.
+
+    Readiness answers one yes/no question for the platform's health check and
+    must stay cheap; this answers "which parts work, and was that actually
+    checked" for humans, the UI, and MCP clients deciding whether a run is
+    worth submitting. It always returns 200 - a non-ok body is the payload,
+    not an error.
+    """
+    return await container.get_capabilities_use_case.execute()
 
 
 @router.post("/api/runs", response_model=RunCreateResponse, status_code=202)
