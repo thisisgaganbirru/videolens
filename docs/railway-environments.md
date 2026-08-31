@@ -60,7 +60,9 @@ Both were observed on 2026-08-29: `df08bee` deployed with no checks at all; `09e
 
 This is retired as of the `GET /api/releases` endpoint — the release manifest is no longer committed to the repo, so no bot commit exists to behave either way. See `backend/releases.md`.
 
-**3. An unrelated failing workflow on the same SHA.** Wait for CI reads *every* workflow on the commit, not only the pipeline. A failing Dependabot run counts. Two `docker in /.` Dependabot runs failed on `3b7dc14` and contributed to production skipping it.
+**3. An unrelated failing workflow on the same SHA.** Wait for CI reads *every* workflow on the commit, not only the pipeline. A failing Dependabot run counts.
+
+This is not hypothetical and it is not limited to code deploys. The `docker in /.` Dependabot entry failed on every run (`dependency_file_not_found` — it used the `docker` ecosystem, which scans Dockerfiles, against a root directory that has none). On 2026-08-31 that one failure skipped the redeploy Railway triggers when a variable changes, so a newly added `GITHUB_TOKEN` never reached the running container and the endpoint kept returning an empty index with no error anywhere. **A variable change that Railway reports as a redeploy can be silently skipped.** Fixed by switching that entry to `docker-compose`.
 
 ## Environment variables that do not survive a fork
 
@@ -80,7 +82,8 @@ Under the current model this costs nothing, because Railway builds each environm
 ## Known issues
 
 - **Wait for CI treats "no workflow runs" as pass, not as skip.** A commit nothing runs on deploys ungated. That was how the bot manifest commit reached `dev` without checks; with the manifest commit gone, the remaining way to hit this is a commit whose every workflow is path-filtered out.
-- **The `docker in /.` Dependabot entry has failing runs** (`3b7dc14`). Not yet diagnosed. Because Wait for CI counts every workflow, a chronically failing scheduled job would block deploys indefinitely.
+- **Any chronically failing scheduled job blocks deploys indefinitely**, because Wait for CI counts every workflow on the commit. The `docker in /.` Dependabot entry was exactly this until 2026-08-31. When adding a scheduled workflow, treat its failure as a deployment problem, not a background annoyance.
+- **Config-only redeploys are gated too.** Changing a Railway variable triggers a redeploy that Wait for CI evaluates against the commit currently deployed. If that commit has a failed workflow, the variable change never takes effect and Railway still shows a deployment entry — as `SKIPPED`.
 - **`connect_service_source` cannot express this topology.** Any automation of branch mapping has to go through the dashboard or Railway's own per-environment API, not that call.
 
 ## Changelog
