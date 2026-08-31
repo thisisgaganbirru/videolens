@@ -21,9 +21,17 @@ updates:
     directory: /frontend
     schedule:
       interval: weekly
-  # This one is unaffected: docker-compose.yml still pins redis, minio/minio,
-  # and minio/mc as literal digests, and those remain automatically bumped.
-  - package-ecosystem: docker
+  # `docker-compose`, not `docker`. The intent has always been the literal
+  # digests docker-compose.yml pins for redis, minio/minio and minio/mc - but
+  # the `docker` ecosystem scans Dockerfiles and Kubernetes YAML, not compose
+  # files, and there is no Dockerfile at the repo root. So every run failed
+  # with `dependency_file_not_found: No Dockerfiles nor Kubernetes YAML found
+  # in /`, and nothing was ever bumped.
+  #
+  # A failing scheduled job is not cosmetic here. Railway's Wait for CI skips a
+  # deploy when *any* workflow on the commit failed, including Dependabot's, so
+  # this silently blocked production - see docs/railway-environments.md.
+  - package-ecosystem: docker-compose
     directory: /
     schedule:
       interval: weekly
