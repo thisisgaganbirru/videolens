@@ -536,10 +536,10 @@ set that still runs application and container checks on pull requests into
 so the checks still exist to be required — but whether they actually *block*
 a merge has to be confirmed from Settings → Branches by someone with access.
 
-One catch if it gets enabled: `android-development-build.yml` holds
-`contents: write` and pushes a release manifest directly to `dev`. Protection
-on `dev` needs a
-carve-out for that bot push or the release step starts failing.
+No carve-out is needed for the release job. It holds `contents: write`, but
+since the release index moved server-side (`GithubReleaseCatalog`) and
+releases moved to `main`, it only creates a tag and a release — it pushes no
+commit to any branch, so branch protection has nothing to trip over.
 
 ---
 
