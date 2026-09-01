@@ -23,6 +23,13 @@ jobs:
   android:
     if: github.ref == 'refs/heads/main'
     uses: ./.github/workflows/reusable-android-checks.yml
+    with:
+      upload_apk: true
+      # The production backend, matching the image this same workflow publishes.
+      # This APK is installed on real devices, so it cannot fall back to
+      # localhost - and it must not point at dev, whose Redis, quota and stored
+      # runs are a different environment entirely.
+      api_base_url: https://videolens-backend-production.up.railway.app
   publish:
     if: github.ref == 'refs/heads/main'
     needs: [application, containers]
@@ -32,3 +39,45 @@ jobs:
       channel: latest
       revision: ${{ github.sha }}
     secrets: inherit
+
+  release:
+    name: Publish release
+    # workflow_dispatch builds and tests but deliberately publishes nothing.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # The APK is what people actually install, so it does not ship while the
+    # backend it talks to is failing its own tests.
+    needs: [application, android]
+    runs-on: ubuntu-latest
+    # The only job in this repository holding a write token. Keep it that way:
+    # everything else, including the Android build itself, is contents: read.
+    permissions:
+      contents: write
+    env:
+      RELEASE_NAME: VideoLens AI v${{ needs.android.outputs.version_name }} (build ${{ needs.android.outputs.version_code }})
+      # Built by the Android job alongside the version.json inside the APK
+      # bundle, so the manifest the installed app reads and the tag it links to
+      # cannot disagree.
+      RELEASE_TAG: ${{ needs.android.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.android.outputs.artifact_name }}
+          path: release-assets
+      - name: Publish release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          # Pins the tag to the exact commit the APK was built from rather than
+          # to wherever main's tip has since moved. This shipped broken once,
+          # when releases ran on dev and the tag landed on main instead.
+          target_commitish: ${{ github.sha }}
+          name: ${{ env.RELEASE_NAME }}
+          # GitHub builds the body from PRs merged since the previous tag.
+          generate_release_notes: true
+          prerelease: false
+          files: |
+            release-assets/*.apk
+            release-assets/version.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
