@@ -185,15 +185,20 @@ supplied at build time rather than hardcoded:
 
 Both `versionName` and `versionCode`, plus the short git commit (`buildRef`),
 are baked into the output APK's filename so any build can be traced back to
-the exact version and commit it came from. The dedicated Android dev workflow
-additionally names the uploaded artifact after the same values (see
-`.github/workflows/android-development-build.yml`), downloadable from the Actions run
-summary.
+the exact version and commit it came from. The release workflow additionally
+names the uploaded artifact after the same values (see
+`.github/workflows/production-environment.yml`), downloadable from the Actions
+run summary.
 
-On every push to `dev`, CI also publishes the debug APK as a GitHub Release
-(tagged `dev-v<versionName>-build<run number>`, marked pre-release) under the
-repo's **Releases** page — a stable, non-expiring download link, unlike the
-30-day workflow artifact.
+On every push to `main`, CI also publishes the debug APK as a GitHub Release
+(tagged `v<versionName>-build<versionCode>`) under the repo's **Releases**
+page — a stable, non-expiring download link, unlike the 30-day workflow
+artifact. Pushes to `dev` build the APK as a gate and discard it; releases
+come from `main` only, so a tag always describes code that has been promoted.
+
+Builds 1-30 predate that move and are tagged `dev-v<versionName>-build<code>`.
+`GithubReleaseCatalog`'s tag pattern accepts both forms so those releases stay
+readable by the in-app Releases tab and update check.
 
 ### Debug signing
 

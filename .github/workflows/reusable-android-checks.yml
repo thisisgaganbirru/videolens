@@ -1,9 +1,9 @@
 name: Reusable Android checks
 
 # Single definition of the Android build. Called three ways:
-#   pull-request-checks.yml   -> pre-merge gate, upload_apk: false
-#   production-environment.yml -> main validation, upload_apk: false
-#   android-development-build.yml -> dev, upload_apk: true, then a separate
+#   pull-request-checks.yml     -> pre-merge gate, upload_apk: false
+#   development-environment.yml -> dev gate, upload_apk: false
+#   production-environment.yml  -> main, upload_apk: true, then a separate
 #     release job in that workflow consumes the artifact.
 # This workflow never creates a tag or a release; it is capped at contents: read.
 
@@ -24,6 +24,16 @@ on:
         required: false
         default: ""
         type: string
+      tag_prefix:
+        description: >-
+          Prefix for the release tag this build will be published under. Only
+          used to write the releaseUrl into version.json, so the manifest the
+          installed app reads points at a tag that actually exists. The caller
+          publishing the release must use the release_tag output rather than
+          rebuilding the string, or the two can drift apart.
+        required: false
+        default: "v"
+        type: string
     outputs:
       version_name:
         description: Application version name read from frontend/package.json
@@ -34,6 +44,12 @@ on:
       artifact_name:
         description: Name of the uploaded APK artifact, empty unless upload_apk is true
         value: ${{ jobs.android.outputs.artifact_name }}
+      version_code:
+        description: Android versionCode this APK was built with
+        value: ${{ jobs.android.outputs.version_code }}
+      release_tag:
+        description: Tag the caller's release job must publish this APK under
+        value: ${{ jobs.android.outputs.release_tag }}
 
 permissions:
   contents: read
@@ -46,6 +62,8 @@ jobs:
       version_name: ${{ steps.version.outputs.name }}
       version_sha: ${{ steps.version.outputs.sha }}
       artifact_name: ${{ steps.version.outputs.artifact }}
+      version_code: ${{ steps.version.outputs.code }}
+      release_tag: ${{ steps.version.outputs.tag }}
     defaults:
       run:
         working-directory: frontend
@@ -72,6 +90,10 @@ jobs:
             }
           fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # versionCode is the commit count below, which is 1 at the default
+          # fetch-depth of 1 - every build would claim to be version 1.
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .nvmrc
@@ -93,18 +115,32 @@ jobs:
         env:
           NEXT_PUBLIC_API_BASE_URL: ${{ inputs.api_base_url }}
       - id: version
+        env:
+          TAG_PREFIX: ${{ inputs.tag_prefix }}
         run: |
           name="$(node -p "require('./package.json').version")"
           sha="$(git rev-parse --short HEAD)"
+          # versionCode must never go backwards. Android refuses to install an
+          # APK whose code is below the installed one, and updateCheck.ts
+          # compares these numbers to decide a newer build exists - so a code
+          # that drops silently strands every device on the build it already
+          # has. github.run_number is per-workflow and starts near zero, so it
+          # resets the moment a different workflow takes over publishing, which
+          # is exactly what moving releases from dev to main does. Commit count
+          # is a property of the history rather than of the workflow, so it
+          # carries across that move and keeps climbing.
+          code="$(git rev-list --count HEAD)"
           {
             echo "name=${name}"
             echo "sha=${sha}"
-            echo "artifact=videolens-ai-v${name}-code${{ github.run_number }}-${sha}-debug"
+            echo "code=${code}"
+            echo "tag=${TAG_PREFIX}${name}-build${code}"
+            echo "artifact=videolens-ai-v${name}-code${code}-${sha}-debug"
           } >> "$GITHUB_OUTPUT"
       - run: |
           ./gradlew assembleDebug testDebugUnitTest \
             -PappVersionName=${{ steps.version.outputs.name }} \
-            -PappVersionCode=${{ github.run_number }} \
+            -PappVersionCode=${{ steps.version.outputs.code }} \
             -PbuildRef=${{ steps.version.outputs.sha }}
         working-directory: frontend/android
       - name: Write version manifest
@@ -116,10 +152,10 @@ jobs:
         run: |
           cat > android/app/build/outputs/apk/debug/version.json <<JSON
           {
-            "versionCode": ${{ github.run_number }},
+            "versionCode": ${{ steps.version.outputs.code }},
             "versionName": "${{ steps.version.outputs.name }}",
             "commit": "${{ steps.version.outputs.sha }}",
-            "releaseUrl": "https://github.com/${{ github.repository }}/releases/tag/dev-v${{ steps.version.outputs.name }}-build${{ github.run_number }}"
+            "releaseUrl": "https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.tag }}"
           }
           JSON
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

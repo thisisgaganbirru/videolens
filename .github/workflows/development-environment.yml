@@ -20,6 +20,11 @@ jobs:
   containers:
     if: github.ref == 'refs/heads/dev'
     uses: ./.github/workflows/reusable-container-checks.yml
+  # Gate only. dev builds the APK to prove it still compiles, then throws it
+  # away: releases are published from main, so nothing here reaches a device.
+  android:
+    if: github.ref == 'refs/heads/dev'
+    uses: ./.github/workflows/reusable-android-checks.yml
   publish:
     if: github.ref == 'refs/heads/dev'
     needs: [application, containers]

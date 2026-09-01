@@ -11,9 +11,8 @@ is never reused as a hosted deployment manifest.
 | --- | --- | --- | --- |
 | Local workspace | `scripts/workspace.ps1` and `docker-compose.yml` | Hardened frontend, API, worker, Redis, and MinIO on loopback/private networks | Nothing external |
 | Pull request | `.github/workflows/pull-request-checks.yml` | Application checks, native container builds/scans, and the Android build/unit tests for PRs targeting `dev` or `main` | Nothing |
-| Dev | `.github/workflows/development-environment.yml` on `dev` | Application checks and container checks | Signed amd64/arm64 images tagged `dev` and `sha-<commit>` in GHCR |
-| Android dev | `.github/workflows/android-development-build.yml` on `dev` | Android API 36 build and unit tests | Debug artifact and dev prerelease |
-| Production | `.github/workflows/production-environment.yml` on `main` | Application checks, container checks, and the Android build/unit tests | Signed amd64/arm64 images tagged `latest` and `sha-<commit>` in GHCR |
+| Dev | `.github/workflows/development-environment.yml` on `dev` | Application checks, container checks, and the Android build/unit tests | Signed amd64/arm64 images tagged `dev` and `sha-<commit>` in GHCR |
+| Production | `.github/workflows/production-environment.yml` on `main` | Application checks, container checks, and the Android build/unit tests | Signed amd64/arm64 images tagged `latest` and `sha-<commit>` in GHCR, plus the debug APK as a GitHub Release |
 
 Workflow filenames use lowercase kebab-case. Call-only building blocks follow
 `reusable-<responsibility>.yml`; event-driven entry points follow
@@ -31,13 +30,13 @@ creates a tag or a release. Three callers:
   this is the only thing that catches a broken Capacitor sync or Gradle build
   before it lands. It costs roughly 6-10 minutes of extra PR CI wall-clock, in
   parallel with the application and container jobs.
-- `production-environment.yml` — same gate on `main`. It does not block the
-  container publication job, which has no Android dependency; an Android failure
-  still fails the workflow run.
-- `android-development-build.yml` — passes `upload_apk: true`, so the reusable
+- `development-environment.yml` — same gate on `dev`. Builds the APK to prove
+  the Capacitor sync and Gradle build still work, then discards it. Nothing on
+  `dev` reaches a device.
+- `production-environment.yml` — passes `upload_apk: true`, so the reusable
   also writes `version.json` and uploads the APK as a workflow artifact. A
-  separate `release` job in that workflow (the only job holding
-  `contents: write`) downloads the artifact and publishes the dev prerelease.
+  separate `release` job in that workflow (the only job in the repository
+  holding `contents: write`) downloads the artifact and publishes the release.
 
 #### The APK's backend URL
 
@@ -47,11 +46,10 @@ creates a tag or a release. Three callers:
 inlines every `NEXT_PUBLIC_*` value into the static export, so the URL is
 compiled into the APK and cannot be changed after the fact.
 
-Only `android-development-build.yml` passes it (the dev Railway backend, the
-same URL `development-environment.yml` compiles the dev frontend image
-against). The PR and `main` callers deliberately omit it: those builds exist
-to prove the Android project still compiles and their APK is discarded, never
-installed.
+Only `production-environment.yml` passes it (the production Railway backend,
+matching the images that workflow publishes). The PR and `dev` callers
+deliberately omit it: those builds exist to prove the Android project still
+compiles and their APK is discarded, never installed.
 
 A validation step fails the build when `upload_apk: true` and `api_base_url`
 is empty, mirroring the frontend-scoped check in
@@ -63,11 +61,38 @@ every request fails with "Can't reach the server", while CI stays green
 because the APK builds perfectly. Every APK published before 2026-08-16
 shipped this way.
 
-The release step passes `target_commitish: ${{ github.sha }}`. Without it GitHub
-creates the tag at the repository default branch (`main`) while the APK is built
-from the pushed `dev` commit, so the tag does not describe the artifact —
-observed on `dev-v1.1.0-build28`. `workflow_dispatch` runs build and test only;
-the release job is gated on `github.event_name == 'push'`.
+The release step passes `target_commitish: ${{ github.sha }}`, pinning the tag
+to the commit the APK was built from rather than to wherever the branch tip has
+since moved. It mattered more when releases ran on `dev`, where GitHub would
+otherwise create the tag on the default branch (`main`) and the tag would not
+describe the artifact at all — observed on `dev-v1.1.0-build28`. Now that
+releases run on `main` the two usually coincide, but a concurrent merge is
+enough to separate them. `workflow_dispatch` runs build and test only; the
+release job is gated on `github.event_name == 'push'`.
+
+### Tag scheme and versionCode
+
+Releases are tagged `v<versionName>-build<versionCode>`; `versionName` is read
+from `frontend/package.json` and `versionCode` is `git rev-list --count HEAD`.
+
+`versionCode` used to be `github.run_number`. That is scoped to one workflow,
+so moving publication from `android-development-build.yml` (at run 30) to
+`production-environment.yml` (its own counter, near zero) would have made the
+next release claim a **lower** code than the builds already installed — and a
+code that goes backwards is not cosmetic. Android refuses to install an APK
+below the installed code, and `updateCheck.ts` compares codes to decide a newer
+build exists, so every device would have been stranded on build 30 with no way
+forward. Commit count is a property of the history rather than of a workflow,
+so it survived the move (181 at the time, against 30) and keeps climbing.
+
+Two consequences worth knowing:
+
+- The Android job checks out with `fetch-depth: 0`. At the default depth of 1,
+  `git rev-list --count HEAD` returns 1 and every build claims to be version 1.
+- `GithubReleaseCatalog._TAG` accepts an optional `dev-` prefix. Builds 1-30
+  were published from `dev` as `dev-v<version>-build<code>` and are still the
+  newest build on some devices; `latest` is the first *parseable* tag, so
+  dropping the old form would have left those devices seeing no updates.
 
 ### Release notes
 
@@ -554,3 +579,4 @@ jobs.
 - 2026-08-16 · main session · with builds fixed (PR #16 merged), Railway `dev` deploys hit two more failures unrelated to cache mounts. `videolens-worker` was reading the auto-detected `backend/railway.json` instead of `backend/railway.worker.json` (no per-service Config-as-Code path was ever set), inheriting a healthcheck path that can never succeed for a service with no HTTP server — fixed via the Railway dashboard, not a repo change. `videolens-backend`'s healthcheck failed even after the app logged a clean startup every time; a red herring (the public domain's target port, `8080` vs the actual `8000`) was found and fixed first but did not resolve it, since Railway's healthcheck reads the `PORT` variable, not the domain's target port — confirmed by `NETWORK_RX_GB` metrics stuck at exactly 0 across every failed attempt, proving the probe never reached the container. Fixed with a `PORT=8000` dashboard variable plus a durable code fix: `backend/Dockerfile`'s `CMD` now honors `${PORT:-8000}` via `sh -c exec`, matching the pattern `frontend/Dockerfile` already used (`ENV PORT=3000`, read by Next.js) — which is why the frontend never hit this. Documented both dashboard-only gotchas under a new *Railway service configuration gotchas* section since neither is enforced or visible from this repo. Bundled with retroactively bumping `frontend/package.json`/`package-lock.json` to `2.0.0` to reflect PR #12's CI/CD rewrite, which had shipped without a version bump
 - 2026-08-29 · main session · replaced the manifest commit's `[skip ci]` with a `paths-ignore` guard; the marker was leaving `dev` with an unchecked head and made `dev` -> `main` permanently unmergeable
 - 2026-08-29 · main session · removed the manifest commit and its `paths-ignore` guard; the release index is served by `GET /api/releases` now
+- 2026-09-01 · main session · moved release publication from `dev` to `main`. Deleted `android-development-build.yml`; `production-environment.yml` now passes `upload_apk: true` with the production backend URL and owns the release job (and with it the repo's only `contents: write`), while `development-environment.yml` gained an Android gate so `dev` still validates the build without producing anything installable. Tags lose the `dev-` prefix and releases are no longer prereleases. The trap this hid: `versionCode` was `github.run_number`, which is per-workflow — publishing from a different workflow would have restarted it near zero, below the installed build 30, and Android refuses to install a lower code while `updateCheck.ts` compares codes to find a newer build, so every device would have been stranded with no way forward and CI green throughout. Switched `versionCode` to `git rev-list --count HEAD` (181 vs 30, monotonic, workflow-independent), which needs `fetch-depth: 0` or it reads 1. Also widened `GithubReleaseCatalog._TAG` to accept the optional `dev-` prefix so builds 1-30 stay parseable — `latest` is the first parseable tag, so dropping the old form would have broken the update check for exactly the devices that most need it
