@@ -167,15 +167,18 @@ Frontend at `:3000`, backend at `:8000`, MinIO console at `:9001`.
 
 ### CI (`.github/workflows/`)
 
-Eight workflows in a caller/reusable split. Three **callers** decide when
+Seven workflows in a caller/reusable split. Three **callers** decide when
 things run; four **reusables** hold the actual steps so no build logic is
 written twice; one job publishes the Android release.
 
 | Trigger | Runs |
 |---|---|
 | PR into `dev`/`main` | application checks, container checks, Android checks |
-| push to `dev` | the same three, plus a dev-channel container publish, plus the Android APK build and prerelease |
-| push to `main` | the same three, plus a production-channel container publish |
+| push to `dev` | the same three, plus a dev-channel container publish |
+| push to `main` | the same three, plus a production-channel container publish, plus the Android APK build and release |
+
+**Releases are published from `main` only.** `dev` builds the APK to prove it
+still compiles and then discards it — nothing on `dev` reaches a device.
 
 The reusables: `reusable-application-checks.yml` (backend compileall +
 unittest discover + import check; frontend `tsc --noEmit` + `build` +
@@ -196,13 +199,20 @@ use the `secrets` input.
 Two properties worth preserving if you touch these:
 
 - **Exactly one job in the whole set has `contents: write`** — the release
-  job in `android-development-build.yml`. Everything else is `contents:
-  read`. The Android build steps live in a reusable precisely so the PR and
-  `main` paths can run the same build without ever holding a write token.
+  job in `production-environment.yml`. Everything else is `contents: read`.
+  The Android build steps live in a reusable precisely so the PR and `dev`
+  paths can run the same build without ever holding a write token.
 - **`target_commitish: ${{ github.sha }}` on the release step is
-  load-bearing.** Without it GitHub creates the tag at the default branch
-  (`main`) while the APK is built from `dev`, so the tag points at code that
-  is not in the artifact. This shipped broken once; don't drop it.
+  load-bearing.** It pins the tag to the commit the APK was built from rather
+  than to wherever the branch tip has moved. This shipped broken once, back
+  when releases ran on `dev` and the tag landed on `main`; don't drop it.
+- **`versionCode` is `git rev-list --count HEAD`, not `github.run_number`.**
+  It must never decrease: Android refuses to install an APK below the
+  installed code, and `updateCheck.ts` compares these to find a newer build.
+  `run_number` is per-workflow and resets to near zero whenever a different
+  workflow starts publishing — which is precisely what moving releases from
+  `dev` to `main` did. This also means the Android checkout needs
+  `fetch-depth: 0`; at the default depth of 1 every build is version 1.
 
 Full reference — trigger table, tag scheme, signing, the container channels
 — is `docs/container-workflows.md`. Read it before editing a workflow.

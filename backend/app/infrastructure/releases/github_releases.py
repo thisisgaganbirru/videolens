@@ -21,10 +21,16 @@ from ..config import Settings
 _TIMEOUT_SECONDS = 10
 _PER_PAGE = 30
 
-# Release tags are written by android-development-build.yml as
-# `dev-v<version>-build<code>`; the build number is the Android versionCode
-# an installed APK compares itself against.
-_TAG = re.compile(r"^dev-v(?P<version>\d+\.\d+\.\d+)-build(?P<code>\d+)$")
+# Release tags are written by production-environment.yml as
+# `v<version>-build<code>`; the build number is the Android versionCode an
+# installed APK compares itself against.
+#
+# The `dev-` prefix is optional because releases used to be published from the
+# dev branch under `dev-v<version>-build<code>`, and builds 1-30 still carry
+# that form. Dropping it here would make every one of them unparseable, which
+# does not just shorten a list: `latest` is the first *parseable* tag, so a
+# device sitting on one of those builds would be told nothing newer exists.
+_TAG = re.compile(r"^(?:dev-)?v(?P<version>\d+\.\d+\.\d+)-build(?P<code>\d+)$")
 
 
 class GithubReleaseCatalog:
