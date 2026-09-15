@@ -17,6 +17,10 @@ exception, listed so it isn't mistaken for a stray file:
 - `railway-environments.md` — the two Railway environments, which branch
   feeds each, how `Wait for CI` gates deploys, and the three ways a deploy
   silently does not happen. Read before changing a trigger branch.
+- `product-plan-100k.md` — the product and engineering strategy for taking
+  the app from a free tool to $100k ARR: positioning, pricing and unit
+  economics, a phased roadmap mapped onto the existing layering, risks, and a
+  90-day sprint plan. Read before starting any accounts/billing/storage work.
 - `engineering-standards.md` — cross-cutting, not a per-feature reference. A
   repo-wide engineering-hygiene register audited 2026-08-15. Dependency
   reproducibility and container vulnerability gates are now implemented;
