@@ -11,30 +11,43 @@ from app.domain.errors import (
 )
 
 from .fakes import (
+    FakeAccountDirectory,
     FakeJobQueue,
     FakeMediaProcessor,
     FakeObjectStore,
     FakeRunRepository,
     FakeSpendCap,
     FakeUploadedFile,
+    FakeUsageMeter,
+    make_entitlements,
 )
 
 PRINCIPAL = Principal(subject="client:test-owner", authenticated=False)
 
 
 class CreateRunUseCaseTests(unittest.IsolatedAsyncioTestCase):
-    def _make_use_case(self, *, distributed: bool = False, spend_allowed: bool = True):
+    def _make_use_case(
+        self,
+        *,
+        distributed: bool = False,
+        spend_allowed: bool = True,
+        accounts: FakeAccountDirectory | None = None,
+        usage: FakeUsageMeter | None = None,
+    ):
         self.runs = FakeRunRepository()
         self.media = FakeMediaProcessor()
         self.storage = FakeObjectStore()
         self.queue = FakeJobQueue()
         self.spend_cap = FakeSpendCap(allow=spend_allowed)
+        self.accounts = accounts or FakeAccountDirectory(enabled=False)
+        self.usage = usage or FakeUsageMeter()
         return CreateRunUseCase(
             runs=self.runs,
             media=self.media,
             storage=self.storage,
             queue=self.queue,
             spend_cap=self.spend_cap,
+            entitlements=make_entitlements(self.accounts, self.usage),
             distributed=distributed,
         )
 

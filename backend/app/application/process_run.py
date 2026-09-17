@@ -2,7 +2,8 @@ import asyncio
 import logging
 import os
 
-from ..domain.entities import AnalysisCompleteness, RunStatus
+from ..domain.entities import AnalysisCompleteness, RunStatus, TokenUsage
+from ..domain.entitlements import media_resolution_for
 from ..domain.errors import (
     AnalysisUnavailableError,
     GeminiConfigurationError,
@@ -10,6 +11,7 @@ from ..domain.errors import (
     UserFacingError,
 )
 from ..domain.ports import AnalysisEngine, MediaProcessor, ObjectStore, RunRepository
+from .record_usage import RecordUsageUseCase
 
 logger = logging.getLogger("videolens")
 
@@ -30,11 +32,13 @@ class ProcessRunUseCase:
         media: MediaProcessor,
         storage: ObjectStore,
         analysis: AnalysisEngine,
+        usage: RecordUsageUseCase | None = None,
     ) -> None:
         self._runs = runs
         self._media = media
         self._storage = storage
         self._analysis = analysis
+        self._usage = usage
 
     async def _analyze_captions(
         self, run_id: str, source_url: str, gemini_api_key: str | None
@@ -83,7 +87,16 @@ class ProcessRunUseCase:
         gemini_api_key: str | None = None,
     ) -> None:
         await self._runs.set_status(run_id, RunStatus.PROCESSING)
+        # The run carries the cap it was admitted under and the workspace to
+        # bill; both were decided at intake so the worker needs no plan
+        # lookup. A run that vanished from the store (TTL, flushed Redis)
+        # still gets the deployment defaults rather than a crash.
+        run = await self._runs.get(run_id)
+        max_seconds = run.max_duration_seconds if run else None
+        workspace_id = run.workspace_id if run else None
+        duration = run.duration_seconds if run else None
         metadata = None
+        tokens: TokenUsage | None = None
         try:
             if source_url and not source_key:
                 await self._runs.set_stage(run_id, "downloading")
@@ -102,13 +115,15 @@ class ProcessRunUseCase:
                 if downloaded.metadata is not None:
                     metadata = downloaded.metadata
                     await self._runs.set_source_metadata(run_id, metadata)
-                await self._media.enforce_duration_cap(run_id, saved_path)
+                duration = await self._media.enforce_duration_cap(run_id, saved_path, max_seconds)
+                await self._runs.set_duration(run_id, duration)
             elif source_key:
                 run_dir = self._media.create_run_dir(run_id)
                 extension = os.path.splitext(source_key)[1].lower()
                 saved_path = os.path.join(run_dir, f"source{extension}")
                 await self._storage.download_source(source_key, saved_path)
-                await self._media.enforce_duration_cap(run_id, saved_path)
+                duration = await self._media.enforce_duration_cap(run_id, saved_path, max_seconds)
+                await self._runs.set_duration(run_id, duration)
 
             if not saved_path or not run_dir:
                 raise MediaValidationError("No media source was provided.")
@@ -119,6 +134,15 @@ class ProcessRunUseCase:
             async def on_stage(stage: str) -> None:
                 await self._runs.set_stage(run_id, stage)
 
+            async def on_usage(usage: TokenUsage) -> None:
+                nonlocal tokens
+                tokens = usage
+                await self._runs.set_usage(run_id, usage)
+
+            # Long media is read at low resolution: it is what keeps an hour of
+            # video inside the model's context, and a third of the cost.
+            resolution = media_resolution_for(duration)
+
             # The publisher's own title/caption/stats are context the pixels do
             # not carry - names, jargon, and spellings the audio only says out
             # loud. Only URL runs have it; uploads pass None and the engine
@@ -128,8 +152,25 @@ class ProcessRunUseCase:
                 on_stage=on_stage,
                 api_key=gemini_api_key,
                 metadata=metadata,
+                resolution=resolution,
+                on_usage=on_usage,
             )
             await self._runs.set_result(run_id, result)
+
+            # Metered after the result is safely stored: a person who paid for
+            # minutes gets their notes even if the ledger write fails, and a
+            # caller on their own Gemini key is never charged for our model.
+            if self._usage is not None and workspace_id and duration and not gemini_api_key:
+                try:
+                    await self._usage.execute(
+                        run_id=run_id,
+                        workspace_id=workspace_id,
+                        duration_seconds=duration,
+                        resolution=resolution,
+                        tokens=tokens,
+                    )
+                except Exception:  # noqa: BLE001 - the run already succeeded
+                    logger.exception("Usage for run %s could not be recorded", run_id)
         except (MediaValidationError, AnalysisUnavailableError, GeminiConfigurationError) as exc:
             # The message is written for the person on the screen; anything an
             # operator would need is on `log_detail` and stops here. Storing it

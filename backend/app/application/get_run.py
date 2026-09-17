@@ -22,7 +22,7 @@ class GetRunUseCase:
 
     async def execute(self, run_id: str, principal: Principal) -> Run:
         run = await self._runs.get(run_id)
-        if run is None or run.owner_id != principal.subject:
+        if run is None or run.owner_id != principal.owner_id:
             raise RunNotFoundError("Run not found.")
 
         if is_run_stale(run.status, run.updated_at, self._stale_after_seconds):

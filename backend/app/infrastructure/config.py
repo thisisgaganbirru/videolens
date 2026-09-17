@@ -48,6 +48,25 @@ class Settings(BaseSettings):
     auth_audience: str = ""
     allow_anonymous: bool = True
 
+    # Durable storage for accounts, workspaces, paid history, usage and API
+    # keys. Empty means none of that exists and the app runs exactly as it
+    # did before: anonymous, Redis-only history, deployment-wide limits.
+    database_url: str = ""
+    db_auto_migrate: bool = True
+
+    # Billing. Empty secret key means no paid plans: the upgrade routes
+    # answer 503 and nothing is ever reported to a meter.
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    stripe_price_pro: str = ""
+    stripe_price_studio: str = ""
+    stripe_price_scale: str = ""
+    stripe_price_overage: str = ""
+    stripe_meter_event_name: str = "videolens_minutes"
+    # Where Checkout and the billing portal send people back to. Defaults to
+    # the first configured origin, which is the deployed frontend.
+    frontend_base_url: str = ""
+
     github_repo: str = "thisisgaganbirru/videolens"
     github_token: str = ""
 
@@ -65,6 +84,22 @@ class Settings(BaseSettings):
     @property
     def queue_enabled(self) -> bool:
         return bool(self.redis_url.strip())
+
+    @property
+    def database_enabled(self) -> bool:
+        return bool(self.database_url.strip())
+
+    @property
+    def billing_enabled(self) -> bool:
+        return bool(self.stripe_secret_key.strip())
+
+    @property
+    def frontend_origin(self) -> str:
+        configured = self.frontend_base_url.strip().rstrip("/")
+        if configured:
+            return configured
+        origins = [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+        return origins[0].rstrip("/") if origins else "http://localhost:3000"
 
     @property
     def object_storage_enabled(self) -> bool:
