@@ -61,7 +61,11 @@ def cleanup_run_dir(settings: Settings, run_id: str) -> None:
     _cleanup_dir(os.path.join(settings.temp_dir, run_id))
 
 
-async def save_upload(settings: Settings, run_id: str, upload: UploadedFile) -> SavedUpload:
+async def save_upload(
+    settings: Settings, run_id: str, upload: UploadedFile, max_size_mb: int | None = None
+) -> SavedUpload:
+    # The plan's cap when the caller has one, the deployment's otherwise.
+    limit_mb = max_size_mb if max_size_mb and max_size_mb > 0 else settings.max_file_size_mb
     ext = os.path.splitext(upload.filename or "")[1].lower()
     if ext not in settings.allowed_extensions:
         raise MediaValidationError(
@@ -71,7 +75,7 @@ async def save_upload(settings: Settings, run_id: str, upload: UploadedFile) -> 
 
     run_dir = create_run_dir(settings, run_id)
     dest_path = os.path.join(run_dir, f"upload{ext}")
-    max_bytes = settings.max_file_size_mb * 1024 * 1024
+    max_bytes = limit_mb * 1024 * 1024
     chunk_size = 1024 * 1024
 
     total = 0
@@ -81,7 +85,7 @@ async def save_upload(settings: Settings, run_id: str, upload: UploadedFile) -> 
                 total += len(chunk)
                 if total > max_bytes:
                     raise MediaValidationError(
-                        f"That file is over the {settings.max_file_size_mb}MB limit."
+                        f"That file is over the {limit_mb}MB limit."
                     )
                 out_file.write(chunk)
     except MediaValidationError:

@@ -10,11 +10,13 @@ async def startup(ctx: dict) -> None:
     if not settings.queue_enabled or not container.object_store.enabled:
         raise RuntimeError("Worker requires Redis and S3-compatible object storage.")
     await container.run_repository.ping()
+    await container.prepare_database()
 
 
 async def shutdown(ctx: dict) -> None:
     await container.run_repository.close()
     await container.key_vault.close()
+    await container.database.close()
 
 
 async def process_run(

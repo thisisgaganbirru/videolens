@@ -31,11 +31,15 @@ class MediaService:
     def cleanup_run_dir(self, run_id: str) -> None:
         uploads.cleanup_run_dir(self._settings, run_id)
 
-    async def save_upload(self, run_id: str, upload: UploadedFile) -> SavedUpload:
-        return await uploads.save_upload(self._settings, run_id, upload)
+    async def save_upload(
+        self, run_id: str, upload: UploadedFile, max_size_mb: int | None = None
+    ) -> SavedUpload:
+        return await uploads.save_upload(self._settings, run_id, upload, max_size_mb)
 
-    async def enforce_duration_cap(self, run_id: str, path: str) -> None:
-        await ffmpeg.enforce_duration_cap(self._settings, run_id, path)
+    async def enforce_duration_cap(
+        self, run_id: str, path: str, max_seconds: int | None = None
+    ) -> float:
+        return await ffmpeg.enforce_duration_cap(self._settings, run_id, path, max_seconds)
 
     async def download_url(self, run_id: str, url: str) -> SavedUpload:
         return await self._resolvers.fetch(run_id, url)

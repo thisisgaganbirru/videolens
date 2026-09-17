@@ -27,6 +27,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # it succeeded on any string Linux accepts as a directory name.
     container.media.validate_temp_dir()
     settings = container.settings
+    await container.prepare_database()
     if settings.queue_enabled:
         await container.run_repository.ping()
         if not container.object_store.enabled:
@@ -61,8 +62,8 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=container.settings.allowed_origin_list,
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Client-ID", "X-Gemini-Api-Key"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Client-ID", "X-Gemini-Api-Key", "X-Api-Key"],
 )
 register_error_handlers(app)
 app.include_router(router)

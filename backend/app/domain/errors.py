@@ -59,3 +59,57 @@ class RunSchedulingError(Exception):
 
 class RunNotFoundError(Exception):
     """No run exists for the given id and owner."""
+
+
+class PlanLimitError(UserFacingError):
+    """The workspace has used everything its plan includes this period.
+
+    Distinct from `QuotaExceededError` (the deployment's shared daily budget)
+    because the remedy is different: this one is fixed by upgrading, and the
+    API answers it with 402 so a client can route straight to billing.
+    """
+
+
+class DurationLimitError(MediaValidationError):
+    """The media is longer than the caller's plan allows.
+
+    A `MediaValidationError` because everything that handles one (cleanup,
+    status 400, the "pick another file" advice) is right here too; its own
+    class because the interface layer wants to say "upgrade for longer video"
+    on top of that, and only for this case.
+    """
+
+    def __init__(self, message: str, *, duration_seconds: float, limit_seconds: int) -> None:
+        super().__init__(message)
+        self.duration_seconds = duration_seconds
+        self.limit_seconds = limit_seconds
+
+
+class AuthenticationError(Exception):
+    """The credential presented could not be verified."""
+
+
+class PermissionDeniedError(Exception):
+    """The caller is known but not allowed to do this."""
+
+
+class WorkspaceNotFoundError(Exception):
+    """No workspace exists for the given id and caller."""
+
+
+class ApiKeyNotFoundError(Exception):
+    """No active API key exists for the given id and workspace."""
+
+
+class BillingNotConfiguredError(Exception):
+    """A billing action was requested on a deployment with no billing provider.
+
+    Raised, not swallowed, so the frontend's upgrade button fails with a
+    clear 503 rather than a dead link - and so a test can prove that nothing
+    money-shaped runs until the operator has deliberately turned it on.
+    """
+
+
+class WebhookVerificationError(Exception):
+    """A billing webhook's signature did not verify, or its body was
+    malformed. Answered with 400 so the provider retries nothing."""
