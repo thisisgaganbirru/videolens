@@ -87,3 +87,4 @@ No test coverage for `ffmpeg.py` directly (it requires an actual ffmpeg binary).
 - 2026-08-29 · main session · extracted the SSRF guard into `net.py`; put `download_url` behind an ordered `ResolverChain` and added `DirectHttpResolver` as the fallback route
 - 2026-08-29 · main session · added `captions.py` (subtitle salvage) and shared `_source_metadata_from_info` between the download and caption paths
 - 2026-08-29 · main session · merged dev: `net.py` carries dev's user-facing wording plus `log_detail`, and the resolvers follow the same split
+- 2026-09-17 · main session · `enforce_duration_cap` and `save_upload` take a per-plan limit and the duration probe returns the measured seconds; over-cap is `DurationLimitError` with `duration_seconds`/`limit_seconds` on the wire

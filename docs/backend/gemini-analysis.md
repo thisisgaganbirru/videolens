@@ -66,3 +66,4 @@ Google's own 503 describes; that is tracked as a known issue there.
 - 2026-08-29 · main session · added `source_context.py` and fed publisher metadata into the prompt as explicitly-untrusted context
 - 2026-08-29 · main session · added `analyze_captions` and `CAPTION_SYSTEM_INSTRUCTION` for the caption-only salvage path
 - 2026-08-29 · main session · merged dev: routed `analyze_captions` through `_as_domain_error` so a busy-Gemini caption run says so instead of blaming the link
+- 2026-09-17 · main session · `analyze`/`analyze_with_retry` take `resolution` (`MEDIA_RESOLUTION_LOW` when supported by the SDK) and `on_usage` (token counts from `usage_metadata`)

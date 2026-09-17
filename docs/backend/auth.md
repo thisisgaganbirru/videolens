@@ -15,3 +15,6 @@ Otherwise, falls back to anonymous: requires `allow_anonymous` (default true) an
 **Status**: OIDC verification is implemented but not enabled by default (`allow_anonymous: true`). Per root `README.md`, going fully non-anonymous requires actually configuring an identity provider first — not something flip a flag alone accomplishes.
 
 **Tests**: none directly for `get_principal` or `JwtVerifier` (would need a mock JWKS endpoint). `is_valid_client_id`'s underlying pattern has no dedicated test either, though it's simple enough to read at a glance.
+
+## Changelog
+- 2026-09-17 · main session · `get_principal` now tries an API key (`X-Api-Key` or `Bearer vl_live_…`) first, then the JWT, then `X-Client-ID`; JWT claims go through `IdentifyCallerUseCase.from_token_claims` (account + workspace when `DATABASE_URL` is set); `AUTH_AUDIENCE` is optional so Clerk's default session tokens verify; added `tests/infrastructure/auth/test_jwt_verifier.py` — see `accounts-workspaces.md`

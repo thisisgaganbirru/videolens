@@ -51,3 +51,4 @@ state is a bigger claim than one notice line.
 - 2026-08-15 · frontend agent · ported ApiKeyPanel; promoted the sr-only label to a visible .card-label, kept the programmatic association
 - 2026-08-15 · frontend agent · restructured ApiKeyPanel to place Optional on top label line, started body paragraph on next line, and fixed input field height to 2.5rem single-line bar
 - 2026-08-29 · frontend agent · added the optional `budgetCapability` prop and the `daily_budget` callout under the Optional label (backend sentence verbatim, no lead) — see `capability-reporting.md`
+- 2026-09-17 · main session · the shared `apiClient.ts` now sends `X-Gemini-Api-Key` for every gateway, not only runs; a BYOK run is exempt from plan minutes as well as the daily cap
