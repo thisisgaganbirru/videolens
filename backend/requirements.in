@@ -8,6 +8,6 @@ slowapi>=0.1.9
 python-dotenv>=1.0
 yt-dlp>=2025.6.30
 arq>=0.26.3
-boto3>=1.35
+boto3>=1.43.82
 PyJWT[crypto]>=2.9
 redis>=5.2
