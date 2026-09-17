@@ -2,7 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 
-/* Which of the shell's four destinations is showing is a property of the URL,
+/* Which of the shell's destinations is showing is a property of the URL,
    not of a component. It lives here because reading and writing that URL is
    orchestration — the same layer that owns `useAnalysisRun`'s state machine —
    and because two different route families (the app shell and the legal
@@ -11,11 +11,14 @@ import { useSearchParams } from "next/navigation";
    The address is a query param (`/?view=history`) rather than a route folder
    (`/history`) on purpose: one page component, one copy of the shell, and it
    survives `output: "export"`, which is what the Capacitor build ships. Route
-   folders would mean four prerendered pages each carrying the whole shell, and
+   folders would mean six prerendered pages each carrying the whole shell, and
    a real document navigation on every tab switch. */
 
-/** The four destinations, in nav order. */
-export const MAIN_TABS = ["analyze", "history", "api-key", "releases"] as const;
+/** The destinations, in nav order. `library` and `account` arrived with
+ *  plans: they render on every deployment (an anonymous library is recent
+ *  history with a search box; an anonymous account is the deployment's
+ *  limits), so they are not gated on configuration here. */
+export const MAIN_TABS = ["analyze", "history", "library", "account", "api-key", "releases"] as const;
 
 export type MainTab = (typeof MAIN_TABS)[number];
 

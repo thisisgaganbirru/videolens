@@ -3,8 +3,15 @@
    they go through a hook, which goes through the shared container. */
 
 import type {
+  AccountResponse,
+  ApiKeyCreated,
+  ApiKeyListResponse,
+  AuthUser,
   CapabilityReport,
+  LibraryQuery,
+  LibraryResponse,
   MediaSource,
+  Plan,
   RunCreateResponse,
   RunListResponse,
   RunStatusResponse,
@@ -62,4 +69,45 @@ export interface SharedUrlSource {
   /** Notifies when a share lands while the app is already open. Returns an
    *  unsubscribe function. */
   subscribe(listener: () => void): () => void;
+}
+
+/**
+ * The signed-in session, if the deployment has an identity provider.
+ *
+ * `enabled` is false on a deployment with no provider configured; every
+ * other method is then a harmless no-op (`getToken` resolves `null`, so
+ * every request goes out anonymous exactly as it did before accounts
+ * existed). Nothing outside the adapter knows which provider it is.
+ */
+export interface AuthSession {
+  readonly enabled: boolean;
+  /** Loads the provider once and resolves when the session state is known.
+   *  Idempotent; safe to call from every place that needs the answer. */
+  load(): Promise<void>;
+  /** The signed-in user, or `null` when nobody is (or nothing has loaded). */
+  user(): AuthUser | null;
+  /** A fresh bearer token for the API, or `null` when signed out. */
+  getToken(): Promise<string | null>;
+  signIn(): Promise<void>;
+  signOut(): Promise<void>;
+  /** Notifies when the user signs in or out. Returns an unsubscribe. */
+  subscribe(listener: () => void): () => void;
+}
+
+/** The account panel's half of the API: who am I, what does my plan allow,
+ *  and the money-shaped calls that change it. Every method sends the same
+ *  identity headers `RunsGateway` does, so the answer is about *this* caller. */
+export interface AccountGateway {
+  fetchAccount(): Promise<AccountResponse>;
+  listKeys(): Promise<ApiKeyListResponse>;
+  createKey(name: string): Promise<ApiKeyCreated>;
+  revokeKey(keyId: string): Promise<void>;
+  /** Resolves with the provider's checkout URL; the caller navigates. */
+  startCheckout(plan: Plan): Promise<string>;
+  /** Resolves with the provider's billing-portal URL; the caller navigates. */
+  openBillingPortal(): Promise<string>;
+}
+
+export interface LibraryGateway {
+  search(params: LibraryQuery): Promise<LibraryResponse>;
 }

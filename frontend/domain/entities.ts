@@ -119,3 +119,111 @@ export interface CapabilityReport {
   mode: "local" | "distributed" | (string & {});
   capabilities: Capability[];
 }
+
+/* ---- accounts, plans, usage (GET /api/me) ----
+   Mirrors `backend/app/interface/api/schemas.py`. Widened the same way the
+   capability types are: a plan name this build has never heard of still
+   renders as itself rather than crashing the panel. */
+
+export type Plan = "free" | "pro" | "studio" | "scale";
+
+export type PlanName = Plan | (string & {});
+
+export type AuthMethod = "anonymous" | "token" | "api_key" | (string & {});
+
+export interface UsageSummary {
+  plan: PlanName;
+  minutes_included: number;
+  minutes_used: number;
+  minutes_remaining: number;
+  period_start: string;
+  period_end: string;
+  max_duration_seconds: number;
+  overage_usd_per_minute: number | null;
+}
+
+export interface WorkspaceSummary {
+  workspace_id: string;
+  name: string;
+  plan: PlanName;
+  seats: number;
+  has_subscription: boolean;
+}
+
+export interface AccountResponse {
+  subject: string;
+  method: AuthMethod;
+  email: string | null;
+  account_id: string | null;
+  workspace: WorkspaceSummary | null;
+  usage: UsageSummary;
+  /** Whether this deployment can take money at all. Off means the plan cards
+   *  are informational and the upgrade buttons do not render. */
+  billing_enabled: boolean;
+  /** Whether this deployment has durable storage. Off means there are no
+   *  workspaces, no library beyond recent history, and no API keys. */
+  accounts_enabled: boolean;
+  api_access: boolean;
+  library: boolean;
+}
+
+/* ---- API keys (GET/POST/DELETE /api/keys) ---- */
+
+export interface ApiKeySummary {
+  key_id: string;
+  name: string;
+  prefix: string;
+  scopes: string[];
+  last_used_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+/** The one response that carries the secret. It is shown once and never
+ *  stored client-side; the server keeps only a hash. */
+export interface ApiKeyCreated extends ApiKeySummary {
+  secret: string;
+}
+
+export interface ApiKeyListResponse {
+  keys: ApiKeySummary[];
+}
+
+/* ---- library (GET /api/library) ---- */
+
+export interface LibraryEntry {
+  run_id: string;
+  status: RunStatus;
+  title: string | null;
+  summary: string | null;
+  platform: string | null;
+  source_url: string | null;
+  duration_seconds: number | null;
+  completeness?: AnalysisCompleteness;
+  created_at: string;
+}
+
+export interface LibraryQuery {
+  query?: string;
+  platform?: string | null;
+  since?: string | null;
+  until?: string | null;
+  limit?: number;
+  offset?: number;
+}
+
+export interface LibraryResponse {
+  runs: LibraryEntry[];
+  query: string;
+  limit: number;
+  offset: number;
+}
+
+/** Who the identity provider says is signed in. Provider-neutral on purpose:
+ *  nothing outside `infrastructure/authSession.ts` knows it is Clerk. */
+export interface AuthUser {
+  id: string;
+  email: string | null;
+  name: string | null;
+  imageUrl: string | null;
+}

@@ -18,6 +18,13 @@ export type GatewayErrorKind = "unreachable" | "server" | "unknown";
 export type GatewayError = {
   kind: GatewayErrorKind;
   message: string;
+  /** The backend's machine-readable reason, when it sent one (`plan_limit`,
+   *  `duration_limit`). Null for transport failures and for refusals the
+   *  backend did not classify. */
+  code: string | null;
+  /** The HTTP status for a `server` error; null otherwise. 401 is the one a
+   *  caller acts on: it means "sign in", not "show this sentence". */
+  status: number | null;
 };
 
 /**
@@ -32,7 +39,9 @@ export type GatewayError = {
  *   which is more specific than anything a caller could write.
  */
 export function classifyGatewayError(err: unknown, fallback: string): GatewayError {
-  if (err instanceof NetworkError) return { kind: "unreachable", message: err.message };
-  if (err instanceof ApiError) return { kind: "server", message: err.message };
-  return { kind: "unknown", message: fallback };
+  if (err instanceof NetworkError)
+    return { kind: "unreachable", message: err.message, code: null, status: null };
+  if (err instanceof ApiError)
+    return { kind: "server", message: err.message, code: err.code, status: err.status };
+  return { kind: "unknown", message: fallback, code: null, status: null };
 }
