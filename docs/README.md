@@ -21,6 +21,9 @@ exception, listed so it isn't mistaken for a stray file:
   the app from a free tool to $100k ARR: positioning, pricing and unit
   economics, a phased roadmap mapped onto the existing layering, risks, and a
   90-day sprint plan. Read before starting any accounts/billing/storage work.
+- `mcp-server.md` — the `mcp/` MCP server: a third client of the API for
+  terminal AI agents. Read with `backend/api-keys.md` and
+  `backend/library-search.md`.
 - `engineering-standards.md` — cross-cutting, not a per-feature reference. A
   repo-wide engineering-hygiene register audited 2026-08-15. Dependency
   reproducibility and container vulnerability gates are now implemented;
@@ -60,3 +63,4 @@ someone else's entry.
 - 2026-08-21 · main session · indexed the cross-cutting error-messaging reference
 - 2026-08-29 · main session · indexed `railway-environments.md`
 - 2026-08-29 · main session · added `backend/releases.md` for the new `GET /api/releases` endpoint
+- 2026-09-17 · main session · indexed `mcp-server.md`; added `backend/{accounts-workspaces,billing,api-keys,library-search}.md` and `frontend/{account-panel,library-panel}.md` for the paid-tier implementation

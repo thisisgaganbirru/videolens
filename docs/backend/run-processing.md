@@ -40,3 +40,4 @@ Any failure inside the fallback returns False and the **original download error*
 ## Changelog
 - 2026-08-29 · main session · the pipeline now forwards `SourceMetadata` to the analysis engine as well as persisting it
 - 2026-08-29 · main session · added the caption fallback and `AnalysisCompleteness`; fixed the GC-able local task and the uncaught `CancelledError`, added the read-time staleness backstop, and corrected the inaccurate "known issue" note
+- 2026-09-17 · main session · reads the cap and workspace off the run, analyzes media over 15 min at low resolution, captures Gemini token usage via `on_usage`, and records a usage event after the result is stored (never for BYOK runs) — see `accounts-workspaces.md`

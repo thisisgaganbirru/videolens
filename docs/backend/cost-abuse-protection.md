@@ -20,3 +20,4 @@ Three independent layers bound how much this app can spend on Gemini calls, sinc
 ## Changelog
 
 - 2026-08-21 · main session · rate-limit responses now carry `detail` like every other error (slowapi's stock `error` key meant the UI showed a bare 429 fallback), and the daily-cap message points at BYOK
+- 2026-09-17 · main session · paid workspaces are exempt from `DAILY_RUN_CAP` (their minutes are invoiced) and are capped by their plan allowance instead (402); the rate limit still applies to every caller including API keys

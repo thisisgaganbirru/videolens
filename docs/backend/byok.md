@@ -16,3 +16,6 @@ Lets a caller supply their own Gemini API key (via `X-Gemini-Api-Key` header) so
 **Known issue**: none identified — this is a carefully-scoped, single-purpose adapter.
 
 **Tests**: none currently (would need a Redis instance or heavier mocking to test the distributed path meaningfully).
+
+## Changelog
+- 2026-09-17 · main session · BYOK runs are also exempt from the plan allowance and are never metered; the MCP server sends the same header (`docs/mcp-server.md`)

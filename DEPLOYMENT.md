@@ -1,6 +1,6 @@
 # VideoLens AI Deployment
 
-Last updated: August 15, 2026
+Last updated: September 17, 2026
 
 Since the previous version of this plan, the backend was rewritten into
 clean-architecture layers (`domain/` → `application/` →
@@ -77,9 +77,14 @@ Complete these items before making the application publicly available.
 - [x] OIDC bearer-token verification is implemented (`JwtVerifier`,
       `AUTH_JWKS_URL`/`AUTH_ISSUER`/`AUTH_AUDIENCE`) but disabled by default
       (`ALLOW_ANONYMOUS=true`).
-- [ ] Choose an OIDC provider, configure the three `AUTH_*` variables in
-      production, and decide whether anonymous access stays enabled
-      alongside it or gets turned off.
+- [x] Accounts, workspaces, plans, usage metering, Stripe billing, API
+      keys, and the searchable library are implemented and config-gated
+      (`docs/backend/accounts-workspaces.md`, `billing.md`, `api-keys.md`,
+      `library-search.md`). With none of the variables set the deployment
+      is the anonymous product it was before.
+- [ ] Complete the "Paid tier setup" checklist below (Clerk, Postgres,
+      Stripe) and decide whether anonymous access stays enabled alongside
+      sign-in or gets turned off.
 - [x] Bind anonymous quotas to a stable client ID and authenticated quotas to
       tokens.
 - [x] Limit concurrent FFmpeg and Gemini operations in the worker
@@ -99,6 +104,45 @@ Complete these items before making the application publicly available.
 - [x] Daily global spend backstop (`DAILY_RUN_CAP`) independent of per-caller
       rate limiting; BYOK runs are exempt from this cap since they don't
       spend the shared key, but remain subject to the normal rate limit.
+
+### Paid tier setup (Clerk, Postgres, Stripe)
+
+Everything below is off until its variable is set, and each service can be
+turned on independently. Do them in this order; each step is verifiable on
+its own before the next.
+
+1. **Postgres.** Add a Postgres service on Railway (or any provider) and set
+   `DATABASE_URL` on **both** the backend and worker. Leave
+   `DB_AUTO_MIGRATE=true`; the first boot runs the Alembic migration.
+   Verify: `GET /api/capabilities` shows `database: ok`, and `GET /api/me`
+   with an anonymous `X-Client-ID` reports `accounts_enabled: true`.
+2. **Clerk.** Create a Clerk application. On the backend set
+   `AUTH_JWKS_URL=https://<frontend-api>/.well-known/jwks.json` and
+   `AUTH_ISSUER=https://<frontend-api>` (both on the Clerk dashboard under
+   API keys; leave `AUTH_AUDIENCE` blank). On the frontend set
+   `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` **before building the image**, and add
+   the deployed frontend origin to Clerk's allowed origins. Verify: sign in
+   from the account tab, then `GET /api/me` shows `method: token`, an
+   `account_id`, and a `workspace` on the free plan.
+3. **Stripe.** In the Stripe dashboard create a Meter (event name
+   `videolens_minutes`, aggregation sum), three recurring monthly prices
+   (Pro $19, Studio $79, Scale $299) and one metered overage price bound to
+   the Meter. Add a webhook endpoint at `https://<api>/api/webhooks/stripe`
+   subscribed to `checkout.session.completed`,
+   `customer.subscription.created`, `customer.subscription.updated`,
+   `customer.subscription.deleted`. Set `STRIPE_SECRET_KEY`,
+   `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_STUDIO`,
+   `STRIPE_PRICE_SCALE`, `STRIPE_PRICE_OVERAGE`, and `FRONTEND_BASE_URL` on
+   the backend (the worker only needs `STRIPE_SECRET_KEY` for metering).
+   Verify with Stripe's test mode: upgrade from the account tab with card
+   `4242 4242 4242 4242`, confirm the webhook shows 200 in the dashboard and
+   `GET /api/me` reports the new plan; run one video and confirm a meter
+   event appears on the customer.
+4. **API keys and MCP.** Nothing to configure. On a Studio or Scale
+   workspace, create a key from the account tab and point the MCP server at
+   the deployed API (`mcp/README.md`).
+
+Rollback for any step is unsetting its variables; no data is deleted.
 
 ### Operational Constraints
 
@@ -223,10 +267,21 @@ S3_REGION=auto
 S3_BUCKET=videolens-media
 S3_ACCESS_KEY_ID=<secret>
 S3_SECRET_ACCESS_KEY=<secret>
-AUTH_JWKS_URL=<OIDC JWKS URL>
-AUTH_ISSUER=<OIDC issuer>
-AUTH_AUDIENCE=<OIDC audience>
+AUTH_JWKS_URL=<Clerk JWKS URL>
+AUTH_ISSUER=<Clerk frontend API origin>
+AUTH_AUDIENCE=
 ALLOW_ANONYMOUS=true
+# Paid tier (see "Paid tier setup"); all optional, all off when blank.
+DATABASE_URL=<Railway Postgres URL>
+DB_AUTO_MIGRATE=true
+STRIPE_SECRET_KEY=<secret>
+STRIPE_WEBHOOK_SECRET=<secret>
+STRIPE_PRICE_PRO=<price id>
+STRIPE_PRICE_STUDIO=<price id>
+STRIPE_PRICE_SCALE=<price id>
+STRIPE_PRICE_OVERAGE=<price id>
+STRIPE_METER_EVENT_NAME=videolens_minutes
+FRONTEND_BASE_URL=https://app.example.com
 ```
 
 Do not set the local Windows `FFMPEG_LOCATION` value in production. The
@@ -245,9 +300,11 @@ Do not configure `YTDLP_COOKIES_FROM_BROWSER` on a hosted server.
 
 ```env
 NEXT_PUBLIC_API_BASE_URL=https://api.example.com
+# Optional: enables the sign-in UI. Blank = anonymous-only.
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
 ```
 
-Because this value is used by the browser bundle, configure it before
+Because these values are used by the browser bundle, configure them before
 building the frontend image.
 
 ### Domains
@@ -394,8 +451,8 @@ for 14 days before the developer can apply for production access:
 
 1. Add Redis-backed run state and a background worker. *(done)*
 2. Add authentication, per-user quotas, and production security controls.
-   *(OIDC verification and quotas done; provider selection/config
-   outstanding)*
+   *(OIDC verification, quotas, accounts, plans, billing and API keys done
+   in code; Clerk/Postgres/Stripe setup outstanding, see "Paid tier setup")*
 3. Deploy backend, worker, and frontend as three Railway services.
 4. Test real production uploads and supported public URLs, including BYOK
    and run-history flows.
