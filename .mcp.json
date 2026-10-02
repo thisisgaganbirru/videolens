@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "videolens": {
+      "command": "node",
+      "args": ["mcp/dist/index.js"],
+      "env": {
+        "VIDEOLENS_API_URL": "${VIDEOLENS_API_URL:-http://localhost:8000}",
+        "VIDEOLENS_API_KEY": "${VIDEOLENS_API_KEY:-}",
+        "GEMINI_API_KEY": "${GEMINI_API_KEY:-}"
+      }
+    }
+  }
+}

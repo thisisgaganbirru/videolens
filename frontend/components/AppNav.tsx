@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useState, type MouseEvent } from "react";
 import Link from "next/link";
 import {
+  CircleUser,
   Film,
   History as HistoryIcon,
   KeyRound,
+  Library,
   Menu,
   ScrollText,
   X,
@@ -15,7 +17,7 @@ import { MAIN_TABS, mainTabHref, type MainTab } from "@/application/useMainTab";
 
 /* Hallmark · theme: Terminal (locked) · nav: N5 floating pill
  *
- * The whole nav band — brand, the four destinations, the mobile drawer, the
+ * The whole nav band — brand, the destinations, the mobile drawer, the
  * theme toggle — as one component every route renders.
  *
  * It exists now because the tabs became addressable. While the active tab was
@@ -33,6 +35,8 @@ import { MAIN_TABS, mainTabHref, type MainTab } from "@/application/useMainTab";
 const TAB_META: Record<MainTab, { label: string; icon: typeof Film }> = {
   analyze: { label: "analyze", icon: Film },
   history: { label: "history", icon: HistoryIcon },
+  library: { label: "library", icon: Library },
+  account: { label: "account", icon: CircleUser },
   "api-key": { label: "api key", icon: KeyRound },
   releases: { label: "releases", icon: ScrollText },
 };

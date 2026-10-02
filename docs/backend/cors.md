@@ -68,3 +68,4 @@ header, so once the method and header lists are known good, it is the origin.
 ## Changelog
 
 - 2026-08-20 · main session · always allow the Capacitor Android WebView origins in code; documented why the APK's `Origin` is `https://localhost` and how to spot a rejected preflight in the Railway HTTP logs
+- 2026-09-17 · main session · `X-Api-Key` and `Authorization` are accepted request headers for the account, key and library routes (no origin changes)
