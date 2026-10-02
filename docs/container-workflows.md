@@ -509,6 +509,21 @@ jobs.
   agent that wrote it could run neither Docker nor Grype, so that the rule
   matches the reported finding is reasoning from Grype's own matching source,
   not an observation. The first green `containers / backend` job is the proof.
+- **The `apt-get upgrade` in `backend/Dockerfile` does not do its job while
+  the base digest is unchanged.** `reusable-container-checks.yml` builds with
+  `cache-from: type=gha`, and that `RUN` layer's cache key is the base digest
+  plus the command text — neither changes when Debian publishes a fix, so the
+  layer is restored `CACHED` and `apt-get upgrade` never runs again. Observed
+  on PR #64 (run 37012942486, 2026-10-02): `#12 [runtime 2/8] RUN apt-get
+  update && apt-get upgrade ... CACHED`, then Grype failed on `openssl` /
+  `libssl3t64` / `openssl-provider-legacy` `3.5.7-1~deb13u2` and
+  `libpcre2-8-0` `10.46-1~deb13u2` while `deb13u3` of both was already in
+  `trixie-security`. Bumping the `PYTHON_IMAGE` digest invalidates the layer,
+  which is how this was cleared on 2026-10-02, but it will recur on the next
+  Debian security release. A durable fix (e.g. `no-cache-filters: runtime` on
+  the check build, or a weekly cache-busting build arg) is a workflow change
+  that was deliberately left for the owner; until then, a fixable deb High
+  on the backend is resolved by bumping the base digest.
 - Railway's source integration can begin a dev deploy independently of the
   GitHub validation lane. If strict pre-deploy gating is required, configure
   Railway check-suite waiting after these workflow names exist on the remote.
@@ -580,3 +595,4 @@ jobs.
 - 2026-08-29 · main session · replaced the manifest commit's `[skip ci]` with a `paths-ignore` guard; the marker was leaving `dev` with an unchecked head and made `dev` -> `main` permanently unmergeable
 - 2026-08-29 · main session · removed the manifest commit and its `paths-ignore` guard; the release index is served by `GET /api/releases` now
 - 2026-09-01 · main session · moved release publication from `dev` to `main`. Deleted `android-development-build.yml`; `production-environment.yml` now passes `upload_apk: true` with the production backend URL and owns the release job (and with it the repo's only `contents: write`), while `development-environment.yml` gained an Android gate so `dev` still validates the build without producing anything installable. Tags lose the `dev-` prefix and releases are no longer prereleases. The trap this hid: `versionCode` was `github.run_number`, which is per-workflow — publishing from a different workflow would have restarted it near zero, below the installed build 30, and Android refuses to install a lower code while `updateCheck.ts` compares codes to find a newer build, so every device would have been stranded with no way forward and CI green throughout. Switched `versionCode` to `git rev-list --count HEAD` (181 vs 30, monotonic, workflow-independent), which needs `fetch-depth: 0` or it reads 1. Also widened `GithubReleaseCatalog._TAG` to accept the optional `dev-` prefix so builds 1-30 stay parseable — `latest` is the first parseable tag, so dropping the old form would have broken the update check for exactly the devices that most need it
+- 2026-10-02 · ci agent · fixed `android / Android` failing inside `android-actions/setup-android` v3.2.2 (its default `packages: tools platform-tools` asks sdkmanager for the `tools` package Google removed from the SDK repository in Sep 2026 → `Failed to find package 'tools'`, exit 1) by pinning v4.0.4 (`be39fa83`, defaults to `platform-tools` only, Node 24); and fixed `containers / backend` by bumping `PYTHON_IMAGE` to the current `python:3.13-slim` index digest (`bb298871`, CPython 3.13.16 — clears High `CVE-2026-82049` on the `python` binary, and re-runs the GHA-cached `apt-get upgrade` layer so `openssl`/`libpcre2` `deb13u3` from `trixie-security` land); documented the apt-layer cache trap under Known issues
