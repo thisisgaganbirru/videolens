@@ -83,6 +83,10 @@ jobs:
           cache-from: type=gha,scope=publish-${{ inputs.environment }}-${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=publish-${{ inputs.environment }}-${{ matrix.service }}
           context: ./${{ matrix.service }}
+          # Same final-stage cache bypass as reusable-container-checks.yml:
+          # without it the GHA cache would restore an old OS-package upgrade
+          # layer and ship an image missing fixes the scan build picked up.
+          no-cache-filters: ${{ matrix.service == 'backend' && 'runtime' || 'runner' }}
           labels: |
             org.opencontainers.image.revision=${{ inputs.revision }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}

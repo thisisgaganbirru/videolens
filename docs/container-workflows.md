@@ -177,6 +177,18 @@ console has a loopback host port.
   shared Dockerfile can satisfy both — see *Known issues*.
 - Container checks run Dockerfile validation, cached native builds, and fail on
   fixable high or critical vulnerabilities.
+- **The final stage is never restored from cache.** Both the check build and
+  the publication build pass `no-cache-filters` with the image's last stage
+  (`runtime` for backend, `runner` for frontend). That stage holds the
+  OS-package upgrade (`apt-get upgrade` / `apk add --upgrade 'openssl>=...'`),
+  whose cache key is only the base digest plus the command text; restored from
+  the GHA cache it would never pick up a Debian/Alpine security release, so
+  the scan would gate on a stale layer. Earlier stages (`wheels`, `deps`,
+  `builder`) stay cached; only the final stage rebuilds. The value is the
+  same expression in both workflows, so the image that ships is built the
+  same way as the image that was scanned. Renaming either Dockerfile's final
+  stage means updating both workflows: a filter naming a stage that does not
+  exist is silently a no-op, which would bring the stale-layer problem back.
 - Publications build `linux/amd64` and `linux/arm64`, attach maximum provenance
   and an SBOM, and publish a commit-addressable tag.
 - **Images are deliberately not signed.** Keyless Cosign signing was removed: it
@@ -208,11 +220,14 @@ console has a loopback host port.
   (`'openssl>=3.5.7-r0'`), or the shell reads `>` as redirection and drops it
   silently.
 
-### The vulnerability gate and its one exception
+### The vulnerability gate and its exception list
 
 The gate lives entirely in `reusable-container-checks.yml`:
 `severity-cutoff: high`, `only-fixed: true`, `fail-build: true`. Exceptions
 live in the repo-root **`.grype.yaml`**, never in those three settings.
+
+**There are currently no exceptions**: `.grype.yaml` holds `ignore: []`.
+The file is kept, empty, on purpose (see below).
 
 **`.grype.yaml` is at the repo root because that is `$GITHUB_WORKSPACE`** —
 where `actions/checkout` puts the tree, and therefore Grype's working
@@ -224,46 +239,32 @@ missing file given via `-c`, but `continue`s silently past a file it merely
 failed to auto-detect. Explicit wiring turns a renamed or deleted config into a
 red job instead of a quietly widened gate that looks identical to a working
 one. Setting `config:` disables auto-detection, which is fine — this is the
-only Grype config in the repo.
+only Grype config in the repo. It also means **do not delete the file when the
+list is empty**: the scan step would fail on the missing path.
 
-The single exception, added 2026-08-16:
+**How to add an exception, if one is ever needed.** Only when there is no
+shippable fix (e.g. the fix version is assigned but unreleased), never to make
+a fixable finding go away. Scope it with `vulnerability` + `package.name` +
+`package.type` (Grype ANDs every criterion, so that suppresses exactly one
+CVE on one package of one type and cannot mask anything else) and leave
+`include-aliases` at its default `false`. Record in the entry's comment the
+date, the approver, why no fix can ship, measured risk (severity / EPSS /
+Grype risk), and an explicit removal condition. **Do not weaken the gate
+instead**: dropping `severity-cutoff` to `critical` silences one finding by
+also silencing every future High across both images, permanently and
+invisibly; flipping `only-fixed` off widens rather than narrows the gate.
 
-| Field | Value |
-|---|---|
-| CVE | `CVE-2026-15308` |
-| Package | `python` 3.13.15, type `binary` (backend image only) |
-| Severity / EPSS / risk | High / 0.6% (47th pct) / 0.5 |
-| Fix version | 3.15.0 — **unreleased** |
-
-**Why it is ignored rather than fixed:** there is nothing to upgrade to.
-Checked against the Docker Hub registry on 2026-08-16 — `python:3.13-slim`
-200, `python:3.14-slim` 200, `python:3.15-slim` **404**. 3.14 does not carry
-the fix either. `only-fixed: true` normally guarantees every reported finding
-is actionable; here it admitted one on the strength of a fix version that has
-been assigned but never shipped.
-
-**Why the gate was not weakened instead.** Dropping `severity-cutoff` to
-`critical` would have turned the job green in one line, and was rejected: it
-silences this CVE by also silencing every future High across both images,
-permanently and invisibly. That trades a known, measured, temporary problem
-for an unbounded blind spot. `only-fixed: true` was likewise left alone —
-flipping it off would widen the gate rather than narrow it. An ignore rule is
-the only mechanism here that is *specific*: Grype ANDs every criterion, so
-pinning `vulnerability` + `package.name` + `package.type` suppresses exactly
-one CVE on one package of one type and cannot mask anything else. `type:
-binary` in particular keeps it off any pip-installed package named `python`,
-and `include-aliases` is left at its default `false` so related IDs are not
-swept in.
-
-**Removal condition:** delete the rule the moment a Python base image carrying
-the fix exists — 3.15.0, or any earlier release that backports it — and move
-`backend/Dockerfile`'s `PYTHON_IMAGE` and `/.python-version` to it in the same
-change. This is the "pin the newest LTS major" policy being temporarily
-unsatisfiable, not a standing allowance.
-
-Nothing currently *tells* anyone when that condition is met. Grype ignore rules
-have no expiry, and a rule whose CVE has stopped being reported is
-indistinguishable from one still doing work — see *Known issues*.
+**History: `CVE-2026-15308` (added 2026-08-16, removed 2026-10-02).** High,
+`python` type `binary`, backend only (an `html.parser` CPU DoS). It was
+ignored because Grype named 3.15.0 as the fix and `python:3.15-slim` did not
+exist (Docker Hub 404 on 2026-08-16). It was removed once it stopped matching:
+the base image moved to CPython 3.13.16 (PR #65), and the Grype DB (schema
+v6.1.9, built 2026-10-02) carries the NVD range `>= 3.13.0, < 3.13.15` for
+the 3.13 line, so 3.13.15 is the fix and 3.13.16 is outside the range. The
+`containers / backend` job of run 37018815407 cataloged `python 3.13.16
+binary` and never mentioned the CVE. Removed as dead config: a rule that
+matches nothing still reads as a live exception (see *Known issues* for the
+missing staleness check).
 
 **Frontend findings are fixed, not ignored.** `frontend/package.json` pins
 `sharp` through an exact `overrides` entry (it is a transitive of `next`), so
@@ -504,36 +505,42 @@ jobs.
   arm64 proof.
 - GitHub environment protection and branch protection are repository settings,
   not files, and must be configured by a repository administrator.
-- **The `CVE-2026-15308` ignore rule has no expiry and nothing watches it.**
-  Grype ignore rules are unconditional; once the upstream fix ships and the
-  base image moves, the rule stops matching anything and becomes dead config
-  that still reads as a live exception. Nothing fails, so nobody looks. A
-  staleness check is possible — Grype's JSON output carries an
-  `ignoredMatches` array, so a step could assert that every rule in
-  `.grype.yaml` actually applied to something and fail when one does not. It
-  was deliberately **not** built in the same pass as the rule itself; see the
-  cost note in `mem/20260816-grype-cve-exception.md`. Until it exists, the
-  removal condition is enforced by the comment in `.grype.yaml` and by whoever
-  next bumps the Python major.
-- The `.grype.yaml` rule itself is **unverified against a real scan**. The
-  agent that wrote it could run neither Docker nor Grype, so that the rule
-  matches the reported finding is reasoning from Grype's own matching source,
-  not an observation. The first green `containers / backend` job is the proof.
-- **The `apt-get upgrade` in `backend/Dockerfile` does not do its job while
-  the base digest is unchanged.** `reusable-container-checks.yml` builds with
-  `cache-from: type=gha`, and that `RUN` layer's cache key is the base digest
-  plus the command text — neither changes when Debian publishes a fix, so the
-  layer is restored `CACHED` and `apt-get upgrade` never runs again. Observed
-  on PR #64 (run 37012942486, 2026-10-02): `#12 [runtime 2/8] RUN apt-get
-  update && apt-get upgrade ... CACHED`, then Grype failed on `openssl` /
-  `libssl3t64` / `openssl-provider-legacy` `3.5.7-1~deb13u2` and
-  `libpcre2-8-0` `10.46-1~deb13u2` while `deb13u3` of both was already in
-  `trixie-security`. Bumping the `PYTHON_IMAGE` digest invalidates the layer,
-  which is how this was cleared on 2026-10-02, but it will recur on the next
-  Debian security release. A durable fix (e.g. `no-cache-filters: runtime` on
-  the check build, or a weekly cache-busting build arg) is a workflow change
-  that was deliberately left for the owner; until then, a fixable deb High
-  on the backend is resolved by bumping the base digest.
+- **Nothing detects a stale `.grype.yaml` rule.** Grype ignore rules are
+  unconditional; once an upstream fix ships and the base image moves, a rule
+  stops matching anything and becomes dead config that still reads as a live
+  exception. Nothing fails, so nobody looks. That is exactly what happened to
+  the `CVE-2026-15308` rule, which was dead from PR #65 (CPython 3.13.16)
+  until it was removed by hand on 2026-10-02. A staleness check is possible:
+  Grype's JSON output carries an `ignoredMatches` array, so a step could
+  assert that every rule in `.grype.yaml` actually applied to something and
+  fail when one does not. (`only-fixed` is itself implemented as ignore
+  rules, so the log's "ignored N vulnerability matches" count is not evidence
+  that a user-written rule matched.) Not built; see the cost note in
+  `mem/20260816-grype-cve-exception.md`. Moot while the list is empty;
+  revisit if an exception is ever added.
+- **Resolved 2026-10-02: the cached `apt-get upgrade` layer hid OS security
+  fixes.** `reusable-container-checks.yml` built with `cache-from: type=gha`,
+  and that `RUN` layer's cache key is the base digest plus the command text.
+  Neither changes when Debian publishes a fix, so the layer was restored
+  `CACHED` and `apt-get upgrade` never ran again. Observed on PR #64 (run
+  37012942486): `#12 [runtime 2/8] RUN apt-get update && apt-get upgrade ...
+  CACHED`, then Grype failed on `openssl` / `libssl3t64` /
+  `openssl-provider-legacy` `3.5.7-1~deb13u2` and `libpcre2-8-0`
+  `10.46-1~deb13u2` while `deb13u3` of both was already in `trixie-security`.
+  It was first cleared by bumping the `PYTHON_IMAGE` digest (which
+  invalidates the layer), but that only lasts until the next Debian security
+  release. **Fix:** both the check build and the publication build now pass
+  `no-cache-filters` naming the final stage (`runtime` / `runner`), so that
+  stage always rebuilds while `wheels` / `deps` / `builder` stay cached (see
+  *Build and supply-chain controls*). The frontend's `runner` stage had the
+  same latent issue for its `apk add --upgrade 'openssl>=...'` and gets the
+  same treatment. The publication build had the identical cache config, so
+  without the fix there the shipped image could have been older than the
+  scanned one. Cost: every build reruns `apt-get install ffmpeg` and the
+  offline wheel install (backend), under QEMU for the arm64 leg of a
+  publication, which is the slowest part. **Only CI can prove it**: the next
+  `containers / backend` log should show `[runtime 2/8] RUN apt-get update`
+  executing rather than `CACHED`.
 - Railway's source integration can begin a dev deploy independently of the
   GitHub validation lane. If strict pre-deploy gating is required, configure
   Railway check-suite waiting after these workflow names exist on the remote.
@@ -607,3 +614,4 @@ jobs.
 - 2026-09-01 · main session · moved release publication from `dev` to `main`. Deleted `android-development-build.yml`; `production-environment.yml` now passes `upload_apk: true` with the production backend URL and owns the release job (and with it the repo's only `contents: write`), while `development-environment.yml` gained an Android gate so `dev` still validates the build without producing anything installable. Tags lose the `dev-` prefix and releases are no longer prereleases. The trap this hid: `versionCode` was `github.run_number`, which is per-workflow — publishing from a different workflow would have restarted it near zero, below the installed build 30, and Android refuses to install a lower code while `updateCheck.ts` compares codes to find a newer build, so every device would have been stranded with no way forward and CI green throughout. Switched `versionCode` to `git rev-list --count HEAD` (181 vs 30, monotonic, workflow-independent), which needs `fetch-depth: 0` or it reads 1. Also widened `GithubReleaseCatalog._TAG` to accept the optional `dev-` prefix so builds 1-30 stay parseable — `latest` is the first parseable tag, so dropping the old form would have broken the update check for exactly the devices that most need it
 - 2026-10-02 · ci agent · fixed `android / Android` failing inside `android-actions/setup-android` v3.2.2 (its default `packages: tools platform-tools` asks sdkmanager for the `tools` package Google removed from the SDK repository in Sep 2026 → `Failed to find package 'tools'`, exit 1) by pinning v4.0.4 (`be39fa83`, defaults to `platform-tools` only, Node 24); and fixed `containers / backend` by bumping `PYTHON_IMAGE` to the current `python:3.13-slim` index digest (`bb298871`, CPython 3.13.16 — clears High `CVE-2026-82049` on the `python` binary, and re-runs the GHA-cached `apt-get upgrade` layer so `openssl`/`libpcre2` `deb13u3` from `trixie-security` land); documented the apt-layer cache trap under Known issues
 - 2026-10-02 · frontend agent · cleared the frontend Grype gate failure (next 16.3.0 Criticals GHSA-p293-qw3h-jr36 / GHSA-2xp9-vwfh-vxw4 / GHSA-vcvr-r3jv-pc5j; sharp 0.35.3 High GHSA-rgj7-g3m4-5g8c): `next` + `eslint-config-next` to `^16.3.8`, `sharp` override `0.35.3` -> `0.35.4`; documented that the exact `sharp` override must be bumped by hand since a `next` bump cannot move it. `.grype.yaml` untouched (no frontend entries existed)
+- 2026-10-02 · ci-cache agent · stopped the GHA cache restoring the final image stage (`no-cache-filters: runtime`/`runner`) in both `reusable-container-checks.yml` and `reusable-container-publish.yml` so OS-package upgrades always run and the shipped image matches the scanned one; resolved the apt-layer Known issue. Removed the dead `CVE-2026-15308` rule from `.grype.yaml` (now `ignore: []`; Grype DB v6.1.9 NVD range for 3.13 is `< 3.13.15`, image is 3.13.16) and rewrote the gate section as an exception list with that rule's history
