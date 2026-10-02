@@ -24,6 +24,13 @@ class Settings(BaseSettings):
 
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.6-flash"
+    # Tried with the already-uploaded file once the primary model has exhausted
+    # its transient (429/5xx) retries. Blank = primary only.
+    gemini_fallback_model: str = ""
+    # Total generate_content attempts on the primary model for 429/5xx, with
+    # full-jitter exponential backoff (2s base, doubling) between them.
+    gemini_retry_attempts: int = 6
+    gemini_retry_max_delay_seconds: float = 20.0
 
     max_file_size_mb: int = 200
     max_duration_seconds: int = 180
