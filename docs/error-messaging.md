@@ -80,12 +80,14 @@ run (429)". `_rate_limited` replaces it.
   rather than describing one. Deliberately deferred: it needs a schema field, a
   mapping table, and changes at every raise site, and the two-field version
   captures most of the value.
-- **The retry policy is still weak.** `analyze_with_retry` does 2 attempts with
-  a flat 2s sleep and treats every exception alike. Google's own 503 says spikes
-  are "usually temporary", but two seconds is the same overloaded moment.
-  Exponential backoff with jitter, more attempts for transient statuses, and no
-  retry at all for 4xx is the fix — tracked separately because it changes
-  runtime behaviour rather than copy.
+- **Retry policy (resolved 2026-10-02).** Previously 2 whole-run attempts with
+  a flat 2s sleep, retrying every exception alike and re-uploading each time.
+  Now only 429/5xx are retried, around the single call that failed, with
+  full-jitter exponential backoff (6 attempts, 2s base, 20s per-retry cap) and
+  an optional `GEMINI_FALLBACK_MODEL` that reuses the uploaded file; 4xx and
+  other errors are not retried. The user-facing copy is unchanged — "Gemini is
+  busy…" / "Too many requests…" now only appears after that budget is spent.
+  Details in `backend/gemini-analysis.md`.
 - **`_clock` has no hours component**, so a 90-minute input would read "90:00".
   Unreachable while `MAX_DURATION_SECONDS` is 180.
 - **Not visually verified.** Typechecked and built clean; no screenshot.
@@ -93,10 +95,12 @@ run (429)". `_rate_limited` replaces it.
 **Tests**: `backend/tests/infrastructure/media/test_ytdlp_downloader.py`
 (message/detail split per failure kind),
 `backend/tests/infrastructure/ai/test_gemini_engine.py` (status
-classification), `backend/tests/application/test_process_run.py` (`log_detail`
+classification, retry/backoff/fallback), `backend/tests/application/test_process_run.py` (`log_detail`
 never reaches the run). No frontend test runner exists — see
 `frontend/run-analysis-hook.md`.
 
 ## Changelog
 
 - 2026-08-21 · main session · introduced UserFacingError's message/log_detail split, rewrote every leaking message, added AnalysisUnavailableError for Gemini 429/5xx, gave rate limiting a `detail`-shaped response, keyed recovery advice on the failed stage, and removed the dead `data-error-kind` attribute
+- 2026-10-02 · gemini-retry agent · resolved the "retry policy is still weak" known issue: transient-only full-jitter backoff around the failing call, optional `GEMINI_FALLBACK_MODEL`; copy unchanged
+- 2026-10-02 · gemini-retry agent · default retry attempts raised 5 → 6 (owner-approved)
