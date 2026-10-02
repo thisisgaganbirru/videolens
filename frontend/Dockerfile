@@ -36,6 +36,10 @@ ENV HOSTNAME=0.0.0.0 \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000
 
+# CI rebuilds this whole `runner` stage on every build (`no-cache-filters` in
+# reusable-container-checks.yml and reusable-container-publish.yml) so a cached
+# layer cannot pin openssl below a newer Alpine security fix. Renaming the
+# stage means updating both workflows.
 RUN apk add --no-cache --upgrade 'openssl>=3.5.7-r0' \
     && rm -rf /usr/local/lib/node_modules/npm \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx

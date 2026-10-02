@@ -39,6 +39,10 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 # pinned to a base that is reproducibly out of date. Upgrading closes that
 # window without unpinning anything: the base digest still fixes the starting
 # point, this only pulls forward packages Debian has already fixed.
+# CI rebuilds this whole `runtime` stage on every build (`no-cache-filters` in
+# reusable-container-checks.yml and reusable-container-publish.yml), because a
+# cached copy of this layer would never pick up a new fix. Renaming the stage
+# means updating both workflows.
 RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends ffmpeg \

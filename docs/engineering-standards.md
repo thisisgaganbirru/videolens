@@ -312,6 +312,13 @@ version decision, not a mechanical fix.
 > green at the time of writing, and the exception is time-limited by
 > construction. Closing this needs a green PR #12 *and* eventual removal of
 > the ignore rule.
+>
+> **Status 2026-10-02: both closing conditions met; resolved once this
+> branch's CI is green.** `containers / backend` is green on `dev` (run
+> 37018815407) on CPython 3.13.16, and the `CVE-2026-15308` ignore rule was
+> removed (`.grype.yaml` is now `ignore: []`) because it no longer matched:
+> the Grype DB's NVD range for the 3.13 line is `>= 3.13.0, < 3.13.15`. See
+> *The one outstanding CVE* below and `docs/container-workflows.md`.
 
 Three failures, one root cause. Both pinned runtime majors are old enough that
 the fixes for their high-severity CVEs exist only in later majors:
@@ -476,6 +483,12 @@ judged better than deleting the safety net, but it has not been observed
 either way.
 
 #### The one outstanding CVE
+
+> **Removed 2026-10-02.** No longer outstanding: the base image moved to
+> CPython 3.13.16 (PR #65), which is outside the Grype DB's affected range
+> for 3.13 (`< 3.13.15`; the fix shipped in 3.13.15, not only in 3.15.0 as
+> the advisory first said), so the rule matched nothing and was deleted. The
+> text below is the historical record of why it existed.
 
 The rescan (run `31916904370`) confirmed the version move worked: Node and
 Android are clear, and the backend is down to a **single** High finding. Every
@@ -650,3 +663,4 @@ Re-verify before fixing; do not treat the line numbers as authoritative.
 - 2026-08-29 · frontend agent · closed the `CONTRIBUTING.md`/`npm run lint` finding (codemod run, ESLint 9 flat config added, `android/**` + `public/sw.js` ignored, `no-html-link-for-pages` scoped off for `app/offline/**`) and marked the linter gate PARTIALLY FIXED — `frontend/` only; `mcp/`, `backend/` ruff, and CI wiring all stay open, the last blocked on pre-existing `react-hooks/set-state-in-effect` errors nobody has decided on
 - 2026-08-16 · grype-exception agent · recorded the rescan outcome under "Container base images are past end-of-life" (Node/Android clear, backend down to one High) and added "The one outstanding CVE" covering the scoped `CVE-2026-15308` ignore rule, why `severity-cutoff`/`only-fixed` were left untouched, and the missing expiry enforcement; entry left OPEN — CI has not gone green
 - 2026-08-29 · main session · merged dev: the count is 6 errors + 1 warning, not 5 + 1 — dev's PR #26 `UploadForm.tsx` share effect trips the same `set-state-in-effect` rule, and `dev` has no eslint config to have caught it
+- 2026-10-02 · ci-cache agent · marked "Container base images are past end-of-life" resolved pending this branch's CI and "The one outstanding CVE" removed: `CVE-2026-15308` ignore rule deleted from `.grype.yaml` (image on CPython 3.13.16; Grype DB range `< 3.13.15`)
