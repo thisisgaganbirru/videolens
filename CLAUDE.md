@@ -368,7 +368,8 @@ detects a distributed deployment still running with `*`.
 ## Configuration
 
 See `backend/.env.example` and `frontend/.env.example`. Key backend
-settings: `GEMINI_API_KEY`, `GEMINI_MODEL`, `MAX_FILE_SIZE_MB`,
+settings: `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL` (optional;
+retry tuning via `GEMINI_RETRY_*`), `MAX_FILE_SIZE_MB`,
 `MAX_DURATION_SECONDS`, `RATE_LIMIT_PER_HOUR`, `DAILY_RUN_CAP`,
 `RUN_TTL_SECONDS`, `FFMPEG_LOCATION`, `REDIS_URL`, `S3_*`, optional
 `AUTH_*` OIDC settings, `ALLOWED_ORIGINS`. Login-gated URL sources (some
