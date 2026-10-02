@@ -4,7 +4,8 @@ from types import SimpleNamespace
 from google.genai import errors as genai_errors
 from google.genai import types
 
-from app.domain.entities import CaptionTrack, VideoAnalysis
+from app.domain.entities import CaptionTrack, TokenUsage, VideoAnalysis
+from app.domain.entitlements import MediaResolution
 from app.domain.errors import AnalysisUnavailableError
 from app.infrastructure.ai.gemini_engine import GeminiEngine
 from app.infrastructure.config import Settings
@@ -57,14 +58,20 @@ class _FakeModels:
         self.outcomes = list(outcomes)
         self.models_called: list[str] = []
         self.contents_seen: list[list] = []
+        self.configs_seen: list = []
 
     async def generate_content(self, model, contents, config):
         self.models_called.append(model)
         self.contents_seen.append(contents)
+        self.configs_seen.append(config)
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
-        return SimpleNamespace(parsed=outcome, text=None)
+        return SimpleNamespace(
+            parsed=outcome,
+            text=None,
+            usage_metadata=SimpleNamespace(prompt_token_count=1200, candidates_token_count=300),
+        )
 
 
 class _FakeClient:
@@ -240,6 +247,41 @@ class AnalyzeRetryTests(unittest.IsolatedAsyncioTestCase):
         # Same uploaded file handed to the fallback - no second upload.
         self.assertEqual(client.files.upload_calls, 1)
         self.assertIs(client.models.contents_seen[-1][0], client.models.contents_seen[0][0])
+
+    async def test_fallback_keeps_resolution_and_reports_usage_once(self) -> None:
+        """Paid-tier parameters survive the retry/fallback path: every attempt
+        (primary and fallback) carries the plan's media resolution, and usage
+        is reported exactly once, from the response that succeeded."""
+        client = _FakeClient([_busy(), _busy(), _RESULT])
+        engine, _ = _engine(
+            client, gemini_retry_attempts=2, gemini_fallback_model="fallback-model"
+        )
+        reported: list[TokenUsage] = []
+
+        async def on_usage(usage: TokenUsage) -> None:
+            reported.append(usage)
+
+        result = await engine.analyze_with_retry(
+            "clip.mp4", resolution=MediaResolution.LOW, on_usage=on_usage
+        )
+
+        self.assertIs(result, _RESULT)
+        self.assertEqual(
+            client.models.models_called, ["primary-model", "primary-model", "fallback-model"]
+        )
+        self.assertEqual(
+            [c.media_resolution for c in client.models.configs_seen],
+            [types.MediaResolution.MEDIA_RESOLUTION_LOW] * 3,
+        )
+        self.assertEqual(reported, [TokenUsage(input_tokens=1200, output_tokens=300)])
+
+    async def test_default_resolution_leaves_the_sdk_default(self) -> None:
+        client = _FakeClient([_RESULT])
+        engine, _ = _engine(client)
+
+        await engine.analyze_with_retry("clip.mp4")
+
+        self.assertIsNone(client.models.configs_seen[0].media_resolution)
 
     async def test_fallback_gets_a_short_cycle_then_maps_the_error(self) -> None:
         client = _FakeClient([_busy() for _ in range(4)])

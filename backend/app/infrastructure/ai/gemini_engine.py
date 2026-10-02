@@ -7,9 +7,10 @@ from typing import Any, Awaitable, Callable, Optional, TypeVar
 from google import genai
 from google.genai import types
 
-from ...domain.entities import CaptionTrack, SourceMetadata, VideoAnalysis
+from ...domain.entities import CaptionTrack, SourceMetadata, TokenUsage, VideoAnalysis
+from ...domain.entitlements import MediaResolution
 from ...domain.errors import AnalysisUnavailableError, GeminiConfigurationError
-from ...domain.ports import StageCallback
+from ...domain.ports import StageCallback, UsageCallback
 from ..config import Settings
 from .source_context import build_source_context
 
@@ -270,12 +271,35 @@ class GeminiEngine:
             raise RuntimeError("Gemini returned an empty response.")
         return VideoAnalysis(**json.loads(response.text))
 
+    @staticmethod
+    def _usage_from(response) -> TokenUsage | None:
+        """Token counts as Gemini reported them, or None when it reported
+        nothing - a zero would be indistinguishable from a free call."""
+        meta = getattr(response, "usage_metadata", None)
+        if meta is None:
+            return None
+        return TokenUsage(
+            input_tokens=int(getattr(meta, "prompt_token_count", 0) or 0),
+            output_tokens=int(getattr(meta, "candidates_token_count", 0) or 0),
+        )
+
+    @staticmethod
+    def _media_resolution(resolution: MediaResolution):
+        # `types.MediaResolution` exists on every SDK that supports the
+        # setting; on one that does not, the default is the only option and
+        # the call proceeds without it rather than failing every long video.
+        if resolution is MediaResolution.LOW:
+            return getattr(types.MediaResolution, "MEDIA_RESOLUTION_LOW", None)
+        return None
+
     async def _analyze(
         self,
         video_path: str,
         on_stage: Optional[StageCallback] = None,
         api_key: str | None = None,
         metadata: Optional[SourceMetadata] = None,
+        resolution: MediaResolution = MediaResolution.DEFAULT,
+        on_usage: Optional[UsageCallback] = None,
     ) -> VideoAnalysis:
         if on_stage:
             await on_stage("uploading_to_gemini")
@@ -302,15 +326,28 @@ class GeminiEngine:
 
             if on_stage:
                 await on_stage("analyzing")
+            config_kwargs: dict = dict(
+                system_instruction=SYSTEM_INSTRUCTION,
+                response_mime_type="application/json",
+                response_schema=VideoAnalysis,
+            )
+            media_resolution = self._media_resolution(resolution)
+            if media_resolution is not None:
+                config_kwargs["media_resolution"] = media_resolution
+            # Same config for the primary and the fallback model, so a run
+            # that falls back is still analyzed at the plan's resolution.
             response = await self._generate_with_retry(
                 client,
                 contents=[uploaded, *prompt_parts],
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTION,
-                    response_mime_type="application/json",
-                    response_schema=VideoAnalysis,
-                ),
+                config=types.GenerateContentConfig(**config_kwargs),
             )
+
+            # Reported once, from the one response that succeeded - whichever
+            # model served it. Failed attempts return no usage to report.
+            usage = self._usage_from(response)
+            if usage is not None and on_usage is not None:
+                await on_usage(usage)
+
             return self._parse(response)
         finally:
             try:
@@ -378,6 +415,8 @@ class GeminiEngine:
         attempts: int = 2,
         api_key: str | None = None,
         metadata: Optional[SourceMetadata] = None,
+        resolution: MediaResolution = MediaResolution.DEFAULT,
+        on_usage: Optional[UsageCallback] = None,
     ) -> VideoAnalysis:
         """Analyze `video_path`, mapping a final transient failure onto
         AnalysisUnavailableError.
@@ -394,7 +433,12 @@ class GeminiEngine:
         for attempt in range(1, attempts + 1):
             try:
                 return await self._analyze(
-                    video_path, on_stage=on_stage, api_key=api_key, metadata=metadata
+                    video_path,
+                    on_stage=on_stage,
+                    api_key=api_key,
+                    metadata=metadata,
+                    resolution=resolution,
+                    on_usage=on_usage,
                 )
             except _FileProcessingError as exc:
                 if attempt == attempts:

@@ -1,0 +1,32 @@
+{
+  "name": "@videolens/mcp",
+  "version": "0.1.0",
+  "description": "MCP server that lets terminal AI agents analyze videos with VideoLens: transcript, on-screen text, summary, notes, and full-text search across everything you have analyzed.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "videolens-mcp": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js",
+    "test": "npm run build && node --test dist/*.test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

@@ -1570,6 +1570,251 @@ h3 {
   }
 
   /* ========================================================================
+     ACCOUNT — identity, workspace usage, plan cards, API keys. Same boxless
+     language as the API key panel: rules and alignment, one accent, no cards
+     except the plan grid, where a hairline box is the honest shape for "pick
+     one of these".
+     ======================================================================== */
+
+  .account,
+  .library {
+    max-width: 48rem;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+  }
+  .account-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    padding-top: var(--space-sm);
+    border-top: var(--rule-w) solid var(--color-rule);
+  }
+  .account-section:first-child {
+    padding-top: 0;
+    border-top: none;
+  }
+  .account .prose,
+  .library .prose {
+    max-width: 100%;
+  }
+  .account .card-label {
+    display: block;
+  }
+  .identity {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+  }
+
+  .usage {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    max-width: 28rem;
+  }
+  .usage-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-sm);
+  }
+  .usage-figure {
+    font-size: 0.74rem;
+    color: var(--color-ink-2);
+  }
+  .usage-bar {
+    height: 0.4rem;
+    background: var(--color-paper-3);
+    overflow: hidden;
+  }
+  .usage-fill {
+    display: block;
+    height: 100%;
+    background: var(--color-accent);
+    transition: width var(--dur-mid) var(--ease-out);
+  }
+
+  .plan-grid {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    gap: var(--space-xs);
+  }
+  .plan-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    padding: var(--space-sm);
+    border: var(--rule-w) solid var(--color-rule);
+  }
+  .plan-card[data-current="true"] {
+    border-color: var(--color-accent);
+  }
+  .plan-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-2xs);
+  }
+  .plan-name {
+    font-size: 0.86rem;
+    color: var(--color-ink);
+  }
+  .plan-price {
+    font-size: 0.74rem;
+    color: var(--color-muted);
+  }
+  .plan-perks {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    font-size: 0.72rem;
+    line-height: 1.5;
+    color: var(--color-ink-2);
+    flex: 1;
+  }
+  .plan-perks li::before {
+    content: "— ";
+    color: var(--color-muted);
+  }
+  .plan-card .btn {
+    align-self: flex-start;
+    margin-top: var(--space-2xs);
+  }
+
+  .key-create {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2xs);
+  }
+  .key-create .card-label {
+    flex: 0 0 100%;
+  }
+  .key-create .field {
+    flex: 1 1 14rem;
+    height: 2.5rem;
+  }
+  .key-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .key-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    padding: 0.7rem 0;
+    border-bottom: var(--rule-w) solid var(--color-rule);
+  }
+  .key-row:last-child {
+    border-bottom: none;
+  }
+  .key-row[data-revoked="true"] .h-title {
+    color: var(--color-muted);
+    text-decoration: line-through;
+  }
+  .key-secret {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    max-width: var(--measure);
+    border-left: calc(var(--rule-w) * 2) solid var(--color-accent);
+    padding: var(--space-2xs) 0 var(--space-2xs) var(--space-sm);
+  }
+  .key-secret p {
+    margin: 0;
+    font-size: 0.8rem;
+    line-height: 1.6;
+    color: var(--color-ink-2);
+  }
+  .key-secret-value {
+    font-size: 0.78rem;
+    word-break: break-all;
+    user-select: all;
+    color: var(--color-ink);
+  }
+  .key-secret .apikey-actions {
+    margin-top: 0;
+  }
+
+  /* ========================================================================
+     LIBRARY — history's row language plus a search field and platform chips.
+     ======================================================================== */
+
+  .library-controls {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+  }
+  .library-search {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2xs);
+    max-width: 28rem;
+  }
+  .library-search svg {
+    width: 1rem;
+    height: 1rem;
+    flex-shrink: 0;
+    color: var(--color-muted);
+  }
+  .library-search .field {
+    flex: 1;
+    height: 2.5rem;
+  }
+  .library-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  .chip {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    padding: 0.3rem 0.6rem;
+    border: var(--rule-w) solid var(--color-rule);
+    color: var(--color-ink-2);
+    min-height: 1.75rem;
+  }
+  .chip[aria-pressed="true"] {
+    border-color: var(--color-accent);
+    color: var(--color-accent);
+  }
+  .chip:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  .library-row .h-text {
+    gap: 0.2rem;
+  }
+  .library-summary {
+    font-size: 0.72rem;
+    line-height: 1.45;
+    color: var(--color-ink-2);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    white-space: normal;
+  }
+  .library-row .h-title {
+    white-space: normal;
+  }
+
+  /* ========================================================================
      FOOTER — Ft5 compact bar: wordmark left, legal links right, hairline above
      ======================================================================== */
 

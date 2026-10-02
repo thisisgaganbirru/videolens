@@ -313,3 +313,41 @@ class DailyBudgetProbe:
             probed=True,
             log_detail=f"{remaining} shared runs remaining today",
         )
+
+
+class DatabaseProbe:
+    """`SELECT 1` against the durable store. Disabled, not unavailable, when
+    no DATABASE_URL is set: the deployment simply has no paid features."""
+
+    def __init__(self, database) -> None:
+        self._database = database
+
+    @property
+    def name(self) -> str:
+        return "database"
+
+    async def check(self) -> Capability:
+        if not self._database.enabled:
+            return Capability(
+                name=self.name,
+                state=CapabilityState.DISABLED,
+                detail="Accounts and paid history are not enabled on this deployment.",
+                probed=False,
+            )
+        try:
+            await self._database.ping()
+        except Exception as exc:  # noqa: BLE001 - reported, never raised
+            return Capability(
+                name=self.name,
+                state=CapabilityState.UNAVAILABLE,
+                detail="Account storage is unavailable.",
+                probed=True,
+                log_detail=f"{type(exc).__name__}: {exc}",
+            )
+        return Capability(
+            name=self.name,
+            state=CapabilityState.OK,
+            detail="Account storage is available.",
+            probed=True,
+            log_detail=f"dialect={self._database.dialect}",
+        )
