@@ -265,6 +265,16 @@ Nothing currently *tells* anyone when that condition is met. Grype ignore rules
 have no expiry, and a rule whose CVE has stopped being reported is
 indistinguishable from one still doing work — see *Known issues*.
 
+**Frontend findings are fixed, not ignored.** `frontend/package.json` pins
+`sharp` through an exact `overrides` entry (it is a transitive of `next`), so
+a `next` bump alone never moves it: when Grype flags `sharp`, the override
+value itself has to change. On 2026-10-02 the frontend image failed the gate on
+`next` 16.3.0 (GHSA-p293-qw3h-jr36, GHSA-2xp9-vwfh-vxw4, GHSA-vcvr-r3jv-pc5j,
+all Critical; the last fixed only in 16.3.6) and `sharp` 0.35.3
+(GHSA-rgj7-g3m4-5g8c, High). Fixed by moving `next`/`eslint-config-next` to
+`^16.3.8` and the `sharp` override to `0.35.4`; no `.grype.yaml` entry was
+involved or added.
+
 ### Runtime versions
 
 **Policy: pin the newest LTS major, never `latest`.** Current: **Node 24**,
@@ -596,3 +606,4 @@ jobs.
 - 2026-08-29 · main session · removed the manifest commit and its `paths-ignore` guard; the release index is served by `GET /api/releases` now
 - 2026-09-01 · main session · moved release publication from `dev` to `main`. Deleted `android-development-build.yml`; `production-environment.yml` now passes `upload_apk: true` with the production backend URL and owns the release job (and with it the repo's only `contents: write`), while `development-environment.yml` gained an Android gate so `dev` still validates the build without producing anything installable. Tags lose the `dev-` prefix and releases are no longer prereleases. The trap this hid: `versionCode` was `github.run_number`, which is per-workflow — publishing from a different workflow would have restarted it near zero, below the installed build 30, and Android refuses to install a lower code while `updateCheck.ts` compares codes to find a newer build, so every device would have been stranded with no way forward and CI green throughout. Switched `versionCode` to `git rev-list --count HEAD` (181 vs 30, monotonic, workflow-independent), which needs `fetch-depth: 0` or it reads 1. Also widened `GithubReleaseCatalog._TAG` to accept the optional `dev-` prefix so builds 1-30 stay parseable — `latest` is the first parseable tag, so dropping the old form would have broken the update check for exactly the devices that most need it
 - 2026-10-02 · ci agent · fixed `android / Android` failing inside `android-actions/setup-android` v3.2.2 (its default `packages: tools platform-tools` asks sdkmanager for the `tools` package Google removed from the SDK repository in Sep 2026 → `Failed to find package 'tools'`, exit 1) by pinning v4.0.4 (`be39fa83`, defaults to `platform-tools` only, Node 24); and fixed `containers / backend` by bumping `PYTHON_IMAGE` to the current `python:3.13-slim` index digest (`bb298871`, CPython 3.13.16 — clears High `CVE-2026-82049` on the `python` binary, and re-runs the GHA-cached `apt-get upgrade` layer so `openssl`/`libpcre2` `deb13u3` from `trixie-security` land); documented the apt-layer cache trap under Known issues
+- 2026-10-02 · frontend agent · cleared the frontend Grype gate failure (next 16.3.0 Criticals GHSA-p293-qw3h-jr36 / GHSA-2xp9-vwfh-vxw4 / GHSA-vcvr-r3jv-pc5j; sharp 0.35.3 High GHSA-rgj7-g3m4-5g8c): `next` + `eslint-config-next` to `^16.3.8`, `sharp` override `0.35.3` -> `0.35.4`; documented that the exact `sharp` override must be bumped by hand since a `next` bump cannot move it. `.grype.yaml` untouched (no frontend entries existed)
