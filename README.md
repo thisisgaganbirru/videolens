@@ -133,12 +133,13 @@ that run only:
 
 `mcp/` is an MCP server so terminal AI agents (Claude Code, Cursor, Codex,
 Antigravity, or any MCP client) can call VideoLens directly instead of going
-through the web UI — two tools, `analyze_video` and `list_recent_runs`. It
-requires your own Gemini API key (no shared-quota fallback, unlike the web
-BYOK panel above — see `mcp/README.md` for why) supplied via your agent's
-MCP config, never as a tool argument or file. Not yet published to npm;
-`mcp/README.md` covers building and pointing your agent at the local build
-in the meantime.
+through the web UI — `analyze_video`, `get_run`, `list_recent_runs`,
+`search_library`, `export_run` and `account_status`. It requires a
+credential in your agent's MCP config (never a tool argument or file): a
+workspace API key from the account tab, or your own Gemini API key (no
+shared-quota fallback, unlike the web BYOK panel above — see
+`mcp/README.md` for why). Not yet published to npm; `mcp/README.md` covers
+building and pointing your agent at the local build in the meantime.
 
 ## Configuration
 

@@ -2,7 +2,7 @@ import asyncio
 import os
 import shutil
 
-from ...domain.errors import MediaValidationError
+from ...domain.errors import DurationLimitError, MediaValidationError
 from ..config import Settings
 from .uploads import cleanup_run_dir
 
@@ -75,18 +75,29 @@ async def probe_duration_seconds(settings: Settings, path: str) -> float:
         ) from exc
 
 
-async def enforce_duration_cap(settings: Settings, run_id: str, path: str) -> None:
+async def enforce_duration_cap(
+    settings: Settings, run_id: str, path: str, max_seconds: int | None = None
+) -> float:
+    """Probe the media's length and refuse anything over the cap.
+
+    `max_seconds` is the caller's plan limit; None means the deployment-wide
+    default, which is what anonymous and free use get. Returns the measured
+    duration so the pipeline can meter it without a second probe.
+    """
+    limit = max_seconds if max_seconds and max_seconds > 0 else settings.max_duration_seconds
     try:
         duration = await probe_duration_seconds(settings, path)
     except MediaValidationError:
         cleanup_run_dir(settings, run_id)
         raise
-    if duration > settings.max_duration_seconds:
+    if duration > limit:
         cleanup_run_dir(settings, run_id)
-        raise MediaValidationError(
-            f"This video is {_clock(duration)} long. The limit is "
-            f"{_clock(settings.max_duration_seconds)}."
+        raise DurationLimitError(
+            f"This video is {_clock(duration)} long. The limit is {_clock(limit)}.",
+            duration_seconds=duration,
+            limit_seconds=limit,
         )
+    return duration
 
 
 async def _has_video_stream(settings: Settings, path: str) -> bool:

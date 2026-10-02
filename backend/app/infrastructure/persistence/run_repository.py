@@ -4,7 +4,15 @@ from typing import Optional
 
 from redis.asyncio import Redis
 
-from ...domain.entities import AnalysisCompleteness, Run, RunStatus, SourceMetadata, VideoAnalysis
+from ...domain.entities import (
+    AnalysisCompleteness,
+    Run,
+    RunStatus,
+    SourceMetadata,
+    TokenUsage,
+    VideoAnalysis,
+)
+from ...domain.entitlements import Plan
 from ..config import Settings
 
 # Cap on how many run_ids the per-owner history index retains, independent of
@@ -47,7 +55,16 @@ class RunStore:
         async with self._lock:
             self._memory[run.run_id] = run
 
-    async def create(self, run_id: str, owner_id: str) -> Run:
+    async def create(
+        self,
+        run_id: str,
+        owner_id: str,
+        *,
+        workspace_id: str | None = None,
+        plan: Plan = Plan.FREE,
+        max_duration_seconds: int | None = None,
+        source_url: str | None = None,
+    ) -> Run:
         now = datetime.now(timezone.utc)
         run = Run(
             run_id=run_id,
@@ -55,6 +72,10 @@ class RunStore:
             status=RunStatus.QUEUED,
             created_at=now,
             updated_at=now,
+            workspace_id=workspace_id,
+            plan=plan,
+            max_duration_seconds=max_duration_seconds,
+            source_url=source_url,
         )
         await self._write(run)
         if self._settings.queue_enabled:
@@ -99,10 +120,16 @@ class RunStore:
         completeness: AnalysisCompleteness | None = None,
         source_metadata: SourceMetadata | None = None,
         error: str | None = None,
+        duration_seconds: float | None = None,
+        usage: TokenUsage | None = None,
     ) -> None:
         run = await self.get(run_id)
         if run is None:
             return
+        if duration_seconds is not None:
+            run.duration_seconds = duration_seconds
+        if usage is not None:
+            run.usage = usage
         if status is not None:
             run.status = status
         if stage is not None:
@@ -139,6 +166,12 @@ class RunStore:
 
     async def set_error(self, run_id: str, error: str) -> None:
         await self._update(run_id, status=RunStatus.FAILED, error=error)
+
+    async def set_duration(self, run_id: str, duration_seconds: float) -> None:
+        await self._update(run_id, duration_seconds=duration_seconds)
+
+    async def set_usage(self, run_id: str, usage: TokenUsage) -> None:
+        await self._update(run_id, usage=usage)
 
     async def ping(self) -> bool:
         if not self._settings.queue_enabled:

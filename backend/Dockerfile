@@ -53,6 +53,9 @@ RUN python -m pip install --no-index --require-hashes --find-links=/wheels -r re
     && rm -rf /wheels /usr/local/lib/python3.13/ensurepip
 
 COPY --chown=10001:10001 app ./app
+# Alembic runs at startup when DATABASE_URL is set (see container.prepare_database).
+COPY --chown=10001:10001 alembic.ini ./alembic.ini
+COPY --chown=10001:10001 migrations ./migrations
 RUN mkdir -p /tmp/videolens \
     && chown -R 10001:10001 /app /tmp/videolens
 

@@ -20,3 +20,6 @@ Accepts a media source (file or URL) from `POST /api/runs`, applies the intake b
 **Known issue**: if `queue.enqueue()` throws (e.g. Redis unreachable) *after* `RunRepository.create()` already succeeded, the run record is never rolled back — it's left permanently in `QUEUED` status with nothing ever going to process it. Not currently handled; would need either a compensating delete or a TTL-based sweep.
 
 **Tests**: `backend/tests/application/test_create_run.py`, using in-memory fakes from `backend/tests/application/fakes.py` (covers all 5 rules above plus local vs. distributed file handling).
+
+## Changelog
+- 2026-09-17 · main session · intake resolves the caller's entitlement: plan allowance (`PlanLimitError` 402 `plan_limit`), per-plan file size and duration caps (`DurationLimitError` 400 `duration_limit`), paid plans skip `DAILY_RUN_CAP`; the run records workspace, plan, cap and measured duration — see `accounts-workspaces.md`
