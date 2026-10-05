@@ -7,8 +7,10 @@ import CapabilityNotice from "@/components/CapabilityNotice";
 import UploadForm from "@/components/UploadForm";
 import RunStatusView from "@/components/RunStatusView";
 import ResultsView, { SourceCard } from "@/components/ResultsView";
+import AccountPanel from "@/components/panels/AccountPanel";
 import ApiKeyPanel from "@/components/panels/ApiKeyPanel";
 import HistoryPanel from "@/components/panels/HistoryPanel";
+import LibraryPanel from "@/components/panels/LibraryPanel";
 import VersionLogPanel from "@/components/panels/VersionLogPanel";
 import { useAnalysisRun } from "@/application/useAnalysisRun";
 import { useCapabilities } from "@/application/useCapabilities";
@@ -233,6 +235,28 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
           <div className="surface">
             <div className="pane">
               <HistoryPanel onOpenRun={handleOpenRun} />
+            </div>
+          </div>
+        </section>
+      )}
+
+      {activeTab === "library" && (
+        <section className="tab-view" data-view="library" aria-label="Library">
+          <p className="col-label">Library</p>
+          <div className="surface">
+            <div className="pane">
+              <LibraryPanel onOpenRun={handleOpenRun} />
+            </div>
+          </div>
+        </section>
+      )}
+
+      {activeTab === "account" && (
+        <section className="tab-view" data-view="account" aria-label="Account">
+          <p className="col-label">Account</p>
+          <div className="surface">
+            <div className="pane">
+              <AccountPanel />
             </div>
           </div>
         </section>

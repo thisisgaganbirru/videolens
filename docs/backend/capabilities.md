@@ -63,3 +63,4 @@ Unchanged and still separate:
 - 2026-08-29 · main session · added the capability report, its six probes, `DailyBudget.remaining()`, and `S3ObjectStore.check_bucket()`
 - 2026-08-29 · frontend agent · marked the "frontend does not consume this" gap closed and pointed it at docs/frontend/capability-reporting.md; no backend code touched
 - 2026-08-29 · main session · split `detail` from `log_detail` so the unauthenticated report stops publishing versions, topology and the live budget count
+- 2026-09-17 · main session · added the `database` probe (`disabled` without `DATABASE_URL`, `unavailable` on a failed ping)

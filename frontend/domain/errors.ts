@@ -5,8 +5,22 @@
 
 /** The server answered and the answer was a problem. `message` carries the
  *  backend's own `detail` where it sent one, so it is already specific and
- *  should be shown as-is rather than replaced with a generic line. */
-export class ApiError extends Error {}
+ *  should be shown as-is rather than replaced with a generic line.
+ *
+ *  `code` is the backend's machine-readable reason where it sends one
+ *  (`plan_limit`, `duration_limit`) — the only sanctioned way for a hook to
+ *  branch on *why* a request was refused. `status` is the HTTP status, for
+ *  the one case (401) where the right response is "sign in", not a sentence. */
+export class ApiError extends Error {
+  readonly code: string | null;
+  readonly status: number | null;
+
+  constructor(message: string, options: { code?: string | null; status?: number | null } = {}) {
+    super(message);
+    this.code = options.code ?? null;
+    this.status = options.status ?? null;
+  }
+}
 
 /** The request never produced a usable response at all — connection refused,
  *  DNS failure, offline, blocked CORS preflight. Nothing is known to be wrong
