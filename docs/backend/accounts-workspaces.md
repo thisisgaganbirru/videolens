@@ -23,9 +23,10 @@ Turns a verified credential into a `Principal` with a workspace and a plan, and 
 
 **Ownership**: with a workspace, `owner_id` is `workspace:{id}`, so every member sees the same history and library. API-key callers are `key:{key_id}` subjects bound to the key's workspace. Anonymous callers stay `client:{id}` and never touch the database.
 
-**Config**: `DATABASE_URL` (Postgres; `postgres://` and `postgresql://` are normalized to the asyncpg driver; SQLite accepted for single-machine use), `DB_AUTO_MIGRATE`. `GET /api/capabilities` reports a `database` row: `disabled` without a URL, `unavailable` when the ping fails.
+**Config**: `DATABASE_URL` (Postgres; `postgres://` and `postgresql://` are normalized to the asyncpg driver; SQLite accepted for single-machine use), `DB_AUTO_MIGRATE`. The local `docker compose` stack builds `DATABASE_URL` from `POSTGRES_PASSWORD`, which has no default: copy the root `.env.example` to `.env` and set it, or compose refuses to start (a hardcoded default was flagged by GitGuardian on PR #67). `GET /api/capabilities` reports a `database` row: `disabled` without a URL, `unavailable` when the ping fails.
 
 **Tests**: `tests/domain/test_entitlements.py`, `tests/application/{test_identify_caller,test_record_usage,test_create_run_plans,test_process_run_metering}.py` (fakes in `tests/application/fakes.py`), `tests/infrastructure/persistence/test_sql_adapters.py` (SQLite through the real adapters and migration), `tests/interface/api/test_account_routes.py`.
 
 ## Changelog
 - 2026-09-17 · main session · created with the accounts/workspaces/entitlements implementation (Phase 0 + 1 of `docs/product-plan-100k.md`)
+- 2026-10-04 · main session · local compose Postgres password is now required from root `.env` (no default); added root `.env.example`

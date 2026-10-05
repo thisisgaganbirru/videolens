@@ -13,7 +13,7 @@ x-backend-environment: &backend-environment
   FFMPEG_LOCATION: ""
   TEMP_DIR: /tmp/videolens
   REDIS_URL: redis://redis:6379/0
-  DATABASE_URL: postgresql://${POSTGRES_USER:-videolens}:${POSTGRES_PASSWORD:-videolens-development}@postgres:5432/${POSTGRES_DB:-videolens}
+  DATABASE_URL: postgresql://${POSTGRES_USER:-videolens}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env - see .env.example}@postgres:5432/${POSTGRES_DB:-videolens}
   S3_ENDPOINT_URL: http://minio:9000
   S3_REGION: us-east-1
   S3_BUCKET: videolens
@@ -138,7 +138,7 @@ services:
     pids_limit: 128
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-videolens}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-videolens-development}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env - see .env.example}
       POSTGRES_DB: ${POSTGRES_DB:-videolens}
     tmpfs:
       - /tmp:uid=70,gid=70,mode=0700

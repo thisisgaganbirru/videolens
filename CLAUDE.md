@@ -165,6 +165,7 @@ root `.mcp.json` for the config this repo's contributors get automatically.
 
 ```bash
 cp backend/.env.example backend/.env
+cp .env.example .env           # set POSTGRES_PASSWORD (required, no default)
 docker compose up --build
 ```
 
