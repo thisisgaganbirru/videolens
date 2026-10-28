@@ -223,6 +223,8 @@ S3_REGION=auto
 S3_BUCKET=videolens-media
 S3_ACCESS_KEY_ID=<secret>
 S3_SECRET_ACCESS_KEY=<secret>
+# Railway Buckets use virtual-hosted URLs; MinIO needs the default (auto)
+S3_ADDRESSING_STYLE=virtual
 AUTH_JWKS_URL=<OIDC JWKS URL>
 AUTH_ISSUER=<OIDC issuer>
 AUTH_AUDIENCE=<OIDC audience>
