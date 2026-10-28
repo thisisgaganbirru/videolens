@@ -276,6 +276,19 @@ all Critical; the last fixed only in 16.3.6) and `sharp` 0.35.3
 `^16.3.8` and the `sharp` override to `0.35.4`; no `.grype.yaml` entry was
 involved or added.
 
+On 2026-10-28 it happened again, on both images, all from advisories
+published after `dev`'s last green run on 2026-10-02: `next` 16.3.8
+(GHSA-2464-fhr4-w9xw, GHSA-673q-mjm6-r5xr Critical, GHSA-p3m5-59mp-jv5r High,
+fixed in 16.4.1), `sharp` 0.35.4 (GHSA-wq5f-xc86-pv6w, High), Alpine `zlib`
+1.3.2-r0 (CVE-2026-85091, High) and, on the backend, `certifi` 2026.7.22
+(GHSA-6q48-6c7w-9gw2, Critical). Fixed by `next`/`eslint-config-next`
+`^16.4.1` (resolved 16.4.3), the `sharp` override at `0.35.5`, a
+`'zlib>=1.3.2-r1'` floor beside the openssl one in the frontend `runner`
+stage, and `uv pip compile ... --upgrade-package certifi` (2026.10.23). Again
+no `.grype.yaml` entry. Regenerate `frontend/package-lock.json` with npm 11
+(the npm in `node:24`): npm 10 strips the `libc` fields from the `@img/sharp-*`
+entries, which is what lets `npm ci` on Alpine skip the glibc builds.
+
 ### Runtime versions
 
 **Policy: pin the newest LTS major, never `latest`.** Current: **Node 24**,
@@ -335,7 +348,7 @@ on its own.
 
 #### Other couplings when bumping a major
 
-- `frontend/Dockerfile`'s `'openssl>=3.5.7-r0'` floor depends on the Alpine
+- `frontend/Dockerfile`'s `'openssl>=3.5.7-r0'` and `'zlib>=1.3.2-r1'` floors depend on the Alpine
   release the Node image sits on, and that changes across Node majors:
   `node:20-alpine` was Alpine 3.23, `node:22-alpine` and `node:24-alpine` are
   both Alpine 3.24. Before bumping, confirm the target's `main/x86_64`
@@ -615,3 +628,4 @@ jobs.
 - 2026-10-02 · ci agent · fixed `android / Android` failing inside `android-actions/setup-android` v3.2.2 (its default `packages: tools platform-tools` asks sdkmanager for the `tools` package Google removed from the SDK repository in Sep 2026 → `Failed to find package 'tools'`, exit 1) by pinning v4.0.4 (`be39fa83`, defaults to `platform-tools` only, Node 24); and fixed `containers / backend` by bumping `PYTHON_IMAGE` to the current `python:3.13-slim` index digest (`bb298871`, CPython 3.13.16 — clears High `CVE-2026-82049` on the `python` binary, and re-runs the GHA-cached `apt-get upgrade` layer so `openssl`/`libpcre2` `deb13u3` from `trixie-security` land); documented the apt-layer cache trap under Known issues
 - 2026-10-02 · frontend agent · cleared the frontend Grype gate failure (next 16.3.0 Criticals GHSA-p293-qw3h-jr36 / GHSA-2xp9-vwfh-vxw4 / GHSA-vcvr-r3jv-pc5j; sharp 0.35.3 High GHSA-rgj7-g3m4-5g8c): `next` + `eslint-config-next` to `^16.3.8`, `sharp` override `0.35.3` -> `0.35.4`; documented that the exact `sharp` override must be bumped by hand since a `next` bump cannot move it. `.grype.yaml` untouched (no frontend entries existed)
 - 2026-10-02 · ci-cache agent · stopped the GHA cache restoring the final image stage (`no-cache-filters: runtime`/`runner`) in both `reusable-container-checks.yml` and `reusable-container-publish.yml` so OS-package upgrades always run and the shipped image matches the scanned one; resolved the apt-layer Known issue. Removed the dead `CVE-2026-15308` rule from `.grype.yaml` (now `ignore: []`; Grype DB v6.1.9 NVD range for 3.13 is `< 3.13.15`, image is 3.13.16) and rewrote the gate section as an exception list with that rule's history
+- 2026-10-28 · claude (session ccr-ee9ca9d3) · cleared the 2026-10-28 Grype failures on both images (next 16.4.x, sharp 0.35.5, zlib floor, certifi 2026.10.23) and noted the npm 11 lockfile requirement
