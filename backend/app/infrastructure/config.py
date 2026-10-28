@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     s3_bucket: str = ""
     s3_access_key_id: str = ""
     s3_secret_access_key: str = ""
+    # "auto" lets botocore pick, which with a custom endpoint means path-style
+    # (https://endpoint/bucket) - what MinIO in docker-compose needs. Railway
+    # Buckets document virtual-hosted style (https://bucket.endpoint), so set
+    # "virtual" there.
+    s3_addressing_style: str = "auto"
 
     auth_jwks_url: str = ""
     auth_issuer: str = ""
