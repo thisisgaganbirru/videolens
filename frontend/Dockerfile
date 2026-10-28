@@ -40,7 +40,7 @@ ENV HOSTNAME=0.0.0.0 \
 # reusable-container-checks.yml and reusable-container-publish.yml) so a cached
 # layer cannot pin openssl below a newer Alpine security fix. Renaming the
 # stage means updating both workflows.
-RUN apk add --no-cache --upgrade 'openssl>=3.5.7-r0' \
+RUN apk add --no-cache --upgrade 'openssl>=3.5.7-r0' 'zlib>=1.3.2-r1' \
     && rm -rf /usr/local/lib/node_modules/npm \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx
 
