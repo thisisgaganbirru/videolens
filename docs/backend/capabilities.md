@@ -35,7 +35,7 @@ The failure this design exists to avoid: a health check that reports `ok` for so
 | `url_download` | `UrlDownloadProbe` | Reports the yt-dlp build, degrades past 120 days old (date-stamped releases; a stale copy is the most common reason URL runs start failing), and checks the cookie source — a *configured but missing* cookie file degrades, which is otherwise invisible until someone submits a login-walled link. Fetches nothing. `probed: true` |
 | `analysis_engine` | `AnalysisEngineProbe` | Reports whether a shared key is configured, and says outright it was **not** verified — the only way to validate a Gemini key is to spend a request with it. Missing key is `degraded`, not `unavailable`, because BYOK callers still work. Never includes the key. `probed: false` |
 | `run_store` | `RunStoreProbe` | Pings Redis in distributed mode. In local mode there is nothing to ping (`RunStore.ping()` returns `True` unconditionally there), so it reports `ok` with `probed: false` and names the store as non-durable rather than calling a method whose answer proves nothing. |
-| `object_storage` | `ObjectStoreProbe` | Unconfigured → `disabled` (topology, not a fault). Configured → `head_bucket` against the real bucket, because having four settings filled in says nothing about whether they are correct. |
+| `object_storage` | `ObjectStoreProbe` | Unconfigured → `disabled` (topology, not a fault). Configured → `head_bucket` against the real bucket, because having four settings filled in says nothing about whether they are correct. On failure the traceback is logged at WARNING and `log_detail` names the S3 error code and HTTP status (403 = bad or rotated keys, 404 = wrong or deleted bucket) or, for a non-S3 error such as a refused connection, just the exception class. |
 | `daily_budget` | `DailyBudgetProbe` | Reads `DailyBudget.remaining()` — deliberately read-only; health reporting must never consume the budget it reports on. Exhausted → `unavailable`, uncapped → `disabled`. |
 
 ## Aggregation and shape
@@ -63,3 +63,4 @@ Unchanged and still separate:
 - 2026-08-29 · main session · added the capability report, its six probes, `DailyBudget.remaining()`, and `S3ObjectStore.check_bucket()`
 - 2026-08-29 · frontend agent · marked the "frontend does not consume this" gap closed and pointed it at docs/frontend/capability-reporting.md; no backend code touched
 - 2026-08-29 · main session · split `detail` from `log_detail` so the unauthenticated report stops publishing versions, topology and the live budget count
+- 2026-10-28 · claude (session ccr-ee9ca9d3) · `ObjectStoreProbe` now actually logs the head_bucket failure and puts the S3 code/status in `log_detail`; before, it said "see the logged exception" but nothing was logged
