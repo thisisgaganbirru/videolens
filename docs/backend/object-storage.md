@@ -11,6 +11,9 @@ Temporary storage for uploaded source media in distributed mode, so the worker p
 
 **Enabled check**: `object_storage_enabled` (a `Settings` property) requires all four of `S3_ENDPOINT_URL`/`S3_BUCKET`/`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` to be set. App startup (`interface/api/app.py` lifespan) refuses to boot in distributed mode if object storage isn't configured — Redis-without-S3 is an invalid combination.
 
-**Known issue**: none identified — this is a small, single-purpose adapter with no branching logic beyond the `enabled` check.
+**Known issue**: none in the adapter. Until 2026-10-28 the `object_storage` capability probe swallowed `head_bucket` errors without logging them, so an `unavailable` row left no trace in the Railway logs. It now logs the traceback and the S3 error code (search the backend logs for `Object storage probe failed` or `object_storage=unavailable`). See `capabilities.md`.
 
 **Tests**: none currently (would need a real or mocked S3-compatible endpoint; local dev's `docker-compose.yml` provides MinIO for manual testing).
+
+## Changelog
+- 2026-10-28 · claude (session ccr-ee9ca9d3) · noted where the object-storage probe failure reason now shows up in the logs

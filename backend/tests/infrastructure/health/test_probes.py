@@ -95,6 +95,25 @@ class ObjectStoreProbeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(capability.state, CapabilityState.UNAVAILABLE)
         self.assertNotIn("AKIAsecret", capability.detail)
+        # The operator half names the failure by class only, since the
+        # message of a non-S3 error can carry the endpoint.
+        self.assertEqual(capability.log_detail, "head_bucket failed: RuntimeError")
+
+    async def test_an_s3_error_reports_its_code_and_status_to_the_operator(self) -> None:
+        error = Exception("An error occurred (403) when calling the HeadBucket operation")
+        error.response = {
+            "Error": {"Code": "403", "Message": "Forbidden"},
+            "ResponseMetadata": {"HTTPStatusCode": 403},
+        }
+        storage = FakeObjectStore(enabled=True, error=error)
+
+        with self.assertLogs("videolens", level="WARNING") as logs:
+            capability = await ObjectStoreProbe(storage).check()
+
+        self.assertEqual(capability.state, CapabilityState.UNAVAILABLE)
+        self.assertEqual(capability.detail, "Upload storage is unreachable.")
+        self.assertEqual(capability.log_detail, "head_bucket failed: 403 (HTTP 403)")
+        self.assertIn("Object storage probe failed", logs.output[0])
 
 
 class UrlDownloadProbeTests(unittest.IsolatedAsyncioTestCase):
