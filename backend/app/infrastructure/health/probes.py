@@ -9,12 +9,15 @@ if it were proof the thing works.
 """
 
 import asyncio
+import logging
 import os
 from datetime import date, datetime
 
 from ...domain.entities import Capability, CapabilityState
 from ..config import Settings
 from ..media.ffmpeg import _media_binary
+
+logger = logging.getLogger("videolens")
 
 _VERSION_TIMEOUT_SECONDS = 5.0
 
@@ -147,13 +150,18 @@ class ObjectStoreProbe:
             )
         try:
             await self._storage.check_bucket()
-        except Exception:  # noqa: BLE001 - boto errors carry endpoint/credential detail
+        except Exception as exc:  # noqa: BLE001 - boto errors carry endpoint/credential detail
+            # The public detail stays generic, but the operator needs the
+            # reason: a 403 (bad or rotated keys), a 404 (wrong or deleted
+            # bucket) and a connection error (wrong endpoint) are three
+            # different fixes. The traceback goes to the log only.
+            logger.warning("Object storage probe failed", exc_info=exc)
             return Capability(
                 name=self.name,
                 state=CapabilityState.UNAVAILABLE,
                 detail="Upload storage is unreachable.",
                 probed=True,
-                log_detail="head_bucket failed; see the logged exception",
+                log_detail=f"head_bucket failed: {self._reason(exc)}",
             )
         return Capability(
             name=self.name,
@@ -162,6 +170,21 @@ class ObjectStoreProbe:
             probed=True,
             log_detail="bucket reachable",
         )
+
+    @staticmethod
+    def _reason(exc: Exception) -> str:
+        """botocore's ClientError carries the S3 error code and HTTP status in
+        `exc.response`; read them by duck-typing so this module does not import
+        botocore. Anything else (connection, DNS, timeout) is named by class -
+        its message can hold the endpoint URL, so it is not included."""
+        response = getattr(exc, "response", None)
+        if isinstance(response, dict):
+            error = response.get("Error") or {}
+            status = (response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
+            code = error.get("Code")
+            if code or status:
+                return f"{code or 'unknown code'} (HTTP {status or '?'})"
+        return type(exc).__name__
 
 
 class UrlDownloadProbe:

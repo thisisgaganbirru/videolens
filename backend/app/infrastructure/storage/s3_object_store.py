@@ -2,6 +2,7 @@ import asyncio
 import os
 
 import boto3
+from botocore.config import Config
 
 from ..config import Settings
 
@@ -19,6 +20,7 @@ class S3ObjectStore:
             region_name=self._settings.s3_region,
             aws_access_key_id=self._settings.s3_access_key_id,
             aws_secret_access_key=self._settings.s3_secret_access_key,
+            config=Config(s3={"addressing_style": self._settings.s3_addressing_style}),
         )
 
     @property
