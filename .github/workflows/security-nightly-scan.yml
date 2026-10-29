@@ -1,0 +1,77 @@
+name: Security nightly scan
+
+# Scans main every morning so a newly published CVE shows up as an issue,
+# instead of being discovered when every open PR turns red at once.
+#
+# It must never fail on findings. A scheduled run attaches to main's head
+# commit, and Railway's Wait for CI skips any deploy - including the redeploy a
+# variable change triggers - while a workflow on that commit is red. So the
+# scan runs in advisory mode and the issue job cannot fail the run.
+
+on:
+  schedule:
+    # 06:17 UTC, off the top of the hour when scheduled runs queue up.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-nightly-scan
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    uses: ./.github/workflows/reusable-security-scan.yml
+    with:
+      enforce: false
+
+  issue:
+    name: Report findings
+    needs: scan
+    if: always()
+    runs-on: ubuntu-latest
+    # Reporting is best-effort; it must not turn the run red (see above).
+    continue-on-error: true
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      TITLE: "Security scan: fixable high/critical vulnerabilities on main"
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        # No findings means no artifacts; that must not stop the step below,
+        # which is also what closes the issue after a clean run.
+        continue-on-error: true
+        with:
+          pattern: security-findings-*
+          path: findings
+          merge-multiple: true
+      - name: Open, update or close the tracking issue
+        shell: bash
+        env:
+          SCAN_RESULT: ${{ needs.scan.result }}
+        run: |
+          existing="$(gh issue list --state open --search "in:title \"${TITLE}\"" --json number --jq '.[0].number // empty')"
+          if compgen -G "findings/*.txt" >/dev/null; then
+            services="$(cd findings && ls *.txt | sed 's/\.txt$//' | paste -sd, -)"
+            body="$(printf 'The nightly scan of `main` found fixable high or critical vulnerabilities in: **%s**.\n\nThe next promotion into `main` will fail its enforced scan until these are fixed. The table is in the scan step log of %s.\n\nThis issue is updated by `security-nightly-scan.yml` and closed automatically after a clean run.' "$services" "$RUN_URL")"
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" --body "$body"
+            else
+              gh issue create --title "$TITLE" --body "$body"
+            fi
+          elif [ "$SCAN_RESULT" != "success" ]; then
+            # The scan itself broke (a build failure, not a finding), so the
+            # absence of findings proves nothing. Leave the issue as it is.
+            echo "::warning::The scan job ended '${SCAN_RESULT}'; not treating this run as clean."
+          else
+            echo "No findings."
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --comment "Clean nightly scan: ${RUN_URL}"
+            fi
+          fi

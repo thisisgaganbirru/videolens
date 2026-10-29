@@ -24,11 +24,11 @@ This is deliberate and worth stating plainly, because the repository also publis
 - **Railway** is wired to `thisisgaganbirru/videolens` with `Builder: DOCKERFILE` and a per-service root directory (`/backend`, `/frontend`). It builds its own image on every qualifying push.
 - **GHCR images** (`reusable-container-publish.yml`) are an archive: scanned, with SBOM and provenance attached, tagged `dev` / `latest` / `sha-<commit>`. Nothing deploys them.
 
-So the security gate in `reusable-container-checks.yml` covers the *same Dockerfiles* Railway builds, but not the *artifact* Railway runs. Wait for CI is what connects the two: Railway refuses to deploy a commit whose checks did not pass, so a commit that fails the Grype gate never reaches a running service.
+So the security gate in `reusable-security-scan.yml` covers the *same Dockerfiles* Railway builds, but not the *artifact* Railway runs. Wait for CI is what connects the two: Railway refuses to deploy a commit whose checks did not pass, so a commit that fails the Grype gate never reaches a running service.
 
 ## Deploy triggers
 
-Both environments have **autodeploy on** and **Wait for CI on**. Behaviour, per Railway's docs:
+Both environments have **autodeploy on**. **Wait for CI** (the service source's `checkSuites` flag, readable per environment with the Railway MCP's `get-service-config`) is **on for production** (verified `true` on all three services, 2026-10-29) and was **found off for `dev`** on 2026-10-29: all three `dev` services read `checkSuites: false`, and `dev` deploys started before their workflows did. The owner is switching it on in the dashboard; until `get-service-config` reads `true` for `videolens-backend`, `videolens-worker` and `videolens-frontend` in `dev`, treat `dev` as ungated. Change it in the dashboard only (see *Branch mapping* below for why the API path is unsafe). Behaviour, per Railway's docs, when it is on:
 
 - A push to the tracked branch queues a deploy in `WAITING`.
 - While GitHub Actions runs, it stays `WAITING`.
@@ -42,6 +42,12 @@ Both environments have **autodeploy on** and **Wait for CI on**. Behaviour, per 
 Railway scopes the source branch to an environment's *service instance*, and the dashboard edits it that way. The API and MCP path (`connect_service_source`) accepts an `environment_id` but applies the branch at **service level** — setting `production` to `main` through it also moves `dev` to `main`, and the next push deploys the wrong code to the wrong environment.
 
 This happened on 2026-08-29: `dev` briefly ran `main`'s commit before being restored. **Change trigger branches in the Railway dashboard only**, per environment, per service.
+
+### What each environment waits on (since the 2026-10-29 CI redesign)
+
+- **production**: a merge into `main` runs the publish (build, enforced scan, promote), Android build and release on that commit. Wait for CI holds the deploy until all of it is green, which is the real production gate.
+- **dev**: a merge into `dev` runs **no workflow**; the PR already tested that tree. With nothing to wait for, Wait for CI passes immediately (see *Known issues*), so `dev` deploys as soon as the merge lands. The gate for `dev` is therefore branch protection: the `required` check on the PR, "up to date before merging", and no direct pushes. Leaving Wait for CI on for `dev` costs nothing and covers a manual `workflow_dispatch` run or a future push-triggered workflow.
+- Advisory scans (PRs into `dev`, the nightly run on `main`) are built to finish green, precisely so they can never be the red workflow that skips a deploy.
 
 ## Three ways a deploy silently does not happen
 
@@ -88,3 +94,4 @@ Under the current model this costs nothing, because Railway builds each environm
 
 ## Changelog
 - 2026-08-29 · main session · created; documents the new `production` environment, the source-build vs GHCR-archive split, Wait for CI semantics, the service-level branch-mapping trap, and the three silent-skip modes
+- 2026-10-29 · claude (session ccr-ee9ca9d3) · documented what each environment's Wait for CI now waits on after the CI redesign; `dev` services were found with `checkSuites: false` while this doc said on

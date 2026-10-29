@@ -167,25 +167,43 @@ Frontend at `:3000`, backend at `:8000`, MinIO console at `:9001`.
 
 ### CI (`.github/workflows/`)
 
-Seven workflows in a caller/reusable split. Three **callers** decide when
-things run; four **reusables** hold the actual steps so no build logic is
-written twice; one job publishes the Android release.
+Three independent lanes in a caller/reusable split, redesigned 2026-10-29 so
+each check runs **once**, where it decides something. Callers decide when;
+reusables hold the steps; composite actions in `.github/actions/`
+(`setup-backend`, `setup-frontend`, `setup-android`) hold the setup every job
+repeats.
 
 | Trigger | Runs |
 |---|---|
-| PR into `dev`/`main` | application checks, container checks, Android checks |
-| push to `dev` | the same three, plus a dev-channel container publish |
-| push to `main` | the same three, plus a production-channel container publish, plus the Android APK build and release |
+| PR into `dev` | only what the PR touches (path-classified): backend and/or frontend checks, Android if `frontend/` changed, **advisory** security scan |
+| push to `dev` | nothing; the PR tested this tree. Railway deploys |
+| PR into `main` | full application checks, **enforced** security scan |
+| push to `main` | build each image once, scan it (enforced), promote to `latest`; Android APK; release |
+| nightly (06:17 UTC) | advisory scan of `main`; opens/closes a tracking issue |
 
-**Releases are published from `main` only.** `dev` builds the APK to prove it
-still compiles and then discards it — nothing on `dev` reaches a device.
+**Security is mandatory for production only.** Advisory runs must finish
+**green** (findings go to a warning, the job summary and an artifact): Railway's
+Wait for CI skips a deploy while any workflow on the commit is red, so a red
+advisory or nightly run would silently block a deploy.
+
+**Branch protection requires the `required` job**, which each caller ends with
+and which always reports, never the individual jobs (the `dev` lane skips
+jobs on purpose). It also relies on "require branches to be up to date before
+merging" and no direct pushes to `dev`/`main`; these are repository settings,
+not files.
+
+**Releases are published from `main` only**, and the release job waits on the
+security-gated publish. `dev` builds the APK to prove it still compiles and
+then discards it.
 
 The reusables: `reusable-application-checks.yml` (backend compileall +
 unittest discover + import check; frontend `tsc --noEmit` + `build` +
-`build:mobile`), `reusable-android-checks.yml` (gradle `assembleDebug` +
-`testDebugUnitTest`), `reusable-container-checks.yml` (Dockerfile lint,
-image build, Grype scan), `reusable-container-publish.yml` (multi-arch
-push to GHCR with in-registry SBOM and provenance attestations).
+`build:mobile`; `backend`/`frontend` inputs), `reusable-android-checks.yml`
+(gradle `assembleDebug` + `testDebugUnitTest`), `reusable-security-scan.yml`
+(Dockerfile lint, image build, Grype; `enforce` input),
+`reusable-container-publish.yml` (multi-arch push to GHCR under `sha-<commit>`,
+scan of that digest, `imagetools` promotion to `latest`, in-registry SBOM and
+provenance).
 
 Images are deliberately **not** signed. Cosign's keyless mode was removed
 because it writes a permanent, undeletable entry to Rekor, the public
@@ -200,8 +218,9 @@ Two properties worth preserving if you touch these:
 
 - **Exactly one job in the whole set has `contents: write`** — the release
   job in `production-environment.yml`. Everything else is `contents: read`.
-  The Android build steps live in a reusable precisely so the PR and `dev`
-  paths can run the same build without ever holding a write token.
+  The Android build steps live in a reusable precisely so the `dev` PR gate
+  and the `main` release build run the same steps without either holding a
+  write token. (The nightly scan's issue job has `issues: write`, nothing more.)
 - **`target_commitish: ${{ github.sha }}` on the release step is
   load-bearing.** It pins the tag to the commit the APK was built from rather
   than to wherever the branch tip has moved. This shipped broken once, back
