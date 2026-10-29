@@ -1,5 +1,16 @@
 name: Reusable container publication
 
+# Build once, scan that exact image, then promote it. The multi-platform image
+# is pushed under its immutable `sha-<revision>` tag only; Grype then scans the
+# pushed image (a hard gate, no advisory mode here); only if it passes does the
+# mutable channel tag (`latest`) move to it, by copying the index with
+# `imagetools create` rather than rebuilding. The scanned image and the
+# published image are therefore the same digest.
+#
+# A failed scan leaves the `sha-` tag behind as an unpromoted candidate.
+# Nothing pulls `sha-` tags automatically and Railway builds from source, so
+# this is inert; it also keeps the failing image inspectable.
+
 on:
   workflow_call:
     inputs:
@@ -8,7 +19,7 @@ on:
         required: true
         type: string
       channel:
-        description: Mutable environment tag, such as dev or latest
+        description: Mutable environment tag the scanned image is promoted to, such as latest
         required: true
         type: string
       revision:
@@ -83,7 +94,7 @@ jobs:
           cache-from: type=gha,scope=publish-${{ inputs.environment }}-${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=publish-${{ inputs.environment }}-${{ matrix.service }}
           context: ./${{ matrix.service }}
-          # Same final-stage cache bypass as reusable-container-checks.yml:
+          # Same final-stage cache bypass as reusable-security-scan.yml:
           # without it the GHA cache would restore an old OS-package upgrade
           # layer and ship an image missing fixes the scan build picked up.
           no-cache-filters: ${{ matrix.service == 'backend' && 'runtime' || 'runner' }}
@@ -95,11 +106,34 @@ jobs:
           pull: true
           push: true
           sbom: true
-          tags: |
-            ghcr.io/${{ github.repository }}/videolens-${{ matrix.service }}:${{ inputs.channel }}
-            ghcr.io/${{ github.repository }}/videolens-${{ matrix.service }}:sha-${{ inputs.revision }}
+          # The candidate tag only. The channel tag is added below, after the
+          # scan, so `latest` can never point at an unscanned image.
+          tags: ghcr.io/${{ github.repository }}/videolens-${{ matrix.service }}:sha-${{ inputs.revision }}
+      - name: Scan the pushed image for fixable high and critical vulnerabilities
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          cache-db: true
+          # Same gate and exception list as reusable-security-scan.yml. Grype
+          # pulls with the GHCR login above and scans the runner's platform
+          # (linux/amd64) of the index; the arm64 variant is built from the
+          # same Dockerfile and package pins.
+          config: .grype.yaml
+          fail-build: true
+          image: ghcr.io/${{ github.repository }}/videolens-${{ matrix.service }}@${{ steps.build.outputs.digest }}
+          only-fixed: true
+          output-format: table
+          severity-cutoff: high
+      - name: Promote the scanned image to the channel tag
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}/videolens-${{ matrix.service }}
+          CHANNEL: ${{ inputs.channel }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        # Copies the whole index (both platforms plus the SBOM and provenance
+        # attestations) to the new tag without rebuilding anything.
+        run: docker buildx imagetools create --tag "${IMAGE}:${CHANNEL}" "${IMAGE}@${DIGEST}"
       - name: Report published digest
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
           IMAGE: ghcr.io/${{ github.repository }}/videolens-${{ matrix.service }}
-        run: echo "Published ${IMAGE}@${DIGEST}" >> "$GITHUB_STEP_SUMMARY"
+          CHANNEL: ${{ inputs.channel }}
+        run: echo "Published ${IMAGE}@${DIGEST} as sha-${{ inputs.revision }} and ${CHANNEL}" >> "$GITHUB_STEP_SUMMARY"

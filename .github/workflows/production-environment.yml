@@ -1,27 +1,85 @@
 name: Production environment
 
+# The production lane, in two halves.
+#
+# Pull request into main (the promotion from dev, or a Dependabot PR):
+#   application checks in full, and the security scan ENFORCED. A fixable
+#   high or critical finding fails `required`, so it cannot merge. This is the
+#   only place security is mandatory before code reaches main.
+#
+# Push to main (the merge): the checks above are not repeated - with
+# "Require branches to be up to date before merging" on, the merge commit is
+# the tree the PR just tested. Instead it does what only the merge can:
+#   publish  -> build each image once, scan that exact image (enforced again,
+#               so a CVE published between PR and merge still cannot ship),
+#               then promote it to `latest`
+#   android  -> the APK with the production backend URL compiled in
+#   release  -> the GitHub Release, only once both of the above passed
+# Railway's Wait for CI holds the production deploy until this run is green.
+
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
-  packages: write
 
 concurrency:
-  group: production-environment
-  cancel-in-progress: false
+  # A PR's runs cancel each other; runs on main never cancel, so a merge is
+  # always published and released in full.
+  group: ${{ github.event_name == 'pull_request' && format('production-pr-{0}', github.event.pull_request.number) || 'production-environment' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # --- Pull request into main -------------------------------------------
+
   application:
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'pull_request'
     uses: ./.github/workflows/reusable-application-checks.yml
-  containers:
-    if: github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/reusable-container-checks.yml
+
+  security:
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/reusable-security-scan.yml
+    with:
+      enforce: true
+
+  required:
+    name: required
+    if: always() && github.event_name == 'pull_request'
+    needs: [application, security]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Application checks and the security scan passed
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "Job results: ${RESULTS}"
+          # Stricter than the dev gate: nothing here is path-filtered, so a
+          # skipped job is as wrong as a failed one.
+          if jq -e 'any(.[]; . != "success")' <<<"$RESULTS" >/dev/null; then
+            echo "::error::The promotion needs every check green, including the security scan."
+            exit 1
+          fi
+
+  # --- Push to main ------------------------------------------------------
+
+  publish:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/reusable-container-publish.yml
+    with:
+      environment: production
+      channel: latest
+      revision: ${{ github.sha }}
+    secrets: inherit
+
   android:
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     uses: ./.github/workflows/reusable-android-checks.yml
     with:
       upload_apk: true
@@ -30,26 +88,18 @@ jobs:
       # localhost - and it must not point at dev, whose Redis, quota and stored
       # runs are a different environment entirely.
       api_base_url: https://videolens-backend-production.up.railway.app
-  publish:
-    if: github.ref == 'refs/heads/main'
-    needs: [application, containers]
-    uses: ./.github/workflows/reusable-container-publish.yml
-    with:
-      environment: production
-      channel: latest
-      revision: ${{ github.sha }}
-    secrets: inherit
 
   release:
     name: Publish release
-    # workflow_dispatch builds and tests but deliberately publishes nothing.
+    # workflow_dispatch builds, scans and publishes images but deliberately
+    # creates no release.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    # The APK is what people actually install, so it does not ship while the
-    # backend it talks to is failing its own tests.
-    needs: [application, android]
+    # The APK is what people actually install, so it does not ship unless the
+    # images for the same commit passed the enforced security scan.
+    needs: [android, publish]
     runs-on: ubuntu-latest
-    # The only job in this repository holding a write token. Keep it that way:
-    # everything else, including the Android build itself, is contents: read.
+    # The only job in this repository holding contents: write. Keep it that
+    # way: everything else, including the Android build itself, is read-only.
     permissions:
       contents: write
     env:

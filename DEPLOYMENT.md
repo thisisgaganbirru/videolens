@@ -181,11 +181,13 @@ in Railway's variable store, never here):
 ### Environment-specific automation
 
 Local workspace, dev, and production automation are intentionally separate.
-`docker-compose.yml` is local-only. Pull requests run reusable application and
-container checks. The `dev` branch publishes signed `dev` container images and
-has its own Android debug-release workflow. The `main` branch publishes signed
-production images only after the protected GitHub `production` environment
-allows it and `PRODUCTION_API_BASE_URL` is configured.
+`docker-compose.yml` is local-only. Pull requests into `dev` run only the
+checks a change touches, with an advisory security scan; a merge into `dev`
+runs nothing and Railway deploys it. The promotion PR into `main` runs the full
+checks with the security scan enforced, and the merge builds each production
+image once, scans it, and publishes it only after the protected GitHub
+`production` environment allows it and `PRODUCTION_API_BASE_URL` is
+configured. `dev` no longer publishes GHCR images.
 
 No GitHub workflow deploys Railway at all, in either environment, and that is
 by design: Railway builds from the repository itself and the published images

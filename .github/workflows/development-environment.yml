@@ -1,37 +1,103 @@
 name: Development environment
 
+# The dev lane. Runs on pull requests into dev, and only on them: the checks
+# here are the gate, and a push to dev re-runs nothing, because with "Require
+# branches to be up to date before merging" on, the merge commit is the tree
+# this workflow just tested. Railway deploys dev from the push.
+#
+# Security is advisory on this lane (enforce: false): a finding shows as a
+# warning and a job-summary note but never blocks the merge. It is enforced on
+# the promotion into main instead (production-environment.yml).
+#
+# Only the parts a change touches are run. Branch protection should require
+# the single `required` job below, never the individual jobs, because a
+# skipped job would otherwise leave its check pending forever.
+
 on:
-  push:
+  pull_request:
     branches: [dev]
-  workflow_dispatch:
 
 permissions:
   contents: read
-  packages: write
 
 concurrency:
-  group: dev-environment
+  group: dev-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.classify.outputs.backend }}
+      frontend: ${{ steps.classify.outputs.frontend }}
+      services: ${{ steps.classify.outputs.services }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # The PR checkout is GitHub's merge commit; its first parent is the
+          # base tip, so HEAD^1..HEAD is exactly what this PR changes.
+          fetch-depth: 2
+      - id: classify
+        shell: bash
+        run: |
+          changed="$(git diff --name-only HEAD^1 HEAD)"
+          printf 'Changed files:\n%s\n' "$changed"
+          backend=false
+          frontend=false
+          # CI, shared actions and the scan config can break any job, so a
+          # change to them runs everything.
+          if grep -qE '^(\.github/|\.grype\.yaml$)' <<<"$changed"; then
+            backend=true
+            frontend=true
+          fi
+          if grep -qE '^(backend/|\.python-version$)' <<<"$changed"; then backend=true; fi
+          # frontend/ includes frontend/android/, so this also covers the APK.
+          if grep -qE '^(frontend/|\.nvmrc$)' <<<"$changed"; then frontend=true; fi
+          services="$(jq -cn --argjson b "$backend" --argjson f "$frontend" \
+            '[if $b then "backend" else empty end, if $f then "frontend" else empty end]')"
+          {
+            echo "backend=${backend}"
+            echo "frontend=${frontend}"
+            echo "services=${services}"
+          } >> "$GITHUB_OUTPUT"
+          echo "backend=${backend} frontend=${frontend} services=${services}"
+
   application:
-    if: github.ref == 'refs/heads/dev'
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'
     uses: ./.github/workflows/reusable-application-checks.yml
-  containers:
-    if: github.ref == 'refs/heads/dev'
-    uses: ./.github/workflows/reusable-container-checks.yml
-  # Gate only. dev builds the APK to prove it still compiles, then throws it
-  # away: releases are published from main, so nothing here reaches a device.
-  android:
-    if: github.ref == 'refs/heads/dev'
-    uses: ./.github/workflows/reusable-android-checks.yml
-  publish:
-    if: github.ref == 'refs/heads/dev'
-    needs: [application, containers]
-    uses: ./.github/workflows/reusable-container-publish.yml
     with:
-      environment: dev
-      channel: dev
-      revision: ${{ github.sha }}
-      api_base_url: https://videolens-backend-dev.up.railway.app
-    secrets: inherit
+      backend: ${{ needs.changes.outputs.backend == 'true' }}
+      frontend: ${{ needs.changes.outputs.frontend == 'true' }}
+
+  # Gate only: proves the Capacitor sync and Gradle build still work, then
+  # discards the APK. Releases are built and published from main.
+  android:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    uses: ./.github/workflows/reusable-android-checks.yml
+
+  security:
+    needs: changes
+    if: needs.changes.outputs.services != '[]'
+    uses: ./.github/workflows/reusable-security-scan.yml
+    with:
+      enforce: false
+      services: ${{ needs.changes.outputs.services }}
+
+  required:
+    name: required
+    needs: [changes, application, android, security]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: All required jobs passed or were not needed
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "Job results: ${RESULTS}"
+          if jq -e 'any(.[]; . == "failure" or . == "cancelled")' <<<"$RESULTS" >/dev/null; then
+            echo "::error::A required job failed or was cancelled."
+            exit 1
+          fi
