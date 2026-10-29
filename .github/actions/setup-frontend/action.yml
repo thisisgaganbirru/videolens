@@ -1,0 +1,18 @@
+name: Set up frontend
+description: >-
+  Node from /.nvmrc with the npm cache, then `npm ci` in frontend/. Used by the
+  frontend checks and by the Android build, which runs the same web build
+  before Capacitor sync.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      with:
+        node-version-file: .nvmrc
+        cache: npm
+        cache-dependency-path: frontend/package-lock.json
+    - name: Install frontend dependencies
+      shell: bash
+      working-directory: frontend
+      run: npm ci

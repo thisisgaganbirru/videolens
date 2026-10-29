@@ -2,6 +2,17 @@ name: Reusable application checks
 
 on:
   workflow_call:
+    inputs:
+      backend:
+        description: Run the backend job. Callers pass false when a change touches no backend files.
+        required: false
+        default: true
+        type: boolean
+      frontend:
+        description: Run the frontend job. Callers pass false when a change touches no frontend files.
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -9,6 +20,7 @@ permissions:
 jobs:
   backend:
     name: Backend
+    if: inputs.backend
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -32,12 +44,7 @@ jobs:
             fi
           done
           echo "Python pin agrees everywhere: ${want}"
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version-file: .python-version
-          cache: pip
-          cache-dependency-path: backend/requirements.txt
-      - run: pip install --require-hashes -r requirements.txt
+      - uses: ./.github/actions/setup-backend
       - run: python -m compileall -q app
       - run: python -m unittest discover -s tests
       - run: python -c "import app.main; import app.worker"
@@ -46,6 +53,7 @@ jobs:
 
   frontend:
     name: Frontend
+    if: inputs.frontend
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -66,12 +74,7 @@ jobs:
             exit 1
           fi
           echo "Node pin agrees: ${want}"
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
+      - uses: ./.github/actions/setup-frontend
       - run: npx tsc --noEmit
       - run: npm run build
       - run: npm run build:mobile
