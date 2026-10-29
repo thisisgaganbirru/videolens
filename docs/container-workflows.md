@@ -289,6 +289,15 @@ no `.grype.yaml` entry. Regenerate `frontend/package-lock.json` with npm 11
 (the npm in `node:24`): npm 10 strips the `libc` fields from the `@img/sharp-*`
 entries, which is what lets `npm ci` on Alpine skip the glibc builds.
 
+On 2026-10-29 the frontend image failed again, this time on the Node binary in
+the base image: `node` 24.20.0 (CVE-2026-111497, Critical and on CISA's KEV
+list, plus CVE-2026-105482/105483/106069 High; fixed in 24.22.1). Fixed by
+moving `NODE_IMAGE` to the current `node:24-alpine` digest
+(`sha256:8a32c8cf...`, Node 24.22.2, built 2026-10-28; linux/amd64 and arm64
+present). Docker Hub's anonymous quota was exhausted from the agent's egress
+IP, so the digest was read from `mirror.gcr.io`, which serves official images
+with identical digests; the image config's `NODE_VERSION` confirmed 24.22.2.
+
 ### Runtime versions
 
 **Policy: pin the newest LTS major, never `latest`.** Current: **Node 24**,
@@ -629,3 +638,4 @@ jobs.
 - 2026-10-02 · frontend agent · cleared the frontend Grype gate failure (next 16.3.0 Criticals GHSA-p293-qw3h-jr36 / GHSA-2xp9-vwfh-vxw4 / GHSA-vcvr-r3jv-pc5j; sharp 0.35.3 High GHSA-rgj7-g3m4-5g8c): `next` + `eslint-config-next` to `^16.3.8`, `sharp` override `0.35.3` -> `0.35.4`; documented that the exact `sharp` override must be bumped by hand since a `next` bump cannot move it. `.grype.yaml` untouched (no frontend entries existed)
 - 2026-10-02 · ci-cache agent · stopped the GHA cache restoring the final image stage (`no-cache-filters: runtime`/`runner`) in both `reusable-container-checks.yml` and `reusable-container-publish.yml` so OS-package upgrades always run and the shipped image matches the scanned one; resolved the apt-layer Known issue. Removed the dead `CVE-2026-15308` rule from `.grype.yaml` (now `ignore: []`; Grype DB v6.1.9 NVD range for 3.13 is `< 3.13.15`, image is 3.13.16) and rewrote the gate section as an exception list with that rule's history
 - 2026-10-28 · claude (session ccr-ee9ca9d3) · cleared the 2026-10-28 Grype failures on both images (next 16.4.x, sharp 0.35.5, zlib floor, certifi 2026.10.23) and noted the npm 11 lockfile requirement
+- 2026-10-29 · claude (session ccr-ee9ca9d3) · moved the frontend `NODE_IMAGE` digest to Node 24.22.2 for CVE-2026-111497 (KEV)
