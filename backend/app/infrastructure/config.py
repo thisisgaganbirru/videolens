@@ -51,8 +51,9 @@ class Settings(BaseSettings):
     s3_secret_access_key: str = ""
     # "auto" lets botocore pick, which with a custom endpoint means path-style
     # (https://endpoint/bucket) - what MinIO in docker-compose needs. Railway
-    # Buckets document virtual-hosted style (https://bucket.endpoint), so set
-    # "virtual" there.
+    # Buckets created after Railway's switch want virtual-hosted style
+    # (https://bucket.endpoint); older ones still want "path". The bucket's
+    # Credentials tab says which, and the wrong one fails HeadBucket with 403.
     s3_addressing_style: str = "auto"
 
     auth_jwks_url: str = ""

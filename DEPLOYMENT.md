@@ -218,13 +218,17 @@ WORKER_JOB_TIMEOUT_SECONDS=600
 TEMP_DIR=/tmp/videolens
 ALLOWED_ORIGINS=https://app.example.com
 REDIS_URL=<Railway Redis URL>
-S3_ENDPOINT_URL=<S3-compatible endpoint>
-S3_REGION=auto
-S3_BUCKET=videolens-media
-S3_ACCESS_KEY_ID=<secret>
-S3_SECRET_ACCESS_KEY=<secret>
-# Railway Buckets use virtual-hosted URLs; MinIO needs the default (auto)
-S3_ADDRESSING_STYLE=virtual
+# On Railway, reference the bucket instead of pasting values, so a rotated key
+# or the hashed S3 bucket name can never go stale (bucket here: videolens-dev-media):
+S3_ENDPOINT_URL=${{videolens-dev-media.ENDPOINT}}
+S3_REGION=${{videolens-dev-media.REGION}}
+S3_BUCKET=${{videolens-dev-media.BUCKET}}
+S3_ACCESS_KEY_ID=${{videolens-dev-media.ACCESS_KEY_ID}}
+S3_SECRET_ACCESS_KEY=${{videolens-dev-media.SECRET_ACCESS_KEY}}
+# Use the URL style the bucket's Credentials tab names. Buckets created before
+# Railway moved to virtual-hosted URLs (videolens-dev-media, 2026-08-13) need
+# `path`; newer ones take `virtual`. The wrong one is a bare 403 on HeadBucket.
+S3_ADDRESSING_STYLE=path
 AUTH_JWKS_URL=<OIDC JWKS URL>
 AUTH_ISSUER=<OIDC issuer>
 AUTH_AUDIENCE=<OIDC audience>
