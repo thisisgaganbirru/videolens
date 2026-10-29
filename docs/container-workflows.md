@@ -280,7 +280,11 @@ console has a loopback host port.
   the only build arg is `NEXT_PUBLIC_API_BASE_URL`, which is compiled into
   client-side JS and therefore public by construction.
 - Third-party GitHub Actions are pinned to commit SHAs. Dependabot monitors
-  Docker, Actions, npm, and Python dependency sources.
+  Docker, Actions, npm, and Python dependency sources. Every entry sets
+  `target-branch: dev`, so bumps go through the dev lane like any other change
+  instead of landing on `main` directly, and Actions, npm minor/patch and pip
+  minor/patch are each grouped into one weekly PR. npm and pip majors stay
+  separate PRs; Tailwind majors are ignored (staying on v3 deliberately).
 - Dependabot's Docker ecosystem bumps base-image digests only; it never looks
   inside a `RUN` layer. Package constraints written there (`apk add`, `pip
   install`) must therefore be `>=` security floors, not exact pins — an exact
@@ -385,11 +389,12 @@ Each runtime is declared in exactly **two** places, not eight:
 | Python | `backend/Dockerfile` `ARG PYTHON_IMAGE` | `python:3.13-slim` + digest |
 
 Everything else reads from those. The workflows carry no version literal at
-all: `reusable-application-checks.yml` uses `python-version-file:
-.python-version` and `node-version-file: .nvmrc`, and
-`reusable-android-checks.yml` uses `node-version-file: .nvmrc`. Both inputs
-were verified present on the exact pinned action SHAs
-(`actions/setup-node@49933ea5`, `actions/setup-python@a26af69b`) — if you ever
+all: the composite actions `.github/actions/setup-backend` (`python-version-file:
+.python-version`) and `.github/actions/setup-frontend` (`node-version-file:
+.nvmrc`) read them, and every job that needs a runtime goes through those two.
+Both inputs were verified present on the exact pinned action SHAs
+(`actions/setup-node@49933ea5`; `actions/setup-python@5fda3b95` v7.0.0,
+re-checked against that tag's `action.yml` on 2026-10-29) — if you ever
 bump those pins, re-check, and never bump an action version just to get an
 input. Inside the Dockerfiles a single global `ARG` before the first `FROM`
 feeds every stage (`FROM ${NODE_IMAGE}` three times, `FROM ${PYTHON_IMAGE}`
@@ -711,3 +716,4 @@ jobs.
 - 2026-10-28 · claude (session ccr-ee9ca9d3) · cleared the 2026-10-28 Grype failures on both images (next 16.4.x, sharp 0.35.5, zlib floor, certifi 2026.10.23) and noted the npm 11 lockfile requirement
 - 2026-10-29 · claude (session ccr-ee9ca9d3) · moved the frontend `NODE_IMAGE` digest to Node 24.22.2 for CVE-2026-111497 (KEV)
 - 2026-10-29 · claude (session ccr-ee9ca9d3) · CI redesign: three independent lanes (dev PR-only and path-filtered, production with enforced security, nightly advisory scan), build-once/scan/promote publish, `required` aggregate checks, composite setup actions; dropped the `dev` GHCR publish and the duplicate push re-runs
+- 2026-10-29 · claude (session ccr-ee9ca9d3) · bumped checkout v7.0.1, setup-buildx v4.3.0, setup-java v6.0.0, download-artifact v8.0.1, setup-python v7.0.0 (inputs re-verified per tag); Dependabot now targets `dev` with grouped updates and a Tailwind-major ignore
