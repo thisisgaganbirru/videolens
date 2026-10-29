@@ -6,7 +6,7 @@
 # fails the build if they drift (reusable-application-checks.yml). The digest
 # has to be a literal here and cannot move into .nvmrc: it is a content hash,
 # not something derivable from a version string.
-ARG NODE_IMAGE=node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf
+ARG NODE_IMAGE=node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85
 
 FROM ${NODE_IMAGE} AS deps
 WORKDIR /app
@@ -36,7 +36,11 @@ ENV HOSTNAME=0.0.0.0 \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000
 
-RUN apk add --no-cache --upgrade 'openssl>=3.5.7-r0' \
+# CI rebuilds this whole `runner` stage on every build (`no-cache-filters` in
+# reusable-container-checks.yml and reusable-container-publish.yml) so a cached
+# layer cannot pin openssl below a newer Alpine security fix. Renaming the
+# stage means updating both workflows.
+RUN apk add --no-cache --upgrade 'openssl>=3.5.7-r0' 'zlib>=1.3.2-r1' \
     && rm -rf /usr/local/lib/node_modules/npm \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx
 

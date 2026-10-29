@@ -29,6 +29,15 @@ jobs:
           cache-from: type=gha,scope=check-${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=check-${{ matrix.service }}
           context: ./${{ matrix.service }}
+          # Always rebuild the final stage. Its OS-package upgrade layer
+          # (`apt-get upgrade` in backend `runtime`, `apk add --upgrade` in
+          # frontend `runner`) is keyed only on the base digest and command
+          # text, so a cache hit silently skips new distro security fixes and
+          # the scan below gates on a stale layer. Earlier stages stay cached.
+          # Stage names must match the `AS` names in each Dockerfile, and must
+          # stay identical to reusable-container-publish.yml so the image that
+          # ships is built the same way as the one scanned here.
+          no-cache-filters: ${{ matrix.service == 'backend' && 'runtime' || 'runner' }}
           load: true
           pull: true
           tags: videolens/${{ matrix.service }}:check

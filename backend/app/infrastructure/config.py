@@ -24,6 +24,13 @@ class Settings(BaseSettings):
 
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.6-flash"
+    # Tried with the already-uploaded file once the primary model has exhausted
+    # its transient (429/5xx) retries. Blank = primary only.
+    gemini_fallback_model: str = ""
+    # Total generate_content attempts on the primary model for 429/5xx, with
+    # full-jitter exponential backoff (2s base, doubling) between them.
+    gemini_retry_attempts: int = 6
+    gemini_retry_max_delay_seconds: float = 20.0
 
     max_file_size_mb: int = 200
     max_duration_seconds: int = 180
@@ -42,6 +49,12 @@ class Settings(BaseSettings):
     s3_bucket: str = ""
     s3_access_key_id: str = ""
     s3_secret_access_key: str = ""
+    # "auto" lets botocore pick, which with a custom endpoint means path-style
+    # (https://endpoint/bucket) - what MinIO in docker-compose needs. Railway
+    # Buckets created after Railway's switch want virtual-hosted style
+    # (https://bucket.endpoint); older ones still want "path". The bucket's
+    # Credentials tab says which, and the wrong one fails HeadBucket with 403.
+    s3_addressing_style: str = "auto"
 
     auth_jwks_url: str = ""
     auth_issuer: str = ""

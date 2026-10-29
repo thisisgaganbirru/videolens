@@ -1,6 +1,8 @@
 import asyncio
 import json
-from typing import Optional
+import logging
+import random
+from typing import Any, Awaitable, Callable, Optional, TypeVar
 
 from google import genai
 from google.genai import types
@@ -10,6 +12,25 @@ from ...domain.errors import AnalysisUnavailableError, GeminiConfigurationError
 from ...domain.ports import StageCallback
 from ..config import Settings
 from .source_context import build_source_context
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+# Full-jitter exponential backoff: retry n sleeps a uniform random amount in
+# [0, min(GEMINI_RETRY_MAX_DELAY_SECONDS, BASE * 2**(n-1))]. The jitter matters
+# because a 503 "high demand" spike hits every worker at once; without it they
+# all come back in lockstep and re-create the spike.
+_BACKOFF_BASE_SECONDS = 2.0
+# The fallback model is a second opinion, not a second full wait: by the time
+# it runs, the primary has already spent its whole retry budget.
+_FALLBACK_ATTEMPTS = 2
+
+
+class _FileProcessingError(RuntimeError):
+    """Gemini accepted the upload but could not process it (FAILED state, or
+    never reached ACTIVE in time). The one failure where re-uploading the file
+    is the right retry, because the uploaded copy itself is the problem."""
 
 SYSTEM_INSTRUCTION = """You are analyzing a short media file. It may be audio-only or a video.
 
@@ -76,9 +97,17 @@ State in the summary that this analysis is based on the caption track alone."""
 class GeminiEngine:
     """AnalysisEngine adapter backed by the Gemini API."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+        rand: Callable[[], float] = random.random,
+    ) -> None:
         self._settings = settings
         self._client: genai.Client | None = None
+        # Injected so tests can assert on backoff delays without waiting them out.
+        self._sleep = sleep
+        self._rand = rand
 
     def _get_client(self, api_key: str | None = None) -> genai.Client:
         # A caller-supplied (bring-your-own) key gets its own client, never cached
@@ -103,14 +132,143 @@ class GeminiEngine:
         elapsed = 0.0
         interval = 2.0
         while elapsed < timeout:
-            file = await client.aio.files.get(name=file_name)
+            # Each poll is an API call that can 429/5xx on its own; give it the
+            # same transient-only backoff rather than failing the whole run.
+            # `elapsed` counts only the 2s poll interval, as before - backoff
+            # time spent inside a poll is not charged against the timeout.
+            file = await self._with_backoff(
+                lambda: client.aio.files.get(name=file_name),
+                attempts=self._settings.gemini_retry_attempts,
+                model=self._settings.gemini_model,
+                operation="files.get",
+            )
             if file.state == types.FileState.ACTIVE:
                 return
             if file.state == types.FileState.FAILED:
-                raise RuntimeError("Gemini failed to process the uploaded video file.")
-            await asyncio.sleep(interval)
+                raise _FileProcessingError("Gemini failed to process the uploaded video file.")
+            await self._sleep(interval)
             elapsed += interval
-        raise RuntimeError("Timed out waiting for Gemini to finish processing the uploaded video.")
+        raise _FileProcessingError(
+            "Timed out waiting for Gemini to finish processing the uploaded video."
+        )
+
+    # ----------------------------------------------------------------- retry
+
+    @staticmethod
+    def _status_of(exc: BaseException) -> Any:
+        # `.code` on google.genai.errors.APIError is the HTTP status int.
+        return getattr(exc, "code", None)
+
+    @classmethod
+    def _is_transient(cls, exc: BaseException) -> bool:
+        return cls._status_of(exc) in cls._TRANSIENT_STATUS
+
+    def _backoff_delay(self, retry_number: int) -> float:
+        """Delay before retry `retry_number` (1-based): full jitter over a
+        doubling ceiling, the ceiling capped at GEMINI_RETRY_MAX_DELAY_SECONDS."""
+        ceiling = min(
+            self._settings.gemini_retry_max_delay_seconds,
+            _BACKOFF_BASE_SECONDS * (2 ** (retry_number - 1)),
+        )
+        return self._rand() * max(ceiling, 0.0)
+
+    async def _with_backoff(
+        self,
+        call: Callable[[], Awaitable[T]],
+        *,
+        attempts: int,
+        model: str,
+        operation: str,
+    ) -> T:
+        """Run `call`, retrying only transient (429/5xx) API errors.
+
+        Anything else - a 400, a parse error, a bug - raises on the first
+        attempt: it would fail identically next time, and waiting only delays
+        the error the user is going to see anyway.
+        """
+        attempts = max(1, attempts)
+        for attempt in range(1, attempts + 1):
+            try:
+                return await call()
+            except Exception as exc:  # noqa: BLE001 - re-raised unless transient
+                if not self._is_transient(exc) or attempt == attempts:
+                    raise
+                delay = self._backoff_delay(attempt)
+                # Status, attempt, and model only - never the exception text or
+                # anything else that could carry request material.
+                logger.warning(
+                    "Gemini %s got transient status %s on model %s (attempt %d/%d); "
+                    "retrying in %.1fs",
+                    operation,
+                    self._status_of(exc),
+                    model,
+                    attempt,
+                    attempts,
+                    delay,
+                )
+                await self._sleep(delay)
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    async def _generate_with_retry(
+        self,
+        client: genai.Client,
+        *,
+        contents: list[Any],
+        config: types.GenerateContentConfig,
+    ) -> Any:
+        """`generate_content` with transient-only backoff on the primary model,
+        then - if GEMINI_FALLBACK_MODEL is set - a short cycle on the fallback.
+
+        `contents` may hold an already-uploaded file; it is reused as-is for
+        the fallback, so falling back never costs a second upload.
+        """
+        primary = self._settings.gemini_model
+
+        def call(model: str) -> Callable[[], Awaitable[Any]]:
+            return lambda: client.aio.models.generate_content(
+                model=model, contents=contents, config=config
+            )
+
+        try:
+            return await self._with_backoff(
+                call(primary),
+                attempts=self._settings.gemini_retry_attempts,
+                model=primary,
+                operation="generate_content",
+            )
+        except Exception as exc:  # noqa: BLE001 - re-raised unless a fallback applies
+            fallback = self._settings.gemini_fallback_model.strip()
+            if not self._is_transient(exc) or not fallback or fallback == primary:
+                raise
+            logger.warning(
+                "Gemini model %s still unavailable (status %s) after %d attempts; "
+                "trying fallback model %s",
+                primary,
+                self._status_of(exc),
+                max(1, self._settings.gemini_retry_attempts),
+                fallback,
+            )
+
+        response = await self._with_backoff(
+            call(fallback),
+            attempts=_FALLBACK_ATTEMPTS,
+            model=fallback,
+            operation="generate_content",
+        )
+        logger.warning(
+            "Gemini fallback model %s served the request (primary %s was unavailable)",
+            fallback,
+            primary,
+        )
+        return response
+
+    @staticmethod
+    def _parse(response: Any) -> VideoAnalysis:
+        if isinstance(response.parsed, VideoAnalysis):
+            return response.parsed
+        if not response.text:
+            raise RuntimeError("Gemini returned an empty response.")
+        return VideoAnalysis(**json.loads(response.text))
 
     async def _analyze(
         self,
@@ -130,14 +288,22 @@ class GeminiEngine:
         if source_context:
             prompt_parts.append(source_context)
 
-        uploaded = await client.aio.files.upload(file=video_path)
+        # Upload once. The upload is an API call too and can 503 on its own,
+        # so it gets the same transient-only backoff - but a generate_content
+        # failure below never sends us back here to upload the file again.
+        uploaded = await self._with_backoff(
+            lambda: client.aio.files.upload(file=video_path),
+            attempts=self._settings.gemini_retry_attempts,
+            model=self._settings.gemini_model,
+            operation="files.upload",
+        )
         try:
             await self._wait_until_active(client, uploaded.name)
 
             if on_stage:
                 await on_stage("analyzing")
-            response = await client.aio.models.generate_content(
-                model=self._settings.gemini_model,
+            response = await self._generate_with_retry(
+                client,
                 contents=[uploaded, *prompt_parts],
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_INSTRUCTION,
@@ -145,13 +311,7 @@ class GeminiEngine:
                     response_schema=VideoAnalysis,
                 ),
             )
-
-            if isinstance(response.parsed, VideoAnalysis):
-                return response.parsed
-
-            if not response.text:
-                raise RuntimeError("Gemini returned an empty response.")
-            return VideoAnalysis(**json.loads(response.text))
+            return self._parse(response)
         finally:
             try:
                 await client.aio.files.delete(name=uploaded.name)
@@ -179,8 +339,8 @@ class GeminiEngine:
             parts.append(source_context)
 
         try:
-            response = await client.aio.models.generate_content(
-                model=self._settings.gemini_model,
+            response = await self._generate_with_retry(
+                client,
                 contents=parts,
                 config=types.GenerateContentConfig(
                     system_instruction=CAPTION_SYSTEM_INSTRUCTION,
@@ -191,11 +351,7 @@ class GeminiEngine:
         except Exception as exc:  # noqa: BLE001 - mapped, then re-raised as-is
             raise self._as_domain_error(exc) from exc
 
-        if isinstance(response.parsed, VideoAnalysis):
-            return response.parsed
-        if not response.text:
-            raise RuntimeError("Gemini returned an empty response.")
-        return VideoAnalysis(**json.loads(response.text))
+        return self._parse(response)
 
     # 429 and 5xx are the API saying "not now" - the request was well-formed and
     # the media was fine, so the honest advice is to wait rather than to go and
@@ -223,15 +379,37 @@ class GeminiEngine:
         api_key: str | None = None,
         metadata: Optional[SourceMetadata] = None,
     ) -> VideoAnalysis:
-        last_error: Exception | None = None
-        for attempt in range(attempts):
+        """Analyze `video_path`, mapping a final transient failure onto
+        AnalysisUnavailableError.
+
+        API-level retries (429/5xx with backoff, then the optional fallback
+        model) happen inside `_analyze`, around the one call that failed. This
+        outer `attempts` loop survives for exactly one case: Gemini accepted
+        the upload but failed to process it or never made it ACTIVE - the only
+        failure where re-uploading is the actual fix. Everything else
+        propagates on the first attempt so ProcessRunUseCase can mask it and
+        log the traceback.
+        """
+        attempts = max(1, attempts)
+        for attempt in range(1, attempts + 1):
             try:
                 return await self._analyze(
                     video_path, on_stage=on_stage, api_key=api_key, metadata=metadata
                 )
-            except Exception as exc:  # noqa: BLE001
-                last_error = exc
-                if attempt < attempts - 1:
-                    await asyncio.sleep(2)
-        assert last_error is not None
-        raise self._as_domain_error(last_error)
+            except _FileProcessingError as exc:
+                if attempt == attempts:
+                    raise
+                logger.warning(
+                    "Gemini could not process the uploaded file (%s); re-uploading "
+                    "(attempt %d/%d)",
+                    exc,
+                    attempt,
+                    attempts,
+                )
+                await self._sleep(_BACKOFF_BASE_SECONDS)
+            except Exception as exc:  # noqa: BLE001 - mapped, then re-raised
+                mapped = self._as_domain_error(exc)
+                if mapped is exc:
+                    raise
+                raise mapped from exc
+        raise AssertionError("unreachable")  # pragma: no cover
