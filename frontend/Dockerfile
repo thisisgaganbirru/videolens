@@ -6,7 +6,7 @@
 # fails the build if they drift (reusable-application-checks.yml). The digest
 # has to be a literal here and cannot move into .nvmrc: it is a content hash,
 # not something derivable from a version string.
-ARG NODE_IMAGE=node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf
+ARG NODE_IMAGE=node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85
 
 FROM ${NODE_IMAGE} AS deps
 WORKDIR /app
