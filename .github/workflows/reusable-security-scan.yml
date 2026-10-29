@@ -1,0 +1,107 @@
+name: Reusable security scan
+
+# Dockerfile check, native image build and Grype scan for fixable high and
+# critical vulnerabilities. One definition, three callers:
+#   production-environment.yml   -> PRs into main, enforce: true (a finding
+#     fails the job, so the promotion cannot merge)
+#   development-environment.yml  -> PRs into dev, enforce: false
+#   security-nightly-scan.yml    -> main on a schedule, enforce: false
+#
+# Advisory mode (enforce: false) must finish green. Railway's Wait for CI skips
+# a deploy when ANY workflow on the commit failed, so a red advisory scan would
+# silently block the dev deploy (or, for the nightly run on main, a production
+# redeploy). Findings are reported through a warning, the job summary and a
+# `security-findings-<service>` artifact instead.
+
+on:
+  workflow_call:
+    inputs:
+      enforce:
+        description: Fail the job on findings. false reports them and stays green.
+        required: true
+        type: boolean
+      services:
+        description: JSON list of images to scan, a subset of ["backend","frontend"].
+        required: false
+        default: '["backend","frontend"]'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(inputs.services) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+      - name: Check Dockerfile
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          call: check
+          context: ./${{ matrix.service }}
+      - name: Build image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          cache-from: type=gha,scope=check-${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=check-${{ matrix.service }}
+          context: ./${{ matrix.service }}
+          # Always rebuild the final stage. Its OS-package upgrade layer
+          # (`apt-get upgrade` in backend `runtime`, `apk add --upgrade` in
+          # frontend `runner`) is keyed only on the base digest and command
+          # text, so a cache hit silently skips new distro security fixes and
+          # the scan below gates on a stale layer. Earlier stages stay cached.
+          # Stage names must match the `AS` names in each Dockerfile, and must
+          # stay identical to reusable-container-publish.yml so the image that
+          # is published is built the same way as the one scanned here.
+          no-cache-filters: ${{ matrix.service == 'backend' && 'runtime' || 'runner' }}
+          load: true
+          pull: true
+          tags: videolens/${{ matrix.service }}:check
+      - name: Scan fixable high and critical vulnerabilities
+        id: scan
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        # The gate itself never changes between modes: fail-build, only-fixed
+        # and severity-cutoff stay as they are. Advisory mode only stops a
+        # failed scan from failing the job.
+        continue-on-error: ${{ !inputs.enforce }}
+        with:
+          cache-db: true
+          # Repo-root Grype config carrying documented, per-CVE exceptions.
+          # Passed explicitly rather than relying on cwd auto-detection: Grype
+          # hard-errors on a missing `-c` path but silently skips a config it
+          # merely failed to auto-detect, so this makes a renamed or deleted
+          # config a red job instead of a quietly widened gate.
+          config: .grype.yaml
+          fail-build: true
+          image: videolens/${{ matrix.service }}:check
+          only-fixed: true
+          output-format: table
+          severity-cutoff: high
+      - name: Report advisory findings
+        if: ${{ !inputs.enforce && steps.scan.outcome == 'failure' }}
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: |
+          msg="Fixable high/critical vulnerabilities in the ${SERVICE} image. Advisory here; the production promotion will fail on them. See the scan step's log for the table."
+          echo "::warning title=Security scan (${SERVICE})::${msg}"
+          {
+            echo "### Security findings: ${SERVICE}"
+            echo
+            echo "${msg}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p security-findings
+          echo "${msg}" > "security-findings/${SERVICE}.txt"
+      - name: Upload advisory findings
+        if: ${{ !inputs.enforce && steps.scan.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: security-findings-${{ matrix.service }}
+          path: security-findings/
+          retention-days: 7

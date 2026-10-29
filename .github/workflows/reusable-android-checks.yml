@@ -1,10 +1,10 @@
 name: Reusable Android checks
 
-# Single definition of the Android build. Called three ways:
-#   pull-request-checks.yml     -> pre-merge gate, upload_apk: false
-#   development-environment.yml -> dev gate, upload_apk: false
-#   production-environment.yml  -> main, upload_apk: true, then a separate
-#     release job in that workflow consumes the artifact.
+# Single definition of the Android build. Called two ways:
+#   development-environment.yml -> PRs into dev that touch frontend/, as a
+#     gate: upload_apk false, the APK is discarded.
+#   production-environment.yml  -> push to main, upload_apk true, then a
+#     separate release job in that workflow consumes the artifact.
 # This workflow never creates a tag or a release; it is capped at contents: read.
 
 on:
@@ -19,8 +19,8 @@ on:
         description: >-
           Backend URL compiled into the APK as NEXT_PUBLIC_API_BASE_URL.
           Required whenever upload_apk is true, because that APK reaches real
-          devices. Gate-only callers (PR, main) may omit it: their APK is built
-          to prove it compiles and is then discarded, never installed.
+          devices. The gate-only caller (PRs into dev) omits it: that APK is
+          built to prove it compiles and is then discarded, never installed.
         required: false
         default: ""
         type: string
@@ -94,24 +94,8 @@ jobs:
           # versionCode is the commit count below, which is 1 at the default
           # fetch-depth of 1 - every build would claim to be version 1.
           fetch-depth: 0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
-        with:
-          distribution: temurin
-          java-version: "21"
-          cache: gradle
-      # v4.0.2+ is required. v3.x defaults its `packages` input to
-      # "tools platform-tools", and Google removed the long-deprecated `tools`
-      # package from the SDK repository in Sep 2026, so v3 fails inside its own
-      # setup with "Failed to find package 'tools'" before our sdkmanager line
-      # ever runs. v4 defaults to "platform-tools" only (and runs on Node 24).
-      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
-      - run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
-      - run: npm ci
+      - uses: ./.github/actions/setup-frontend
+      - uses: ./.github/actions/setup-android
       # `android:sync` runs `build:mobile`, and Next inlines NEXT_PUBLIC_* at
       # build time — so this value is baked into the static export the APK
       # ships, not read at runtime. It has to be set here, or the APK is

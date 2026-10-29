@@ -241,10 +241,12 @@ resources. Point the frontend's
 - Provision Redis and an S3-compatible bucket, then share their variables with
   the API and worker services.
 
-GitHub Actions is separated by environment and responsibility: pull requests
-run application and container checks, `dev` publishes signed dev images and a
-separate Android dev build, and `main` publishes signed production images only
-after all checks and the protected `production` environment gate pass. See
+GitHub Actions runs three independent lanes: pull requests into `dev` run only
+the checks a change touches, with an advisory security scan; the promotion into
+`main` runs the full checks with the security scan enforced, and the merge
+builds, scans and publishes the production images and the Android release
+behind the protected `production` environment; a nightly scan of `main` opens
+an issue when a new vulnerability lands. See
 `docs/container-workflows.md` for the exact workflow and deployment boundaries.
 
 ### Cost protection
