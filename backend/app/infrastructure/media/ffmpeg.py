@@ -101,7 +101,18 @@ async def _has_video_stream(settings: Settings, path: str) -> bool:
         stderr=asyncio.subprocess.PIPE,
     )
     stdout, _ = await proc.communicate()
-    return proc.returncode == 0 and stdout.strip() == b"video"
+    return proc.returncode == 0 and _first_csv_field(stdout) == b"video"
+
+
+def _first_csv_field(stdout: bytes) -> bytes:
+    """ffprobe's csv writer appends a trailing comma (and can add further
+    lines) when the stream carries side data - a phone video's rotation
+    matrix, or the ambient-viewing block on Instagram's VP9 reels - so the
+    output is `video,` rather than `video`. Comparing the whole output sent
+    those files down the audio-only path, which drops the picture with `-vn`
+    and fails outright when there is no audio track either."""
+    lines = stdout.strip().splitlines()
+    return lines[0].split(b",")[0].strip() if lines else b""
 
 
 async def normalize_media(settings: Settings, src_path: str, run_dir: str) -> str:

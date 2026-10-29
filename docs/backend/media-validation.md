@@ -4,7 +4,7 @@ Everything about getting a valid media file onto local disk: upload handling, UR
 
 **Files** (all under `backend/app/infrastructure/media/`)
 - `uploads.py` — `save_upload` (streams an uploaded file to disk in 1MB chunks, extension allowlist, size cap), `create_run_dir`/`cleanup_run_dir`, `validate_temp_dir` (startup guard, below).
-- `ffmpeg.py` — `_media_binary` (resolves the ffmpeg/ffprobe path, either from `FFMPEG_LOCATION` or `PATH`), `probe_duration_seconds`, `enforce_duration_cap`, `normalize_media` (re-encodes to H.264/AAC mp4 if a video stream is present, else mp3), `_has_video_stream`.
+- `ffmpeg.py` — `_media_binary` (resolves the ffmpeg/ffprobe path, either from `FFMPEG_LOCATION` or `PATH`), `probe_duration_seconds`, `enforce_duration_cap`, `normalize_media` (re-encodes to H.264/AAC mp4 if a video stream is present, else mp3), `_has_video_stream`. `_has_video_stream` reads only the first CSV field of ffprobe's output: a stream with side data (phone rotation matrix, the ambient-viewing block on Instagram VP9 reels) prints `video,` not `video`, and the old exact match sent those files down the `-vn` mp3 path, losing the picture, or failing with "Output file does not contain any stream" when there was no audio either. Fixed 2026-10-28; `tests/infrastructure/media/test_ffmpeg.py`.
 - `net.py` — `validate_public_url` (**SSRF guard**), shared by every resolver.
 - `ytdlp_downloader.py` — `_cookie_options`, `download_url` (the yt-dlp fetch itself).
 - `captions.py` — `fetch_captions`, the subtitle salvage path used when every resolver has failed.
@@ -87,3 +87,4 @@ No test coverage for `ffmpeg.py` directly (it requires an actual ffmpeg binary).
 - 2026-08-29 · main session · extracted the SSRF guard into `net.py`; put `download_url` behind an ordered `ResolverChain` and added `DirectHttpResolver` as the fallback route
 - 2026-08-29 · main session · added `captions.py` (subtitle salvage) and shared `_source_metadata_from_info` between the download and caption paths
 - 2026-08-29 · main session · merged dev: `net.py` carries dev's user-facing wording plus `log_detail`, and the resolvers follow the same split
+- 2026-10-28 · claude (session ccr-ee9ca9d3) · fixed `_has_video_stream` misreading streams with side data as audio-only (broke a video-only Instagram reel in dev)

@@ -11,9 +11,8 @@ is never reused as a hosted deployment manifest.
 | --- | --- | --- | --- |
 | Local workspace | `scripts/workspace.ps1` and `docker-compose.yml` | Hardened frontend, API, worker, Redis, and MinIO on loopback/private networks | Nothing external |
 | Pull request | `.github/workflows/pull-request-checks.yml` | Application checks, native container builds/scans, and the Android build/unit tests for PRs targeting `dev` or `main` | Nothing |
-| Dev | `.github/workflows/development-environment.yml` on `dev` | Application checks and container checks | Signed amd64/arm64 images tagged `dev` and `sha-<commit>` in GHCR |
-| Android dev | `.github/workflows/android-development-build.yml` on `dev` | Android API 36 build and unit tests | Debug artifact and dev prerelease |
-| Production | `.github/workflows/production-environment.yml` on `main` | Application checks, container checks, and the Android build/unit tests | Signed amd64/arm64 images tagged `latest` and `sha-<commit>` in GHCR |
+| Dev | `.github/workflows/development-environment.yml` on `dev` | Application checks, container checks, and the Android build/unit tests | Signed amd64/arm64 images tagged `dev` and `sha-<commit>` in GHCR |
+| Production | `.github/workflows/production-environment.yml` on `main` | Application checks, container checks, and the Android build/unit tests | Signed amd64/arm64 images tagged `latest` and `sha-<commit>` in GHCR, plus the debug APK as a GitHub Release |
 
 Workflow filenames use lowercase kebab-case. Call-only building blocks follow
 `reusable-<responsibility>.yml`; event-driven entry points follow
@@ -31,13 +30,13 @@ creates a tag or a release. Three callers:
   this is the only thing that catches a broken Capacitor sync or Gradle build
   before it lands. It costs roughly 6-10 minutes of extra PR CI wall-clock, in
   parallel with the application and container jobs.
-- `production-environment.yml` — same gate on `main`. It does not block the
-  container publication job, which has no Android dependency; an Android failure
-  still fails the workflow run.
-- `android-development-build.yml` — passes `upload_apk: true`, so the reusable
+- `development-environment.yml` — same gate on `dev`. Builds the APK to prove
+  the Capacitor sync and Gradle build still work, then discards it. Nothing on
+  `dev` reaches a device.
+- `production-environment.yml` — passes `upload_apk: true`, so the reusable
   also writes `version.json` and uploads the APK as a workflow artifact. A
-  separate `release` job in that workflow (the only job holding
-  `contents: write`) downloads the artifact and publishes the dev prerelease.
+  separate `release` job in that workflow (the only job in the repository
+  holding `contents: write`) downloads the artifact and publishes the release.
 
 #### The APK's backend URL
 
@@ -47,11 +46,10 @@ creates a tag or a release. Three callers:
 inlines every `NEXT_PUBLIC_*` value into the static export, so the URL is
 compiled into the APK and cannot be changed after the fact.
 
-Only `android-development-build.yml` passes it (the dev Railway backend, the
-same URL `development-environment.yml` compiles the dev frontend image
-against). The PR and `main` callers deliberately omit it: those builds exist
-to prove the Android project still compiles and their APK is discarded, never
-installed.
+Only `production-environment.yml` passes it (the production Railway backend,
+matching the images that workflow publishes). The PR and `dev` callers
+deliberately omit it: those builds exist to prove the Android project still
+compiles and their APK is discarded, never installed.
 
 A validation step fails the build when `upload_apk: true` and `api_base_url`
 is empty, mirroring the frontend-scoped check in
@@ -63,11 +61,38 @@ every request fails with "Can't reach the server", while CI stays green
 because the APK builds perfectly. Every APK published before 2026-08-16
 shipped this way.
 
-The release step passes `target_commitish: ${{ github.sha }}`. Without it GitHub
-creates the tag at the repository default branch (`main`) while the APK is built
-from the pushed `dev` commit, so the tag does not describe the artifact —
-observed on `dev-v1.1.0-build28`. `workflow_dispatch` runs build and test only;
-the release job is gated on `github.event_name == 'push'`.
+The release step passes `target_commitish: ${{ github.sha }}`, pinning the tag
+to the commit the APK was built from rather than to wherever the branch tip has
+since moved. It mattered more when releases ran on `dev`, where GitHub would
+otherwise create the tag on the default branch (`main`) and the tag would not
+describe the artifact at all — observed on `dev-v1.1.0-build28`. Now that
+releases run on `main` the two usually coincide, but a concurrent merge is
+enough to separate them. `workflow_dispatch` runs build and test only; the
+release job is gated on `github.event_name == 'push'`.
+
+### Tag scheme and versionCode
+
+Releases are tagged `v<versionName>-build<versionCode>`; `versionName` is read
+from `frontend/package.json` and `versionCode` is `git rev-list --count HEAD`.
+
+`versionCode` used to be `github.run_number`. That is scoped to one workflow,
+so moving publication from `android-development-build.yml` (at run 30) to
+`production-environment.yml` (its own counter, near zero) would have made the
+next release claim a **lower** code than the builds already installed — and a
+code that goes backwards is not cosmetic. Android refuses to install an APK
+below the installed code, and `updateCheck.ts` compares codes to decide a newer
+build exists, so every device would have been stranded on build 30 with no way
+forward. Commit count is a property of the history rather than of a workflow,
+so it survived the move (181 at the time, against 30) and keeps climbing.
+
+Two consequences worth knowing:
+
+- The Android job checks out with `fetch-depth: 0`. At the default depth of 1,
+  `git rev-list --count HEAD` returns 1 and every build claims to be version 1.
+- `GithubReleaseCatalog._TAG` accepts an optional `dev-` prefix. Builds 1-30
+  were published from `dev` as `dev-v<version>-build<code>` and are still the
+  newest build on some devices; `latest` is the first *parseable* tag, so
+  dropping the old form would have left those devices seeing no updates.
 
 ### Release notes
 
@@ -152,6 +177,18 @@ console has a loopback host port.
   shared Dockerfile can satisfy both — see *Known issues*.
 - Container checks run Dockerfile validation, cached native builds, and fail on
   fixable high or critical vulnerabilities.
+- **The final stage is never restored from cache.** Both the check build and
+  the publication build pass `no-cache-filters` with the image's last stage
+  (`runtime` for backend, `runner` for frontend). That stage holds the
+  OS-package upgrade (`apt-get upgrade` / `apk add --upgrade 'openssl>=...'`),
+  whose cache key is only the base digest plus the command text; restored from
+  the GHA cache it would never pick up a Debian/Alpine security release, so
+  the scan would gate on a stale layer. Earlier stages (`wheels`, `deps`,
+  `builder`) stay cached; only the final stage rebuilds. The value is the
+  same expression in both workflows, so the image that ships is built the
+  same way as the image that was scanned. Renaming either Dockerfile's final
+  stage means updating both workflows: a filter naming a stage that does not
+  exist is silently a no-op, which would bring the stale-layer problem back.
 - Publications build `linux/amd64` and `linux/arm64`, attach maximum provenance
   and an SBOM, and publish a commit-addressable tag.
 - **Images are deliberately not signed.** Keyless Cosign signing was removed: it
@@ -183,11 +220,14 @@ console has a loopback host port.
   (`'openssl>=3.5.7-r0'`), or the shell reads `>` as redirection and drops it
   silently.
 
-### The vulnerability gate and its one exception
+### The vulnerability gate and its exception list
 
 The gate lives entirely in `reusable-container-checks.yml`:
 `severity-cutoff: high`, `only-fixed: true`, `fail-build: true`. Exceptions
 live in the repo-root **`.grype.yaml`**, never in those three settings.
+
+**There are currently no exceptions**: `.grype.yaml` holds `ignore: []`.
+The file is kept, empty, on purpose (see below).
 
 **`.grype.yaml` is at the repo root because that is `$GITHUB_WORKSPACE`** —
 where `actions/checkout` puts the tree, and therefore Grype's working
@@ -199,46 +239,64 @@ missing file given via `-c`, but `continue`s silently past a file it merely
 failed to auto-detect. Explicit wiring turns a renamed or deleted config into a
 red job instead of a quietly widened gate that looks identical to a working
 one. Setting `config:` disables auto-detection, which is fine — this is the
-only Grype config in the repo.
+only Grype config in the repo. It also means **do not delete the file when the
+list is empty**: the scan step would fail on the missing path.
 
-The single exception, added 2026-08-16:
+**How to add an exception, if one is ever needed.** Only when there is no
+shippable fix (e.g. the fix version is assigned but unreleased), never to make
+a fixable finding go away. Scope it with `vulnerability` + `package.name` +
+`package.type` (Grype ANDs every criterion, so that suppresses exactly one
+CVE on one package of one type and cannot mask anything else) and leave
+`include-aliases` at its default `false`. Record in the entry's comment the
+date, the approver, why no fix can ship, measured risk (severity / EPSS /
+Grype risk), and an explicit removal condition. **Do not weaken the gate
+instead**: dropping `severity-cutoff` to `critical` silences one finding by
+also silencing every future High across both images, permanently and
+invisibly; flipping `only-fixed` off widens rather than narrows the gate.
 
-| Field | Value |
-|---|---|
-| CVE | `CVE-2026-15308` |
-| Package | `python` 3.13.15, type `binary` (backend image only) |
-| Severity / EPSS / risk | High / 0.6% (47th pct) / 0.5 |
-| Fix version | 3.15.0 — **unreleased** |
+**History: `CVE-2026-15308` (added 2026-08-16, removed 2026-10-02).** High,
+`python` type `binary`, backend only (an `html.parser` CPU DoS). It was
+ignored because Grype named 3.15.0 as the fix and `python:3.15-slim` did not
+exist (Docker Hub 404 on 2026-08-16). It was removed once it stopped matching:
+the base image moved to CPython 3.13.16 (PR #65), and the Grype DB (schema
+v6.1.9, built 2026-10-02) carries the NVD range `>= 3.13.0, < 3.13.15` for
+the 3.13 line, so 3.13.15 is the fix and 3.13.16 is outside the range. The
+`containers / backend` job of run 37018815407 cataloged `python 3.13.16
+binary` and never mentioned the CVE. Removed as dead config: a rule that
+matches nothing still reads as a live exception (see *Known issues* for the
+missing staleness check).
 
-**Why it is ignored rather than fixed:** there is nothing to upgrade to.
-Checked against the Docker Hub registry on 2026-08-16 — `python:3.13-slim`
-200, `python:3.14-slim` 200, `python:3.15-slim` **404**. 3.14 does not carry
-the fix either. `only-fixed: true` normally guarantees every reported finding
-is actionable; here it admitted one on the strength of a fix version that has
-been assigned but never shipped.
+**Frontend findings are fixed, not ignored.** `frontend/package.json` pins
+`sharp` through an exact `overrides` entry (it is a transitive of `next`), so
+a `next` bump alone never moves it: when Grype flags `sharp`, the override
+value itself has to change. On 2026-10-02 the frontend image failed the gate on
+`next` 16.3.0 (GHSA-p293-qw3h-jr36, GHSA-2xp9-vwfh-vxw4, GHSA-vcvr-r3jv-pc5j,
+all Critical; the last fixed only in 16.3.6) and `sharp` 0.35.3
+(GHSA-rgj7-g3m4-5g8c, High). Fixed by moving `next`/`eslint-config-next` to
+`^16.3.8` and the `sharp` override to `0.35.4`; no `.grype.yaml` entry was
+involved or added.
 
-**Why the gate was not weakened instead.** Dropping `severity-cutoff` to
-`critical` would have turned the job green in one line, and was rejected: it
-silences this CVE by also silencing every future High across both images,
-permanently and invisibly. That trades a known, measured, temporary problem
-for an unbounded blind spot. `only-fixed: true` was likewise left alone —
-flipping it off would widen the gate rather than narrow it. An ignore rule is
-the only mechanism here that is *specific*: Grype ANDs every criterion, so
-pinning `vulnerability` + `package.name` + `package.type` suppresses exactly
-one CVE on one package of one type and cannot mask anything else. `type:
-binary` in particular keeps it off any pip-installed package named `python`,
-and `include-aliases` is left at its default `false` so related IDs are not
-swept in.
+On 2026-10-28 it happened again, on both images, all from advisories
+published after `dev`'s last green run on 2026-10-02: `next` 16.3.8
+(GHSA-2464-fhr4-w9xw, GHSA-673q-mjm6-r5xr Critical, GHSA-p3m5-59mp-jv5r High,
+fixed in 16.4.1), `sharp` 0.35.4 (GHSA-wq5f-xc86-pv6w, High), Alpine `zlib`
+1.3.2-r0 (CVE-2026-85091, High) and, on the backend, `certifi` 2026.7.22
+(GHSA-6q48-6c7w-9gw2, Critical). Fixed by `next`/`eslint-config-next`
+`^16.4.1` (resolved 16.4.3), the `sharp` override at `0.35.5`, a
+`'zlib>=1.3.2-r1'` floor beside the openssl one in the frontend `runner`
+stage, and `uv pip compile ... --upgrade-package certifi` (2026.10.23). Again
+no `.grype.yaml` entry. Regenerate `frontend/package-lock.json` with npm 11
+(the npm in `node:24`): npm 10 strips the `libc` fields from the `@img/sharp-*`
+entries, which is what lets `npm ci` on Alpine skip the glibc builds.
 
-**Removal condition:** delete the rule the moment a Python base image carrying
-the fix exists — 3.15.0, or any earlier release that backports it — and move
-`backend/Dockerfile`'s `PYTHON_IMAGE` and `/.python-version` to it in the same
-change. This is the "pin the newest LTS major" policy being temporarily
-unsatisfiable, not a standing allowance.
-
-Nothing currently *tells* anyone when that condition is met. Grype ignore rules
-have no expiry, and a rule whose CVE has stopped being reported is
-indistinguishable from one still doing work — see *Known issues*.
+On 2026-10-29 the frontend image failed again, this time on the Node binary in
+the base image: `node` 24.20.0 (CVE-2026-111497, Critical and on CISA's KEV
+list, plus CVE-2026-105482/105483/106069 High; fixed in 24.22.1). Fixed by
+moving `NODE_IMAGE` to the current `node:24-alpine` digest
+(`sha256:8a32c8cf...`, Node 24.22.2, built 2026-10-28; linux/amd64 and arm64
+present). Docker Hub's anonymous quota was exhausted from the agent's egress
+IP, so the digest was read from `mirror.gcr.io`, which serves official images
+with identical digests; the image config's `NODE_VERSION` confirmed 24.22.2.
 
 ### Runtime versions
 
@@ -299,7 +357,7 @@ on its own.
 
 #### Other couplings when bumping a major
 
-- `frontend/Dockerfile`'s `'openssl>=3.5.7-r0'` floor depends on the Alpine
+- `frontend/Dockerfile`'s `'openssl>=3.5.7-r0'` and `'zlib>=1.3.2-r1'` floors depend on the Alpine
   release the Node image sits on, and that changes across Node majors:
   `node:20-alpine` was Alpine 3.23, `node:22-alpine` and `node:24-alpine` are
   both Alpine 3.24. Before bumping, confirm the target's `main/x86_64`
@@ -469,21 +527,42 @@ jobs.
   arm64 proof.
 - GitHub environment protection and branch protection are repository settings,
   not files, and must be configured by a repository administrator.
-- **The `CVE-2026-15308` ignore rule has no expiry and nothing watches it.**
-  Grype ignore rules are unconditional; once the upstream fix ships and the
-  base image moves, the rule stops matching anything and becomes dead config
-  that still reads as a live exception. Nothing fails, so nobody looks. A
-  staleness check is possible — Grype's JSON output carries an
-  `ignoredMatches` array, so a step could assert that every rule in
-  `.grype.yaml` actually applied to something and fail when one does not. It
-  was deliberately **not** built in the same pass as the rule itself; see the
-  cost note in `mem/20260816-grype-cve-exception.md`. Until it exists, the
-  removal condition is enforced by the comment in `.grype.yaml` and by whoever
-  next bumps the Python major.
-- The `.grype.yaml` rule itself is **unverified against a real scan**. The
-  agent that wrote it could run neither Docker nor Grype, so that the rule
-  matches the reported finding is reasoning from Grype's own matching source,
-  not an observation. The first green `containers / backend` job is the proof.
+- **Nothing detects a stale `.grype.yaml` rule.** Grype ignore rules are
+  unconditional; once an upstream fix ships and the base image moves, a rule
+  stops matching anything and becomes dead config that still reads as a live
+  exception. Nothing fails, so nobody looks. That is exactly what happened to
+  the `CVE-2026-15308` rule, which was dead from PR #65 (CPython 3.13.16)
+  until it was removed by hand on 2026-10-02. A staleness check is possible:
+  Grype's JSON output carries an `ignoredMatches` array, so a step could
+  assert that every rule in `.grype.yaml` actually applied to something and
+  fail when one does not. (`only-fixed` is itself implemented as ignore
+  rules, so the log's "ignored N vulnerability matches" count is not evidence
+  that a user-written rule matched.) Not built; see the cost note in
+  `mem/20260816-grype-cve-exception.md`. Moot while the list is empty;
+  revisit if an exception is ever added.
+- **Resolved 2026-10-02: the cached `apt-get upgrade` layer hid OS security
+  fixes.** `reusable-container-checks.yml` built with `cache-from: type=gha`,
+  and that `RUN` layer's cache key is the base digest plus the command text.
+  Neither changes when Debian publishes a fix, so the layer was restored
+  `CACHED` and `apt-get upgrade` never ran again. Observed on PR #64 (run
+  37012942486): `#12 [runtime 2/8] RUN apt-get update && apt-get upgrade ...
+  CACHED`, then Grype failed on `openssl` / `libssl3t64` /
+  `openssl-provider-legacy` `3.5.7-1~deb13u2` and `libpcre2-8-0`
+  `10.46-1~deb13u2` while `deb13u3` of both was already in `trixie-security`.
+  It was first cleared by bumping the `PYTHON_IMAGE` digest (which
+  invalidates the layer), but that only lasts until the next Debian security
+  release. **Fix:** both the check build and the publication build now pass
+  `no-cache-filters` naming the final stage (`runtime` / `runner`), so that
+  stage always rebuilds while `wheels` / `deps` / `builder` stay cached (see
+  *Build and supply-chain controls*). The frontend's `runner` stage had the
+  same latent issue for its `apk add --upgrade 'openssl>=...'` and gets the
+  same treatment. The publication build had the identical cache config, so
+  without the fix there the shipped image could have been older than the
+  scanned one. Cost: every build reruns `apt-get install ffmpeg` and the
+  offline wheel install (backend), under QEMU for the arm64 leg of a
+  publication, which is the slowest part. **Only CI can prove it**: the next
+  `containers / backend` log should show `[runtime 2/8] RUN apt-get update`
+  executing rather than `CACHED`.
 - Railway's source integration can begin a dev deploy independently of the
   GitHub validation lane. If strict pre-deploy gating is required, configure
   Railway check-suite waiting after these workflow names exist on the remote.
@@ -554,3 +633,9 @@ jobs.
 - 2026-08-16 · main session · with builds fixed (PR #16 merged), Railway `dev` deploys hit two more failures unrelated to cache mounts. `videolens-worker` was reading the auto-detected `backend/railway.json` instead of `backend/railway.worker.json` (no per-service Config-as-Code path was ever set), inheriting a healthcheck path that can never succeed for a service with no HTTP server — fixed via the Railway dashboard, not a repo change. `videolens-backend`'s healthcheck failed even after the app logged a clean startup every time; a red herring (the public domain's target port, `8080` vs the actual `8000`) was found and fixed first but did not resolve it, since Railway's healthcheck reads the `PORT` variable, not the domain's target port — confirmed by `NETWORK_RX_GB` metrics stuck at exactly 0 across every failed attempt, proving the probe never reached the container. Fixed with a `PORT=8000` dashboard variable plus a durable code fix: `backend/Dockerfile`'s `CMD` now honors `${PORT:-8000}` via `sh -c exec`, matching the pattern `frontend/Dockerfile` already used (`ENV PORT=3000`, read by Next.js) — which is why the frontend never hit this. Documented both dashboard-only gotchas under a new *Railway service configuration gotchas* section since neither is enforced or visible from this repo. Bundled with retroactively bumping `frontend/package.json`/`package-lock.json` to `2.0.0` to reflect PR #12's CI/CD rewrite, which had shipped without a version bump
 - 2026-08-29 · main session · replaced the manifest commit's `[skip ci]` with a `paths-ignore` guard; the marker was leaving `dev` with an unchecked head and made `dev` -> `main` permanently unmergeable
 - 2026-08-29 · main session · removed the manifest commit and its `paths-ignore` guard; the release index is served by `GET /api/releases` now
+- 2026-09-01 · main session · moved release publication from `dev` to `main`. Deleted `android-development-build.yml`; `production-environment.yml` now passes `upload_apk: true` with the production backend URL and owns the release job (and with it the repo's only `contents: write`), while `development-environment.yml` gained an Android gate so `dev` still validates the build without producing anything installable. Tags lose the `dev-` prefix and releases are no longer prereleases. The trap this hid: `versionCode` was `github.run_number`, which is per-workflow — publishing from a different workflow would have restarted it near zero, below the installed build 30, and Android refuses to install a lower code while `updateCheck.ts` compares codes to find a newer build, so every device would have been stranded with no way forward and CI green throughout. Switched `versionCode` to `git rev-list --count HEAD` (181 vs 30, monotonic, workflow-independent), which needs `fetch-depth: 0` or it reads 1. Also widened `GithubReleaseCatalog._TAG` to accept the optional `dev-` prefix so builds 1-30 stay parseable — `latest` is the first parseable tag, so dropping the old form would have broken the update check for exactly the devices that most need it
+- 2026-10-02 · ci agent · fixed `android / Android` failing inside `android-actions/setup-android` v3.2.2 (its default `packages: tools platform-tools` asks sdkmanager for the `tools` package Google removed from the SDK repository in Sep 2026 → `Failed to find package 'tools'`, exit 1) by pinning v4.0.4 (`be39fa83`, defaults to `platform-tools` only, Node 24); and fixed `containers / backend` by bumping `PYTHON_IMAGE` to the current `python:3.13-slim` index digest (`bb298871`, CPython 3.13.16 — clears High `CVE-2026-82049` on the `python` binary, and re-runs the GHA-cached `apt-get upgrade` layer so `openssl`/`libpcre2` `deb13u3` from `trixie-security` land); documented the apt-layer cache trap under Known issues
+- 2026-10-02 · frontend agent · cleared the frontend Grype gate failure (next 16.3.0 Criticals GHSA-p293-qw3h-jr36 / GHSA-2xp9-vwfh-vxw4 / GHSA-vcvr-r3jv-pc5j; sharp 0.35.3 High GHSA-rgj7-g3m4-5g8c): `next` + `eslint-config-next` to `^16.3.8`, `sharp` override `0.35.3` -> `0.35.4`; documented that the exact `sharp` override must be bumped by hand since a `next` bump cannot move it. `.grype.yaml` untouched (no frontend entries existed)
+- 2026-10-02 · ci-cache agent · stopped the GHA cache restoring the final image stage (`no-cache-filters: runtime`/`runner`) in both `reusable-container-checks.yml` and `reusable-container-publish.yml` so OS-package upgrades always run and the shipped image matches the scanned one; resolved the apt-layer Known issue. Removed the dead `CVE-2026-15308` rule from `.grype.yaml` (now `ignore: []`; Grype DB v6.1.9 NVD range for 3.13 is `< 3.13.15`, image is 3.13.16) and rewrote the gate section as an exception list with that rule's history
+- 2026-10-28 · claude (session ccr-ee9ca9d3) · cleared the 2026-10-28 Grype failures on both images (next 16.4.x, sharp 0.35.5, zlib floor, certifi 2026.10.23) and noted the npm 11 lockfile requirement
+- 2026-10-29 · claude (session ccr-ee9ca9d3) · moved the frontend `NODE_IMAGE` digest to Node 24.22.2 for CVE-2026-111497 (KEV)

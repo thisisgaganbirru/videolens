@@ -21,7 +21,35 @@ PAYLOAD = [
 ]
 
 
+MAIN_PAYLOAD = [
+    {
+        "name": "VideoLens AI v2.1.0 (build 182)",
+        "tag_name": "v2.1.0-build182",
+        "published_at": "2026-09-01T10:00:00Z",
+        "html_url": "https://github.com/o/r/releases/tag/v2.1.0-build182",
+        "draft": False,
+    },
+    *PAYLOAD,
+]
+
+
 class ToIndexTests(unittest.TestCase):
+    def test_reads_a_release_published_from_main(self) -> None:
+        # Releases moved from dev to main and lost the `dev-` prefix with it.
+        index = GithubReleaseCatalog._to_index(MAIN_PAYLOAD)
+
+        self.assertEqual(index.latest.version_code, 182)
+        self.assertEqual(index.latest.version_name, "2.1.0")
+
+    def test_still_reads_the_dev_prefixed_tags_already_published(self) -> None:
+        # Builds 1-30 shipped as `dev-v<version>-build<code>` and are still the
+        # newest thing a device out there has installed. If they stopped
+        # parsing, `latest` would fall through to None and those devices would
+        # never be offered anything.
+        index = GithubReleaseCatalog._to_index(PAYLOAD)
+
+        self.assertEqual(index.latest.version_code, 24)
+
     def test_maps_every_release_into_the_index(self) -> None:
         index = GithubReleaseCatalog._to_index(PAYLOAD)
 
