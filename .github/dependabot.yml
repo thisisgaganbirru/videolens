@@ -1,4 +1,15 @@
 version: 2
+
+# Every entry targets `dev`, not the default branch (`main`). Without
+# `target-branch`, Dependabot opens PRs straight against `main`, skipping the
+# dev lane entirely; by 2026-10-29 that had piled up 16 stale PRs, most of
+# them superseded by later bumps on `dev`. On `dev` they go through the normal
+# PR checks and reach production with the next promotion.
+#
+# Language and Actions updates are grouped into one weekly PR per ecosystem,
+# so a week of bumps costs one CI run, not one per package. Majors stay
+# ungrouped (npm and pip) so a breaking upgrade arrives as its own reviewable PR.
+
 updates:
   # Docker ecosystem coverage is NOT uniform across these three directories.
   # Dependabot's Dockerfile parser matches literal `FROM image:tag@sha256:...`
@@ -15,10 +26,12 @@ updates:
   # Dependabot as evidence the base images are current.
   - package-ecosystem: docker
     directory: /backend
+    target-branch: dev
     schedule:
       interval: weekly
   - package-ecosystem: docker
     directory: /frontend
+    target-branch: dev
     schedule:
       interval: weekly
   # `docker-compose`, not `docker`. The intent has always been the literal
@@ -33,17 +46,36 @@ updates:
   # this silently blocked production - see docs/railway-environments.md.
   - package-ecosystem: docker-compose
     directory: /
+    target-branch: dev
     schedule:
       interval: weekly
   - package-ecosystem: github-actions
     directory: /
+    target-branch: dev
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
   - package-ecosystem: npm
     directory: /frontend
+    target-branch: dev
     schedule:
       interval: weekly
+    groups:
+      npm-minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # Deliberately staying on Tailwind 3 (see 40dc380). v4 replaces the
+      # config model and PostCSS plugin, so it is a planned migration, not a
+      # weekly bump. Remove this entry when that migration is picked up.
+      - dependency-name: tailwindcss
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: pip
     directory: /backend
+    target-branch: dev
     schedule:
       interval: weekly
+    groups:
+      pip-minor-and-patch:
+        update-types: ["minor", "patch"]

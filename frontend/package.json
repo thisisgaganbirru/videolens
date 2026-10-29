@@ -15,7 +15,7 @@
     "@capacitor/android": "^8.5.0",
     "@capacitor/app": "^8.1.1",
     "@capacitor/core": "^8.5.0",
-    "@capacitor/share": "^8.0.1",
+    "@capacitor/share": "^8.0.2",
     "lucide-react": "^1.45.0",
     "next": "^16.4.1",
     "react": "^19.0.0",
@@ -24,7 +24,7 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
-    "@capacitor/cli": "^8.5.0",
+    "@capacitor/cli": "^8.5.2",
     "@types/node": "^26.4.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
