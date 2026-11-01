@@ -26,18 +26,34 @@ function getClientId(): string {
 export class FetchRunsGateway implements RunsGateway {
   constructor(private readonly apiKeyStore: ApiKeyStore) {}
 
-  private requestHeaders(): HeadersInit {
+  /* BYOK: the Gemini key travels ONLY on run creation (POST /api/runs), the
+     one endpoint that reads it (backend interface/api/routes.py create_run).
+     Polling a run and listing history never needed it, and before 2026-11-01
+     it rode along on every one of those requests too — dozens per run, each a
+     fresh copy of the secret on the wire for no reason. `X-Client-ID` still
+     goes everywhere: it scopes which runs a caller can see. */
+  private requestHeaders({ withGeminiKey }: { withGeminiKey: boolean }): HeadersInit {
     const headers: Record<string, string> = { "X-Client-ID": getClientId() };
-    const geminiApiKey = this.apiKeyStore.get();
-    if (geminiApiKey) headers["X-Gemini-Api-Key"] = geminiApiKey;
+    if (withGeminiKey) {
+      const geminiApiKey = this.apiKeyStore.get();
+      if (geminiApiKey) headers["X-Gemini-Api-Key"] = geminiApiKey;
+    }
     return headers;
   }
 
   /** Transport layer only: resolves with whatever HTTP response came back
-   *  (status untouched), throws `NetworkError` when none came back at all. */
-  private async send(path: string, init: RequestInit = {}): Promise<Response> {
+   *  (status untouched), throws `NetworkError` when none came back at all.
+   *  `withGeminiKey` defaults to false; only `createRun` passes true. */
+  private async send(
+    path: string,
+    init: RequestInit = {},
+    { withGeminiKey = false }: { withGeminiKey?: boolean } = {}
+  ): Promise<Response> {
     try {
-      return await fetch(`${API_BASE_URL}${path}`, { ...init, headers: this.requestHeaders() });
+      return await fetch(`${API_BASE_URL}${path}`, {
+        ...init,
+        headers: this.requestHeaders({ withGeminiKey }),
+      });
     } catch {
       throw new NetworkError(UNREACHABLE);
     }
@@ -60,7 +76,7 @@ export class FetchRunsGateway implements RunsGateway {
     if (source.url) formData.append("url", source.url);
     formData.append("accept_terms", "true");
 
-    const res = await this.send("/api/runs", { method: "POST", body: formData });
+    const res = await this.send("/api/runs", { method: "POST", body: formData }, { withGeminiKey: true });
 
     if (!res.ok) {
       const body = await res.json().catch(() => null);
