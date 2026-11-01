@@ -472,6 +472,10 @@ h3 {
        .error-note    the same line at danger ink. Something WAS rejected, and
                       the control that caused it is right there — so the note
                       needs no box and no recovery control of its own.
+       .intake-alert  the intake card's one exception: a form-level submit
+                      failure (server unreachable, submit rejected), boxed in
+                      danger-soft at the top of the card, per the owner.
+                      Field-level rejections stay .error-note.
        .error-inline  a panel-scoped failure region: danger rule, the panel's
                       own reading size, and a retry control. Defined further
                       down.
@@ -928,36 +932,40 @@ h3 {
     background: var(--color-rule);
   }
 
-  /* The drop zone: dashed, paper-filled (a well inside the white card), the
-     upload glyph in an accent-soft disc, title, limits, and the outlined
-     Browse button — all centred, as drawn. */
+  /* The drop zone: a compact dashed row, paper-filled (a well inside the white
+     card) — upload glyph in an accent-soft disc, title over limits, and the
+     outlined Browse button pinned right. On a narrow card the button wraps
+     onto its own full-width line rather than squeezing the text. */
   .drop {
     border: var(--rule-w) dashed var(--color-input-border);
     border-radius: var(--radius-control);
     background: var(--color-paper);
-    padding: 1.75rem var(--space-sm);
+    padding: var(--space-sm);
     display: flex;
-    flex-direction: column;
+    flex-wrap: wrap;
     align-items: center;
-    text-align: center;
-    gap: 0.125rem;
+    gap: var(--space-xs) var(--space-sm);
     transition: border-color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out);
   }
   .drop-icon {
+    flex: none;
     display: grid;
     place-items: center;
-    width: 3rem;
-    height: 3rem;
-    margin-bottom: var(--space-2xs);
+    width: 2.5rem;
+    height: 2.5rem;
     border-radius: var(--radius-pill);
     background: var(--color-accent-soft);
     color: var(--color-accent-strong);
+  }
+  .drop-text {
+    flex: 1 1 12rem;
+    min-width: 0;
   }
   .drop p {
     margin: 0;
   }
   .drop-title {
-    font-size: 1.0625rem;
+    font-size: 1rem;
     font-weight: 600;
     color: var(--color-ink);
   }
@@ -974,12 +982,17 @@ h3 {
     }
   }
   .drop .hint {
-    font-size: 0.9375rem;
+    font-size: 0.875rem;
     line-height: 1.35;
     color: var(--color-muted);
   }
   .drop .btn {
-    margin-top: var(--space-xs);
+    flex: none;
+  }
+  @media (max-width: 30rem) {
+    .drop .btn {
+      flex: 1 1 100%;
+    }
   }
   .drop[data-dragging="true"] {
     border-color: var(--color-accent);
@@ -2249,6 +2262,54 @@ h3 {
     .intake-layout > .wyg {
       margin-top: 0;
     }
+    /* The desktop intake header, to the owner's spec (2026-11-01): a 40px
+       top, eyebrow 13/600/0.08em with 16px under it, the headline in
+       Newsreader 50/500 at 1.05 and -0.02em with 20px under it, the intro
+       18px at 1.55 in ink-2 with a 480px measure and 24px under it. Fixed
+       sizes, so the intake fits one desktop screen without the page
+       scrolling. */
+    .intake-layout {
+      padding-top: 2.5rem;
+      padding-bottom: var(--space-md);
+    }
+    .intake-layout .eyebrow {
+      letter-spacing: 0.08em;
+      margin-bottom: var(--space-sm);
+    }
+    .intake-layout .intake-title {
+      margin: 0 0 1.25rem;
+      font-size: 3.125rem;
+      font-weight: 500;
+      line-height: 1.05;
+      letter-spacing: -0.02em;
+    }
+    .intake-layout .intake-lede {
+      margin: 0;
+      max-width: 30rem;
+      font-size: 1.125rem;
+      line-height: 1.55;
+    }
+    .intake-layout .intake-card {
+      margin-top: var(--space-md);
+      padding: 1.25rem var(--space-md);
+    }
+    .intake-layout .terms-row {
+      margin-top: var(--space-sm);
+    }
+  }
+  /* A short desktop window (a 768px laptop screen after browser chrome):
+     tighten the card's inner rhythm too, so the intake still fits whole. */
+  @media (min-width: 60rem) and (max-height: 50rem) {
+    .intake-layout {
+      padding-bottom: var(--space-sm);
+    }
+    .intake-layout .intake-card {
+      margin-top: var(--space-sm);
+      padding: var(--space-sm) var(--space-md);
+    }
+    .intake-layout .divider {
+      margin: var(--space-xs) 0;
+    }
   }
   .intake {
     display: flex;
@@ -2274,8 +2335,22 @@ h3 {
     line-height: 1.55;
     color: var(--color-ink-2);
   }
-  .intake > .error-note {
-    margin-top: var(--space-xs);
+  /* Form-level submit error, first thing inside the intake card (owner fix
+     2026-11-01; it used to be a bare red line under the card). The failed
+     run notice's palette at the card's control size: danger-soft fill, a
+     hairline danger border, danger ink (5.6:1 light, 5.8:1 dark). Absent,
+     it is not rendered, so the card does not move. */
+  .intake-alert {
+    margin: 0 0 var(--space-sm);
+    padding: 0.625rem 0.875rem;
+    border: var(--rule-w) solid var(--color-danger-border);
+    border-radius: var(--radius-control);
+    background: var(--color-danger-soft);
+    color: var(--color-danger);
+    font-size: 0.9375rem;
+    font-weight: 500;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
   }
 
   .intake-card {

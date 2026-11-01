@@ -131,20 +131,14 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                   submitting={submitting}
                   sharedUrl={sharedUrl}
                   urlCapability={urlDownload}
+                  /* Back at idle with an error means the submit was rejected,
+                     the server could not be reached, or a history row would
+                     not open. The control that failed is still on screen with
+                     whatever the user typed, so pressing it again is the whole
+                     recovery: a compact notice at the top of the card, not
+                     the progress view's notice card with its own actions. */
+                  submitError={error}
                 />
-                {/* Back at idle with an error means the submit was rejected, or
-                    a history row would not open. Either way the control that
-                    failed is still on screen — and, since `submit` no longer
-                    unmounts this branch while the request is in flight, so is
-                    whatever the user typed. Pressing the same button again is
-                    the whole recovery, so this is a form-level line under the
-                    card, not the progress view's notice card, which is drawn
-                    for a full-view failure with actions of its own. */}
-                {error && (
-                  <p role="alert" className="error-note">
-                    {error}
-                  </p>
-                )}
               </div>
 
               <aside className="wyg" aria-labelledby="wyg-title">
