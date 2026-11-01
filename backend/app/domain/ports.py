@@ -31,7 +31,15 @@ class UploadedFile(Protocol):
 
 
 class RunRepository(Protocol):
-    async def create(self, run_id: str, owner_id: str) -> Run: ...
+    async def create(
+        self,
+        run_id: str,
+        owner_id: str,
+        *,
+        source_kind: str | None = None,
+        platform: str | None = None,
+        duration_seconds: float | None = None,
+    ) -> Run: ...
 
     async def get(self, run_id: str) -> Optional[Run]: ...
 
@@ -50,6 +58,8 @@ class RunRepository(Protocol):
 
     async def set_source_metadata(self, run_id: str, metadata: SourceMetadata) -> None: ...
 
+    async def set_duration(self, run_id: str, duration_seconds: float) -> None: ...
+
     async def set_error(self, run_id: str, error: str) -> None: ...
 
     async def ping(self) -> bool: ...
@@ -66,7 +76,10 @@ class MediaProcessor(Protocol):
 
     async def save_upload(self, run_id: str, upload: UploadedFile) -> SavedUpload: ...
 
-    async def enforce_duration_cap(self, run_id: str, path: str) -> None: ...
+    async def enforce_duration_cap(self, run_id: str, path: str) -> float:
+        """Probe the file, reject it if over the cap, and return the probed
+        length in seconds so the caller can record it."""
+        ...
 
     async def download_url(self, run_id: str, url: str) -> SavedUpload: ...
 

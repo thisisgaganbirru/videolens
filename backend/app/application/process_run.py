@@ -54,6 +54,7 @@ class ProcessRunUseCase:
             result = await self._analysis.analyze_captions(captions, api_key=gemini_api_key)
             if captions.metadata is not None:
                 await self._runs.set_source_metadata(run_id, captions.metadata)
+            await self._record_duration(run_id, captions.duration_seconds)
             await self._runs.set_result(run_id, result, AnalysisCompleteness.CAPTIONS_ONLY)
             logger.info("Run %s recovered from captions after the download failed", run_id)
             return True
@@ -65,6 +66,16 @@ class ProcessRunUseCase:
         except Exception:
             logger.exception("Caption fallback failed for run %s", run_id)
             return False
+
+    async def _record_duration(self, run_id: str, duration: float | None) -> None:
+        # Shown on the history card. Purely cosmetic, so a failed write must
+        # not fail an otherwise healthy run.
+        if duration is None:
+            return
+        try:
+            await self._runs.set_duration(run_id, duration)
+        except Exception:
+            logger.exception("Could not record duration for run %s", run_id)
 
     @staticmethod
     def _log_failure(run_id: str, exc: UserFacingError) -> None:
@@ -102,13 +113,17 @@ class ProcessRunUseCase:
                 if downloaded.metadata is not None:
                     metadata = downloaded.metadata
                     await self._runs.set_source_metadata(run_id, metadata)
-                await self._media.enforce_duration_cap(run_id, saved_path)
+                await self._record_duration(
+                    run_id, await self._media.enforce_duration_cap(run_id, saved_path)
+                )
             elif source_key:
                 run_dir = self._media.create_run_dir(run_id)
                 extension = os.path.splitext(source_key)[1].lower()
                 saved_path = os.path.join(run_dir, f"source{extension}")
                 await self._storage.download_source(source_key, saved_path)
-                await self._media.enforce_duration_cap(run_id, saved_path)
+                await self._record_duration(
+                    run_id, await self._media.enforce_duration_cap(run_id, saved_path)
+                )
 
             if not saved_path or not run_dir:
                 raise MediaValidationError("No media source was provided.")

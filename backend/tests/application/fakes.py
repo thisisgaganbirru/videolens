@@ -19,9 +19,26 @@ class FakeRunRepository:
         self.runs: dict[str, Run] = {}
         self.created_ids: list[str] = []
 
-    async def create(self, run_id: str, owner_id: str) -> Run:
+    async def create(
+        self,
+        run_id: str,
+        owner_id: str,
+        *,
+        source_kind: str | None = None,
+        platform: str | None = None,
+        duration_seconds: float | None = None,
+    ) -> Run:
         now = datetime.now(timezone.utc)
-        run = Run(run_id=run_id, owner_id=owner_id, status=RunStatus.QUEUED, created_at=now, updated_at=now)
+        run = Run(
+            run_id=run_id,
+            owner_id=owner_id,
+            status=RunStatus.QUEUED,
+            created_at=now,
+            updated_at=now,
+            source_kind=source_kind,
+            platform=platform,
+            duration_seconds=duration_seconds,
+        )
         self.runs[run_id] = run
         self.created_ids.append(run_id)
         return run
@@ -49,6 +66,9 @@ class FakeRunRepository:
     async def set_source_metadata(self, run_id: str, metadata: SourceMetadata) -> None:
         self.runs[run_id].source_metadata = metadata
 
+    async def set_duration(self, run_id: str, duration_seconds: float) -> None:
+        self.runs[run_id].duration_seconds = duration_seconds
+
     async def set_error(self, run_id: str, error: str) -> None:
         self.runs[run_id].status = RunStatus.FAILED
         self.runs[run_id].error = error
@@ -69,6 +89,8 @@ class FakeMediaProcessor:
         self.normalize_calls: list[tuple[str, str]] = []
         self.save_upload_error: Exception | None = None
         self.enforce_duration_error: Exception | None = None
+        self.probed_duration: float = 42.5
+        self.upload_extension: str = ".mp4"
         self.download_error: Exception | None = None
         self.download_metadata: SourceMetadata | None = None
         self.captions: CaptionTrack | None = None
@@ -87,12 +109,15 @@ class FakeMediaProcessor:
     async def save_upload(self, run_id: str, upload) -> SavedUpload:
         if self.save_upload_error:
             raise self.save_upload_error
-        return SavedUpload(path=f"/tmp/{run_id}/upload.mp4", run_dir=f"/tmp/{run_id}")
+        return SavedUpload(
+            path=f"/tmp/{run_id}/upload{self.upload_extension}", run_dir=f"/tmp/{run_id}"
+        )
 
-    async def enforce_duration_cap(self, run_id: str, path: str) -> None:
+    async def enforce_duration_cap(self, run_id: str, path: str) -> float:
         self.enforced_duration.append((run_id, path))
         if self.enforce_duration_error:
             raise self.enforce_duration_error
+        return self.probed_duration
 
     async def download_url(self, run_id: str, url: str) -> SavedUpload:
         self.download_calls.append((run_id, url))

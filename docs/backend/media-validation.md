@@ -28,7 +28,7 @@ Ordering yt-dlp first is deliberate: nothing that works today changes behaviour,
 
 **SSRF protection**: `validate_public_url` in `net.py` parses the URL, requires `http`/`https` with no embedded credentials, then does a real DNS resolution (`socket.getaddrinfo`) and checks **every** resolved address is a global IP (`ipaddress.ip_address(...).is_global`) — rejects private/local/link-local targets *before* any resolver touches the URL. This is the load-bearing check that stops someone submitting `http://169.254.169.254/...` or a `localhost` URL to reach internal infra. It lives in its own module precisely so there is one copy: a second implementation that drifts is how a fallback route ends up reaching an address the primary route refuses.
 
-**Limits enforced**: file extension (`.mp3`/`.mp4`/`.mov` only), `MAX_FILE_SIZE_MB` (both during streamed upload and post-download for URL sources), `MAX_DURATION_SECONDS` via `enforce_duration_cap` (checked once for uploads, checked again after download for URL/S3 sources since those weren't probed synchronously by the request handler).
+**Limits enforced**: file extension (`.mp3`/`.mp4`/`.mov` only), `MAX_FILE_SIZE_MB` (both during streamed upload and post-download for URL sources), `MAX_DURATION_SECONDS` via `enforce_duration_cap` (checked once for uploads, checked again after download for URL/S3 sources since those weren't probed synchronously by the request handler). `enforce_duration_cap` **returns the probed duration** (seconds, float) so callers can record it on the run (`Run.duration_seconds`); `captions.py` likewise carries yt-dlp's reported `duration` on `CaptionTrack.duration_seconds`.
 
 **yt-dlp cookies**: exactly one of `YTDLP_COOKIES_FILE` or `YTDLP_COOKIES_FROM_BROWSER` may be configured — both set raises `MediaValidationError`. Needed for login-gated sources (Instagram in particular); the download-error message is rewritten with cookie-setup guidance when yt-dlp reports Instagram returned an empty response.
 
@@ -88,3 +88,4 @@ No test coverage for `ffmpeg.py` directly (it requires an actual ffmpeg binary).
 - 2026-08-29 · main session · added `captions.py` (subtitle salvage) and shared `_source_metadata_from_info` between the download and caption paths
 - 2026-08-29 · main session · merged dev: `net.py` carries dev's user-facing wording plus `log_detail`, and the resolvers follow the same split
 - 2026-10-28 · claude (session ccr-ee9ca9d3) · fixed `_has_video_stream` misreading streams with side data as audio-only (broke a video-only Instagram reel in dev)
+- 2026-11-01 · backend agent (Phase 3) · `enforce_duration_cap` returns the probed duration; `CaptionTrack` carries yt-dlp's `duration`

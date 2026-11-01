@@ -105,6 +105,14 @@ def parse_caption_payload(payload: str, ext: str) -> str:
     return _parse_cue_format(payload)
 
 
+def _duration(value: object) -> float | None:
+    try:
+        seconds = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds > 0 else None
+
+
 async def fetch_captions(settings: Settings, url: str) -> CaptionTrack | None:
     """Return the best available transcript for `url`, or None.
 
@@ -153,6 +161,7 @@ async def fetch_captions(settings: Settings, url: str) -> CaptionTrack | None:
             language=language,
             automatic=automatic,
             metadata=_source_metadata_from_info(info, url),
+            duration_seconds=_duration(info.get("duration")),
         )
 
     try:

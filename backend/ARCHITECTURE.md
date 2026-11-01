@@ -26,6 +26,9 @@ only in `container.py`.
 - `policies.py` — pure functions/constants that encode a business rule
   without needing any infrastructure: `quota_key_from_headers`,
   `is_valid_client_id`.
+- `run_facts.py` — pure derivations of the media facts the history grid
+  shows (`describe_run` → source kind, normalized platform, duration,
+  orientation, summary snippet). Routes call it and only map the result.
 - `ports.py` — `Protocol` interfaces the application layer depends on:
   `RunRepository`, `MediaProcessor`, `AnalysisEngine`, `ObjectStore`,
   `JobQueue`, `SpendCap`, `KeyVault`, `TokenVerifier`, `UploadedFile`.

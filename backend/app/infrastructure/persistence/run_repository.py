@@ -47,7 +47,15 @@ class RunStore:
         async with self._lock:
             self._memory[run.run_id] = run
 
-    async def create(self, run_id: str, owner_id: str) -> Run:
+    async def create(
+        self,
+        run_id: str,
+        owner_id: str,
+        *,
+        source_kind: str | None = None,
+        platform: str | None = None,
+        duration_seconds: float | None = None,
+    ) -> Run:
         now = datetime.now(timezone.utc)
         run = Run(
             run_id=run_id,
@@ -55,6 +63,9 @@ class RunStore:
             status=RunStatus.QUEUED,
             created_at=now,
             updated_at=now,
+            source_kind=source_kind,
+            platform=platform,
+            duration_seconds=duration_seconds,
         )
         await self._write(run)
         if self._settings.queue_enabled:
@@ -98,6 +109,7 @@ class RunStore:
         result: VideoAnalysis | None = None,
         completeness: AnalysisCompleteness | None = None,
         source_metadata: SourceMetadata | None = None,
+        duration_seconds: float | None = None,
         error: str | None = None,
     ) -> None:
         run = await self.get(run_id)
@@ -113,6 +125,8 @@ class RunStore:
             run.completeness = completeness
         if source_metadata is not None:
             run.source_metadata = source_metadata
+        if duration_seconds is not None:
+            run.duration_seconds = duration_seconds
         if error is not None:
             run.error = error
         run.updated_at = datetime.now(timezone.utc)
@@ -136,6 +150,9 @@ class RunStore:
 
     async def set_source_metadata(self, run_id: str, metadata: SourceMetadata) -> None:
         await self._update(run_id, source_metadata=metadata)
+
+    async def set_duration(self, run_id: str, duration_seconds: float) -> None:
+        await self._update(run_id, duration_seconds=duration_seconds)
 
     async def set_error(self, run_id: str, error: str) -> None:
         await self._update(run_id, status=RunStatus.FAILED, error=error)
