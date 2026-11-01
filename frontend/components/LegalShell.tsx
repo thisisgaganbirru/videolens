@@ -1,10 +1,12 @@
-import Link from "next/link";
-import { ChevronLeft, House } from "lucide-react";
 import AppNav from "@/components/AppNav";
 import BottomTabBar from "@/components/BottomTabBar";
 import SiteFooter from "@/components/SiteFooter";
 
-/* Hallmark · theme: editorial (carried from tokens.css) · macrostructure: Long Document
+/* Hallmark · theme: editorial (tokens.css) · macrostructure: Long Document
+ * (design/phase4-boards/Privacy*.png, Terms*.png: serif title, a muted date
+ * line right under it, then serif section heads over Hanken body at a reading
+ * measure — no rules between sections, and no crumb bar: the boards drop it,
+ * the shared nav above is the way back)
  *
  * Shared frame for /privacy and /terms. They are one document type, so they
  * share a shape rather than each inventing one; the page files hold only copy.
@@ -12,79 +14,40 @@ import SiteFooter from "@/components/SiteFooter";
  * Chrome is the app's chrome, not a legal-page variant: the same `.shell`
  * frame, the same `<AppNav />`, and the same `<SiteFooter />` (browser tab) or
  * `<BottomTabBar />` (installed app) — literally the components HomeScreen
- * renders. A standalone route is still the same
- * application, so it does not get its own furniture. The tabs work here because
- * they address the URL (`/?view=history`), not HomeScreen's React state; none
- * of them is `aria-current` on a legal route, because none of them is where you
- * are.
+ * renders. A standalone route is still the same application, so it does not
+ * get its own furniture. The tabs work here because they address the URL
+ * (`/?view=history`), not HomeScreen's React state; none of them is
+ * `aria-current` on a legal route, because none of them is where you are.
  *
- * `data-frame="fixed"` locks the nav and footer to the viewport; only the
- * document body between them scrolls, and only when the content is actually
- * taller than that band.
+ * Scrolling is HomeScreen's model (Phase 4): the section is a `.view-scroll`
+ * band — from 32rem up it scrolls between the fixed nav and footer, only when
+ * the document is taller than the band; below, `.viewport` scrolls under the
+ * sticky bar. `data-frame="fixed"` and the inner `.legal-doc` scroller went,
+ * so the scrollbar sits at the window edge on every route alike.
  */
 
 type LegalShellProps = {
   title: string;
   effective: string;
-  /** Which legal route this is — labels the crumb and marks the footer link. */
+  /** Which legal route this is — marks the footer link / More-sheet row. */
   current: "privacy" | "terms";
   children: React.ReactNode;
 };
 
 export default function LegalShell({ title, effective, current, children }: LegalShellProps) {
   return (
-    <div className="shell" data-view="legal" data-frame="fixed">
+    <div className="shell" data-view="legal">
       <AppNav activeTab={null} />
 
-      <section data-view="legal" aria-label={title}>
-        {/* Two different things, so two different elements: a control, then a
-            location. The back button is deliberately OUTSIDE the <ol> — it is
-            an action, not an ancestor, and listing it as a breadcrumb item
-            would tell a screen reader this document sits two levels deep when
-            it sits one. The trail below it is a real <nav> + <ol>, which is
-            what lets assistive tech announce "breadcrumb, 2 items" and skip
-            the whole thing. */}
-        <div className="crumb-bar">
-          <Link href="/" className="crumb-back">
-            <ChevronLeft aria-hidden="true" />
-            {/* A real text node rather than aria-label: translatable, and it
-                survives a text-only rendering. `sr-only` is absolutely
-                positioned, so it is not a flex item and cannot push the
-                glyph off centre. */}
-            <span className="sr-only">Back to VideoLens AI</span>
-          </Link>
-
-          <nav aria-label="Breadcrumb">
-            <ol>
-              <li>
-                <Link href="/" className="crumb-home">
-                  <House aria-hidden="true" />
-                  <span className="sr-only">VideoLens AI home</span>
-                </Link>
-              </li>
-              <li>
-                {/* aria-hidden: the slash is the visible grammar of a path, but
-                    read aloud between two items it is only noise. */}
-                <span className="crumb-sep" aria-hidden="true">
-                  /
-                </span>
-                <span className="crumb-current" aria-current="page">
-                  {current}
-                </span>
-              </li>
-            </ol>
-          </nav>
-        </div>
-
-        <div className="legal-doc select-text">
-          <div className="legal-body">
-            <h1 className="page-title">{title}</h1>
-            <p className="card-label mt-[var(--space-xs)]">{effective}</p>
-
-            <div className="legal-copy mt-[var(--space-lg)] flex flex-col gap-[var(--space-lg)] pb-[var(--space-lg)]">
-              {children}
-            </div>
-          </div>
+      <section className="view-scroll" data-view="legal" aria-label={title}>
+        <div className="legal-page">
+          <article className="select-text">
+            <header className="view-head">
+              <h1 className="view-title">{title}</h1>
+              <p className="legal-meta">{effective}</p>
+            </header>
+            <div className="legal-copy">{children}</div>
+          </article>
         </div>
       </section>
 
@@ -97,9 +60,9 @@ export default function LegalShell({ title, effective, current, children }: Lega
 /** A single titled clause. Kept here so both routes get identical section rhythm. */
 export function LegalSection({ heading, children }: { heading: string; children: React.ReactNode }) {
   return (
-    <section>
-      <h2 className="col-label">{heading}</h2>
-      <p className="prose mt-[var(--space-xs)]">{children}</p>
+    <section className="legal-section">
+      <h2 className="legal-heading">{heading}</h2>
+      <p className="legal-text">{children}</p>
     </section>
   );
 }

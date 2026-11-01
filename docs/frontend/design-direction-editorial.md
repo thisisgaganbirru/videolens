@@ -62,6 +62,25 @@ except where marked *proposed* (the handoff had no dark value for them).
 
 The two sub-3 rows are fills that never carry information on their own.
 
+**Phase 4 dark-mode audit (2026-11-01) — no token changed.** Every danger/error
+pair was recomputed from `tokens.css` and every text pair passes in both
+themes, so `tokens.css` is untouched. Added rows:
+
+| Pair (L / D) | Ratio | Need |
+|---|---|---|
+| ink-2 on danger-soft (run-notice body) | 9.24 / 9.55 | 4.5 |
+| danger 2px edge vs danger-soft (failed frame) | 5.45 / 5.74 | 3 (UI) |
+| danger-border vs surface / paper (alert hairline, Failed badge) | 1.72 / 1.88 · 1.56 / 2.04 | decorative — fill + danger text carry the state |
+| accent-strong on accent-soft ("Saved on this device") | 6.64 / 9.34 | 4.5 |
+| muted on surface / tint (key help, release meta, legal meta) | 6.34 / 6.44 · 5.27 / 5.70 | 4.5 |
+| input-border vs surface (Remove key edge) | 3.58 / 3.56 | 3 (UI) |
+| input-border vs tint (Offline / Lost dashed tile) | 2.98 / 3.15 | decorative — not a control; title + lede carry it |
+
+The danger-border hairline fails 3:1 in both themes by design: WCAG 1.4.11
+does not require a contrasting container edge when the component is identified
+by its contents, and raising it would make every error box shout. Revisit only
+if an error state ever relies on its border alone.
+
 ### Temporary aliases — removed in Phase 2
 
 Phase 1 shipped an alias block mapping the Terminal-era names (`paper-2`,
@@ -73,7 +92,7 @@ Use the real token names only.
 ## Type
 
 - **UI: Hanken Grotesk**, the variable file (one file covers 400–700, smaller than four statics). `--font-ui`.
-- **Headlines and reading text: Newsreader, variable (wght + opsz, roman + italic) since Phase 2.** `--font-serif`. Opt-in by class only (`.page-title`, `.sheet-title`, `.intake-title`, `.run-title`, `.result-title`, `.prose-serif`); base `h1–h3` deliberately do **not** set a family. Phase 1 loaded a single static 400; Phase 2 moved Notes/TL;DR into the serif, and their markdown carries bold headings, `**strong**` and `*emphasis*`, which a static 400 would have faux-bolded and faux-italicised. The opsz axis is what makes the 56px headline match the boards' display cut.
+- **Headlines and reading text: Newsreader, variable (wght + opsz, roman + italic) since Phase 2.** `--font-serif`. Opt-in by class only (`.view-title` (Phase 4: API key, Releases, Privacy, Terms; History's `.history-title` shares it), `.legal-heading`, `.key-guide-title`, `.offline-title`, `.sheet-title`, `.intake-title`, `.run-title`, `.result-title`, `.prose-serif`); base `h1–h3` deliberately do **not** set a family. Phase 1 loaded a single static 400; Phase 2 moved Notes/TL;DR into the serif, and their markdown carries bold headings, `**strong**` and `*emphasis*`, which a static 400 would have faux-bolded and faux-italicised. The opsz axis is what makes the 56px headline match the boards' display cut.
 - **Serif reading measure: `--measure-serif: 36rem`**, measured in the browser at 19px: 576px ≈ 74 characters per line in Notes/TL;DR, 69 in transcript lines. 40rem measured 82 and was cut. Phone (18px, 316px column) runs ~43.
 - Both via `next/font/google` → self-hosted under `/_next/static/media`; `scripts/build-sw.mjs` now precaches `.woff2` so the offline page and the Capacitor export keep their type.
 
@@ -104,6 +123,7 @@ details are in `app-shell-layout.md`.
 - **Dark dock is a raised tint** (`#212522`), not an inverted light bar — an inverted bar on a near-black page was the loudest element on screen.
 - **App mode on a wide window** (changed in Phase 2, settled 2026-11-01): the bottom tab bar and More sheet are phone-only — `≤ 37.5rem`. A wider installed window gets the web chrome whole: the top bar and the footer, which is its way to Privacy/Terms (owner decision; they are not added to the top-bar menu). CSS only.
 - **design/newshots/ supersedes design/shots/** for ProgressCaptions, ProgressUploadMobile, ProgressFailed, ProgressLostWeb and ResultsOnScreenText(Mobile). One new token: `--color-strip-skipped-edge` (dashed edge of a skipped frame, light #5E5F66 / dark #5A615C).
+- **Phase 4 boards** (`design/phase4-boards/`; no suffix = desktop 1280, `Web` = phone browser shell, `Mobile` = installed-app shell) cover API key, Releases, Privacy, Terms and Offline. They were rendered with fallback fonts — match size, weight, spacing and hierarchy, never glyph shapes; the real faces are Newsreader and Hanken Grotesk. Truth-driven copy deviations (no "few free runs", no Open History offline, no release bullets, the phone boards' key sentence on desktop, "Effective" over "Last updated") are recorded in `byok-api-key.md`, `release-notes.md`, `legal-offline-routes.md`.
 - **Phase 2 deviations** are listed per shot in `mem/20261101-redesign-phase2-core-flow.md` and summarised in `upload-form.md`, `run-status-pipeline.md` and `results-view.md`.
 
 ## Overrides of tooling suggestions
@@ -120,3 +140,5 @@ generated one). Nothing is persisted outside this doc and `frontend/app/tokens.c
 - 2026-11-01 · frontend agent · owner answers applied: TL;DR key-takeaway label, bold filmstrip labels; corrected the Privacy/Terms note (they were already in the More sheet; the gap is wide installed windows only)
 - 2026-11-01 · frontend agent · final Phase 2 round: design/newshots built (captions route, File received, failed/lost notice, text-only On-screen); wide installed windows show the footer; added --color-strip-skipped-edge
 - 2026-11-01 · frontend agent (Phase 3) · History poster grid built on the existing --poster-1..5 and --radius-poster (no new tokens); new classes .history*, .filter-pill, .sort-select, .poster* in globals.css HISTORY block. See run-history.md
+- 2026-11-01 · frontend agent (Phase 4) · API key / Releases / Privacy / Terms / Offline built editorially (shared `.view-title`, no new tokens); dark-mode contrast audit of danger and new pairs, computed — all text passes, no token change; no-board pages listed
+- 2026-11-01 · frontend agent (Phase 4, boards) · pages rebuilt to design/phase4-boards/; `.view-title` (and History's title) now clamp(2.25rem, 1.75rem + 1.6vw, 3rem) = 36px phone / 48px at 1280 to match the boards; new `.release-latest` pill reuses accent-strong on accent-soft (already audited both themes); no token change

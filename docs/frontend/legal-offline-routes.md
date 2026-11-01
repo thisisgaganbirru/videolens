@@ -4,7 +4,7 @@ The three standalone pages that render *outside* the app shell: `/privacy`,
 `/terms`, and the service worker's `/offline` fallback.
 
 **Files**
-- `frontend/components/LegalShell.tsx` — the shared frame for the two *documents*: `AppNav`, crumb bar, scrolling document, footer, plus the `LegalSection` clause wrapper.
+- `frontend/components/LegalShell.tsx` — the shared frame for the two *documents*: `AppNav`, a `.view-scroll` section holding the `.legal-page` column (crumb bar, title, effective date, clauses), footer, plus the `LegalSection` clause wrapper.
 - `frontend/components/AppNav.tsx` — the nav band. All three routes render it; see `app-shell-layout.md`.
 - `frontend/components/ThemeToggle.tsx` — the theme button, rendered inside `AppNav`, so it is literally the same control on every route rather than a lookalike. Exports `toggleTheme()` too.
 - `frontend/app/privacy/page.tsx` — privacy copy only.
@@ -93,6 +93,50 @@ looking live while they cannot act. Since the shell's JS is now precached
 (below), React genuinely hydrates offline — the drawer opens, the toggle
 toggles, the tabs navigate. Verified offline at 390x844: drawer `0/0/272/844`,
 theme toggle flips and persists, tapping History reaches `/?view=history`.
+
+## Phase 4 layout (2026-11-01, `design/phase4-boards/{Privacy,Terms,Offline}*.png`) — supersedes "The measure", "Fixed frame" and "Layout" below
+
+Built to the owner's boards in `design/phase4-boards/` (the first pass that
+day had extrapolated without them). **The crumb bar is gone**: the boards draw
+none, and the shared nav/footer/More sheet are the way back. That reverses the
+earlier record of the crumb bar as "the user's call" — the boards are the
+owner's later word; flag it if that was not intended. Any section below that
+describes the crumb bar is history; all `.crumb-*` CSS is deleted.
+The three sections below describe the Terminal-era `.legal-doc`/`.page-title`/
+`.home-center` implementation and are kept for history only — those classes
+are deleted from `globals.css`.
+
+- **Scroll model.** `data-frame="fixed"` is dropped from all three routes.
+  Each renders `<section class="view-scroll">`, the same scroller Analyze,
+  History, API key and Releases use (`.shell > section.view-scroll` in
+  `globals.css`): from 32rem it is the full-bleed region between the fixed nav
+  and footer, `overflow-y: auto` so a short page shows no scrollbar; below
+  32rem `.viewport` scrolls. Measured at 1366×900, 390×844 web and app, both
+  themes: no document scroll, no horizontal scroll.
+- **Legal** (`LegalShell`): `.legal-page` (the centred 43.5rem column shared
+  with `.key-page`/`.releases`) → `<article>` with `.view-head`
+  (`h1.view-title` "Privacy" / "Terms" — retitled from "Privacy Policy" /
+  "Terms of Use" per the boards) and `.legal-meta` directly under it →
+  `.legal-copy` (capped at `--measure`, 30px between sections, **no rules**).
+  `LegalSection` renders `section.legal-section > h2.legal-heading`
+  (Newsreader 24→28px) `+ p.legal-text` (17/1.65, ink-2, 4px under its
+  heading). Deviations: the meta line keeps "Effective August 1, 2026" (the
+  boards' "Last updated:" would change what the date means legally), and the
+  boards' tint "Sample text — replace before launch" notice is not rendered:
+  the copy is the real policy text, not sample text (its Contact clause still
+  carries its own pre-launch placeholder).
+- **Offline**: `.offline` (28rem), centred in the band at every width — the
+  offline section is a flex column filling the band, so the block centres on
+  phones too. A 76px round tint disc with lucide `WifiOff` (ink, never red),
+  serif `h1` "You're offline" at the shared title size, the lede "VideoLens
+  needs a connection to analyze new videos. A run you already started keeps
+  going on the server.", and **`<a href="/">` Try again** (`.btn-ink`) —
+  still a plain anchor (the eslint override for `app/offline/**` stays),
+  because an RSC navigation cannot resolve with the network down.
+  Deviation: the boards' "Your History is still here." and **Open History**
+  button are omitted because they are not true yet — History is fetched from
+  the server, and the service worker answers `/?view=history` with this page
+  while offline. Add both when run history moves client-side.
 
 ## The measure
 
@@ -590,3 +634,5 @@ including a cold start with the HTTP cache cleared via CDP
 - 2026-08-15 · frontend agent (sw offline policy) · sw.js now serves /privacy and /terms from cache offline and keeps / on the offline page (explicit allowlist; / deliberately excluded); precache list generated at build time from the real build output (sw/sw.template.js + scripts/build-sw.mjs → gitignored public/sw.js), so React hydrates offline and the theme toggle works; cache name is now a content digest, verified to sweep a stale cache across a real rebuild; /offline ported to `<AppNav activeTab={null} />` so all four routes carry identical chrome; fixed the 16px footer offset between flow and fixed frames at 390px; corrected the "One honest exception", the rejected-extraction rationale and the crumb bar's justification — all three void since the tabs moved into the URL
 - 2026-08-15 · frontend agent (crumb bar revision) · crumb is now a 28px bordered rounded-square back button (chevron, outside the `<ol>`, new `--radius-control: 8px` token) then the trail `⌂ / PRIVACY`; dropped the word BACK; DELETED the hairline from the nav→crumb→heading chain entirely (`.crumb-bar` border-bottom, `.legal-doc` padding-top and a short-lived `.legal-body` border-top all gone); nav→h1 77.0→60.0 desktop, 89→76.0 mobile; back button's 44x44 touch target now carried by an asymmetric `::before` (a flat `inset: -0.5rem` measured 42, not 44 — border-box). Three things here are the USER'S explicit calls and were each argued the other way by a previous pass: two glyphs not one, no `BACK` word, no hairline. Do not revert them
 - 2026-11-01 · frontend agent · footers on /privacy, /terms and /offline replaced by the shared `SiteFooter` (web shell) + `BottomTabBar` (app shell, Privacy/Terms in the More sheet as plain `<a>` so they still work offline); routing contract and plain-anchor rule unchanged — see app-shell-layout.md "Two shells"
+- 2026-11-01 · frontend agent (Phase 4) · editorial restyle of Privacy, Terms and Offline (no board): `.view-scroll` section replaces `data-frame="fixed"`, serif `.view-title` + `.legal-meta`, `.legal-section`/`.legal-heading`/`.legal-text` clauses at `--measure`, Offline as a dashed WifiOff tile + serif title + plain `<a>` Try again; deleted `.legal-doc`/`.legal-body`/`.page-title`/`.home-center`
+- 2026-11-01 · frontend agent (Phase 4, boards) · rebuilt Privacy/Terms/Offline to design/phase4-boards: crumb bar removed (boards draw none; all .crumb-* CSS deleted), titles Privacy/Terms, meta directly under title, no section rules, tighter section rhythm; Offline as a round tint disc + "You're offline" + new lede, centred on phones; "Your History is still here"/Open History omitted (not true offline yet); "Effective" kept over "Last updated"; sample-text notice not rendered

@@ -19,16 +19,26 @@ Shows the caller's own past runs (newest first, backend-capped at 20) and lets t
 Source of truth: `design/shots/HistoryA.png`, `HistoryADark.png`,
 `HistoryMobile.png` (installed app), `HistoryWeb.png` (phone browser).
 
-- **Header**: `h1.history-title` "History" in Newsreader (36→48px), lede
+- **Header**: `h1.history-title` "History" in Newsreader (36→48px; shares the `.view-title` rule with API key, Releases and the legal pages since Phase 4), lede
   "Your recent analyses. Open one to read its notes again."
 - **Controls** (populated state only): filter pills All / Instagram / TikTok /
   YouTube / Files (`button[aria-pressed]` in a `role="group"`; active = filled
   ink pill), search (`input[type=search].field.field-pill`, matches title +
   `summary_snippet`, every whitespace term must match), sort (native `<select>`
   styled as a pill: Newest / Oldest). From 48rem: pills left, search (260px) +
-  sort right. Phone: search with sort beside it, then the pill row, which
-  scrolls sideways and bleeds off the right edge. A visually hidden polite
+  sort right. Phone (below 48rem, Phase 4): search alone, full width, on its own
+  row, then the pill row, which scrolls sideways and bleeds off the right
+  edge; **sort is hidden** (`HistoryWeb.png`, `HistoryMobile.png`). A visually hidden polite
   status announces "N runs shown" only once something has narrowed the list.
+- **Sort hidden ⇒ Newest.** `HistoryGrid` reads
+  `useMediaQuery("(min-width: 48rem)")` (`components/useMediaQuery.ts`, a
+  `useSyncExternalStore` wrapper — no set-state-in-effect) and orders by
+  `sortVisible ? sort : "newest"`. The CSS breakpoint that hides
+  `.history-sort` is the same 48rem, so the list can never be ordered by a
+  control the user cannot see. The desktop choice is kept in state, not reset:
+  narrow to a phone width and back, and "Oldest" returns (verified 1366 →
+  390 → 1366). The server snapshot is `false` (Newest), which is also the
+  default, so the static export hydrates without a mismatch.
 - **Groups**: `h2.history-group-label` eyebrows TODAY / EARLIER THIS WEEK /
   EARLIER (+ UNDATED for an unparseable `created_at`, always last). "This
   week" = the previous six calendar days, the window where a bare weekday
@@ -55,7 +65,7 @@ Source of truth: `design/shots/HistoryA.png`, `HistoryADark.png`,
   pill). Failed and in-progress runs still count toward the backend's 20.
 - **Files filter** = `source_kind === "file"` or platform `audio_file` /
   `video_file`.
-- **Scrolling**: like Analyze, from 32rem `section[data-view="history"]` is the
+- **Scrolling**: like Analyze, from 32rem the History section (`section.view-scroll`, Phase 4) is the
   scroller between the fixed nav and footer (full-bleed so its scrollbar is at
   the window edge); below 32rem `.viewport` scrolls. In the installed-app shell
   the dock's footprint is already reserved by `.shell`'s bottom padding —
@@ -194,3 +204,5 @@ painting 66.8px buttons (44 content + 20.8 padding + 2 border) instead of the
 - 2026-08-15 · frontend agent (history error handling) · split transport from server failures (`NetworkError`), added a keyboard-reachable retry, replaced the panel's `.error-block` with a new `.error-inline`, added `.error-note`, and fixed `.btn`'s `content-box` touch targets (66.8px → 44px)
 - 2026-08-15 · doc-accuracy agent · corrected two stale claims against live code: `VersionLogPanel` has moved to `.error-inline` with a real retry (was recorded as not-yet-done), and `useAnalysisRun.ts` now classifies via the shared `application/gatewayError.ts` (`classifyGatewayError`) and exposes `errorKind` (was recorded as an open follow-up); documented the shared classifier itself
 - 2026-11-01 · frontend agent (Phase 3) · replaced the day-grouped row list with the editorial poster grid (filters, search, sort, day buckets, landscape spans, tint hash, legacy fallbacks, Failed/Processing badges); pure helpers in components/history.ts; History section is now its own scroller; empty + no-matches states restyled
+- 2026-11-01 · frontend agent (Phase 4) · phone controls: search full width on its own row above the pills, sort hidden below 48rem and ordering forced to Newest there via `useMediaQuery` (desktop choice preserved); scroller selector is now `.view-scroll`
+- 2026-11-01 · frontend agent (Phase 4, boards) · title size follows the shared `.view-title`/`.history-title` change to clamp(2.25rem, 1.75rem + 1.6vw, 3rem) made for the Phase 4 boards (36px phone, 48px at 1280); no other History change

@@ -2,7 +2,7 @@ import LegalShell, { LegalSection } from "@/components/LegalShell";
 
 export default function TermsPage() {
   return (
-    <LegalShell title="Terms of Use" effective="Effective August 1, 2026" current="terms">
+    <LegalShell title="Terms" effective="Effective August 1, 2026" current="terms">
       <LegalSection heading="Permission to process">
         You may submit only media you own or are authorized to process. You are responsible for complying with copyright, privacy, contractual, and platform requirements.
       </LegalSection>

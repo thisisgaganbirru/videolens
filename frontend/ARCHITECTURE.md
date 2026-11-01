@@ -84,7 +84,8 @@ does lives in `components/`:
   by `ThemeToggle` and `app/layout.tsx`'s pre-paint script.
 - `panels/{ApiKeyPanel,HistoryPanel,VersionLogPanel}.tsx` — one component
   per tab, each just rendering its matching hook's state.
-- `format.ts` — the shared `formatDate` used by the two list-style panels.
+- `format.ts` — `formatDay` ("Oct 30, 2026"), used by the Releases list. (History formats its own dates in `history.ts`.)
+- `useMediaQuery.ts` — `useSyncExternalStore` over `matchMedia`; only for when React itself must know the width (History hides sort below 48rem and forces Newest).
 - `UploadForm.tsx`, `ResultsView.tsx`, `RunStatusView.tsx`,
   `UpdateBanner.tsx`, `ServiceWorkerRegistration.tsx` — presentational
   components, unchanged in behavior; only their imports moved to
