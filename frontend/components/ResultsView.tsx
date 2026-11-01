@@ -1,21 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { Capacitor } from "@capacitor/core";
 import { Share } from "@capacitor/share";
-import {
-  CalendarDays,
-  Check,
-  ChevronDown,
-  Copy,
-  ExternalLink,
-  Eye,
-  Heart,
-  MessageCircle,
-  Share2,
-} from "lucide-react";
+import { ArrowUpRight, Check, ChevronDown, Copy, Share2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { splitTakeaway } from "./takeaway";
 import type {
   AnalysisCompleteness,
   ScreenTextSegment,
@@ -58,10 +49,15 @@ const TABS = [
   { key: "summary", label: "TL;DR" },
   { key: "markdown", label: "Notes" },
   { key: "transcript", label: "Transcript" },
-  { key: "screen_text", label: "On-Screen" },
+  { key: "screen_text", label: "On-screen" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
+
+/* TL;DR opens first: the shortest read, the thing to have in front of you the
+   moment a run finishes. (Phase 2 briefly opened on Notes to match the boards;
+   the owner reverted that on 2026-11-01 — TL;DR is the default.) */
+const DEFAULT_TAB: TabKey = "summary";
 type TimelineSegment = ScreenTextSegment | TranscriptSegment;
 
 function formatTimestamp(value: number) {
@@ -79,52 +75,176 @@ function formatTimestamp(value: number) {
 }
 
 /**
- * Timestamped rows on the shared `.line` grid: an accent timestamp column and
- * the text beside it, separated by hairlines rather than a drawn rail. Only
- * the start time is shown (the end is carried in the `title`/`dateTime`) —
- * the two-line time column the old glass layout used cost more width than the
- * 3.6rem gutter the Terminal grid allows.
+ * The On-screen tab, text only (design/newshots/ResultsOnScreenText*.png): one
+ * line of context, then a row per moment — the start time in the accent
+ * column, the text found in the frame beside it in serif, one line per line
+ * the model returned (a card listing "Grain / Protein / Veg" stays three
+ * lines). Only the start time is shown; the end is carried in the `title` and
+ * `dateTime`. The backend sends no frames, so there are no thumbnails.
  */
-function TimelineView({
+function OnScreenView({
   segments,
   fallback,
   emptyMessage,
-  label,
-  marker,
 }: {
-  segments: TimelineSegment[];
+  segments: ScreenTextSegment[];
   fallback: string;
   emptyMessage: string;
-  label: string;
-  marker?: string;
 }) {
-  if (segments.length === 0) {
-    return <p className="prose whitespace-pre-wrap break-words">{fallback || emptyMessage}</p>;
+  const text = fallback.trim();
+  if (segments.length === 0 && !text) {
+    return <p className="t-intro">{emptyMessage}</p>;
   }
 
   return (
-    <ol className="list-none" aria-label={label}>
-      {segments.map((segment, index) => {
-        const speaker = "speaker" in segment ? segment.speaker : null;
+    <>
+      <p className="t-intro">Text found in the video frames, with the time it appears.</p>
+      {segments.length === 0 ? (
+        /* An older run, or a model reply without timings: the text alone. */
+        <p className="screen-text">{text}</p>
+      ) : (
+        <ol className="t-list t-list--screen" aria-label="On-screen text by time">
+          {segments.map((segment, index) => (
+            <li key={`${segment.start_seconds}-${segment.end_seconds}-${index}`} className="t-row">
+              <time
+                dateTime={`PT${Math.max(0, Math.round(segment.start_seconds))}S`}
+                title={`${formatTimestamp(segment.start_seconds)}–${formatTimestamp(segment.end_seconds)}`}
+                className="t-time"
+              >
+                {formatTimestamp(segment.start_seconds)}
+              </time>
+              <p className="t-text">{segment.text.trim()}</p>
+            </li>
+          ))}
+        </ol>
+      )}
+    </>
+  );
+}
 
-        return (
-          <li key={`${segment.start_seconds}-${segment.end_seconds}-${index}`} className="line">
-            <time
-              dateTime={`PT${Math.max(0, Math.round(segment.start_seconds))}S`}
-              title={`${formatTimestamp(segment.start_seconds)}–${formatTimestamp(segment.end_seconds)}`}
-              className="tabular-nums"
-            >
-              {formatTimestamp(segment.start_seconds)}
-            </time>
-            <p className="min-w-0 whitespace-pre-wrap break-words">
-              {speaker ? <span className="speaker">{speaker}</span> : null}
-              {!speaker && marker ? <span className="ocr-tag">{marker}</span> : null}
-              {segment.text}
-            </p>
-          </li>
-        );
-      })}
-    </ol>
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** `text` with every case-insensitive occurrence of `query` wrapped in <mark>. */
+function highlight(text: string, query: string) {
+  if (!query) return text;
+  const parts = text.split(new RegExp(`(${escapeRegExp(query)})`, "gi"));
+  return parts.map((part, index) => (index % 2 === 1 ? <mark key={index}>{part}</mark> : part));
+}
+
+/**
+ * The Transcript tab, drawn on design/shots/ResultsTranscript.png: a search
+ * box that filters the rows and marks the matches, a switch that hides the
+ * timestamp column, then the rows. Both controls are local view state — they
+ * change what is shown, never what is copied, shared or downloaded.
+ *
+ * With no timed segments there is nothing to search or time, so the toolbar is
+ * not drawn and the plain transcript (or the empty message) reads as prose.
+ */
+function TranscriptView({ segments, fallback }: { segments: TranscriptSegment[]; fallback: string }) {
+  const [query, setQuery] = useState("");
+  const [showTimes, setShowTimes] = useState(true);
+  const searchId = useId();
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  if (segments.length === 0) {
+    return (
+      <p className="prose-serif whitespace-pre-wrap break-words">
+        {fallback || "No spoken content was detected."}
+      </p>
+    );
+  }
+
+  const needle = query.trim();
+  const lowered = needle.toLowerCase();
+  const visible = needle
+    ? segments.filter(
+        (segment) =>
+          segment.text.toLowerCase().includes(lowered) ||
+          (segment.speaker ?? "").toLowerCase().includes(lowered),
+      )
+    : segments;
+
+  /* Polite and atomic, and only while a search is active: it says how many
+     rows the filter left. Silent with no query, where the count is just "all
+     of them". */
+  const countMessage = needle
+    ? `${visible.length} ${visible.length === 1 ? "line matches" : "lines match"} “${needle}”.`
+    : "";
+
+  return (
+    <>
+      <div className="t-toolbar">
+        <div className="t-search">
+          <label htmlFor={searchId} className="sr-only">
+            Search transcript
+          </label>
+          <input
+            ref={searchRef}
+            id={searchId}
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search transcript"
+            autoComplete="off"
+            className="field field-pill"
+          />
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={showTimes}
+          onClick={() => setShowTimes((value) => !value)}
+          className="switch-row"
+        >
+          <span className="switch" aria-hidden="true" />
+          Timestamps
+        </button>
+      </div>
+
+      <p className="sr-only" aria-live="polite" aria-atomic="true">
+        {countMessage}
+      </p>
+
+      {visible.length === 0 ? (
+        <div className="t-empty">
+          <p className="pending-note">Nothing in this transcript matches “{needle}”.</p>
+          <button
+            type="button"
+            className="reset-link"
+            onClick={() => {
+              setQuery("");
+              searchRef.current?.focus();
+            }}
+          >
+            Clear search
+          </button>
+        </div>
+      ) : (
+        <ol className="t-list" data-times={showTimes ? "on" : "off"} aria-label="Timestamped transcript">
+          {visible.map((segment, index) => (
+            <li key={`${segment.start_seconds}-${segment.end_seconds}-${index}`} className="t-row">
+              {showTimes ? (
+                <time
+                  dateTime={`PT${Math.max(0, Math.round(segment.start_seconds))}S`}
+                  title={`${formatTimestamp(segment.start_seconds)}–${formatTimestamp(segment.end_seconds)}`}
+                  className="t-time"
+                >
+                  {formatTimestamp(segment.start_seconds)}
+                </time>
+              ) : null}
+              <div className="t-body">
+                {segment.speaker ? (
+                  <span className="t-speaker">{highlight(segment.speaker, needle)}</span>
+                ) : null}
+                <p className="t-text">{highlight(segment.text, needle)}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+    </>
   );
 }
 
@@ -226,10 +346,12 @@ function formatCount(value: number) {
   return new Intl.NumberFormat("en", { notation: "compact" }).format(value);
 }
 
-function creatorInitials(name: string) {
+export function creatorInitials(name: string) {
   return name
+    .replace(/^@/, "")
     .trim()
-    .split(/\s+/)
+    .split(/[\s._-]+/)
+    .filter(Boolean)
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase())
     .join("");
@@ -245,6 +367,12 @@ function formatUploadDate(value: string) {
   );
 }
 
+/** "2026-10-12"-style machine value for `<time dateTime>`, when the backend
+ *  sent the compact yt-dlp form; otherwise the value as given. */
+function uploadDateTime(value: string) {
+  return /^\d{8}$/.test(value) ? `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}` : value;
+}
+
 // Official brand glyphs only, sourced from each platform's own brand-resource
 // pages (see mem/20260810-official-platform-icons.md). Omitted entirely for
 // platforms without a redistribution-friendly logo (e.g. TikTok requires
@@ -255,32 +383,31 @@ const PLATFORM_ICONS: Record<string, string> = {
 };
 
 /**
- * Deliberately unboxed: no border, no tint, no shadow. It sits in HomeScreen's
- * left ruled column, where the single vertical hairline against the results
- * pane is the whole separation — two bordered rectangles side by side read as
- * a slide, which is what the de-boxing pass removed.
+ * The source card, drawn on design/shots/Results.png: platform chip with the
+ * outbound "Original post" link on one row, the creator under a monogram, the
+ * caption clamped behind "Show more", then a ruled footer of counts and the
+ * posting date. HomeScreen supplies the card surface around it (so the same
+ * component also renders bare inside the phone disclosure).
  *
- * Section order mirrors the mockup: origin row (platform left, original-post
- * link right), creator block with the source title nested under the uploader,
- * caption clamped to three lines behind a disclosure, then the stats footer.
+ * The counts lost their icons in the editorial pass: "184K views" says what it
+ * is in words, and the glyph beside it was a second label for the same fact.
  */
 export function SourceCard({ metadata }: { metadata: SourceMetadata }) {
   const [expanded, setExpanded] = useState(false);
   const stats = [
-    { label: "views", value: metadata.view_count, icon: Eye },
-    { label: "likes", value: metadata.like_count, icon: Heart },
-    { label: "comments", value: metadata.comment_count, icon: MessageCircle },
+    { label: "views", value: metadata.view_count },
+    { label: "likes", value: metadata.like_count },
+    { label: "comments", value: metadata.comment_count },
   ].flatMap((stat) => (stat.value == null ? [] : [{ ...stat, value: stat.value }]));
+  const icon = PLATFORM_ICONS[metadata.platform.toLowerCase()];
 
   return (
     <article className="source-card">
-      {/* Row, not a stacked column: platform reads left, the outbound link
-          right, on one baseline — the mockup's `.origin`. */}
-      <div className="source-card__origin w-full flex-row items-center justify-between gap-[var(--space-xs)]">
+      <div className="source-card__origin">
         <span className="source-card__platform">
-          {PLATFORM_ICONS[metadata.platform.toLowerCase()] && (
+          {icon && (
             <img
-              src={PLATFORM_ICONS[metadata.platform.toLowerCase()]}
+              src={icon}
               /* Decorative on purpose: the platform name sits right beside it,
                  so alt text would double-announce. */
               alt=""
@@ -289,14 +416,9 @@ export function SourceCard({ metadata }: { metadata: SourceMetadata }) {
           )}
           {metadata.platform}
         </span>
-        <a
-          href={metadata.source_url}
-          target="_blank"
-          rel="noreferrer"
-          className="source-card__action hover:text-[var(--color-accent)]"
-        >
-          original post
-          <ExternalLink className="h-3 w-3" aria-hidden="true" />
+        <a href={metadata.source_url} target="_blank" rel="noreferrer" className="source-card__action">
+          Original post
+          <ArrowUpRight aria-hidden="true" />
         </a>
       </div>
 
@@ -311,7 +433,7 @@ export function SourceCard({ metadata }: { metadata: SourceMetadata }) {
                 href={metadata.uploader_url}
                 target="_blank"
                 rel="noreferrer"
-                className="source-card__creator-link hover:text-[var(--color-accent)]"
+                className="source-card__creator-link"
                 title={metadata.uploader}
               >
                 {metadata.uploader}
@@ -329,47 +451,45 @@ export function SourceCard({ metadata }: { metadata: SourceMetadata }) {
       )}
 
       {metadata.description && (
-        <p className={`source-card__caption ${expanded ? "" : "line-clamp-3"}`}>{metadata.description}</p>
+        <p className={`source-card__caption ${expanded ? "" : "line-clamp-4"}`}>{metadata.description}</p>
       )}
       {metadata.description && metadata.description.length > 160 && (
         <button
           type="button"
           onClick={() => setExpanded((value) => !value)}
-          /* The shared `.disclosure` (mockup name), not the BEM
-             `.source-card__disclosure`: only the shared rule carries the
-             `all: unset` reset, `cursor: pointer`, the svg sizing, and the
-             `[aria-expanded="true"] svg` chevron flip the design keys off. */
           /* self-start because `all: unset` blockifies the button as a flex
              item of `.source-card`, which would otherwise stretch the hit
              target across the whole column. */
-          className="disclosure self-start hover:text-[var(--color-focus)]"
+          className="disclosure self-start"
           aria-expanded={expanded}
         >
-          {expanded ? "show less" : "show more"}
+          {expanded ? "Show less" : "Show more"}
           <ChevronDown aria-hidden="true" />
         </button>
       )}
 
       {(stats.length > 0 || metadata.upload_date) && (
         <footer className="source-card__footer">
-          <ul className="source-card__stats">
-            {stats.map((stat) => (
-              <li
-                key={stat.label}
-                className="source-card__stat"
-                aria-label={`${stat.value.toLocaleString("en-US")} ${stat.label}`}
-              >
-                <stat.icon className="h-3.5 w-3.5" aria-hidden="true" />
-                <strong>{formatCount(stat.value)}</strong>
-                <span>{stat.label}</span>
-              </li>
-            ))}
-          </ul>
+          {stats.length > 0 && (
+            <ul className="source-card__stats">
+              {stats.map((stat) => (
+                <li
+                  key={stat.label}
+                  className="source-card__stat"
+                  aria-label={`${stat.value.toLocaleString("en-US")} ${stat.label}`}
+                >
+                  <strong>{formatCount(stat.value)}</strong> {stat.label}
+                </li>
+              ))}
+            </ul>
+          )}
           {metadata.upload_date && (
-            <time className="source-card__date" dateTime={metadata.upload_date}>
-              <CalendarDays className="h-3.5 w-3.5" aria-hidden="true" />
-              {formatUploadDate(metadata.upload_date)}
-            </time>
+            <p className="source-card__date">
+              Posted{" "}
+              <time dateTime={uploadDateTime(metadata.upload_date)}>
+                {formatUploadDate(metadata.upload_date)}
+              </time>
+            </p>
           )}
         </footer>
       )}
@@ -377,10 +497,11 @@ export function SourceCard({ metadata }: { metadata: SourceMetadata }) {
   );
 }
 
-/* Rendered inside HomeScreen's `.results` flex column, so this returns the
-   pane's own children rather than another wrapper: title band, `.tab-list`
-   (inset to the pane gutter, underline spanning the full tint), then the
-   scrolling `.pane`. */
+/* Rendered inside HomeScreen's `.result-card`, so this returns the card's own
+   children rather than another wrapper: title band, completeness note, tab
+   row, panels. Nothing in here scrolls on its own — the Analyze band does
+   (see app-shell-layout.md), so a long transcript simply makes the page
+   longer between the fixed nav and the fixed footer/dock. */
 export default function ResultsView({
   result,
   sourceMetadata,
@@ -391,19 +512,42 @@ export default function ResultsView({
   completeness?: AnalysisCompleteness;
 }) {
   const captionsOnly = completeness === "captions_only";
-  const [active, setActive] = useState<TabKey>("summary");
+  const [active, setActive] = useState<TabKey>(DEFAULT_TAB);
+  const summary = splitTakeaway(result.summary);
   const [copied, setCopied] = useState(false);
   const [canShare, setCanShare] = useState(false);
+  const tabRefs = useRef<Partial<Record<TabKey, HTMLButtonElement | null>>>({});
 
   const content = result[active];
 
   useEffect(() => {
-    setCopied(false);
-  }, [active]);
-
-  useEffect(() => {
     setCanShare(Capacitor.isNativePlatform() || typeof navigator.share === "function");
   }, []);
+
+  /* The copied tick belongs to the tab it copied. Reset where the tab changes
+     rather than in an effect watching `active` — same behaviour, one render
+     fewer, and no set-state-in-effect. */
+  const selectTab = (key: TabKey) => {
+    setActive(key);
+    setCopied(false);
+  };
+
+  /* WAI-ARIA tabs, automatic activation: arrows move and select, Home/End jump
+     to the ends, and only the selected tab is in the Tab order (roving
+     tabindex), so Tab from the row goes straight into the panel. */
+  const onTabKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const index = TABS.findIndex((tab) => tab.key === active);
+    let next = index;
+    if (event.key === "ArrowRight") next = (index + 1) % TABS.length;
+    else if (event.key === "ArrowLeft") next = (index - 1 + TABS.length) % TABS.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = TABS.length - 1;
+    else return;
+    event.preventDefault();
+    const key = TABS[next].key;
+    selectTab(key);
+    tabRefs.current[key]?.focus();
+  };
 
   const copyContent = async () => {
     await navigator.clipboard.writeText(content);
@@ -421,15 +565,12 @@ export default function ResultsView({
 
   return (
     <>
-      {/* Copy and share sit up here rather than in `.actions` below: they act
-          on whichever tab is showing, so they belong with the title band that
-          spans all four tabs, not stacked under the panel content where they
-          read as part of the last panel. Download stays below — it produces
-          one whole-report file regardless of the active tab. */}
+      {/* Copy and share act on whichever tab is showing; Download is the whole
+          report regardless of tab. All three sit in the title band, as drawn —
+          the download used to live under the last panel, where it read as part
+          of that panel and was a long scroll away on a full transcript. */}
       <div className="result-head">
-        <h2 className="min-w-0 break-words text-[0.95rem] font-semibold leading-[1.35] text-[var(--color-ink)]">
-          {result.title}
-        </h2>
+        <h2 className="result-title">{result.title}</h2>
         <div className="result-actions">
           <button
             type="button"
@@ -437,7 +578,7 @@ export default function ResultsView({
             className="icon-action"
             data-state={copied ? "copied" : undefined}
             aria-label={copied ? "Copied to clipboard" : "Copy this tab"}
-            title={copied ? "copied" : "copy"}
+            title={copied ? "Copied" : "Copy this tab"}
           >
             {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
           </button>
@@ -447,22 +588,26 @@ export default function ResultsView({
               onClick={() => void shareContent()}
               className="icon-action"
               aria-label="Share this tab"
-              title="share"
+              title="Share this tab"
             >
               <Share2 aria-hidden="true" />
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => downloadMarkdown(result, sourceMetadata, completeness)}
+            className="btn btn-primary btn-pill result-download"
+          >
+            Download .md
+          </button>
         </div>
       </div>
 
-      {/* A sibling of `.result-head`, above `.tab-list`, on purpose: it
-          qualifies all four panels, so it belongs to the pane's fixed header
-          rather than to any one of them, and in the `fixed` frame that header
-          is the part that does not scroll away. It stays *outside* the title
-          band rather than inside it — that band is a two-column row (title
-          left, copy/share right), and a full-width note has no column there. Nothing renders at all on a `full` run — the
-          normal path must be pixel-identical to before, the same restraint the
-          capability strip applies when the deployment is healthy.
+      {/* Between the title and the tabs on purpose: it qualifies all four
+          panels, so it belongs to none of them. Nothing renders at all on a
+          `full` run — the normal path stays exactly as drawn, the same
+          restraint the capability strip applies when the deployment is
+          healthy.
 
           A plain <p>, not role="alert" and not a live region: the run
           succeeded. This is a qualifier arriving with brand-new content the
@@ -475,16 +620,20 @@ export default function ResultsView({
         </p>
       )}
 
-      <div className="tab-list" role="tablist" aria-label="Analysis results">
+      <div className="tab-list" role="tablist" aria-label="Analysis results" onKeyDown={onTabKeyDown}>
         {TABS.map((tab) => (
           <button
             key={tab.key}
+            ref={(node) => {
+              tabRefs.current[tab.key] = node;
+            }}
             type="button"
-            onClick={() => setActive(tab.key)}
+            onClick={() => selectTab(tab.key)}
             role="tab"
             id={`result-tab-${tab.key}`}
             aria-selected={active === tab.key}
             aria-controls={`result-panel-${tab.key}`}
+            tabIndex={active === tab.key ? 0 : -1}
             className="tab"
           >
             {tab.label}
@@ -492,166 +641,97 @@ export default function ResultsView({
         ))}
       </div>
 
-      <div className="pane">
-        {/* All four panels stay mounted; `.panel` hides the inactive ones with
-            `display: none`, which also keeps them out of the a11y tree, and
-            `[data-active="true"]` drives the fade-in. */}
-        <div
-          className="panel"
-          data-active={active === "markdown" ? "true" : "false"}
-          role="tabpanel"
-          id="result-panel-markdown"
-          aria-labelledby="result-tab-markdown"
-        >
-          <div className="prose">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                h1: ({ children }) => (
-                  <h1 className="mb-[var(--space-sm)] break-words text-[1.15rem] font-bold leading-[1.3] text-[var(--color-ink)]">
-                    {children}
-                  </h1>
-                ),
-                h2: ({ children }) => (
-                  <h2 className="mb-[var(--space-xs)] mt-[var(--space-lg)] border-b border-[var(--color-rule)] pb-[var(--space-2xs)] text-[1rem] font-bold text-[var(--color-ink)] first:mt-0">
-                    {children}
-                  </h2>
-                ),
-                h3: ({ children }) => (
-                  <h3 className="mb-[var(--space-2xs)] mt-[var(--space-md)] text-[0.92rem] font-semibold text-[var(--color-ink)]">
-                    {children}
-                  </h3>
-                ),
-                h4: ({ children }) => (
-                  <h4 className="mb-[var(--space-2xs)] mt-[var(--space-sm)] text-[0.86rem] font-semibold text-[var(--color-ink-2)]">
-                    {children}
-                  </h4>
-                ),
-                p: ({ children }) => <p className="mb-[var(--space-sm)] last:mb-0">{children}</p>,
-                ul: ({ children }) => (
-                  <ul className="mb-[var(--space-sm)] list-disc space-y-[0.35rem] pl-[1.4rem] marker:text-[var(--color-muted)]">
-                    {children}
-                  </ul>
-                ),
-                ol: ({ children }) => (
-                  <ol className="mb-[var(--space-sm)] list-decimal space-y-[0.35rem] pl-[1.4rem] marker:text-[var(--color-muted)]">
-                    {children}
-                  </ol>
-                ),
-                li: ({ children }) => <li className="pl-1">{children}</li>,
-                strong: ({ children }) => (
-                  <strong className="font-semibold text-[var(--color-ink)]">{children}</strong>
-                ),
-                blockquote: ({ children }) => (
-                  <blockquote className="my-[var(--space-sm)] border-l-2 border-[var(--color-accent)] pl-[var(--space-sm)] text-[var(--color-muted)]">
-                    {children}
-                  </blockquote>
-                ),
-                a: ({ href, children }) => (
-                  <a
-                    href={href}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-[var(--color-accent)] underline underline-offset-4 hover:text-[var(--color-focus)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)]"
-                  >
-                    {children}
-                  </a>
-                ),
-                code: ({ children, className }) => (
-                  <code
-                    className={`${className || ""} bg-[var(--color-paper-3)] px-1.5 py-0.5 text-[0.9em] text-[var(--color-ink)]`}
-                  >
-                    {children}
-                  </code>
-                ),
-                pre: ({ children }) => (
-                  <pre className="mb-[var(--space-sm)] overflow-x-auto border border-[var(--color-rule)] bg-[var(--color-paper)] p-[var(--space-sm)] text-[0.78rem] leading-[1.55] [&_code]:bg-transparent [&_code]:p-0">
-                    {children}
-                  </pre>
-                ),
-                table: ({ children }) => (
-                  <table className="mb-[var(--space-sm)] block w-full overflow-x-auto border-collapse text-left text-[0.78rem]">
-                    {children}
-                  </table>
-                ),
-                thead: ({ children }) => (
-                  <thead className="border-b border-[var(--color-rule-2)]">{children}</thead>
-                ),
-                th: ({ children }) => (
-                  <th className="whitespace-nowrap px-[var(--space-2xs)] py-[0.35rem] font-semibold text-[var(--color-ink)]">
-                    {children}
-                  </th>
-                ),
-                td: ({ children }) => (
-                  <td className="border-b border-[var(--color-rule)] px-[var(--space-2xs)] py-[0.35rem] align-top">
-                    {children}
-                  </td>
-                ),
-                hr: () => <hr className="my-[var(--space-md)] border-[var(--color-rule)]" />,
-              }}
-            >
-              {result.markdown}
-            </ReactMarkdown>
-          </div>
-        </div>
-
-        <div
-          className="panel"
-          data-active={active === "summary" ? "true" : "false"}
-          role="tabpanel"
-          id="result-panel-summary"
-          aria-labelledby="result-tab-summary"
-        >
-          <p className="prose whitespace-pre-wrap break-words">
-            {result.summary || "No summary was generated."}
-          </p>
-        </div>
-
-        <div
-          className="panel"
-          data-active={active === "transcript" ? "true" : "false"}
-          role="tabpanel"
-          id="result-panel-transcript"
-          aria-labelledby="result-tab-transcript"
-        >
-          <TimelineView
-            segments={result.transcript_segments || []}
-            fallback={result.transcript}
-            emptyMessage="No spoken content was detected."
-            label="Timestamped transcript"
-          />
-        </div>
-
-        <div
-          className="panel"
-          data-active={active === "screen_text" ? "true" : "false"}
-          role="tabpanel"
-          id="result-panel-screen_text"
-          aria-labelledby="result-tab-screen_text"
-        >
-          {/* The one place the caption-only run actively lies if left alone:
-              an empty section under a tab called "On-Screen" reads as "the
-              video had none". `screen_text` is empty here because the caption
-              instruction forbids describing visuals the model cannot see, not
-              because anything was searched and came up empty. */}
-          <TimelineView
-            segments={result.screen_text_segments || []}
-            fallback={result.screen_text}
-            emptyMessage={captionsOnly ? CAPTIONS_ONLY_NO_SCREEN_TEXT : FULL_NO_SCREEN_TEXT}
-            label="Timestamped on-screen text"
-            marker="on-screen"
-          />
-        </div>
-
-        <div className="actions">
-          <button
-            type="button"
-            onClick={() => downloadMarkdown(result, sourceMetadata, completeness)}
-            className="btn btn-secondary"
+      {/* All four panels stay mounted; `.panel` hides the inactive ones with
+          `display: none`, which also keeps them out of the a11y tree, and
+          `[data-active="true"]` drives the fade-in. Mounted, not remounted, is
+          also what keeps a transcript search alive across a tab switch. */}
+      <div
+        className="panel"
+        data-active={active === "markdown" ? "true" : "false"}
+        role="tabpanel"
+        id="result-panel-markdown"
+        aria-labelledby="result-tab-markdown"
+        tabIndex={0}
+      >
+        <div className="prose-serif">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              /* The card title above is the h2; the notes' own headings step
+                 down beneath it whatever level the model wrote them at, so
+                 the outline stays one document. */
+              h1: ({ children }) => <h3 className="notes-h1">{children}</h3>,
+              h2: ({ children }) => <h3>{children}</h3>,
+              h3: ({ children }) => <h4>{children}</h4>,
+              h4: ({ children }) => <h5>{children}</h5>,
+              a: ({ href, children }) => (
+                <a href={href} target="_blank" rel="noreferrer" className="text-link">
+                  {children}
+                </a>
+              ),
+              table: ({ children }) => (
+                <div className="notes-table">
+                  <table>{children}</table>
+                </div>
+              ),
+            }}
           >
-            download report (.md)
-          </button>
+            {result.markdown}
+          </ReactMarkdown>
         </div>
+      </div>
+
+      <div
+        className="panel"
+        data-active={active === "summary" ? "true" : "false"}
+        role="tabpanel"
+        id="result-panel-summary"
+        aria-labelledby="result-tab-summary"
+        tabIndex={0}
+      >
+        {summary.takeaway ? (
+          <div className="prose-serif">
+            <figure className="takeaway">
+              <figcaption className="takeaway-label">Key takeaway</figcaption>
+              <p className="takeaway-text break-words">{summary.takeaway}</p>
+            </figure>
+            {summary.rest ? (
+              <p className="whitespace-pre-wrap break-words">{summary.rest}</p>
+            ) : null}
+          </div>
+        ) : (
+          <p className="prose-serif">No summary was generated.</p>
+        )}
+      </div>
+
+      <div
+        className="panel"
+        data-active={active === "transcript" ? "true" : "false"}
+        role="tabpanel"
+        id="result-panel-transcript"
+        aria-labelledby="result-tab-transcript"
+      >
+        <TranscriptView segments={result.transcript_segments || []} fallback={result.transcript} />
+      </div>
+
+      <div
+        className="panel"
+        data-active={active === "screen_text" ? "true" : "false"}
+        role="tabpanel"
+        id="result-panel-screen_text"
+        aria-labelledby="result-tab-screen_text"
+        tabIndex={0}
+      >
+        {/* The one place the caption-only run actively lies if left alone:
+            an empty section under a tab called "On-screen" reads as "the
+            video had none". `screen_text` is empty here because the caption
+            instruction forbids describing visuals the model cannot see, not
+            because anything was searched and came up empty. */}
+        <OnScreenView
+          segments={result.screen_text_segments || []}
+          fallback={result.screen_text || ""}
+          emptyMessage={captionsOnly ? CAPTIONS_ONLY_NO_SCREEN_TEXT : FULL_NO_SCREEN_TEXT}
+        />
       </div>
     </>
   );
