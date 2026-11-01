@@ -2,6 +2,7 @@
 
 import { ArrowUpRight } from "lucide-react";
 import { useVersionLog } from "@/application/useVersionLog";
+import AppBackLink from "@/components/AppBackLink";
 import { formatDay } from "@/components/format";
 import { orderReleases, releaseSubtitle, releaseVersion } from "@/components/releases";
 
@@ -28,6 +29,7 @@ const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION;
 export default function VersionLogPanel() {
   return (
     <div className="releases">
+      <AppBackLink />
       <header className="view-head">
         <h1 className="view-title">Releases</h1>
         <p className="view-lede">

@@ -20,6 +20,7 @@ shells").
 - `frontend/app/tokens.css` — palette, type, space, shape, motion tokens.
 - `frontend/app/globals.css` — the shared class vocabulary (`.shell`, `.nav`, `.nav-tab`, `.view-scroll`, `.view-head`/`.view-title`, …).
 - `frontend/components/useMediaQuery.ts` — `useSyncExternalStore` wrapper over `matchMedia` (server snapshot `false`); for the rare case where React, not just CSS, must know the width (History's hidden sort).
+- `frontend/components/AppBackLink.tsx` + `frontend/application/backNavigation.ts` — the installed app's "‹ Back" link above the title of API key, Releases, Privacy and Terms, and the "is the previous entry in-app?" check behind it. See "App-shell Back link".
 
 ## Structure
 
@@ -122,6 +123,20 @@ confined to the phone-width app shell: the rule is "same chrome on every route
 - **Top bar is sticky, full-bleed.** `.viewport` is `container-type: inline-size`; `.nav-wrap` and `.page-end` break out of the shell's gutter with `margin-inline: calc((100% - 100cqi) / 2)` + matching padding — full width without `100vw` (which counts the scrollbar and causes horizontal scroll).
 - **More sheet** is a native modal `<dialog>` opened with `showModal()`: top layer, inert page, Escape via `cancel`, `::backdrop` click closes (dialog has no own padding, so only a backdrop click targets the element), focus returns to More on every close path. Add rows by editing `MORE_SHEET_GROUPS` — three row kinds: `tab` (in-place nav on `/`), `route` (plain `<a>`, works from `/offline`), `theme` (`role="switch"`, reuses `toggleTheme`).
 - **Cascade-layer trap.** The responsive `@media` blocks in `globals.css` are *unlayered*, so they beat anything in `@layer components` regardless of specificity. The ≥ 48rem `.nav-links { display: flex }` is therefore written `:root:not([data-shell="app"]) .nav-links` — unscoped, it would resurrect the links in app mode. Any new unlayered responsive rule touching chrome needs the same guard.
+
+### App-shell Back link (2026-11-01)
+
+The Phase 4 crumb/back bar stays **removed in the web shell** (desktop and
+phone browser). In the **app shell only** (`html[data-shell="app"]`), API key,
+Releases, Privacy and Terms carry a small `‹ Back` link (`.app-back`,
+`components/AppBackLink.tsx`) above the title — they open from the More sheet,
+and iOS standalone has no back button.
+
+- **Visibility is CSS.** `.app-back` is `display: none`; `:root[data-shell="app"] .app-back` is `inline-flex`. Same layer (`components`), no media query, so it shows at every app width (an iPad in standalone has no back button either). `data-shell` is stamped pre-paint, so no flash; `display: none` keeps it out of the tab order and the accessibility tree in the web shell (measured: 0 `link "Back"` in phone web and 1366, 1 in app).
+- **Look.** Lucide `ChevronLeft` + "Back", Hanken 15px/500, `--color-muted`, ink on hover/active/focus, 2px `--color-focus` ring (`outline-offset: 0`, `--radius-control`). The 44px target is padding pulled out with negative margins (12px up into the column's top padding, 6px left so the chevron sits on the title's edge), so the title moves down only ~32px: measured at 390×844 app, title top 132 vs 100 in the web shell; link box 69×44.
+- **Behaviour** (`application/backNavigation.ts` → `hasInAppPrevious()`). A real `<Link href="/">` (middle-click / copy link = Analyze). Plain left-click: if the previous history entry is in-app → `history.back()` (returns to the view the user came from: a tab on `/` or a legal route); else on `/` → `goToMainTab("analyze")` (push, like any tab switch); else (legal route opened cold) the link navigates to `/`. "In-app previous" is, in order: Navigation API `navigation.currentEntry.index > 0` (same-origin entries only); else the `videolensInApp` marker `goToMainTab` now writes into every entry it pushes (Next's patched `pushState` keeps its own `__NA`/tree keys beside it — measured); else a same-origin `document.referrer` (Privacy/Terms are document navigations from the More sheet's plain `<a>`).
+- **Measured** (Playwright, mocked `/api`, app shell 390×844), with and without the Navigation API (`window.navigation` shadowed to `undefined`): Analyze → More → API key → Back = `/` Analyze; History → More → Releases → Back = `/?view=history`; History → More → Privacy → Back = `/?view=history`; Analyze → More → Terms → Back = `/`; cold `/?view=api-key`, `/?view=releases`, `/privacy`, `/terms` → Back = `/` Analyze. 16/16 pass.
+- **Not covered:** a tab view reached by a *Next router* navigation (e.g. the More sheet's API key row tapped on `/privacy`) on a browser **without** the Navigation API has no marker and no useful referrer, so Back goes to Analyze instead of the legal page. Chromium and Safari 26+ take the Navigation API path and are unaffected.
 
 ## Tab routing
 
@@ -389,3 +404,4 @@ back/forward was measured and the Capacitor mapping is read from
 - 2026-11-01 · frontend agent (Phase 3) · History section scrolls like Analyze (full-bleed scroller from 32rem); dock clearance re-measured on History (last poster 700 / dock 764 at 390×844)
 - 2026-11-01 · frontend agent (Phase 4) · every view and standalone route is now a `section.view-scroll` (scroller selector generalised, `data-frame` dropped from legal/offline); deleted `.tab-view`/`.surface`/`.pane`/`.home-center`/`.legal-doc`/`.legal-body`/`.page-title`; added `useMediaQuery`; More sheet and phone menu re-checked against MoreMobile.png / MenuWeb.png, unchanged
 - 2026-11-01 · frontend agent (Phase 4, boards) · offline section is now a flex column filling the band at every width so its block centres on phones too; `NEXT_PUBLIC_APP_VERSION` added to next.config.mjs `env` (read from package.json; `agentRules: false` untouched); legal crumb bar removed per the boards
+- 2026-11-01 · frontend agent (app Back link) · added `AppBackLink` (`.app-back`) above the title of API key, Releases, Privacy and Terms in the app shell only (`display:none` in the web shell; every width in the app shell); `application/backNavigation.ts` decides history.back() vs Analyze (Navigation API → `goToMainTab` history-state marker → same-origin referrer); `goToMainTab` now pushes `{ videolensInApp: true }`

@@ -1,3 +1,4 @@
+import AppBackLink from "@/components/AppBackLink";
 import AppNav from "@/components/AppNav";
 import BottomTabBar from "@/components/BottomTabBar";
 import SiteFooter from "@/components/SiteFooter";
@@ -41,6 +42,7 @@ export default function LegalShell({ title, effective, current, children }: Lega
 
       <section className="view-scroll" data-view="legal" aria-label={title}>
         <div className="legal-page">
+          <AppBackLink />
           <article className="select-text">
             <header className="view-head">
               <h1 className="view-title">{title}</h1>

@@ -5,6 +5,7 @@ import { Check, Eye, EyeOff } from "lucide-react";
 import { useGeminiApiKey } from "@/application/useGeminiApiKey";
 import { isNoticeable } from "@/application/useCapabilities";
 import { CapabilityCallout } from "@/components/CapabilityNotice";
+import AppBackLink from "@/components/AppBackLink";
 import type { Capability } from "@/domain/entities";
 
 /* Hallmark · theme: editorial · page: API key
@@ -91,6 +92,7 @@ export default function ApiKeyPanel({
 
   return (
     <div className="key-page">
+      <AppBackLink />
       <header className="view-head">
         <h1 className="view-title">API key</h1>
         <p className="view-lede">
