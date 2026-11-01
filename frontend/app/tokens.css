@@ -1,4 +1,4 @@
-/* Hallmark · genre: editorial · theme: custom (owner handoff, design/tokens.css)
+/* Hallmark · genre: editorial · theme: custom (owner handoff — docs/frontend/design-direction-editorial.md)
  * vibe: calm editorial — warm paper, near-black ink, one green accent
  * paper #F6F4EE · accent #1A7F37 (green) · Newsreader (headlines, notes) + Hanken Grotesk (UI)
  * axes: light / roman-serif / chromatic-other · nav: top bar (web) or bottom tab bar (app)
@@ -10,7 +10,8 @@
  * never decorates. The poster tints are placeholder thumbnails, not a palette.
  *
  * Hex, not OKLCH, on purpose: these are the owner's handoff values verbatim, so
- * a diff against design/tokens.css stays readable.
+ * a diff against the handoff values listed in
+ * docs/frontend/design-direction-editorial.md stays readable.
  *
  * pre-emit critique: P5 H5 E4 S5 R5 V4
  */
@@ -50,6 +51,7 @@
   --color-strip-hole:         #F6F4EE;
   --color-strip-waiting:      #2A2B31;
   --color-strip-waiting-text: #B4B1A8;
+  --color-strip-skipped-edge: #5E5F66; /* dashed edge of a skipped frame */
 
   /* ---- bottom tab bar (installed-app shell). A dark dock in light mode, as
      drawn on the App boards; a raised tint in dark mode, where a light dock
@@ -108,6 +110,11 @@
   --page-gutter: clamp(1rem, 4vw, 3rem);
   --shell-width: calc(74rem + 2 * 3rem);
   --measure: 40rem;
+  /* The serif reading measure (Notes, TL;DR, transcript). Newsreader sets
+     narrower per character than Hanken, so it gets its own token; the width
+     was checked in the browser for ~65-75 characters per line at the 19px
+     reading size (results-view.md records the measurement). */
+  --measure-serif: 36rem;
   /* The bottom tab bar's own height — a property of that component, declared
      once, which the shell reads to keep content from sitting under it. */
   --tabbar-height: 4rem;
@@ -125,19 +132,6 @@
      an overlay painted in --color-paper is invisible against the page it is
      meant to dim. */
   --color-backdrop: rgba(0, 0, 0, 0.45);
-
-  /* ---- TEMPORARY legacy aliases (Phase 1 only) ----
-     The Terminal theme's names, pointed at their editorial equivalents so the
-     not-yet-restyled views (UploadForm, RunStatusView, ResultsView, panels)
-     keep rendering. Phase 2 migrates every caller to the canonical name and
-     DELETES this block — do not add new callers. */
-  --color-paper-2:    var(--color-surface);
-  --color-nav-bg:     var(--color-surface);
-  --color-paper-3:    var(--color-tint);
-  --color-rule-2:     var(--color-border-strong);
-  --color-accent-ink: var(--color-on-accent);
-  --font-body:        var(--font-ui);
-  --font-display:     var(--font-serif);
 
   color-scheme: light;
 }
@@ -179,6 +173,7 @@
   --color-strip-hole:         #0E100F;
   --color-strip-waiting:      #2C312E;
   --color-strip-waiting-text: #B4B1A8;
+  --color-strip-skipped-edge: #5A615C;
 
   --color-dock:        #212522;
   --color-dock-active: #2C312E;

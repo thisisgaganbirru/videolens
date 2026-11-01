@@ -1,8 +1,9 @@
 /* Which chrome this display mode gets, in one place.
  *
  * `web`  — a normal browser tab (phone or desktop): top bar, phone menu, footer.
- * `app`  — installed: standalone PWA or the Capacitor Android build: top bar
- *          (brand + theme), bottom tab bar, More sheet, no footer.
+ * `app`  — installed: standalone PWA or the Capacitor Android build. Up to
+ *          37.5rem: top bar (brand + theme), bottom tab bar, More sheet, no
+ *          footer. Wider: the web chrome, footer included.
  *
  * Decided by the blocking pre-paint script in `app/layout.tsx`, which stamps
  * `<html data-shell>`; both variants are always rendered and CSS shows one.

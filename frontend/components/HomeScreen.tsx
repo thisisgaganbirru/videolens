@@ -8,7 +8,7 @@ import SiteFooter from "@/components/SiteFooter";
 import CapabilityNotice from "@/components/CapabilityNotice";
 import UploadForm from "@/components/UploadForm";
 import RunStatusView from "@/components/RunStatusView";
-import ResultsView, { SourceCard } from "@/components/ResultsView";
+import ResultsView, { SourceCard, creatorInitials } from "@/components/ResultsView";
 import ApiKeyPanel from "@/components/panels/ApiKeyPanel";
 import HistoryPanel from "@/components/panels/HistoryPanel";
 import VersionLogPanel from "@/components/panels/VersionLogPanel";
@@ -36,7 +36,14 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
     sourceMetadata,
     error,
     submitting,
+    sourceName,
+    canRetry,
+    reconnectIn,
+    reconnecting,
+    reconnectAttempt,
     submit,
+    retry,
+    reconnectNow,
     reset,
     openRun,
   } = useAnalysisRun();
@@ -70,9 +77,11 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   }, [sharedUrl, reset]);
 
   /* An error while the pipeline is on screen can only come from the poll's
-     catch — `submit` now stays on idle until the server answers, and `openRun`
-     returns to idle on failure. So this is precisely "the interval is dead":
-     nothing above will ever update again. */
+     catch — `submit` stays on idle until the server answers, and `openRun`
+     returns to idle on failure. So this is precisely "the poll is down":
+     `useAnalysisRun` is counting down to its next reconnect attempt, and
+     nothing on screen advances until one succeeds (which clears `error` and
+     drops this flag on its own). */
   const connectionLost = Boolean(error) && (status === "queued" || status === "processing");
 
   const handleOpenRun = (runId: string) => {
@@ -82,31 +91,41 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
     void openRun(runId);
   };
 
-  /* "fixed" is the one-viewport frame where only the results pane scrolls.
-     It applies on mobile whenever there is a results pane to bound; every
-     other state lets the page flow and scroll normally. From 32rem up the
-     stylesheet puts every view back on the fixed frame. */
-  const frame = activeTab === "analyze" && status === "complete" && !sourceOpen ? "fixed" : "flow";
-
+  /* No `data-frame` here any more. Phase 2 retired the inner results pane:
+     the whole Analyze band is the one scroller (from 32rem up it scrolls
+     between the fixed nav and footer; below, `.viewport` scrolls under the
+     sticky nav and footer/dock) — see app-shell-layout.md. `fixed` survives
+     only on the standalone routes that still opt into it. */
   return (
-    <div className="shell" data-view={activeTab} data-frame={frame}>
+    <div className="shell" data-view={activeTab}>
       <AppNav activeTab={activeTab} onSelectTab={goToMainTab} />
 
       {activeTab === "analyze" && (
         <section data-view="analyze" aria-label="Analyze">
           {status === "idle" && (
-            <div className="home-center">
+            <div className="intake-layout">
+              {/* Always in the DOM, empty and zero-height when the deployment
+                  is healthy, so the polite live region exists *before* the
+                  report lands and can announce it. A conditionally-rendered
+                  live region announces nothing, and a permanently visible
+                  "all systems operational" strip is chrome that tells the
+                  user nothing they can act on. A grid item of its own: first
+                  on a phone, top of the panel column on a wide screen, so it
+                  never sits between the lede and the card. First in the DOM
+                  too, so it is read before the form it is about. */}
+              <div className="cap-slot" aria-live="polite">
+                {notice && <CapabilityNotice report={notice} />}
+              </div>
               <div className="intake">
-                <p className="card-label">new analysis</p>
-                {/* Always in the DOM, empty and zero-height when the deployment
-                    is healthy, so the polite live region exists *before* the
-                    report lands and can announce it. A conditionally-rendered
-                    live region announces nothing, and a permanently visible
-                    "all systems operational" strip is chrome that tells the
-                    user nothing they can act on. */}
-                <div className="cap-slot" aria-live="polite">
-                  {notice && <CapabilityNotice report={notice} />}
-                </div>
+                {/* TODO(phase 5): the free-run counter ("2 of 3 free runs
+                    left today") sits here, above the eyebrow — the column is a
+                    plain flow, so one more line needs no layout change. */}
+                <p className="eyebrow">New analysis</p>
+                <h1 className="intake-title">Turn any short video into clean notes.</h1>
+                <p className="intake-lede">
+                  Paste a link or drop a file. You get a transcript, the text on screen, a short
+                  summary, and notes you can keep.
+                </p>
                 <UploadForm
                   onSubmit={submit}
                   submitting={submitting}
@@ -118,106 +137,142 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     failed is still on screen — and, since `submit` no longer
                     unmounts this branch while the request is in flight, so is
                     whatever the user typed. Pressing the same button again is
-                    the whole recovery, so this is a form-level line in
-                    UploadForm's own error slot, not the centred `.error-block`,
-                    which is drawn for a full-view failure with an action of its
-                    own. */}
+                    the whole recovery, so this is a form-level line under the
+                    card, not the progress view's notice card, which is drawn
+                    for a full-view failure with actions of its own. */}
                 {error && (
-                  <p role="alert" className="error-note mt-[var(--space-xs)]">
+                  <p role="alert" className="error-note">
                     {error}
                   </p>
                 )}
               </div>
+
+              <aside className="wyg" aria-labelledby="wyg-title">
+                <h2 id="wyg-title" className="wyg-title">
+                  What you get
+                </h2>
+                <dl className="wyg-list">
+                  <div className="wyg-row">
+                    <dt className="chip">TL;DR</dt>
+                    <dd>
+                      <WhatYouGet
+                        short="A short read of what the video says."
+                        long="A short read of what the video says, so you can decide if it is worth your time."
+                      />
+                    </dd>
+                  </div>
+                  <div className="wyg-row">
+                    <dt className="chip">Notes</dt>
+                    <dd>
+                      <WhatYouGet
+                        short="Structured notes to copy or download."
+                        long="Structured notes to copy or download as Markdown."
+                      />
+                    </dd>
+                  </div>
+                  <div className="wyg-row">
+                    <dt className="chip">Transcript</dt>
+                    <dd>
+                      <WhatYouGet
+                        short="Timestamped, with speakers when clear."
+                        long="Timestamped, with speakers labeled when they can be told apart."
+                      />
+                    </dd>
+                  </div>
+                  <div className="wyg-row">
+                    <dt className="chip">On-screen</dt>
+                    <dd>
+                      <WhatYouGet
+                        short="Text, code, and charts from the frames."
+                        long="Text, code, and charts that appear in the frames, not just the audio."
+                      />
+                    </dd>
+                  </div>
+                </dl>
+                <p className="wyg-foot">
+                  Files are deleted from our servers as soon as a run finishes.
+                </p>
+              </aside>
             </div>
           )}
 
           {(status === "queued" || status === "processing" || status === "failed") && (
-            <div className="home-center">
-              <div className="run-state">
-                <RunStatusView
-                  status={status}
-                  stage={stage}
-                  sourceKind={sourceKind}
-                  error={error}
-                  connectionLost={connectionLost}
-                />
-                {connectionLost ? (
-                  /* Polling threw, so `useAnalysisRun` cleared its interval: the
-                     pipeline above is now frozen and nothing on this screen will
-                     ever update again. That is a genuine full stop, which is what
-                     `.error-block` was drawn for — lead, explanation, and an
-                     action inside the block, so the spec's reserved
-                     `p:last-of-type` margin is the gap above the button rather
-                     than dead space. The button replaces the `.reset-link` here
-                     instead of joining it: two ways to start over is one too
-                     many, and `.btn` is the one that gets a 44px target on
-                     touch. The same flag stops `RunStatusView` pulsing and
-                     removes its "you can leave this open" note, so this block is
-                     the only thing on screen describing the failure. */
-                  <div role="alert" className="error-block">
-                    {/* The lead says what happened to the *run*; the gateway's
-                        message already says why the request failed, so
-                        repeating "lost contact" here would be the same
-                        sentence twice. */}
-                    <p>
-                      <strong>This run stopped updating.</strong> {error}
-                    </p>
-                    <p>
-                      It may still finish on the server — reopen it from History in a
-                      moment, or start over.
-                    </p>
-                    <button type="button" className="btn btn-secondary" onClick={reset}>
-                      start over
-                    </button>
-                  </div>
-                ) : (
-                  <button type="button" className="reset-link" onClick={reset}>
-                    analyze another file
-                  </button>
-                )}
-              </div>
+            <div className="run-state">
+              <RunStatusView
+                status={status}
+                stage={stage}
+                sourceKind={sourceKind}
+                error={error}
+                connectionLost={connectionLost}
+                sourceLabel={sourceName ?? sourceMetadata?.source_url.replace(/^https?:\/\/(www\.)?/i, "") ?? null}
+                retryInSeconds={reconnectIn}
+                retrying={reconnecting}
+                reconnectAttempt={reconnectAttempt}
+                retryBusy={submitting}
+                onReset={reset}
+                onRetry={canRetry ? retry : undefined}
+                onRetryNow={reconnectNow}
+              />
             </div>
           )}
 
           {status === "complete" && result && (
-            <div className="workspace">
-              {/* Two ruled columns, no card on either side: the single vertical
-                  hairline on .right-col is the whole separation, and only the
-                  results pane carries the paper-2 tint. */}
-              <div className="left-col" data-collapsed={sourceOpen ? "false" : "true"}>
-                <button
-                  type="button"
-                  className="col-label"
-                  onClick={() => setSourceOpen((open) => !open)}
-                  aria-expanded={sourceOpen}
-                  aria-controls="source-panel"
-                >
-                  Source
-                  <ChevronDown className="col-chevron" aria-hidden="true" />
-                </button>
-                <div className="source-frame" id="source-panel">
-                  <div className="source-body">
-                    {sourceMetadata ? (
-                      <SourceCard metadata={sourceMetadata} />
-                    ) : (
-                      <p className="pending-note">No source metadata for this run.</p>
+            <div className="results-layout">
+              <div className="source-col">
+                <p className="section-label">Source</p>
+                {/* On a phone the source collapses behind this one-line pill
+                    (ResultsMobile.png), so the results are the first thing on
+                    screen. From 56rem the column stands beside the results and
+                    the pill is display:none — the panel is always open there. */}
+                {sourceMetadata && (
+                  <button
+                    type="button"
+                    className="source-toggle"
+                    onClick={() => setSourceOpen((open) => !open)}
+                    aria-expanded={sourceOpen}
+                    aria-controls="source-panel"
+                  >
+                    {sourceMetadata.uploader && (
+                      <span className="source-card__monogram" aria-hidden="true">
+                        {creatorInitials(sourceMetadata.uploader)}
+                      </span>
                     )}
-                  </div>
-                  <button type="button" className="reset-link" onClick={reset}>
-                    analyze another file
+                    <span className="source-toggle__text">
+                      Source: {sourceMetadata.platform}
+                      {sourceMetadata.uploader ? `, ${sourceMetadata.uploader}` : ""}
+                    </span>
+                    <ChevronDown className="source-toggle__chevron" aria-hidden="true" />
                   </button>
+                )}
+                <div className="source-panel" id="source-panel" data-open={sourceOpen ? "true" : "false"}>
+                  {sourceMetadata ? (
+                    <SourceCard metadata={sourceMetadata} />
+                  ) : (
+                    <p className="pending-note">
+                      No source details for this run — it was an uploaded file.
+                    </p>
+                  )}
                 </div>
+                <button type="button" className="btn btn-secondary btn-block reset-wide" onClick={reset}>
+                  Analyze another file
+                </button>
               </div>
 
-              <div className="right-col">
-                <p className="col-label">Results</p>
-                <div className="results">
+              <div className="results-col">
+                <p className="section-label">Results</p>
+                <article className="result-card">
                   <ResultsView
                     result={result}
                     sourceMetadata={sourceMetadata}
                     completeness={completeness}
                   />
-                </div>
+                </article>
+                {/* The same action, placed under the card on a phone where
+                    the source column is a pill above it. CSS shows exactly
+                    one of the two. */}
+                <button type="button" className="btn btn-secondary btn-block reset-narrow" onClick={reset}>
+                  Analyze another file
+                </button>
               </div>
             </div>
           )}
@@ -263,10 +318,24 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
       )}
 
       {/* Both shells' chrome is always rendered; `<html data-shell>` decides
-          which shows (footer in a browser tab, dock in the installed app). */}
+          which shows (footer in a browser tab and a wide installed window,
+          dock in a phone-width installed app). */}
       <SiteFooter />
       <BottomTabBar activeTab={activeTab} onSelectTab={goToMainTab} />
     </div>
+  );
+}
+
+/* The "What you get" lines come in two lengths, as drawn: the phone board
+   (single column, panel under the card) uses the short ones, the desktop
+   board the long. Both are in the DOM and CSS shows one — `display: none`
+   keeps the other out of the accessibility tree, so it is read once. */
+function WhatYouGet({ short, long }: { short: string; long: string }) {
+  return (
+    <>
+      <span className="wyg-short">{short}</span>
+      <span className="wyg-long">{long}</span>
+    </>
   );
 }
 

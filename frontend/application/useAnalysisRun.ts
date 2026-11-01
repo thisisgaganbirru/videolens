@@ -5,6 +5,7 @@ import type {
   AnalysisCompleteness,
   MediaSource,
   RunStatus,
+  RunStatusResponse,
   SourceMetadata,
   VideoAnalysis,
 } from "@/domain/entities";
@@ -12,6 +13,32 @@ import { classifyGatewayError } from "@/application/gatewayError";
 import { runsGateway } from "@/infrastructure/container";
 
 const POLL_INTERVAL_MS = 3000;
+
+/* Reconnect schedule after a poll throws: 4s, 8s, 16s, then every 30s until the
+   user starts over. The first wait is short because most drops are a blip (a
+   phone changing networks); the cap keeps a genuinely offline tab from
+   hammering the server the moment it comes back, without ever giving up on a
+   run that is still finishing server-side. */
+const RECONNECT_DELAYS_S = [4, 8, 16, 30];
+
+function reconnectDelay(attempt: number): number {
+  return RECONNECT_DELAYS_S[Math.min(attempt, RECONNECT_DELAYS_S.length - 1)];
+}
+
+/** The full wait scheduled for the given 1-based `reconnectAttempt`, so the
+ *  screen can announce "trying again in N seconds" once per attempt without
+ *  reading the ticking countdown. */
+export function reconnectDelayFor(reconnectAttempt: number): number {
+  return reconnectDelay(Math.max(0, reconnectAttempt - 1));
+}
+
+/* What the progress screen calls the thing being analyzed before the server has
+   said anything about it: the link as typed (minus the scheme), or the file's
+   own name. Display only — never sent anywhere. */
+function describeSource(source: MediaSource): string {
+  if (source.file) return source.file.name;
+  return source.url.replace(/^https?:\/\/(www\.)?/i, "").replace(/\/$/, "");
+}
 
 /* Fallbacks only — they are reached when the failure is neither a `NetworkError`
    nor an `ApiError`, i.e. when we genuinely do not know. A backend that is down
@@ -35,7 +62,29 @@ export function useAnalysisRun() {
   const [sourceMetadata, setSourceMetadata] = useState<SourceMetadata | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  /* The link or file name of the run on screen, for the progress view's source
+     chip. Known only for runs submitted in this session; a run reopened from
+     History has none until its metadata arrives. */
+  const [sourceName, setSourceName] = useState<string | null>(null);
+  /* The last submitted source, kept so a failed run can be retried with one
+     press instead of re-pasting or re-picking. State rather than a ref because
+     the screen reads it (whether to offer "Try again") during render. Cleared
+     by reset and openRun — a run reopened from History has nothing to resubmit. */
+  const [retrySource, setRetrySource] = useState<MediaSource | null>(null);
+  /* Connection-lost bookkeeping. `reconnectIn` is whole seconds until the next
+     automatic attempt (ticks once a second, for the visible countdown);
+     `reconnecting` is true while an attempt is on the wire; `reconnectAttempt`
+     counts failed attempts since the connection was last good and changes once
+     per attempt — the polite announcement keys on it, so a screen reader hears
+     one sentence per attempt rather than one per second. */
+  const [reconnectIn, setReconnectIn] = useState<number | null>(null);
+  const [reconnecting, setReconnecting] = useState(false);
+  const [reconnectAttempt, setReconnectAttempt] = useState(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const runIdRef = useRef<string | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const attemptRef = useRef(0);
   /* Mirrors `submitting` for the guard below. State is read from a stale
      closure inside the same tick a second submit could arrive in; a ref is
      read at call time, which is what a re-entrancy guard needs. */
@@ -45,47 +94,151 @@ export function useAnalysisRun() {
      intent arrived resolves into a screen that has moved on, so each one drops
      its result if the counter no longer matches the value it captured. Without
      it, a link shared mid-submit is undone a moment later by the 202 for the
-     run the user just abandoned. */
+     run the user just abandoned. The reconnect timers check it too. */
   const generationRef = useRef(0);
 
-  useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
+  /* Every timer this hook owns, stopped in one place: unmount, reset, openRun,
+     a fresh submit and a successful reconnect all need exactly this. */
+  const stopTimers = useCallback(() => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+    if (tickRef.current) clearInterval(tickRef.current);
+    pollRef.current = null;
+    reconnectTimerRef.current = null;
+    tickRef.current = null;
+  }, []);
+
+  useEffect(() => stopTimers, [stopTimers]);
+
+  const clearReconnect = useCallback(() => {
+    attemptRef.current = 0;
+    setReconnectIn(null);
+    setReconnecting(false);
+    setReconnectAttempt(0);
   }, []);
 
   const fail = useCallback((err: unknown, fallback: string) => {
     setError(classifyGatewayError(err, fallback).message);
   }, []);
 
-  const pollRun = useCallback(
-    (runId: string) => {
+  /* One observed run response, applied to the screen. Returns true when the
+     run has settled (complete or failed) — nothing left to poll for. Shared by
+     the interval, a reconnect attempt and openRun so the three cannot disagree
+     about what a response means. */
+  const applyRun = useCallback((run: RunStatusResponse): boolean => {
+    setStatus(run.status);
+    setStage(run.stage);
+    if (run.source_metadata) setSourceMetadata(run.source_metadata);
+    /* A run reopened from History starts as "file" (openRun has no source to
+       go on). Source metadata and these two stages only ever exist for link
+       runs, so either one settles it; otherwise the progress strip would draw
+       "File received" over a link. Never flips a link run back to "file". */
+    if (run.source_metadata || run.stage === "downloading" || run.stage === "analyzing_captions") {
+      setSourceKind("url");
+    }
+    if (run.status === "complete") {
+      setResult(run.result);
+      setCompleteness(run.completeness ?? "full");
+      return true;
+    }
+    if (run.status === "failed") {
+      setError(run.error || "Video analysis failed.");
+      return true;
+    }
+    return false;
+  }, []);
+
+  /* `startPolling` and `scheduleReconnect` reach each other (a dead poll
+     schedules a reconnect; a good reconnect resumes polling), so the second is
+     called through a ref rather than a dependency cycle. */
+  const scheduleReconnectRef = useRef<(generation: number) => void>(() => {});
+
+  const startPolling = useCallback(
+    (runId: string, generation: number) => {
+      runIdRef.current = runId;
+      if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = setInterval(async () => {
         try {
           const run = await runsGateway.getRun(runId);
-          setStatus(run.status);
-          setStage(run.stage);
-          if (run.source_metadata) setSourceMetadata(run.source_metadata);
-          if (run.status === "complete") {
-            setResult(run.result);
-            setCompleteness(run.completeness ?? "full");
-            if (pollRef.current) clearInterval(pollRef.current);
-          } else if (run.status === "failed") {
-            setError(run.error || "Video analysis failed.");
-            if (pollRef.current) clearInterval(pollRef.current);
+          if (generationRef.current !== generation) return;
+          if (applyRun(run) && pollRef.current) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
           }
         } catch (err) {
-          /* The interval dies here, so the pipeline on screen is frozen from
-             this moment on. `HomeScreen` reads (error && status is queued or
-             processing) as exactly that condition and tells `RunStatusView` to
-             stop claiming progress. */
-          fail(err, POLL_FALLBACK);
+          if (generationRef.current !== generation) return;
+          /* The interval stops, and the screen stops claiming progress:
+             `HomeScreen` reads (error && status is queued or processing) as
+             "connection lost". What changed is that this is no longer the end —
+             a reconnect is scheduled and counted down on screen, and a good
+             response puts the pipeline straight back. */
           if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = null;
+          fail(err, POLL_FALLBACK);
+          scheduleReconnectRef.current(generation);
         }
       }, POLL_INTERVAL_MS);
     },
-    [fail]
+    [applyRun, fail]
   );
+
+  const attemptReconnect = useCallback(
+    async (generation: number) => {
+      const runId = runIdRef.current;
+      if (!runId || generationRef.current !== generation) return;
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      if (tickRef.current) clearInterval(tickRef.current);
+      reconnectTimerRef.current = null;
+      tickRef.current = null;
+      setReconnectIn(null);
+      setReconnecting(true);
+      try {
+        const run = await runsGateway.getRun(runId);
+        if (generationRef.current !== generation) return;
+        setError(null);
+        clearReconnect();
+        if (!applyRun(run)) startPolling(runId, generation);
+      } catch (err) {
+        if (generationRef.current !== generation) return;
+        fail(err, POLL_FALLBACK);
+        attemptRef.current += 1;
+        scheduleReconnectRef.current(generation);
+      }
+    },
+    [applyRun, clearReconnect, fail, startPolling]
+  );
+
+  const scheduleReconnect = useCallback(
+    (generation: number) => {
+      const delay = reconnectDelay(attemptRef.current);
+      const due = Date.now() + delay * 1000;
+      setReconnecting(false);
+      setReconnectIn(delay);
+      setReconnectAttempt(attemptRef.current + 1);
+      if (tickRef.current) clearInterval(tickRef.current);
+      /* A wall-clock deadline rather than a decrementing counter, so a
+         throttled background tab shows the true time left when it comes back
+         instead of a number that froze while it was hidden. */
+      tickRef.current = setInterval(() => {
+        setReconnectIn(Math.max(0, Math.ceil((due - Date.now()) / 1000)));
+      }, 1000);
+      reconnectTimerRef.current = setTimeout(() => {
+        void attemptReconnect(generation);
+      }, delay * 1000);
+    },
+    [attemptReconnect]
+  );
+
+  useEffect(() => {
+    scheduleReconnectRef.current = scheduleReconnect;
+  }, [scheduleReconnect]);
+
+  /* "Retry now": skip the rest of the countdown. A no-op unless a reconnect is
+     actually pending, so a double press cannot put two requests on the wire. */
+  const reconnectNow = useCallback(() => {
+    if (!reconnectTimerRef.current) return;
+    void attemptReconnect(generationRef.current);
+  }, [attemptReconnect]);
 
   /* Why this does NOT optimistically set `status: "queued"` before awaiting.
      That transition unmounts the idle branch, and with it `UploadForm`'s local
@@ -104,6 +257,8 @@ export function useAnalysisRun() {
       if (submittingRef.current) return;
       submittingRef.current = true;
       setSubmitting(true);
+      stopTimers();
+      clearReconnect();
       setError(null);
       setResult(null);
       setCompleteness("full");
@@ -114,8 +269,10 @@ export function useAnalysisRun() {
       try {
         const run = await runsGateway.createRun(source);
         if (generationRef.current !== generation) return;
+        setSourceName(describeSource(source));
+        setRetrySource(source);
         setStatus(run.status);
-        pollRun(run.run_id);
+        startPolling(run.run_id, generation);
       } catch (err) {
         if (generationRef.current !== generation) return;
         fail(err, SUBMIT_FALLBACK);
@@ -124,18 +281,16 @@ export function useAnalysisRun() {
         setSubmitting(false);
       }
     },
-    [fail, pollRun]
+    [clearReconnect, fail, startPolling, stopTimers]
   );
 
   const reset = useCallback(() => {
-    /* Stop the poll first. It is `setStatus(run.status)` on a timer, so leaving
-       it running meant "analyze another file" bounced straight back to the
-       pipeline on the next tick — the interval outlived the state it was
-       driving. */
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
+    /* Stop every timer first. The poll is `setStatus(run.status)` on a timer
+       and a pending reconnect would revive it, so leaving either running meant
+       "analyze another file" bounced straight back to the pipeline. */
+    stopTimers();
+    clearReconnect();
+    runIdRef.current = null;
     generationRef.current += 1;
     setStatus("idle");
     setStage(null);
@@ -143,44 +298,42 @@ export function useAnalysisRun() {
     setResult(null);
     setCompleteness("full");
     setSourceMetadata(null);
+    setSourceName(null);
+    setRetrySource(null);
     setError(null);
-  }, []);
+  }, [clearReconnect, stopTimers]);
 
   const openRun = useCallback(
     async (runId: string) => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
+      stopTimers();
+      clearReconnect();
       setError(null);
       setResult(null);
       setCompleteness("full");
       setSourceMetadata(null);
+      setSourceName(null);
+      setRetrySource(null);
       setSourceKind("file");
       setStatus("processing");
       const generation = ++generationRef.current;
       try {
         const run = await runsGateway.getRun(runId);
         if (generationRef.current !== generation) return;
-        setStatus(run.status);
-        setStage(run.stage);
-        if (run.source_metadata) setSourceMetadata(run.source_metadata);
-        if (run.status === "complete") {
-          setResult(run.result);
-          setCompleteness(run.completeness ?? "full");
-        } else if (run.status === "failed") {
-          setError(run.error || "Video analysis failed.");
-        } else {
-          pollRun(runId);
-        }
+        if (!applyRun(run)) startPolling(runId, generation);
       } catch (err) {
         if (generationRef.current !== generation) return;
         setStatus("idle");
         fail(err, OPEN_FALLBACK);
       }
     },
-    [fail, pollRun]
+    [applyRun, clearReconnect, fail, startPolling, stopTimers]
   );
+
+  /* Resubmit the run that just failed, same link or same file. Only offered
+     while `canRetry` is true. */
+  const retry = useCallback(() => {
+    if (retrySource) void submit(retrySource);
+  }, [retrySource, submit]);
 
   return {
     status,
@@ -191,7 +344,14 @@ export function useAnalysisRun() {
     sourceMetadata,
     error,
     submitting,
+    sourceName,
+    canRetry: retrySource !== null,
+    reconnectIn,
+    reconnecting,
+    reconnectAttempt,
     submit,
+    retry,
+    reconnectNow,
     reset,
     openRun,
   };

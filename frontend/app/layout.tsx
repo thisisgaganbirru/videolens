@@ -12,9 +12,13 @@ import "./globals.css";
    precaches them (scripts/build-sw.mjs).
 
    Hanken Grotesk is the variable font: the UI uses 400/500/600/700, and one
-   variable file is smaller than four static ones. Newsreader is headlines
-   only, at 400, so it loads that one static weight. The two `variable`s are
-   what `--font-ui` / `--font-serif` in tokens.css read. */
+   variable file is smaller than four static ones. Newsreader is variable too
+   since Phase 2: it now sets the Notes and TL;DR reading text, whose markdown
+   carries bold headings, **strong** and *emphasis* — a static 400 would have
+   the browser synthesise all three. Italic, and the optical-size axis below,
+   are the extra bytes that buys.
+   The two `variable`s are what `--font-ui` / `--font-serif` in tokens.css
+   read. */
 const hanken = Hanken_Grotesk({
   subsets: ["latin"],
   variable: "--font-hanken",
@@ -22,8 +26,12 @@ const hanken = Hanken_Grotesk({
 });
 const newsreader = Newsreader({
   subsets: ["latin"],
-  weight: "400",
-  style: "normal",
+  style: ["normal", "italic"],
+  /* The optical-size axis: Newsreader's display cut is what the boards'
+     56px headline is set in (narrower and finer than the text cut at the
+     same size). Browsers pick the cut from the font size by themselves
+     (font-optical-sizing: auto), so nothing in CSS has to ask for it. */
+  axes: ["opsz"],
   variable: "--font-newsreader",
   display: "swap",
 });

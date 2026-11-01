@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import type { Capability, MediaSource } from "@/domain/entities";
 import type { SharedUrl } from "@/application/useSharedUrl";
+import { ArrowUpFromLine } from "lucide-react";
 import { CapabilityCallout } from "@/components/CapabilityNotice";
 import { isNoticeable } from "@/application/useCapabilities";
 
@@ -139,6 +140,13 @@ export default function UploadForm({
   const submitUrl = (event: FormEvent) => {
     event.preventDefault();
     const value = url.trim();
+    /* The button stays enabled with an empty field, as drawn on Main.png: a
+       greyed-out primary action gives no reason, an error on press does. */
+    if (!value) {
+      setError("Paste a link to analyze.");
+      document.getElementById("media-url")?.focus();
+      return;
+    }
     if (!acceptedTerms) {
       setError("Accept the media-use terms before analysis.");
       return;
@@ -173,46 +181,48 @@ export default function UploadForm({
     .filter(Boolean)
     .join(" ");
 
-  /* No surface, no frame, no card: this control sits directly inside
-     HomeScreen's `.intake` (which already renders the "new analysis"
-     micro-label). Structure is the field's own edge, the rule of the
-     divider, and the dashed drop zone — nothing wraps them. */
+  /* The intake card: one white surface holding both entry points and the
+     terms row, drawn on design/shots/Main.png. HomeScreen owns everything
+     around it (eyebrow, headline, lede, the "What you get" panel), so this
+     component stays the form and nothing else. */
   return (
-    <>
-      <form onSubmit={submitUrl} className="row">
-        <label htmlFor="media-url" className="sr-only">
-          Video or audio URL
+    <div className="intake-card">
+      <form onSubmit={submitUrl} className="link-form">
+        <label htmlFor="media-url" className="intake-card__label">
+          Paste a link
         </label>
-        <input
-          id="media-url"
-          type="url"
-          value={url}
-          onChange={(event) => {
-            setUrl(event.target.value);
-            setError(null);
-          }}
-          placeholder="paste a youtube, tiktok, or instagram link"
-          autoComplete="url"
-          disabled={busy}
-          aria-invalid={error ? "true" : undefined}
-          aria-describedby={describedBy || undefined}
-          className="field"
-        />
-        <button
-          type="submit"
-          disabled={busy || !url.trim() || !acceptedTerms}
-          aria-busy={pendingKind === "url" && submitting ? true : undefined}
-          className="btn btn-primary"
-        >
-          {pendingKind === "url" && submitting ? "sending…" : "analyze url"}
-        </button>
+        <div className="link-row">
+          <input
+            id="media-url"
+            type="url"
+            value={url}
+            onChange={(event) => {
+              setUrl(event.target.value);
+              setError(null);
+            }}
+            placeholder="YouTube, TikTok, or Instagram link"
+            autoComplete="url"
+            disabled={busy}
+            aria-invalid={error ? "true" : undefined}
+            aria-describedby={describedBy || undefined}
+            className="field"
+          />
+          <button
+            type="submit"
+            disabled={busy}
+            aria-busy={pendingKind === "url" && submitting ? true : undefined}
+            className="btn btn-primary"
+          >
+            {pendingKind === "url" && submitting ? "Sending…" : "Analyze link"}
+          </button>
+        </div>
       </form>
 
       {urlNotice && (
         <div id="url-capability" className="cap-field-note">
           <CapabilityCallout
             capability={urlNotice}
-            lead={urlNotice.state === "unavailable" ? "URL runs are unavailable" : "URL runs may fail"}
+            lead={urlNotice.state === "unavailable" ? "Link runs are unavailable" : "Link runs may fail"}
           />
         </div>
       )}
@@ -244,13 +254,20 @@ export default function UploadForm({
         }}
         className="drop"
       >
-        <div>
-          <p>drop an audio or video file here</p>
-          <p className="hint">
-            mp3, mp4, or mov — up to {MAX_FILE_SIZE_MB}mb &amp;{" "}
-            {MAX_DURATION_SECONDS / 60} minutes
-          </p>
-        </div>
+        <span className="drop-icon" aria-hidden="true">
+          <ArrowUpFromLine size={20} strokeWidth={2} />
+        </span>
+        {/* Two titles, one shown: "drop" is a lie on a touch screen, where the
+            only way in is the button. The swap is a hover/pointer media query
+            in globals.css; `display: none` keeps the hidden one out of the
+            accessibility tree too. */}
+        <p className="drop-title">
+          <span className="drop-title--pointer">Drop an audio or video file here</span>
+          <span className="drop-title--touch">Add an audio or video file</span>
+        </p>
+        <p className="hint">
+          MP3, MP4, or MOV. Up to {MAX_FILE_SIZE_MB} MB and {MAX_DURATION_SECONDS / 60} minutes.
+        </p>
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
@@ -259,10 +276,10 @@ export default function UploadForm({
           className="btn btn-secondary"
         >
           {pendingKind === "file" && submitting
-            ? "sending…"
+            ? "Sending…"
             : checking
-              ? "checking…"
-              : "browse file"}
+              ? "Checking…"
+              : "Browse files"}
         </button>
         <input
           ref={inputRef}
@@ -281,7 +298,7 @@ export default function UploadForm({
         />
       </div>
 
-      <label className="mt-[var(--space-sm)] flex items-start gap-[var(--space-2xs)] text-[0.72rem] leading-[1.6] text-[var(--color-muted)]">
+      <label className="terms-row">
         <input
           type="checkbox"
           checked={acceptedTerms}
@@ -296,15 +313,14 @@ export default function UploadForm({
             }
             setError(null);
           }}
-          className="mt-[0.2rem] h-3.5 w-3.5 shrink-0 accent-[var(--color-accent)]"
         />
         <span>
-          I will only submit media I own or am authorized to process, and I agree to the{" "}
-          <a className="text-[var(--color-accent)] underline underline-offset-2" href="/terms">
+          I will only submit media I own or am allowed to process, and I agree to the{" "}
+          <a className="text-link" href="/terms">
             Terms
           </a>{" "}
           and{" "}
-          <a className="text-[var(--color-accent)] underline underline-offset-2" href="/privacy">
+          <a className="text-link" href="/privacy">
             Privacy Policy
           </a>
           .
@@ -312,14 +328,12 @@ export default function UploadForm({
       </label>
 
       {/* `.error-note` is the named class for this exact recipe (`.pending-note`
-          at danger ink) — see the four-rung ladder documented in globals.css.
-          It used to be inlined here as arbitrary values, which meant the same
-          rule lived in two places. */}
+          at danger ink) — see the four-rung ladder documented in globals.css. */}
       {error && (
-        <p id="intake-error" role="alert" className="error-note mt-[var(--space-xs)]">
+        <p id="intake-error" role="alert" className="error-note">
           {error}
         </p>
       )}
-    </>
+    </div>
   );
 }
