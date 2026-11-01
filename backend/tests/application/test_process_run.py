@@ -293,6 +293,41 @@ class ProcessRunUseCaseTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(stages, ["downloading", "normalizing", "uploading_to_gemini", "analyzing"])
 
+    async def test_persists_the_probed_duration_of_a_downloaded_url(self) -> None:
+        self.media.probed_duration = 61.0
+        await self.use_case.execute("run-1", source_url="https://x.test/v")
+
+        self.assertEqual(self.runs.runs["run-1"].duration_seconds, 61.0)
+
+    async def test_persists_the_probed_duration_of_an_object_store_source(self) -> None:
+        self.media.probed_duration = 12.25
+        await self.use_case.execute("run-1", source_key="runs/run-1/source.mp4")
+
+        self.assertEqual(self.runs.runs["run-1"].duration_seconds, 12.25)
+
+    async def test_a_caption_recovery_keeps_the_duration_yt_dlp_reported(self) -> None:
+        self.media.download_error = MediaValidationError("HTTP Error 403: Forbidden")
+        self.media.captions = CaptionTrack(
+            text="hi", language="en", automatic=False, duration_seconds=95.0
+        )
+
+        await self.use_case.execute("run-1", source_url="https://x.test/v")
+
+        run = self.runs.runs["run-1"]
+        self.assertEqual(run.status, RunStatus.COMPLETE)
+        self.assertEqual(run.duration_seconds, 95.0)
+
+    async def test_a_failed_duration_write_does_not_fail_the_run(self) -> None:
+        async def broken(run_id: str, duration_seconds: float) -> None:
+            raise RuntimeError("redis blip")
+
+        self.runs.set_duration = broken  # type: ignore[method-assign]
+        await self.use_case.execute("run-1", source_url="https://x.test/v")
+
+        run = self.runs.runs["run-1"]
+        self.assertEqual(run.status, RunStatus.COMPLETE)
+        self.assertIsNone(run.duration_seconds)
+
 
 if __name__ == "__main__":
     unittest.main()

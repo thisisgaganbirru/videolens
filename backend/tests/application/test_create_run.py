@@ -148,6 +148,40 @@ class CreateRunUseCaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.storage.deleted), 1)
         self.assertEqual(len(self.media.cleaned_up), 2)  # once after S3 upload, once in the except block
 
+    async def test_a_url_run_is_recorded_as_a_link_with_no_stored_platform(self) -> None:
+        use_case = self._make_use_case()
+        run = await use_case.execute(
+            principal=PRINCIPAL, accept_terms=True, file=None, url="https://x.test/v", gemini_api_key=None
+        )
+        stored = self.runs.runs[run.run_id]
+        self.assertEqual(stored.source_kind, "link")
+        # Link platforms come from yt-dlp metadata at read time, not intake.
+        self.assertIsNone(stored.platform)
+        self.assertIsNone(stored.duration_seconds)
+
+    async def test_a_video_upload_is_recorded_as_a_file_with_its_probed_duration(self) -> None:
+        use_case = self._make_use_case()
+        run = await use_case.execute(
+            principal=PRINCIPAL, accept_terms=True, file=FakeUploadedFile("my holiday.mov"),
+            url=None, gemini_api_key=None,
+        )
+        stored = self.runs.runs[run.run_id]
+        self.assertEqual(stored.source_kind, "file")
+        self.assertEqual(stored.platform, "video_file")
+        self.assertEqual(stored.duration_seconds, 42.5)
+
+    async def test_an_mp3_upload_is_recorded_as_an_audio_file(self) -> None:
+        use_case = self._make_use_case(distributed=True)
+        self.media.upload_extension = ".mp3"
+        run = await use_case.execute(
+            principal=PRINCIPAL, accept_terms=True, file=FakeUploadedFile("Jane Doe voicemail.mp3"),
+            url=None, gemini_api_key=None,
+        )
+        stored = self.runs.runs[run.run_id]
+        self.assertEqual(stored.platform, "audio_file")
+        # The submitted filename is never written anywhere on the run.
+        self.assertNotIn("Jane", stored.model_dump_json())
+
 
 if __name__ == "__main__":
     unittest.main()

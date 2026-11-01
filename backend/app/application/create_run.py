@@ -1,3 +1,4 @@
+import os
 import uuid
 
 from ..domain.entities import Principal, Run
@@ -8,6 +9,7 @@ from ..domain.errors import (
     RunSchedulingError,
     TermsNotAcceptedError,
 )
+from ..domain.run_facts import file_platform
 from ..domain.ports import JobQueue, MediaProcessor, ObjectStore, RunRepository, SpendCap, UploadedFile
 
 
@@ -69,15 +71,27 @@ class CreateRunUseCase:
 
         saved = None
         source_key = None
+        platform = None
+        duration_seconds = None
         try:
             if file is not None:
                 saved = await self._media.save_upload(run_id, file)
-                await self._media.enforce_duration_cap(run_id, saved.path)
+                duration_seconds = await self._media.enforce_duration_cap(run_id, saved.path)
+                # Only the extension of the *saved* path is consulted (the
+                # adapter names it "upload<ext>"), never the submitted
+                # filename, which can carry personal information.
+                platform = file_platform(os.path.splitext(saved.path)[1])
                 if self._distributed:
                     source_key = await self._storage.upload_source(run_id, saved.path)
                     self._media.cleanup_run_dir(run_id)
 
-            run = await self._runs.create(run_id, principal.subject)
+            run = await self._runs.create(
+                run_id,
+                principal.subject,
+                source_kind="file" if file is not None else "link",
+                platform=platform,
+                duration_seconds=duration_seconds,
+            )
             await self._queue.enqueue(
                 run_id,
                 saved_path=saved.path if saved and not self._distributed else None,

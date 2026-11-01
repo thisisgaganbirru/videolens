@@ -11,6 +11,7 @@ Does the actual work for one run: get the source media onto disk, validate/norma
 1. Status → `PROCESSING`.
 2. Get the source onto disk, one of three ways: (a) `source_key` set → download from S3 via `ObjectStore.download_source`, then re-run the duration cap (the file wasn't validated in this process before); (b) `source_url` set → stage `"downloading"`, then `MediaProcessor.download_url`, then duration cap; (c) neither set → `saved_path`/`run_dir` were passed in directly (local-mode upload, already duration-capped by `CreateRunUseCase` before enqueueing — **not** re-validated here).
    - For path (b), if the download returned a `SourceMetadata` (yt-dlp's own post metadata — title, uploader, caption, upload date, like/view/comment counts; see `docs/backend/media-validation.md`), it's persisted immediately via `RunRepository.set_source_metadata` — before normalize/analyze — so it's visible on `GET /api/runs/{id}` even if a later stage fails. File-upload runs never have this (`SavedUpload.metadata` is `None` for uploads).
+   - Paths (a) and (b) record the length `enforce_duration_cap` returns via `RunRepository.set_duration` (`_record_duration`, which logs and swallows a write failure — the duration is cosmetic and must never fail a healthy run). The caption fallback records `CaptionTrack.duration_seconds` (yt-dlp's reported length) the same way.
 3. If no usable path/dir resulted, raise `MediaValidationError("No media source was provided.")`.
 4. Stage → `"normalizing"`, then `MediaProcessor.normalize_media`.
 5. `AnalysisEngine.analyze_with_retry`, with an `on_stage` callback that relays Gemini's own stages (`"uploading_to_gemini"`, `"analyzing"`) into `RunRepository.set_stage`, and the `SourceMetadata` from step 2 when there was one. The metadata is both persisted onto the run *and* passed to the engine — persisting it makes it visible in the UI, passing it makes the analysis better (see `docs/backend/gemini-analysis.md`). Upload and S3 paths pass `None`.
@@ -40,3 +41,4 @@ Any failure inside the fallback returns False and the **original download error*
 ## Changelog
 - 2026-08-29 · main session · the pipeline now forwards `SourceMetadata` to the analysis engine as well as persisting it
 - 2026-08-29 · main session · added the caption fallback and `AnalysisCompleteness`; fixed the GC-able local task and the uncaught `CancelledError`, added the read-time staleness backstop, and corrected the inaccurate "known issue" note
+- 2026-11-01 · backend agent (Phase 3) · URL/S3/caption paths persist the source duration via `set_duration`

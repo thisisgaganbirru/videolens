@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from starlette.requests import Request
 
 from ...container import container
-from ...domain.entities import CapabilityReport, Principal, ReleaseIndex
+from ...domain.entities import CapabilityReport, Principal, ReleaseIndex, Run
+from ...domain.run_facts import describe_run
 from .dependencies import get_principal
 from .rate_limiter import limiter
 from .schemas import RunCreateResponse, RunListResponse, RunStatusResponse, RunSummary
@@ -78,16 +79,21 @@ async def list_runs(
     principal: Principal = Depends(get_principal),
 ) -> RunListResponse:
     runs = await container.list_runs_use_case.execute(principal)
-    return RunListResponse(
-        runs=[
-            RunSummary(
-                run_id=run.run_id,
-                status=run.status,
-                title=run.result.title if run.result else None,
-                created_at=run.created_at,
-            )
-            for run in runs
-        ]
+    return RunListResponse(runs=[_summary(run) for run in runs])
+
+
+def _summary(run: Run) -> RunSummary:
+    facts = describe_run(run)
+    return RunSummary(
+        run_id=run.run_id,
+        status=run.status,
+        title=run.result.title if run.result else None,
+        created_at=run.created_at,
+        source_kind=facts.source_kind,
+        platform=facts.platform,
+        duration_seconds=facts.duration_seconds,
+        summary_snippet=facts.summary_snippet,
+        orientation=facts.orientation,
     )
 
 
@@ -97,6 +103,7 @@ async def get_run(
     principal: Principal = Depends(get_principal),
 ) -> RunStatusResponse:
     run = await container.get_run_use_case.execute(run_id, principal)
+    facts = describe_run(run)
     return RunStatusResponse(
         run_id=run.run_id,
         status=run.status,
@@ -105,4 +112,7 @@ async def get_run(
         source_metadata=run.source_metadata,
         completeness=run.completeness,
         error=run.error,
+        source_kind=facts.source_kind,
+        platform=facts.platform,
+        duration_seconds=facts.duration_seconds,
     )

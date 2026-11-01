@@ -1,6 +1,6 @@
 import unittest
 
-from app.domain.entities import RunStatus, VideoAnalysis
+from app.domain.entities import Run, RunStatus, VideoAnalysis
 from app.infrastructure.config import Settings
 from app.infrastructure.persistence.run_repository import RunStore
 
@@ -49,6 +49,39 @@ class RunStoreTests(unittest.IsolatedAsyncioTestCase):
         history = await self.store.list_for_owner("client:owner-1", limit=2)
 
         self.assertEqual(len(history), 2)
+
+    async def test_create_records_media_facts_and_set_duration_updates_them(self) -> None:
+        run = await self.store.create(
+            "run-f", "client:owner-1", source_kind="file", platform="audio_file", duration_seconds=3.5
+        )
+        self.assertEqual(run.source_kind, "file")
+        self.assertEqual(run.platform, "audio_file")
+
+        await self.store.set_duration("run-f", 4.0)
+
+        saved = await self.store.get("run-f")
+        assert saved is not None
+        self.assertEqual(saved.duration_seconds, 4.0)
+        self.assertEqual(saved.platform, "audio_file")
+
+    async def test_set_duration_on_a_missing_run_is_a_no_op(self) -> None:
+        await self.store.set_duration("nope", 1.0)
+        self.assertIsNone(await self.store.get("nope"))
+
+
+class LegacyRunPayloadTests(unittest.TestCase):
+    def test_a_run_stored_before_the_media_fields_existed_still_deserializes(self) -> None:
+        # Exactly what Redis holds for a run written by the previous release.
+        payload = (
+            '{"run_id":"old","owner_id":"client:o","status":"complete",'
+            '"created_at":"2026-10-01T00:00:00Z","updated_at":"2026-10-01T00:01:00Z",'
+            '"stage":null,"result":null,"error":null,"source_metadata":null,'
+            '"completeness":"full"}'
+        )
+        run = Run.model_validate_json(payload)
+        self.assertIsNone(run.source_kind)
+        self.assertIsNone(run.platform)
+        self.assertIsNone(run.duration_seconds)
 
 
 if __name__ == "__main__":

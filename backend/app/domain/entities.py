@@ -73,6 +73,15 @@ class Run(BaseModel):
     error: Optional[str] = None
     source_metadata: Optional[SourceMetadata] = None
     completeness: AnalysisCompleteness = AnalysisCompleteness.FULL
+    # Facts about the media, not the person. All optional with a None default
+    # so a run stored before they existed still deserializes. `source_kind` is
+    # "link" or "file"; `platform` is only stored for file runs ("audio_file" /
+    # "video_file", from the extension - the filename itself is never kept),
+    # link runs derive theirs from `source_metadata` at read time
+    # (see domain/run_facts.py).
+    source_kind: Optional[str] = None
+    platform: Optional[str] = None
+    duration_seconds: Optional[float] = None
 
 
 class CapabilityState(str, Enum):
@@ -160,3 +169,6 @@ class CaptionTrack:
     language: str
     automatic: bool
     metadata: Optional[SourceMetadata] = None
+    # yt-dlp's own reported length, when it gave one. The media was never
+    # downloaded on this path, so there is nothing to ffprobe.
+    duration_seconds: Optional[float] = None
