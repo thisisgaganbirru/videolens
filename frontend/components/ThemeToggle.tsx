@@ -1,6 +1,7 @@
 "use client";
 
 import { Moon, Sun } from "lucide-react";
+import { useSystemBarsTheme } from "@/application/useSystemBarsTheme";
 import { syncThemeColorMeta, THEME_STORAGE_KEY, type Theme } from "@/components/theme";
 
 /* Reads and writes the same attribute + key the blocking script in
@@ -20,8 +21,13 @@ export function toggleTheme() {
 }
 
 /* Shared by the app shell and the standalone routes so every page carries the
-   same control, rather than each rebuilding a lookalike. */
+   same control, rather than each rebuilding a lookalike.
+
+   Also the one mount point for the native system-bar sync: every route renders
+   exactly one ThemeToggle, and the hook follows <html data-theme>, so the
+   status/gesture bar icons flip with the toggle without toggleTheme knowing. */
 export default function ThemeToggle() {
+  useSystemBarsTheme();
   return (
     <button type="button" className="theme-toggle" onClick={toggleTheme} aria-label="Toggle theme">
       <Sun className="icon-sun" aria-hidden="true" />
