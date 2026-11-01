@@ -21,10 +21,10 @@ export type Theme = "light" | "dark";
  */
 export const DEFAULT_THEME: Theme = "light";
 
-/** sRGB equivalents of `--color-paper` in each theme (see `app/tokens.css`). */
+/** `--color-paper` in each theme (see `app/tokens.css`) — keep them equal. */
 export const THEME_COLOR: Record<Theme, string> = {
-  light: "#f8fbf7",
-  dark: "#0c0f0c",
+  light: "#F6F4EE",
+  dark: "#0E100F",
 };
 
 /**
