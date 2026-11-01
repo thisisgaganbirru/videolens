@@ -1,16 +1,18 @@
 import Link from "next/link";
 import { ChevronLeft, House } from "lucide-react";
 import AppNav from "@/components/AppNav";
+import BottomTabBar from "@/components/BottomTabBar";
+import SiteFooter from "@/components/SiteFooter";
 
-/* Hallmark · theme: Terminal (locked, carried from tokens.css) · macrostructure: Long Document
+/* Hallmark · theme: editorial (carried from tokens.css) · macrostructure: Long Document
  *
  * Shared frame for /privacy and /terms. They are one document type, so they
  * share a shape rather than each inventing one; the page files hold only copy.
  *
  * Chrome is the app's chrome, not a legal-page variant: the same `.shell`
- * frame, the same `<AppNav />` — brand, all four tabs, drawer and theme toggle,
- * literally the same component HomeScreen renders — and the same
- * `.page-end` / `.foot` footer. A standalone route is still the same
+ * frame, the same `<AppNav />`, and the same `<SiteFooter />` (browser tab) or
+ * `<BottomTabBar />` (installed app) — literally the components HomeScreen
+ * renders. A standalone route is still the same
  * application, so it does not get its own furniture. The tabs work here because
  * they address the URL (`/?view=history`), not HomeScreen's React state; none
  * of them is `aria-current` on a legal route, because none of them is where you
@@ -86,19 +88,8 @@ export default function LegalShell({ title, effective, current, children }: Lega
         </div>
       </section>
 
-      <div className="page-end">
-        <footer className="foot">
-          <span>VideoLens AI</span>
-          <nav className="foot-legal" aria-label="Legal">
-            <Link href="/privacy" aria-current={current === "privacy" ? "page" : undefined}>
-              Privacy
-            </Link>
-            <Link href="/terms" aria-current={current === "terms" ? "page" : undefined}>
-              Terms
-            </Link>
-          </nav>
-        </footer>
-      </div>
+      <SiteFooter current={current} />
+      <BottomTabBar activeTab={null} currentRoute={current} />
     </div>
   );
 }

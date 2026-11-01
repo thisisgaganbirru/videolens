@@ -1,11 +1,13 @@
 import AppNav from "@/components/AppNav";
+import BottomTabBar from "@/components/BottomTabBar";
+import SiteFooter from "@/components/SiteFooter";
 
-/* Hallmark · theme: Terminal (locked, carried from tokens.css)
+/* Hallmark · theme: editorial (carried from tokens.css)
  *
  * Chrome is the app's chrome, not an offline-page variant: the same `.shell`
- * frame, the same `<AppNav />` — brand, all four tabs, drawer and theme toggle,
- * literally the component HomeScreen and LegalShell render — and the same
- * `.page-end > .foot` footer. A standalone route is still the same
+ * frame, the same `<AppNav />`, `<SiteFooter />` and `<BottomTabBar />` that
+ * HomeScreen and LegalShell render (the display mode picks which of the last
+ * two shows). A standalone route is still the same
  * application, so it does not get its own furniture.
  *
  * `activeTab={null}`: none of the four is where you are.
@@ -66,15 +68,8 @@ export default function OfflinePage() {
         </div>
       </section>
 
-      <div className="page-end">
-        <footer className="foot">
-          <span>VideoLens AI</span>
-          <nav className="foot-legal" aria-label="Legal">
-            <a href="/privacy">Privacy</a>
-            <a href="/terms">Terms</a>
-          </nav>
-        </footer>
-      </div>
+      <SiteFooter />
+      <BottomTabBar activeTab={null} />
     </div>
   );
 }
