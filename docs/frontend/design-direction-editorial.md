@@ -1,10 +1,12 @@
 # Editorial design direction (current)
 
-**Status: Phase 1 implemented** (tokens, fonts, app shell, bottom tab bar, More
-sheet). Supersedes `design-direction-terminal.md`. Phases 2+ (intake, results,
-history, panels re-skinned to these tokens) are not done yet — those views still
-render with the Terminal-era component classes, now coloured through the
-temporary aliases below.
+**Status: Phases 1 and 2 implemented.** Phase 1: tokens, fonts, app shell,
+bottom tab bar, More sheet. Phase 2: the Analyze tab's core flow — intake,
+progress filmstrip, results — rebuilt structurally against the shots (see
+`upload-form.md`, `run-status-pipeline.md`, `results-view.md`). Supersedes
+`design-direction-terminal.md`. Phases 3–5 (History, API key, Releases, legal
+pages, free-run banner, thumbnails, landing) are not done; those views render
+with the shared component classes on the new tokens.
 
 Source of truth for the look is the owner's handoff in `design/`
 (`design-handoff.md`, `tokens.css`, `shots/*.png`). This doc records how it was
@@ -17,7 +19,6 @@ handoff did not specify it.
 - `frontend/components/theme.ts` — `THEME_COLOR` (`#F6F4EE` / `#0E100F`).
 - `frontend/components/shell.ts` — `ShellMode`, `SHELL_STORAGE_KEY`.
 - `frontend/app/manifest.ts`, `frontend/capacitor.config.ts` — paper colour for splash/manifest.
-- `design-system/videolens/MASTER.md` (repo root) — the ui-ux-pro-max persisted design system, overwritten with this locked system.
 
 ## Palette
 
@@ -61,18 +62,19 @@ except where marked *proposed* (the handoff had no dark value for them).
 
 The two sub-3 rows are fills that never carry information on their own.
 
-### Temporary aliases
+### Temporary aliases — removed in Phase 2
 
-`tokens.css` ends with a clearly marked alias block mapping the Terminal-era
-names onto the new tokens so untouched views keep rendering:
-`paper-2`/`nav-bg` → `surface`, `paper-3` → `tint`, `rule-2` → `border-strong`,
-`accent-ink` → `on-accent`, `font-body` → `font-ui`, `font-display` →
-`font-serif`. **Delete each alias when its last caller is ported** (Phase 2+).
+Phase 1 shipped an alias block mapping the Terminal-era names (`paper-2`,
+`nav-bg`, `paper-3`, `rule-2`, `accent-ink`, `font-body`, `font-display`) onto
+the new tokens. Phase 2 migrated every caller and deleted the block; a grep for
+those names across `frontend/app` and `frontend/components` returns nothing.
+Use the real token names only.
 
 ## Type
 
 - **UI: Hanken Grotesk**, the variable file (one file covers 400–700, smaller than four statics). `--font-ui`.
-- **Headlines: Newsreader 400 only.** `--font-serif`. Opt-in via `.page-title` and `.sheet-title`; base `h1–h3` deliberately do **not** set a family, because Newsreader is loaded at one weight and a bold heading would be faux-bolded.
+- **Headlines and reading text: Newsreader, variable (wght + opsz, roman + italic) since Phase 2.** `--font-serif`. Opt-in by class only (`.page-title`, `.sheet-title`, `.intake-title`, `.run-title`, `.result-title`, `.prose-serif`); base `h1–h3` deliberately do **not** set a family. Phase 1 loaded a single static 400; Phase 2 moved Notes/TL;DR into the serif, and their markdown carries bold headings, `**strong**` and `*emphasis*`, which a static 400 would have faux-bolded and faux-italicised. The opsz axis is what makes the 56px headline match the boards' display cut.
+- **Serif reading measure: `--measure-serif: 36rem`**, measured in the browser at 19px: 576px ≈ 74 characters per line in Notes/TL;DR, 69 in transcript lines. 40rem measured 82 and was cut. Phone (18px, 316px column) runs ~43.
 - Both via `next/font/google` → self-hosted under `/_next/static/media`; `scripts/build-sw.mjs` now precaches `.woff2` so the offline page and the Capacitor export keep their type.
 
 ## Shape and spacing
@@ -100,14 +102,20 @@ details are in `app-shell-layout.md`.
 - **More sheet covers the dock.** The shot draws the dock above the sheet. The sheet is a native modal `<dialog>` (top layer, inert page, platform Escape); keeping the dock interactive above it would need a non-modal dialog and a hand-rolled trap. Correct semantics won.
 - **Theme toggle glyph shows the destination**: moon in light, sun in dark. MainDark draws a moon.
 - **Dark dock is a raised tint** (`#212522`), not an inverted light bar — an inverted bar on a near-black page was the loudest element on screen.
-- **App mode on a wide window** keeps the bottom bar (centred, max 30rem) rather than switching to the top links — an installed desktop PWA is still "the app". Open question for the owner.
+- **App mode on a wide window** (changed in Phase 2, settled 2026-11-01): the bottom tab bar and More sheet are phone-only — `≤ 37.5rem`. A wider installed window gets the web chrome whole: the top bar and the footer, which is its way to Privacy/Terms (owner decision; they are not added to the top-bar menu). CSS only.
+- **design/newshots/ supersedes design/shots/** for ProgressCaptions, ProgressUploadMobile, ProgressFailed, ProgressLostWeb and ResultsOnScreenText(Mobile). One new token: `--color-strip-skipped-edge` (dashed edge of a skipped frame, light #5E5F66 / dark #5A615C).
+- **Phase 2 deviations** are listed per shot in `mem/20261101-redesign-phase2-core-flow.md` and summarised in `upload-form.md`, `run-status-pipeline.md` and `results-view.md`.
 
 ## Overrides of tooling suggestions
 
 ui-ux-pro-max proposed a teal/orange palette with Lora/Raleway. Overridden in
 favour of the owner's handoff (hallmark: a supplied design system beats a
-generated one). Recorded in `design-system/videolens/MASTER.md`.
+generated one). Nothing is persisted outside this doc and `frontend/app/tokens.css`.
 
 ## Changelog
 
 - 2026-11-01 · frontend agent · created: Phase 1 of the editorial redesign — tokens, fonts, shell-mode detection, dark danger/strip/dock values with contrast table, deviations from the shots
+- 2026-11-01 · frontend agent · Phase 2: status, alias block removed, Newsreader variable + `--measure-serif` (measured), wide installed windows get the top bar, `design-system/` references dropped (that folder no longer exists)
+- 2026-11-01 · frontend agent · owner follow-ups: results row is underlined tabs (not a segmented control) with TL;DR default; service notice moved into the editorial system; intake grid tracks floorless. See results-view.md, capability-reporting.md, upload-form.md
+- 2026-11-01 · frontend agent · owner answers applied: TL;DR key-takeaway label, bold filmstrip labels; corrected the Privacy/Terms note (they were already in the More sheet; the gap is wide installed windows only)
+- 2026-11-01 · frontend agent · final Phase 2 round: design/newshots built (captions route, File received, failed/lost notice, text-only On-screen); wide installed windows show the footer; added --color-strip-skipped-edge

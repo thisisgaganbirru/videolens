@@ -1,86 +1,130 @@
 # Run status pipeline view
 
-Shows the live pipeline progress for a queued/processing run (steps: download → prepare → send to Gemini → analyze, or the last three only for file uploads which skip download). Renders inside the Analyze tab, above where `ResultsView` takes over once complete.
+Shows the live pipeline progress for a queued/processing run (four frames: Downloading → Normalizing → Uploading → Analyzing for a link; File received → Normalizing → Uploading → Analyzing for an upload). Renders inside the Analyze tab, above where `ResultsView` takes over once complete.
 
 **Files**
-- `frontend/components/RunStatusView.tsx` — the component. Pure/presentational: takes `status`, `stage`, `sourceKind`, `error`, `connectionLost` as props (all sourced from `useAnalysisRun`, see `docs/frontend/run-analysis-hook.md`).
+- `frontend/components/RunStatusView.tsx` — the component. Pure/presentational: takes `status`, `stage`, `sourceKind`, `error`, `connectionLost`, `sourceLabel`, `retryInSeconds`, `retrying`, `reconnectAttempt`, `retryBusy`, `onReset`, `onRetry`, `onRetryNow` as props (all sourced from `useAnalysisRun`, see `docs/frontend/run-analysis-hook.md`).
 - `frontend/components/RunStatusView.preview.tsx` — a dev-only harness rendering all 8 states (queued, each processing stage, failed, both complete variants) side by side. Not wired to any route — mount it temporarily under `app/` to visually check changes, then remove the route before committing.
 
-**Layout** (Terminal redesign — see `design-direction-terminal.md`): a centred
-single column (`.run-state`), *not* the two-column workspace — there's no
-source metadata to show yet mid-run. A `.status` pill sits above a `.steps`
-grid of equal-width `.step` tracks joined by a connector rule. Four labelled
-tracks don't fit a phone, so they stack to a vertical pipeline below 32rem.
-The failed state renders `.error-block`.
+**Layout (editorial Phase 2 — Progress, ProgressWeb, ProgressMobile,
+ProgressFailed, ProgressLost).** `HomeScreen` owns `.run-state` (centred
+column, max 56rem); the component returns a fragment: status pill → serif
+`h1.run-title` → `.run-lede` → `.filmstrip` → `.source-chip` (not in failed
+or lost) → either `p.run-notice` + `.run-actions` (failed / lost) or the
+`.reset-link`. **design/newshots/ supersedes design/shots/** for
+ProgressCaptions, ProgressUploadMobile, ProgressFailed and ProgressLostWeb. This replaces the
+Terminal-era `.steps` track and `.error-block`, and the `stalled` state below.
 
-**The component returns a fragment, not a wrapper.** `globals.css` styles
-`.run-state > .status` as a *direct-child* selector, so an intervening
-`<section>` silently kills the flex gap. `HomeScreen` owns the `.run-state`
-element.
+The **filmstrip** is the progress bar: a dark strip (`--color-strip`) with
+painted sprocket holes, one `li.frame` per backend stage. Below 46rem the
+frames stack (holes down both sides) and the source chip spans the strip's
+width; at ≥ 46rem they run four across (holes along top and bottom). The holes
+are a one-hole gradient tile with `background-repeat: round`, so the run always
+ends on a whole hole. File runs open on **File received** (`FILE_STEP`,
+ProgressUploadMobile.png), done from the first paint: the bytes are on the
+server before a run exists, and no backend stage names it.
 
-**State encoding**: `.status[data-tone="processing"|"failed"]` (no `data-tone`
-= complete); `.step[data-status="done"|"active"]`, with neither meaning
-upcoming. Failed marks prior steps done and nothing active, so the accent pulse
-never contradicts a red pill. Motion is the shared `pip-pulse`, already disabled
-under `prefers-reduced-motion`.
+| frame `data-state` | look | caption |
+|---|---|---|
+| `done` | accent-soft, check | Done |
+| `active` | white, accent number/caption, `.frame-scan` sweep (one `transform`; under reduced motion it rests at ~60%), `aria-current="step"` | In progress |
+| `waiting` | strip-waiting | Waiting |
+| `failed` | danger-soft, 2px danger inset, X | Stopped here |
+| `lost` | tint, dashed outline, wifi-off — never red | Waiting for connection |
+| `missed` | as `failed`, X (captions route's Downloading frame) | Couldn't download |
+| `skipped` | no fill, 1.5px dashed `--color-strip-skipped-edge`, waiting text | Skipped |
 
-**No retry button in the error block** — `HomeScreen` renders the reset link
-beneath it; the mockup's retry button would duplicate that control.
+**Captions route** (`stage === "analyzing_captions"` on a link run,
+ProgressCaptions.png): every download route failed, so the backend fetched the
+caption track and went straight to analysis (`backend/app/application/
+process_run.py` `_analyze_captions`) — normalizing and the Gemini upload never
+ran. Downloading is `missed`, Normalizing and Uploading `skipped`, Analyzing
+active (or failed / lost if the run stops there). Title "Reading the
+captions", lede "We couldn't download the video, so we are using its captions
+only. Results may have less detail.", pill stays Processing. A run of unknown
+kind (reopened, no metadata yet) never gets this treatment; it falls back to
+the plain Analyzing frame.
 
-## `connectionLost` — the stalled state
+Pill (`.status[data-tone]`): Queued / Processing / Failed / Connection lost.
+Titles: "Reading your video" / "Reading the captions" / "That didn't work" /
+"Connection lost".
 
-If the poll throws, `useAnalysisRun` clears its interval. Nothing on this screen
-will ever change again — but the view used to carry on pulsing an `active` step
-and saying "Longer files take more time to normalize. **You can leave this
-open.**" Both statements are false the instant the interval dies: nothing is
-progressing, and leaving it open achieves nothing.
+**Failed**: lede "The run stopped while <verb>. <advice>". `recoveryAdvice(stage)`:
+at or after the Gemini upload it is "You can try the same link|file again."
+(ProgressFailed.png's copy; the problem is on our side), at downloading "Try a
+different link, or download the video and upload the file instead.", at
+normalizing "Try a different link|file." The server's own error sits alone in the
+`p.run-notice` card (danger border, max 40rem), and the actions sit centred
+under it in `.run-actions` (ProgressFailed.png): **Try again** (ink button,
+only when the hook has a source to resubmit) and **Analyze another file**.
+Side by side from 40rem, full-width and stacked below.
 
-`HomeScreen` computes `connectionLost = Boolean(error) && (status === "queued"
-|| status === "processing")` — which is exactly "the poll's catch fired", since
-`submit` now stays on idle until the server answers and `openRun` returns to
-idle on failure. It is the *same* flag that gates the `.error-block`, so the two
-treatments cannot disagree. Passing it flips three things:
+**Connection lost** (`connectionLost` from `HomeScreen`: error while queued or
+processing — the same derivation as before): the current frame goes `lost`
+(nothing animates), the notice reads "We can't reach the server right now.
+Trying again in N seconds." with a live countdown from
+`useAnalysisRun.reconnectIn`; under it **Retry now** and **Stop watching**
+(ProgressLostWeb.png). The lede is the shot's: "Check your network. The page
+reconnects on its own and picks up where it left off." — true: a successful reconnect resumes polling and the screen
+returns to Processing by itself. It is still deliberately not danger-coloured:
+the run has not failed, we have only stopped hearing about it.
 
-| | running | stalled |
-| --- | --- | --- |
-| pill | `data-tone="processing"`, label `processing`/`queued`, pip pulsing | `data-tone="stalled"`, label `stalled`, pip static |
-| current step | `data-status="active"`, accent fill, `pip-pulse`, `aria-current="step"` | `data-status="stalled"`, dashed muted mark, no fill, no animation, no `aria-current` |
-| below the steps | `.pending-note` "you can leave this open" | **nothing** — the caller's `.error-block` follows |
+**Announcements**: one `sr-only` polite region. While lost it changes once per
+attempt ("Connection lost. Trying again in 8 seconds.", from
+`reconnectDelayFor`); the ticking countdown is outside any live region.
 
-**Why `stalled` and not `failed`.** The run has not failed; we have only stopped
-hearing about it, and it may well still be finishing on the server (which is what
-the block below says). So the pill is the processing pill with its claim
-withdrawn — same outline, no fill, muted ink — and is deliberately *not*
-danger-coloured. The `.error-block` directly beneath is the one thing on this
-screen allowed to carry danger ink. The dashed step mark is the drop zone's
-"not settled yet" idiom, reused rather than invented.
+**Deliberate deviations from the shots**
+- "Stop watching and analyze another file" (processing, captions) instead of
+  "Cancel": `reset()` stops polling; there is no server cancel endpoint yet (see
+  the deferred item below). ProgressCaptions.png and ProgressUploadMobile.png
+  already use this wording; ProgressLostWeb.png's "Stop watching" is used
+  as drawn.
+- ProgressFailed.png's lede says "the same link or file"; the built lede names
+  the one the run actually used ("the same link" / "the same file").
+- The older ProgressFailed / ProgressLost shots in design/shots/ are superseded
+  by design/newshots/ and no longer followed.
 
-**One error treatment, one recovery control.** The pending note gives way (not
-the block): the block is the thing with the explanation and the `start over`
-button, and a note advising patience directly above a box saying it is over
-would be two screens fighting. `HomeScreen` already swaps its `.reset-link` for
-the block's own button in this state, so the total is exactly one control.
-`RunStatusView`'s `aria-live="polite"` region also goes silent while stalled —
-the block is `role="alert"`, and an assertive alert plus a polite status saying
-the same thing is one announcement too many.
+**Frame labels are bold** (`.frame-label` weight 700, owner decision
+2026-11-01). No frame-state rule overrides the weight, so every state
+(done / active / waiting / failed / lost / missed / skipped), both themes and
+the phone vertical layout get it.
 
-**Known issues**: no invented progress data — no percentage, ETA, or duration,
-because the backend returns none. Stage announcements go to an `sr-only` polite
-live region. On very short viewports the container can still scroll (accepted
-tradeoff — see `mem/20260810-run-status-pipeline-redesign.md`).
+**Deferred by owner decision (2026-11-01): server-side cancel.** The wording
+stays "Stop watching and analyze another file" / "Stop watching" / "Analyze
+another file" because the client only stops polling; the run keeps going on
+the server and still spends quota. A real cancel endpoint is planned for a
+later phase; when it lands, these buttons can call it and the copy can say
+"Cancel". "Try again" stays a brand-new run with the same source (it does not
+resume the failed one).
 
-**Tests**: none (see `run-analysis-hook.md` — no frontend unit tests currently);
-verified via the preview harness (now 10 states, including the stalled one) and
-`tsc --noEmit`. The stalled state has also been forced in a real browser
-(Playwright: 202 accepted, then the polling GET aborted) at 1440x900 and 390x844
-in both themes — 0 `active` steps, 1 `stalled` step, `animation-name: none` on
-the pip, 0 occurrences of "You can leave this open", 0 `.pending-note` in
-`.run-state`, 0 `.reset-link`, 1 `start over` (115.4x44.0 on touch), no
-horizontal overflow, and the button really returns to the intake. Contrast
-against paper: pill 5.26:1 / 5.53:1, stalled step label 10.8:1 / 10.83:1.
+**Known issues**: no invented progress data — no percentage, ETA or duration,
+because the backend returns none. A URL run reopened from History is recognised as one once its
+status carries `source_metadata` or a link-only stage (see
+`run-analysis-hook.md`); before that it shows the File received frame.
+`RunStatusView.preview.tsx` still passes only the older props; it compiles
+(the new props are optional) but does not show the lost countdown, retry
+buttons or source chip.
+
+**Verified (Phase 2, Playwright against the dev server, backend faked by route
+interception)**: Progress 1280×860 (section 726/726, no scroll), ProgressWeb
+390×900, ProgressMobile 390×918 app shell, ProgressFailed and ProgressLost at
+1280×1342; plus queued (file run), each processing stage including
+`analyzing_captions`, failed at downloading / normalizing / analyzing, lost in
+both themes and on a phone, the countdown ticking 4→3, Retry now firing one
+attempt and rescheduling at 8s, and recovery back to Processing. No page
+errors, no horizontal overflow, no document scroll in any of them.
+
+**Verified (newshots round, 2026-11-01, same harness)**: captions route at
+1280×860 light/dark and 390 app; File received at 390 app light/dark and
+1280; failed at 1280 light/dark and 390; lost at 390 web light/dark and 1280.
+Design-vs-built pairs for ProgressCaptions, ProgressUploadMobile,
+ProgressFailed and ProgressLostWeb. No page errors, no horizontal overflow.
 
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported RunStatusView to the centred .run-state pipeline; returns a fragment (.run-state > .status is a direct-child selector)
 - 2026-08-15 · frontend agent (run lifecycle errors) · added `connectionLost`: a stalled pill tone, a stalled (dashed, unanimated) step state, and suppression of the "you can leave this open" note, so the view stops claiming progress once polling dies
 - 2026-08-21 · main session · recovery advice now keyed on the stage the run died at rather than on sourceKind, and the dead data-error-kind attribute removed. See ../error-messaging.md
+- 2026-11-01 · frontend agent · editorial Phase 2: rebuilt as the filmstrip (frame states done/active/waiting/failed/lost), serif title per state, source chip, failed/lost notice with Try again / Retry now + live reconnect countdown; Terminal-era layout/stalled sections replaced; deviations and deferred slots recorded
+- 2026-11-01 · frontend agent · frame labels bold (700) in every state/theme/layout; server-side cancel recorded as deferred by owner decision (wording unchanged, Try again stays a new run)
+- 2026-11-01 · frontend agent · design/newshots round: captions route (missed/skipped frames, own title + lede), File received first frame for uploads, notice card split from centred actions with no source chip in failed/lost, lost lede + "Stop watching" from ProgressLostWeb; `STAGE_ALIASES`/`FILE_STEP` TODO(design) slots closed

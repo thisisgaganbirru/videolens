@@ -48,14 +48,26 @@ had addresses.
 > home/analyze are two states of the Analyze tab, and processing/failed are run
 > states, not destinations. Don't port the nav literally.
 
-**Analyze** is two ruled columns at `3fr / 7fr` separated by a single vertical
-hairline. **Neither column is a bordered card** — structure comes from rules and
-alignment. Only the results pane carries the `--color-paper-2` tint (`.results`),
-while `.surface` on non-results tabs (History, API Key, Releases) remains transparent with `.tab-view .pane` dropping `padding-inline` to align flush left with section headers.
+**Analyze (Terminal era — replaced 2026-11-01, Phase 2).** Was two ruled
+columns at `3fr / 7fr` separated by a hairline, with the results pane on a
+tinted `.results` surface. Phase 2 rebuilt all three states (intake two-column
+card + "What you get", progress filmstrip, results source column + card); see
+`upload-form.md`, `run-status-pipeline.md`, `results-view.md`.
+
+**Analyze scrolling (Phase 2).** At ≥ 32rem the whole `section[data-view="analyze"]`
+is the scroller (`overflow-y: auto`) and is full-bleed — `margin-inline: calc((100% - 100cqi) / 2)`
+with matching padding — so its scrollbar sits on the window edge, not inside
+the gutter. `HomeScreen` no longer sets `data-frame`; the section scrolls only
+when its content is taller than the band (measured: Main at 1280×989 is
+855/855, no scroll; ResultsTranscript at 1280×980 is 846/846). Below 32rem the
+`.viewport` scrolls, as before. The footer band at ≥ 32rem reaches back through
+the shell's bottom gutter (`margin-bottom: -max(1rem, safe-bottom)`), so it sits
+on the window's bottom edge as drawn (y 932 at 1280×989, same as Main.png).
+Other tabs keep the old behaviour, while `.surface` on non-results tabs (History, API Key, Releases) remains transparent with `.tab-view .pane` dropping `padding-inline` to align flush left with section headers.
 De-boxing was a specific fix: two bordered tinted rectangles side by side read
 as a PowerPoint slide.
 
-**Footer** (web shell only) is a compact bar — "VideoLens AI" left, underlined Privacy/Terms right, full-bleed hairline above. Hidden in the app shell.
+**Footer** is a compact bar — "VideoLens AI" left, underlined Privacy/Terms right, full-bleed hairline above. Shown in the web shell and in installed windows wider than 37.5rem; hidden only in the phone-width app shell (≤ 37.5rem), which has the dock instead.
 
 ## Responsive model
 
@@ -84,13 +96,25 @@ renders **both** chromes; CSS shows one.
 
 | | web (browser tab) | app (installed PWA / Capacitor) |
 |---|---|---|
-| Top bar | brand · tab links (≥ 48rem) · theme · hamburger (< 48rem) | brand · theme only |
-| Phone menu | `.menu-panel`, sibling of `.nav-wrap`, full-width 60px cards; hides the content section while open | none |
-| Bottom | `SiteFooter` | `BottomTabBar` (fixed dock, inset by `--page-gutter`/safe areas, max 30rem) |
-| Privacy / Terms | footer | More sheet |
+| Top bar | brand · tab links (≥ 48rem) · theme · hamburger (< 48rem) | ≤ 37.5rem: brand · theme only. Wider: same as web (links ≥ 48rem, hamburger between) |
+| Phone menu | `.menu-panel`, sibling of `.nav-wrap`, full-width 60px cards; hides the content section while open | none at ≤ 37.5rem |
+| Bottom | `SiteFooter` | ≤ 37.5rem: `BottomTabBar` (fixed dock, inset by `--page-gutter`/safe areas), no footer. Wider: `SiteFooter`, same as web |
+| Privacy / Terms | footer | ≤ 37.5rem: More sheet rows. Wider: the footer (owner decision 2026-11-01; not added to the top-bar menu) |
 
-This is a **deliberate exception to "same footer on every route"**: the rule is
-now "same chrome on every route *within a shell*". Both shells still render on
+**Phone-only dock (Phase 2).** The bottom tab bar, the More sheet and the
+content's dock clearance all live inside `@media (max-width: 37.5rem)`, and
+so (since 2026-11-01) does the app shell's footer hide — a wider installed
+window gets the web chrome whole, top bar and footer. CSS only — nothing in
+React reads the width. Measured: 1024×760 and 700×800 app shell show the top
+bar and the footer, no dock; 390×844 app shell shows the dock and no footer;
+390 app shell content ends 64px above the dock top.
+Known edge: if the More sheet is open and an installed window is widened past
+37.5rem, the dialog stays open (its trigger is now hidden); Escape or the
+backdrop still closes it.
+
+This is a **deliberate exception to "same footer on every route"**, now
+confined to the phone-width app shell: the rule is "same chrome on every route
+*within a shell*". Both shells still render on
 `/`, `/privacy`, `/terms`, `/offline`.
 
 - **Content never sits under the dock.** In app mode `.shell` gets `padding-bottom: calc(var(--tabbar-height) + max(var(--space-sm), var(--safe-bottom)) + var(--space-sm))`, so the scroller's last line clears the bar. Measured at 390×844: dock top 764, Analyze content ends 565, legal scroller ends 748.
@@ -173,7 +197,16 @@ The browser-chrome colour follows it. `viewport.themeColor` used to be a
 `prefers-color-scheme` **pair**, which was right only while the app tracked the
 OS; a dark-OS visitor would now get a dark strip above a light page. It is one
 media-less tag carrying the light value, which the pre-paint script and
-`toggleTheme` both re-point at whatever theme is actually in use. The three
+`toggleTheme` both re-point at whatever theme is actually in use.
+
+**Android status bar sync from the More sheet.** The More sheet's theme row
+calls the same `toggleTheme()` as the top-bar `ThemeToggle`. The native status
+and navigation bars follow via `useSystemBarsTheme`, which is mounted inside
+`ThemeToggle` and observes `<html data-theme>` — and `AppNav` renders
+`ThemeToggle` in both shells, including app mode at phone width where the
+sheet is the visible control. So a switch from the sheet re-colours the system
+bars with no extra wiring. Not re-verified on a device in Phase 2 (agents do
+not run the native build); reasoned from the mount point. The three
 places that need those two hex values import them from `components/theme.ts` so
 they cannot drift. (`public/manifest.webmanifest`'s own `theme_color` is
 separate and was not touched.)
@@ -237,7 +270,8 @@ every nav in the app. Do not collapse this back into one rule.
 
 - **Capacitor `SystemBars style: "DARK"` was left as-is** (out of Phase 1 scope). On the now-light paper it likely gives light status-bar icons on a light bar — needs an owner decision and a device check (`docs/frontend/android-live-reload.md`; agents don't run the native build).
 - **Tabbing past the last More-sheet row** moves focus to the browser chrome and back, not straight to the first row. That is native `showModal()` behaviour (the page behind stays inert, measured); a hand-rolled wrap-around trap was not added.
-- **App mode on a wide window** keeps the bottom dock (centred, max 30rem). Owner to confirm for installed desktop PWAs.
+- **App mode on a wide window** keeps the bottom dock (centred, max 30rem). Owner to confirm for installed desktop PWAs. *(Superseded in Phase 2: the dock is phone-only.)*
+- ~~Privacy/Terms unreachable in installed windows wider than 37.5rem~~ — fixed 2026-11-01: those windows now show the footer (owner decision).
 - **`--color-focus` now equals the accent**, so legacy hover rules that used `--color-focus` as a hover tint are visual no-ops until Phase 2 re-skins those views.
 - Not verified on a physical device: Playwright/Chromium at 1280×989 and 390×844 only, where `env(safe-area-inset-*)` is 0.
 
@@ -348,3 +382,6 @@ back/forward was measured and the Capacitor mapping is read from
 - 2026-08-15 · doc-accuracy agent · marked two Known issues fixed against live code: `/offline` now renders `<AppNav activeTab={null} />` (was brand-only), and `.page-end`'s negative `margin-bottom` closes the 16px flow-vs-fixed footer gap at 390px (was open) — both cross-checked against `legal-offline-routes.md`, which had already recorded the fixes and flagged this doc as stale
 - 2026-08-16 · main session · wired `--safe-top` into `.nav-wrap`'s `padding-top` after a user screenshot on a physical Android device (`build8`) showed the nav pill sitting flush against the status bar; not caught by the earlier Playwright emulation pass since Chromium doesn't produce a nonzero `env(safe-area-inset-top)`. Not re-verified on device by this agent — only reasoned from the same `max()` pattern already used for the other three safe-area sides
 - 2026-11-01 · frontend agent · editorial redesign Phase 1: two shells (web top bar + full-screen phone menu + footer / app bottom dock + More sheet) chosen by pre-paint `data-shell`; drawer, scrim and pill nav removed; sticky full-bleed bar via cqi; measured no document scroll in all 32 width×theme×shell×route combos
+- 2026-11-01 · frontend agent · Phase 2: dock + More sheet phone-only (≤ 37.5rem), wider installed windows get the top bar and no footer; Analyze section is now the full-bleed scroller at ≥ 32rem (`data-frame` dropped from HomeScreen); footer reaches the bottom edge on desktop; documented the More-sheet → status-bar sync path
+- 2026-11-01 · frontend agent · confirmed Privacy/Terms are already More-sheet rows (no change made); recorded the remaining gap for installed windows wider than 37.5rem as a Known issue
+- 2026-11-01 · frontend agent · owner decision: installed windows wider than 37.5rem show the footer (top bar AND footer); the app-shell footer hide moved inside the ≤ 37.5rem query; Privacy/Terms known issue closed; shell table and footer text corrected
