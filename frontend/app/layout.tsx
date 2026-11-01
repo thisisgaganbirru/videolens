@@ -1,8 +1,32 @@
 import type { Metadata, Viewport } from "next";
+import { Hanken_Grotesk, Newsreader } from "next/font/google";
 import ServiceWorkerRegistration from "@/components/ServiceWorkerRegistration";
 import UpdateBanner from "@/components/UpdateBanner";
 import { DEFAULT_THEME, THEME_COLOR, THEME_STORAGE_KEY } from "@/components/theme";
+import { SHELL_STORAGE_KEY } from "@/components/shell";
 import "./globals.css";
+
+/* Self-hosted at build time by next/font — no request to Google at runtime,
+   which is what lets the static export (Capacitor) and the offline page keep
+   their type. The files land in /_next/static/media and the service worker
+   precaches them (scripts/build-sw.mjs).
+
+   Hanken Grotesk is the variable font: the UI uses 400/500/600/700, and one
+   variable file is smaller than four static ones. Newsreader is headlines
+   only, at 400, so it loads that one static weight. The two `variable`s are
+   what `--font-ui` / `--font-serif` in tokens.css read. */
+const hanken = Hanken_Grotesk({
+  subsets: ["latin"],
+  variable: "--font-hanken",
+  display: "swap",
+});
+const newsreader = Newsreader({
+  subsets: ["latin"],
+  weight: "400",
+  style: "normal",
+  variable: "--font-newsreader",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "VideoLens AI",
@@ -50,15 +74,37 @@ document.documentElement.setAttribute("data-theme",t);try{var m=document.querySe
   THEME_COLOR.dark
 )}:${JSON.stringify(THEME_COLOR.light)});}catch(e){}})();`;
 
+/* Blocking, pre-paint, same reason as the theme script: stamps
+   `<html data-shell="app"|"web">` so the right chrome (bottom tab bar vs top
+   menu + footer) is on screen at first paint. Both are rendered; CSS shows
+   one. See components/shell.ts.
+
+   Installed = a standalone PWA (`display-mode: standalone`, or iOS's
+   `navigator.standalone`) or the Capacitor native shell. Capacitor's bridge
+   object is normally injected ahead of this script, but that is the platform's
+   ordering, not ours — so if detection says "web" it is re-checked once at
+   DOMContentLoaded. A stored `videolens_shell` of "app"/"web" overrides both
+   (testing only). Everything is in try/catch: a failure leaves "web", which is
+   also what the stylesheet assumes with no attribute at all. */
+const SHELL_INIT_SCRIPT = `(function(){var r=document.documentElement,s;try{s=localStorage.getItem(${JSON.stringify(
+  SHELL_STORAGE_KEY
+)});}catch(e){}function d(){try{var w=window,c=w.Capacitor;return(w.matchMedia&&w.matchMedia("(display-mode: standalone)").matches)||w.navigator.standalone===true||!!(c&&c.isNativePlatform&&c.isNativePlatform());}catch(e){return false;}}
+if(s==="app"||s==="web"){r.setAttribute("data-shell",s);return;}r.setAttribute("data-shell",d()?"app":"web");
+if(r.getAttribute("data-shell")==="web"){document.addEventListener("DOMContentLoaded",function(){if(d())r.setAttribute("data-shell","app");});}})();`;
+
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="h-full" suppressHydrationWarning>
+    <html
+      lang="en"
+      className={`h-full ${hanken.variable} ${newsreader.variable}`}
+      suppressHydrationWarning
+    >
       <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT + SHELL_INIT_SCRIPT }} />
       </head>
       <body className="h-[100dvh] overflow-clip bg-[var(--color-paper)] text-[var(--color-ink)] antialiased select-none">
         <div className="viewport">

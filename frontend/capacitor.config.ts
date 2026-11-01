@@ -6,7 +6,9 @@ const config: CapacitorConfig = {
   webDir: "out",
   android: {
     allowMixedContent: false,
-    backgroundColor: "#0b0d0c",
+    // Light `--color-paper` (app/tokens.css): the WebView's colour before the
+    // first paint, so it should match the first-run (light) theme.
+    backgroundColor: "#F6F4EE",
   },
   plugins: {
     SystemBars: {

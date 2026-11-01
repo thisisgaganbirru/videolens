@@ -9,8 +9,10 @@ export default function manifest(): MetadataRoute.Manifest {
     description: "Turn short media into transcripts, timelines, summaries, and notes.",
     start_url: "/",
     display: "standalone",
-    background_color: "#0b0d0c",
-    theme_color: "#0b0d0c",
+    // The light `--color-paper`. Light is the first-run theme, so the splash
+    // and the install-time chrome match the page that then paints.
+    background_color: "#F6F4EE",
+    theme_color: "#F6F4EE",
     orientation: "portrait-primary",
     icons: [
       {

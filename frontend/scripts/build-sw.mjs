@@ -64,7 +64,10 @@ async function collectAssets(dir, prefix = "") {
     const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
     if (entry.isDirectory()) {
       found.push(...(await collectAssets(path.join(dir, entry.name), rel)));
-    } else if (/\.(js|css)$/.test(entry.name)) {
+    } else if (/\.(js|css|woff2)$/.test(entry.name)) {
+      /* woff2: next/font self-hosts the UI and headline faces under
+         /_next/static/media. Without them in the precache, the offline page
+         and every route opened offline fall back to system fonts. */
       found.push(`/_next/static/${rel}`);
     }
   }
