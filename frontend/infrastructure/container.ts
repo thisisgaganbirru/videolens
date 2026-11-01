@@ -8,6 +8,7 @@ import { FetchRunsGateway } from "./runsGateway";
 import { ApiUpdateChecker } from "./updateCheck";
 import { WebShareUrlSource } from "./sharedUrlSource";
 import { FetchVersionLogGateway } from "./versionLogGateway";
+import { CapacitorSystemBarsStyler } from "./systemBars";
 
 export const apiKeyStore = new LocalStorageApiKeyStore();
 export const runsGateway = new FetchRunsGateway(apiKeyStore);
@@ -15,3 +16,4 @@ export const capabilitiesGateway = new FetchCapabilitiesGateway();
 export const versionLogGateway = new FetchVersionLogGateway();
 export const updateChecker = new ApiUpdateChecker();
 export const sharedUrlSource = new WebShareUrlSource();
+export const systemBarsStyler = new CapacitorSystemBarsStyler();

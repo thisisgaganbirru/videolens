@@ -63,3 +63,17 @@ export interface SharedUrlSource {
    *  unsubscribe function. */
   subscribe(listener: () => void): () => void;
 }
+
+/** Which theme the page is painting. Mirrors `Theme` in `components/theme.ts`;
+ *  restated here so `domain/` stays free of presentation imports. */
+export type PaintedTheme = "light" | "dark";
+
+/**
+ * Keeps the OS system bars (status bar + gesture/navigation bar) legible over
+ * the page. The app is edge-to-edge on native, so the WebView paints under the
+ * bars and their icon colour has to follow the app's theme, not the OS's.
+ * A no-op wherever there are no native bars to style (browser, PWA).
+ */
+export interface SystemBarsStyler {
+  matchTheme(theme: PaintedTheme): Promise<void>;
+}

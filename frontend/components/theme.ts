@@ -6,6 +6,10 @@
  * exists so the three places that need the same constants — the pre-paint
  * blocking script in `app/layout.tsx`, the toggle button, and the browser-chrome
  * colour — cannot drift apart.
+ *
+ * The native status/gesture bar icon colour is the one theme-driven side effect
+ * that does need a port (it crosses into Capacitor): see
+ * `application/useSystemBarsTheme.ts`, which follows `data-theme` on its own.
  */
 
 export const THEME_STORAGE_KEY = "videolens_theme";
