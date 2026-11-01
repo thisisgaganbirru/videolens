@@ -29,6 +29,11 @@ interface UploadFormProps {
    *  Comes from `HomeScreen` rather than a hook of this component's own — see
    *  the note there on why the report is fetched exactly once. */
   urlCapability?: Capability | null;
+  /** A form-level failure from `useAnalysisRun` (the submit was rejected, the
+   *  server could not be reached, a History row would not open). Shown as the
+   *  first thing in the card. Not tied to the field: no aria-invalid, no
+   *  focus move, so a network error never pulls focus out of the input. */
+  submitError?: string | null;
 }
 
 function validateFile(file: File): string | null {
@@ -75,6 +80,7 @@ export default function UploadForm({
   submitting,
   sharedUrl,
   urlCapability,
+  submitError,
 }: UploadFormProps) {
   const busy = disabled || submitting;
   const [url, setUrl] = useState("");
@@ -187,6 +193,14 @@ export default function UploadForm({
      component stays the form and nothing else. */
   return (
     <div className="intake-card">
+      {/* The owner wanted the submit error inside the card, above "Paste a
+          link" — the control that failed is right below it. Rendered only
+          when present, so the card is unchanged without it. */}
+      {submitError ? (
+        <p role="alert" className="intake-alert">
+          {submitError}
+        </p>
+      ) : null}
       <form onSubmit={submitUrl} className="link-form">
         <label htmlFor="media-url" className="intake-card__label">
           Paste a link
@@ -261,13 +275,15 @@ export default function UploadForm({
             only way in is the button. The swap is a hover/pointer media query
             in globals.css; `display: none` keeps the hidden one out of the
             accessibility tree too. */}
-        <p className="drop-title">
-          <span className="drop-title--pointer">Drop an audio or video file here</span>
-          <span className="drop-title--touch">Add an audio or video file</span>
-        </p>
-        <p className="hint">
-          MP3, MP4, or MOV. Up to {MAX_FILE_SIZE_MB} MB and {MAX_DURATION_SECONDS / 60} minutes.
-        </p>
+        <div className="drop-text">
+          <p className="drop-title">
+            <span className="drop-title--pointer">Drop an audio or video file</span>
+            <span className="drop-title--touch">Add an audio or video file</span>
+          </p>
+          <p className="hint">
+            MP3, MP4, or MOV. Up to {MAX_FILE_SIZE_MB} MB and {MAX_DURATION_SECONDS / 60} minutes.
+          </p>
+        </div>
         <button
           type="button"
           onClick={() => inputRef.current?.click()}

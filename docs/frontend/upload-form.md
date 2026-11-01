@@ -148,13 +148,31 @@ retry button that wasn't there. Split by what the user is actually looking at:
   target under `pointer: coarse` (measured 115.4 x 66.8).
 - **`status === "failed"`** — untouched. `RunStatusView` owns that block.
 
+**Form-level submit error, inside the card (owner fix 2026-11-01).** The
+`useAnalysisRun` error shown at idle (server unreachable, submit rejected, a
+History row that would not open) used to be a bare `.error-note` line under the
+card in `HomeScreen`. It now reaches `UploadForm` as `submitError` and renders
+as the card's first child, above "Paste a link": `p.intake-alert`
+(`role="alert"`, danger-soft fill, hairline `--color-danger-border`, danger
+ink, 0.9375rem/500; 5.6:1 light, 5.8:1 dark). Only rendered when present, so
+the card does not move without it. It sets no `aria-invalid` and moves no
+focus. The field-level validation line ("Paste a link to analyze.", file-type
+and terms errors) is a different element and stays where it was, `.error-note`
+at the foot of the card, with empty-submit still focusing the field. Both can
+show at once if an old network error is still standing when a field error
+fires; `submit` clears the former on the next attempt. Measured with the
+backend really down at 1280 light/dark web, 1280 app, 390 web, 390 app dark:
+alert first in card, no horizontal overflow. Focus after a network failure is
+on `body` because the pressed button disables while sending (pre-existing,
+unchanged).
+
 **Known issues**
 
 - The `.error-note` swap, the destroyed-URL bug and `RunStatusView`'s
   contradiction — all three previously listed here — are **fixed**; see above and
-  `run-status-pipeline.md`. Both the idle note (`HomeScreen`) and this
-  component's own validation line now use the named `.error-note` class rather
-  than two copies of the same inline Tailwind chain. Measured on the intake at
+  `run-status-pipeline.md`. This component's own validation line uses the
+  named `.error-note` class rather than an inline Tailwind chain (the idle
+  submit note that once shared it is now `.intake-alert`, inside the card). Measured on the intake at
   390px: **6.89:1** light / **6.99:1** dark against paper, at 11.84px.
 - At 390x664 the promoted block's `start over` button sits ~19px below the fold
   and the box is clipped by the footer band. The content band does scroll and
@@ -204,3 +222,7 @@ link is 52px tall (`.link-row .btn` min-height 3.25rem), Browse files 44px.
 - 2026-08-29 · frontend agent · reconciled the capability strip and caption-only note against the dev-side results-view restructure
 - 2026-11-01 · frontend agent · editorial Phase 2: structural rebuild into `.intake-card` (link row with container-query stacking, divider, drop well with pointer/touch titles, terms row); Analyze link stays enabled when empty and explains on press; HomeScreen now owns the two-column intake layout and the "What you get" panel
 - 2026-11-01 · frontend agent · intake grid: dropped the panel track's 17rem floor (both tracks minmax(0, max)), named grid areas so the service notice sits above the panel instead of between the lede and the card; 900–1280px width sweep clean in both shells and themes
+- 2026-11-01 · frontend agent · owner fix: the idle submit/network error moved from a bare line under the card into the top of the intake card as `.intake-alert` (`submitError` prop, role=alert, danger-soft notice); field-level `.error-note` unchanged
+- 2026-11-01 · main session · owner fix: drop zone redrawn as a compact row (icon disc left, title "Drop an audio or video file" over the limits line, Browse files pinned right; the button wraps full-width under 30rem) per the owner's intake screenshot; replaces the centred stacked well
+- 2026-11-01 · main session · owner fix: the desktop intake fits one screen with no page scroll. From 60rem the top padding and headline scale with viewport height (72px / 56px only on tall windows), the card rhythm is tighter, and under 50rem of height the card padding and divider tighten further; measured with no overflow at a 1536×674 viewport (content band 540px)
+- 2026-11-01 · main session · owner spec: desktop intake header fixed at a 40px top, eyebrow 13/600/0.08em with a 16px margin under it, H1 Newsreader 50/500 at line-height 1.05 and -0.02em with 20px under it, intro 18px at 1.55 in ink-2 with a 480px max-width and 24px to the card, in a 620px column; replaces the height-scaled padding and headline from the previous entry. Measured exactly in Chrome at 1536×730 with no page scroll; Newsreader is the variable 200–800 face, so 500 is a real weight, not synthesised
