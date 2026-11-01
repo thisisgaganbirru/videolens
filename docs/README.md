@@ -22,6 +22,12 @@ exception, listed so it isn't mistaken for a stray file:
   reproducibility and container vulnerability gates are now implemented;
   remaining findings stay deferred.
 
+## Current design direction
+
+- `frontend/design-direction-editorial.md` — the live visual system (tokens,
+  type, shell modes, dark-value contrast table). Read before any UI work.
+  `frontend/design-direction-terminal.md` is superseded history.
+
 ## Applies to subagents too — no exceptions
 
 **Every agent and subagent follows this, not just the main session.** If you were
@@ -56,3 +62,4 @@ someone else's entry.
 - 2026-08-21 · main session · indexed the cross-cutting error-messaging reference
 - 2026-08-29 · main session · indexed `railway-environments.md`
 - 2026-08-29 · main session · added `backend/releases.md` for the new `GET /api/releases` endpoint
+- 2026-11-01 · frontend agent · indexed `frontend/design-direction-editorial.md` as the current design direction
