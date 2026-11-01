@@ -3,6 +3,12 @@
 Renders a completed run's analysis across four tabs: TL;DR (`summary`), Notes
 (`markdown`), Transcript, On-Screen.
 
+> **Superseded in part by the editorial Phase 2 rebuild (2026-11-01)** — see
+> "Editorial Phase 2 layout" below. Tab order is unchanged and **TL;DR is still
+> the default** (Phase 2 briefly opened on Notes; the owner reverted it). The
+> labels are "TL;DR / Notes / Transcript / On-screen", drawn as underlined tabs.
+> The four-column grid described under "Tab layout" is gone.
+
 **Tab order and labels**: TL;DR opens by default and sits first because it is the
 shortest read — the thing you want in front of someone the moment a run finishes.
 Notes follows, then the two raw sources behind it. The labels are Title Case here
@@ -225,6 +231,86 @@ The `completeness` rendering was verified with `npx tsc --noEmit`,
 Not tested on a physical device (emulation only) and never against a live
 backend — the fixture is the payload shape in `docs/backend/run-processing.md`.
 
+## Editorial Phase 2 layout (2026-11-01)
+
+Built against `design/shots/Results.png`, `ResultsDark`, `ResultsWeb`,
+`ResultsMobile` and `ResultsTranscript`.
+
+- **Two columns at ≥ 56rem** (laid out by `HomeScreen.tsx`, which owns `.source-panel` and `.result-card`): a source column (`.source-panel`: platform chip,
+  title, channel, stats, caption disclosure) on the left and the result card on
+  the right. Below that the source collapses to a toggle above the card.
+- **Result card** (`.result-card`): serif title band with copy / share icon
+  actions, then the tab row, then the panel, then "Download .md" (text button,
+  no icon — the boards draw none).
+- **Tabs**: TL;DR / Notes / Transcript / On-screen in that order; **TL;DR opens
+  by default** (`DEFAULT_TAB = "summary"`, owner's call; the boards show Notes
+  selected, which is a deliberate deviation now). Roving `tabindex` with Arrow /
+  Home / End, `role="tablist"`/`"tab"`/`aria-selected` unchanged.
+- **Underlined tabs, not a segmented control** (owner spec, 2026-11-01):
+  15px labels, weight 600 on every tab; selected = ink text plus a 2px
+  `--color-accent` underline (#1A7F37 light / #3FB950 dark); others =
+  `--color-muted`, ink on hover. Each tab ≥ 44px tall; gap 28px, 20px below
+  36rem. The row is one 1px `--color-rule` line across its full width and the
+  underline overlaps it by exactly 1px. Focus: 2px accent outline, 2px offset.
+  The row scrolls sideways on narrow phones (measured: scrolls at 320, fits at
+  390), never wraps, and never overflows the page.
+  *Why not `margin-bottom: -1px` over a border:* the row is a scroll container,
+  which clips its children, so that overlapping pixel was being cut off (the
+  "no underline" the owner saw). The rule is now the list's own background,
+  positioned on its content box's bottom edge, and the list carries 4px of
+  padding cancelled by a -4px margin so neither the underline nor the focus
+  ring's offset can be clipped.
+- **Serif reading measure**: `.prose-serif` is Newsreader at 1.125rem
+  (1.1875rem ≥ 48rem) on `--measure-serif: 36rem`. Measured at 1280: ~74
+  characters per line in Notes, ~69 in transcript rows. The board's column is
+  wider (~615px, >80 cpl); the measure was held to 65–75 on purpose.
+- **Transcript**: search field (pill input, no leading icon — matching the
+  board), a "Timestamps" switch (`role="switch"`; off sets `data-times="off"`
+  and hides the time column), `<mark>` on hits, and an empty state "Nothing in
+  this transcript matches …" with a Clear search button.
+- **Caption-only runs**: the completeness note and the replacement on-screen
+  empty line described above are unchanged, just re-tokened.
+
+**Deliberate deviations**
+- Notes blockquotes stay unlabelled (same accent-soft panel, no label): they
+  are whatever the model's markdown quoted. The "Key takeaway" label belongs
+  only to the TL;DR's first sentence, below.
+- The platform icon stays in the source chip (official glyphs, see
+  "Platform icons" above); the board shows a text-only chip.
+
+**Key takeaway (owner decision 2026-11-01).** The TL;DR tab renders the
+summary's first sentence as a `figure.takeaway` with a small-caps
+`figcaption.takeaway-label` "Key takeaway" (accent-strong on accent-soft, the
+Notes blockquote's panel), then the rest as a serif paragraph that keeps its
+line breaks. The split is `splitTakeaway()` in `components/takeaway.ts` (pure):
+the first line if the model wrote lines, else its first sentence via
+`Intl.Segmenter` (`en-u-ss-standard`) plus a merge pass over an abbreviation
+list (e.g., i.e., Dr., U.S., a.m., single initials), with a regex fallback for
+WebViews without `Intl.Segmenter`. Decimals ("3.5%", "$4.99") never split.
+Edge cases: one sentence gives the block alone; an empty or whitespace summary
+gives no block and "No summary was generated."; an ambiguous abbreviation at a
+real sentence end ("6 p.m. Then rest.") stays joined, which shows a longer
+takeaway rather than a broken one. The downloaded .md report is unchanged (the
+whole summary under `## Summary`).
+
+**On-screen tab, text only (design/newshots/ResultsOnScreenText.png +
+ResultsOnScreenTextMobile.png).** `OnScreenView` replaced the token-restyled
+`TimelineView` (deleted, with its `.ocr-tag` pill). A muted `.t-intro` line
+("Text found in the video frames, with the time it appears."), then
+`ol.t-list.t-list--screen`: per segment the start time (accent, 600) in a
+3rem column (3.75rem from 48rem) and the text in serif 1.125rem / 1.65,
+keeping the model's line breaks so a card listing three items stays three
+lines; hairlines between rows, 40rem measure. No segments but a
+`screen_text` string: the intro plus the text alone (`.screen-text`). Nothing
+at all: just the empty message (the caption-only wording on `captions_only`
+runs). The downloaded report's On-screen section is unchanged.
+
+**Verified** with Playwright against the dev server (backend faked): Results
+1280×1098 (section 964/964), ResultsDark, ResultsWeb 390, ResultsMobile 390
+app shell, ResultsTranscript 846/846; keyboard End lands on On-screen; search
+with timestamps off; empty search; caption-only note. No page errors, no
+horizontal overflow, no document scroll.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported ResultsView + SourceCard; de-boxed the source card, wired .disclosure and role=tabpanel, rebuilt SourceCard.preview with six states
@@ -232,3 +318,7 @@ backend — the fixture is the payload shape in `docs/backend/run-processing.md`
 - 2026-08-20 · main session · renamed the tabs (TL;DR/Notes/Transcript/On-Screen), moved TL;DR first and made it the default, and replaced the scrolling flex tab row with a four-column equal-width grid
 - 2026-08-29 · frontend agent · surfaced `completeness`: added `.completeness-note` between the title band and the tabs, replaced the on-screen-text empty state on caption-only runs, and carried both into the downloaded report; nothing renders on `full`
 - 2026-08-29 · frontend agent · reconciled the capability strip and caption-only note against the dev-side results-view restructure
+- 2026-11-01 · frontend agent · editorial Phase 2: two-column source panel + result card, Notes as default tab, Newsreader serif on a 36rem measure (~74 cpl), transcript search/timestamps switch/empty state, icons dropped from Download and search to match the boards; deviations (no Key takeaway label, platform icon kept) and the deferred On-screen view recorded
+- 2026-11-01 · frontend agent · results tabs rebuilt to the owner's underlined-tab spec (15px/600, 2px accent underline overlapping a full-width 1px rule, 28/20px gaps, 44px targets, 2px-offset focus ring, sideways scroll on narrow phones; rule moved to the list background so the scroll clip can't eat it); default tab reverted to TL;DR
+- 2026-11-01 · frontend agent · TL;DR first sentence rendered as a labelled "Key takeaway" block (`components/takeaway.ts` splitter, abbreviation- and decimal-safe; one-sentence and empty summaries handled); Notes blockquotes stay unlabelled; report export unchanged
+- 2026-11-01 · frontend agent · On-screen tab rebuilt text-only from design/newshots (OnScreenView: intro line, time | serif text rows, line breaks kept); TimelineView and .ocr-tag removed; the On-screen TODO(design) closed

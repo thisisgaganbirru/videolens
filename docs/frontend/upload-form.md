@@ -11,7 +11,13 @@ The "Analyze" tab's entry point: paste a public media URL, or drag/drop/browse a
 - File: extension allowlist (`.mp3`/`.mp4`/`.mov`), `MAX_FILE_SIZE_MB` (200), and a best-effort duration check (`readMediaDuration`, via a hidden `<video>`/`<audio>` element's `loadedmetadata` event) against `MAX_DURATION_SECONDS` (180) — wrapped in try/catch since this can fail on some browsers/files, in which case it's silently skipped ("Backend performs authoritative validation").
 - URL: must parse as `http:`/`https:`.
 
-**Terms acceptance**: a checkbox, persisted in `localStorage` (`videolens-media-terms-v1`) so it stays checked across sessions once accepted. Required before either submit path is enabled.
+**Terms acceptance**: a checkbox, persisted in `localStorage` (`videolens-media-terms-v1`) so it stays checked across sessions once accepted. Required before either submit path proceeds — Browse is disabled until it is ticked; pressing Analyze link without it shows "Accept the media-use terms before analysis." in `#intake-error`.
+
+**Analyze link is enabled with an empty field (Phase 2).** It used to be
+disabled until a URL was typed; Main.png draws it as the live green primary
+with an empty field, and a greyed-out primary gives no reason. Pressing it
+empty now shows "Paste a link to analyze." in `#intake-error` and focuses the
+field. It is still disabled while a submit is in flight.
 
 **The `url_download` capability notice.** The form takes an optional
 `urlCapability` prop — the deployment's `url_download` row, handed down by
@@ -49,15 +55,31 @@ runs may not work here). Both come from `HomeScreen` because both concern
 something outside this form's mount lifetime — see `share-intake.md` and
 `capability-reporting.md`.
 
-**Layout** (Terminal redesign — see `design-direction-terminal.md`): **no
-surface, no frame, no card.** It sits optically centred in `.home-center`,
-capped by `.intake` (34rem): a `.row` holding the URL `.field` + primary
-button, an `or` `.divider`, then the dashed `.drop` zone. Structure comes from
-rules and alignment. Do not wrap it in a bordered box.
+**Layout (editorial Phase 2 — Main.png, IntakeWeb.png, IntakeFreeApp.png).**
+The component now renders the white `.intake-card` itself: label "Paste a
+link", `.link-row` (field + Analyze link; side by side when the card is ≥ 28rem
+wide via a container query on `.link-form`, stacked below that), the
+capability callout, an `or` `.divider`, the dashed `.drop` well (accent-soft
+upload disc, title, "MP3, MP4, or MOV. Up to 200 MB and 3 minutes.", outlined
+Browse files), and the `.terms-row`. The drop title is "Drop an audio or video
+file here" on hover-capable pointers and "Add an audio or video file" under
+`@media (hover: none)` — both strings are in the DOM, CSS shows one.
 
-**The component returns a fragment** — `HomeScreen` already supplies the
-`.home-center > .intake > .card-label` chain (styled with `--color-accent` green to match brand accenting), so re-wrapping would double-nest
-it.
+`HomeScreen` owns everything around the card: `.intake-layout` (one column on
+a phone; ≥ 60rem two columns `minmax(0, 38.75rem) minmax(0, 28.75rem)` with a
+4rem column gap — neither track has a floor, so the grid can never be wider than
+its container; the panel's old `17rem` floor was removed on 2026-11-01 after an
+owner report of the panel clipping at ~1086px), the eyebrow "New analysis", the serif `.intake-title`
+(`text-wrap: pretty`, not `balance` — balance broke the desktop line after
+"video" where the board fills it), the lede, `.cap-slot` (now a grid item of its own: first on a phone, top of the
+panel column from 60rem — see `capability-reporting.md`), and the "What you
+get" `aside.wyg` (TL;DR / Notes / Transcript / On-screen chips; a shorter
+description per row below 60rem, as on IntakeWeb). A `TODO(phase 5)` comment
+marks where the free-run banner from IntakeFreeApp.png goes.
+
+Measured against the boards (side-by-side pairs saved during the Phase 2
+pass): Main at 1280×989 fits without scrolling (section 855/855), card
+412–~876 vs the board's 410–876, footer at y 932 as drawn.
 
 State hooks: `.drop[data-dragging="true"]` for drag-over,
 `.field[aria-invalid="true"]` for validation failure.
@@ -168,8 +190,9 @@ aborted POST → connectivity wording **and the typed URL still in the field**;
 429 with a JSON `detail` → the backend's sentence verbatim; slow POST → one
 control labelled `sending…`, both entry points disabled, one POST after a
 deliberate Enter + forced double-click; a successful 202 → results view
-unchanged. Touch targets measured with `getBoundingClientRect`: `analyze url`
-120.9x44.0, `browse file` 122.9x44.0.
+unchanged. Touch targets measured with `getBoundingClientRect` (Terminal
+era): `analyze url` 120.9x44.0, `browse file` 122.9x44.0. Phase 2: Analyze
+link is 52px tall (`.link-row .btn` min-height 3.25rem), Browse files 44px.
 
 ## Changelog
 
@@ -179,3 +202,5 @@ unchanged. Touch targets measured with `getBoundingClientRect`: `analyze url`
 - 2026-08-21 · main session · handed the share intake to HomeScreen/useSharedUrl; this component now just takes a `sharedUrl` prop
 - 2026-08-29 · frontend agent · added the optional `urlCapability` prop and the `url_download` callout under the URL row (warns, never blocks; wired as `aria-describedby` alongside `intake-error`) — see `capability-reporting.md`
 - 2026-08-29 · frontend agent · reconciled the capability strip and caption-only note against the dev-side results-view restructure
+- 2026-11-01 · frontend agent · editorial Phase 2: structural rebuild into `.intake-card` (link row with container-query stacking, divider, drop well with pointer/touch titles, terms row); Analyze link stays enabled when empty and explains on press; HomeScreen now owns the two-column intake layout and the "What you get" panel
+- 2026-11-01 · frontend agent · intake grid: dropped the panel track's 17rem floor (both tracks minmax(0, max)), named grid areas so the service notice sits above the panel instead of between the lede and the card; 900–1280px width sweep clean in both shells and themes
