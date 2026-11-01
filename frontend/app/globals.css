@@ -1,13 +1,16 @@
-/* Hallmark · genre: atmospheric · macrostructure: Feature Stack (adapted, UI) · theme: Terminal
- * enrichment: none · nav: N5 floating pill · footer: Ft5 compact bar
- * source of truth: docs/frontend/mockups/terminal-redesign.html
+/* Hallmark · genre: editorial · theme: custom (owner handoff — see app/tokens.css)
+ * nav: flat top bar (web) / floating bottom dock + More sheet (installed app)
+ * footer: compact bar, web shell only
+ * reference: docs/frontend/design-direction-editorial.md, design/shots/*
  *
- * Deviation from the mockup, deliberate and required by the design doc:
- * the mockup's responsive rules are desktop-first @container queries measuring
- * a demo-only .viewport switch. The real app has no such switch, so every rule
- * below is inverted to MOBILE-FIRST @media (min-width: ...).
+ * Phase 1 of the editorial redesign restyled the BASE and SHELL/NAV/FOOTER
+ * sections only. Everything between them (Analyze, results, panels, legal
+ * documents) is still the Terminal-era vocabulary running on the temporary
+ * legacy token aliases; Phases 2-4 restyle it in place.
  *
- * pre-emit critique: P5 H5 E5 S5 R5 V4
+ * Mobile-first @media (min-width: ...) throughout.
+ *
+ * pre-emit critique: P5 H4 E4 S5 R5 V4
  */
 @import "./tokens.css";
 
@@ -22,7 +25,7 @@
 html {
   height: 100%;
   /* themed scrollbars — Firefox */
-  scrollbar-color: var(--color-rule-2) var(--color-paper);
+  scrollbar-color: var(--color-border-strong) var(--color-paper);
   scrollbar-width: thin;
 }
 
@@ -44,22 +47,24 @@ body {
   flex-direction: column;
   background: var(--color-paper);
   color: var(--color-ink);
-  font-family: var(--font-body);
+  font-family: var(--font-ui);
   font-size: 1rem;
   font-variant-numeric: tabular-nums;
 }
 
+/* No serif here on purpose. Most h2/h3 in the app are UI labels or bold
+   result headings, and Newsreader is loaded at 400 only — a bold serif would
+   be synthesised. Headlines opt in by class (`.page-title`, `.sheet-title`). */
 h1,
 h2,
 h3 {
   min-width: 0;
   overflow-wrap: anywhere;
-  font-family: var(--font-display);
 }
 
 ::selection {
   background: var(--color-accent);
-  color: var(--color-accent-ink);
+  color: var(--color-on-accent);
 }
 
 /* themed scrollbars — WebKit/Blink */
@@ -71,7 +76,7 @@ h3 {
   background: var(--color-paper);
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--color-rule-2);
+  background: var(--color-border-strong);
   border: 2px solid var(--color-paper);
   border-radius: 6px;
 }
@@ -93,20 +98,21 @@ h3 {
      ======================================================================== */
 
   /* The scroll container. Only place in the app allowed to scroll the page as
-     a whole; it exists so the stacked mobile layout has somewhere to go. */
+     a whole; it exists so the stacked mobile layout has somewhere to go.
+
+     `container-type: inline-size` is what lets the nav and footer hairlines
+     run edge to edge from inside the centred `.shell`: `100cqi` is this box's
+     content width with the scrollbar already excluded, where `100vw` would
+     include it and hand the page a horizontal scrollbar. */
   .viewport {
-    position: relative; /* containing block for the mobile drawer + scrim */
+    position: relative;
     flex: 1;
     min-height: 0;
     width: 100%;
     display: flex;
     flex-direction: column;
     overflow-y: auto;
-  }
-
-  /* nothing scrolls behind an open drawer */
-  .viewport:has(.nav-wrap[data-menu-open="true"]) {
-    overflow: hidden;
+    container-type: inline-size;
   }
 
   .shell {
@@ -118,7 +124,7 @@ h3 {
     /* safe areas: the footer sits at the very bottom, where the iOS home
        indicator and Android gesture bar live */
     padding-top: 0;
-    padding-inline: max(var(--space-sm), var(--safe-left), var(--safe-right));
+    padding-inline: max(var(--page-gutter), var(--safe-left), var(--safe-right));
     padding-bottom: max(var(--space-sm), var(--safe-bottom));
     /* mobile default: the shell takes its natural height and .viewport scrolls
        it. min-height keeps it at least a full frame tall so the footer lands
@@ -147,6 +153,15 @@ h3 {
     min-height: 0;
   }
 
+  /* Full-bleed bands inside the centred shell: pull out to the viewport edge,
+     then pad back in by the same amount so their contents still line up with
+     the shell's content edge (the 48px / 16px gutter on the boards). */
+  .nav-wrap,
+  .page-end {
+    margin-inline: calc((100% - 100cqi) / 2);
+    padding-inline: calc((100cqi - 100%) / 2);
+  }
+
   /* The footer isn't pinned to the viewport edge — it follows the active view,
      and lands in the same place on every tab because each view occupies the
      identical band between the nav and here. Sticky on mobile keeps it on the
@@ -158,13 +173,13 @@ h3 {
     bottom: 0;
     z-index: 3;
     background: var(--color-paper);
+    border-top: var(--rule-w) solid var(--color-rule);
     /* `.shell` already reserves the bottom safe gutter. Reach back into it and
        re-apply the same value as padding rather than adding a second one:
        without the negative margin the footer sits one whole gutter higher on a
-       `flow` route than on a `fixed` one, which broke the identical-chrome rule
-       by exactly 16px at 390px. The padding stays because it is what carries
-       the band's background to the bottom edge while it is stuck mid-scroll —
-       drop it and content shows through underneath the footer. */
+       `flow` route than on a `fixed` one. The padding stays because it is what
+       carries the band's background to the bottom edge while it is stuck
+       mid-scroll — drop it and content shows through underneath the footer. */
     margin-bottom: calc(-1 * max(var(--space-sm), var(--safe-bottom)));
     padding-bottom: max(var(--space-sm), var(--safe-bottom));
   }
@@ -176,22 +191,22 @@ h3 {
     padding-bottom: 0;
   }
 
-  /* ---- N5 floating pill nav ----
-     Not sticky: nothing behind it scrolls, so it is simply the fixed top band
-     of the viewport-locked shell. Pulled out past the shell's gutter on both
-     sides so the pill reads as a container around the content. */
-  /* Carries the drawer's open state (`data-menu-open`) because the nav is what
-     draws the drawer. It must stay unpositioned: the drawer's inset resolves
-     against `.viewport`, and a containing block here is the bug that once
-     rendered the menu as a small box inside the nav pill. */
+  /* ---- top bar (both shells) ----
+     A flat band with a hairline under it, as on every board: brand left,
+     controls right. Sticky so it stays put on a phone, where `.viewport`
+     scrolls the stacked layout; on wider screens nothing behind it scrolls and
+     sticky is inert. Carries the phone menu's open state (`data-menu-open`)
+     because the toggle that drives it lives here. */
   .nav-wrap {
     flex-shrink: 0;
+    position: sticky;
+    top: 0;
     z-index: 10;
-    /* On native Android/iOS the status bar sits right where the pill would
-       otherwise start; --safe-top is 0 in a normal browser tab, so this
-       only adds space where a status bar actually needs clearing. */
-    padding-top: max(var(--space-sm), var(--safe-top));
-    margin-inline: calc(var(--space-2xs) * -1);
+    background: var(--color-paper);
+    border-bottom: var(--rule-w) solid var(--color-rule);
+    /* On native Android/iOS the status bar sits right where the bar would
+       otherwise start; --safe-top is 0 in a normal browser tab. */
+    padding-top: var(--safe-top);
   }
 
   .nav {
@@ -199,160 +214,177 @@ h3 {
     align-items: center;
     justify-content: space-between;
     gap: var(--space-sm);
-    background: color-mix(in oklch, var(--color-nav-bg) 85%, transparent);
-    border: var(--rule-w) solid var(--color-rule);
-    border-radius: var(--radius-pill);
-    padding: 0.5rem 0.5rem 0.5rem 1rem;
-    /* MOBILE: backdrop-filter MUST stay off here. Like transform and filter it
-       makes the element a containing block for every absolutely positioned
-       descendant, even a statically positioned one — while it was set, the
-       drawer's inset resolved against the nav pill and the menu rendered as a
-       small scrolling box inside the nav row. */
-    position: static;
-    backdrop-filter: none;
+    min-height: 4.25rem;
   }
 
-  .wordmark {
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1.1875rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--color-ink);
+    white-space: nowrap;
+  }
+  .brand-mark {
+    width: 1.625rem;
+    height: 1.625rem;
+    flex-shrink: 0;
+  }
+  .brand-ring {
+    stroke: var(--color-ink);
+  }
+  .brand-dot {
+    fill: var(--color-accent);
+  }
+
+  .nav-actions {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    font-size: 0.9rem;
-    font-weight: 500;
-    letter-spacing: 0.01em;
-    color: var(--color-ink);
-  }
-  /* The `/ ""` is the alt-text form of `content`: the glyph is decorative, and
-     without it some screen readers announce the block character before the
-     wordmark on every page that carries one.
-     Declared twice on purpose. The alt form is a single indivisible value, so
-     on an engine that doesn't parse it (Safari below 17.4) the WHOLE
-     declaration is dropped and the accent mark silently disappears from every
-     nav in the app. The plain declaration is the floor; @supports upgrades it
-     where the syntax is understood. */
-  .wordmark::before {
-    content: "▮";
-    color: var(--color-accent);
-    font-size: 0.7em;
-  }
-  @supports (content: "x" / "") {
-    .wordmark::before {
-      content: "▮" / "";
-    }
   }
 
-  .nav-right {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-  }
-
-  /* ---- mobile drawer over a dimmed scrim ----
-     An overlay painted in --color-paper sits invisibly on top of a
-     --color-paper page; a drawer reads as a distinct surface because it is
-     elevated (paper-2 + shadow) against a darkened one. */
-  .menu-scrim {
-    display: block;
-    position: absolute;
-    inset: 0;
-    z-index: 4;
-    background: var(--color-backdrop);
-    opacity: 0;
-    visibility: hidden;
-    pointer-events: none;
-    transition: opacity var(--dur-mid) var(--ease-out), visibility var(--dur-mid);
-  }
-  .nav-wrap[data-menu-open="true"] .menu-scrim {
-    opacity: 1;
-    visibility: visible;
-    pointer-events: auto;
-  }
-
+  /* ---- desktop destinations (web shell only, from 48rem) ----
+     Four labels in a row; the current one is a filled ink pill. Hidden below
+     48rem, where the same four live in the full-screen menu instead. */
   .nav-links {
-    display: flex;
-    position: absolute;
-    top: 0;
-    left: 0;
-    bottom: 0;
-    z-index: 5;
-    width: min(17rem, 84%);
-    flex-direction: column;
-    gap: 0.15rem;
-    padding: var(--space-sm);
-    background: var(--color-paper-2);
-    border-right: var(--rule-w) solid var(--color-rule);
-    box-shadow: 0 0 2.5rem color-mix(in oklch, oklch(0% 0 0) 30%, transparent);
-    overflow-y: auto;
-    transform: translateX(-100%);
-    visibility: hidden;
-    transition: transform var(--dur-mid) var(--ease-out), visibility var(--dur-mid);
-  }
-  .nav-wrap[data-menu-open="true"] .nav-links {
-    transform: none;
-    visibility: visible;
-  }
-
-  .menu-head {
-    display: flex;
+    display: none;
     align-items: center;
-    justify-content: space-between;
-    flex-shrink: 0;
-    padding: 0.2rem 0.2rem var(--space-sm);
+    gap: 0.25rem;
+    margin-right: 0.5rem;
   }
-
-  /* icon + label rows, the way a real app drawer lists destinations.
-     Named for what it is rather than matched as `.nav-links > button`: the tabs
-     are anchors now that each one has a real address, and a selector that
-     encodes the element name has to be rewritten every time the markup earns a
-     better one. `all: unset` strips the anchor's colour and underline; every
-     visual property below is then declared, not inherited from the UA. */
   .nav-tab {
     all: unset;
     box-sizing: border-box;
     cursor: pointer;
-    font-family: inherit;
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 0.7rem;
-    width: 100%;
     min-height: 2.75rem;
-    padding: 0.5rem 0.7rem;
-    font-size: 0.85rem;
-    text-align: left;
+    padding: 0 1.125rem;
+    border-radius: var(--radius-pill);
+    font-size: 0.9375rem;
+    font-weight: 500;
     white-space: nowrap;
-    border-radius: 0.5rem;
-    color: var(--color-ink-2);
+    color: var(--color-muted);
     transition: color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out);
   }
-  .nav-tab svg {
-    display: block;
-    width: 1rem;
-    height: 1rem;
-    flex-shrink: 0;
-    color: var(--color-muted);
-  }
-  /* current page is just the filled row — no accent rail. The fill already
-     says "you are here"; a bar was a second marker doing the same job. */
   .nav-tab[aria-current="page"] {
-    background: var(--color-paper-3);
-    color: var(--color-ink);
-  }
-  .nav-tab[aria-current="page"] svg {
-    color: var(--color-accent);
+    background: var(--color-ink);
+    color: var(--color-paper);
   }
   .nav-tab:focus-visible {
     outline: 2px solid var(--color-focus);
     outline-offset: 2px;
   }
   /* The pressed frame. A link that navigates in place gives no other signal
-     that the tap landed, and on touch there is no hover to have given one. */
-  .nav-tab:active {
-    background: var(--color-paper-3);
+     that the tap landed. */
+  .nav-tab:not([aria-current="page"]):active {
+    background: var(--color-tint);
   }
 
-  /* ---- nav icon buttons (theme toggle, drawer open/close) ---- */
+  /* ---- round icon buttons in the bar (theme toggle, menu toggle) ---- */
   .theme-toggle,
-  .menu-toggle,
-  .menu-close,
+  .menu-toggle {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    flex-shrink: 0;
+    color: var(--color-ink);
+    background: var(--color-surface);
+    border: var(--rule-w) solid var(--color-border-strong);
+    border-radius: var(--radius-pill);
+    transition: background-color var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out);
+  }
+  .theme-toggle:focus-visible,
+  .menu-toggle:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  .theme-toggle:active,
+  .menu-toggle:active {
+    background: var(--color-tint);
+  }
+  .theme-toggle svg,
+  .menu-toggle svg {
+    width: 1.125rem;
+    height: 1.125rem;
+  }
+  /* Which glyph shows is decided by the attribute the blocking script in
+     layout.tsx stamps, not by React state — that keeps the toggle free of any
+     hydration mismatch and correct on the very first paint. The boards draw
+     the moon in light mode (the action: go dark) and a sun in dark. */
+  .theme-toggle .icon-sun {
+    display: none;
+  }
+  :root[data-theme="dark"] .theme-toggle .icon-moon {
+    display: none;
+  }
+  :root[data-theme="dark"] .theme-toggle .icon-sun {
+    display: block;
+  }
+
+  /* ---- phone menu (web shell, below 48rem) ----
+     Not a drawer over the page: it takes the content band's place, between
+     the top bar and the footer, as on the Web "Menu" board. It is a sibling of
+     `.nav-wrap` inside `.shell`, so the flex chain measures its height the
+     same way it measures every view — no constant subtracted from 100dvh.
+     While it is open the views are display:none (see the 48rem query), so
+     they leave the tab order and the accessibility tree with it. */
+  .menu-panel {
+    display: none;
+    flex: 1 0 auto;
+    flex-direction: column;
+    gap: 0.625rem;
+    padding-block: var(--space-md);
+  }
+  .nav-wrap[data-menu-open="true"] + .menu-panel {
+    display: flex;
+  }
+  .menu-item {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    width: 100%;
+    min-height: 3.75rem;
+    padding: 0 var(--space-sm);
+    border: var(--rule-w) solid var(--color-rule);
+    border-radius: var(--radius-control);
+    background: var(--color-surface);
+    color: var(--color-ink);
+    font-size: 1.1875rem;
+    font-weight: 600;
+    transition: background-color var(--dur-short) var(--ease-out);
+  }
+  .menu-item svg {
+    width: 1.125rem;
+    height: 1.125rem;
+    flex-shrink: 0;
+  }
+  .menu-item[aria-current="page"] {
+    background: var(--color-ink);
+    border-color: var(--color-ink);
+    color: var(--color-paper);
+  }
+  .menu-item:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  .menu-item:not([aria-current="page"]):active {
+    background: var(--color-tint);
+  }
+
+  /* `.icon-action` is the results view's copy/share button — not part of the
+     bar, kept on its own rule so restyling the bar can't move it. */
   .icon-action {
     all: unset;
     cursor: pointer;
@@ -366,16 +398,10 @@ h3 {
     border-radius: var(--radius-pill);
     transition: color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out);
   }
-  .theme-toggle:focus-visible,
-  .menu-toggle:focus-visible,
-  .menu-close:focus-visible,
   .icon-action:focus-visible {
     outline: 2px solid var(--color-focus);
     outline-offset: 2px;
   }
-  .theme-toggle svg,
-  .menu-toggle svg,
-  .menu-close svg,
   .icon-action svg {
     width: 1.05rem;
     height: 1.05rem;
@@ -385,18 +411,6 @@ h3 {
      reads at a glance rather than only on close inspection. */
   .icon-action[data-state="copied"] {
     color: var(--color-accent);
-  }
-  /* Which glyph shows is decided by the attribute the blocking script in
-     layout.tsx stamps, not by React state — that keeps the toggle free of any
-     hydration mismatch and correct on the very first paint. */
-  .theme-toggle .icon-moon {
-    display: none;
-  }
-  :root[data-theme="dark"] .theme-toggle .icon-sun {
-    display: none;
-  }
-  :root[data-theme="dark"] .theme-toggle .icon-moon {
-    display: block;
   }
 
   /* The single-column tab views borrow Analyze's vertical rhythm: micro-label
@@ -1570,34 +1584,276 @@ h3 {
   }
 
   /* ========================================================================
-     FOOTER — Ft5 compact bar: wordmark left, legal links right, hairline above
+     FOOTER — web shell only: name left, legal links right, hairline above
+     (the hairline is on `.page-end`, which runs full-bleed)
      ======================================================================== */
 
   .foot {
     display: flex;
     align-items: center;
-    justify-content: center;
-    text-align: center;
+    justify-content: space-between;
     gap: var(--space-sm);
     flex-wrap: wrap;
-    margin-top: 0;
-    padding: 0.6rem 0 0;
-    border-top: var(--rule-w) solid var(--color-rule);
-    font-size: 0.72rem;
+    min-height: 3.5rem;
+    font-size: 0.875rem;
     color: var(--color-muted);
   }
   .foot-legal {
     display: flex;
-    gap: var(--space-sm);
+    gap: var(--space-md);
   }
   .foot-legal a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
     color: inherit;
-    text-decoration: none;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-thickness: 1px;
     transition: color var(--dur-short) var(--ease-out);
+  }
+  .foot-legal a[aria-current="page"] {
+    color: var(--color-ink);
   }
   .foot-legal a:focus-visible {
     outline: 2px solid var(--color-focus);
     outline-offset: 2px;
+  }
+
+  /* ========================================================================
+     BOTTOM TAB BAR — installed-app shell only (App boards). A floating dock
+     inset from the screen edges and lifted off the gesture bar. Fixed, so it
+     never travels; the shell reserves its footprint (see SHELL MODE below) so
+     the last line of content can always scroll clear of it.
+     ======================================================================== */
+
+  .tabbar {
+    display: none;
+    position: fixed;
+    z-index: 20;
+    left: max(var(--page-gutter), var(--safe-left));
+    right: max(var(--page-gutter), var(--safe-right));
+    bottom: max(var(--space-sm), var(--safe-bottom));
+    margin-inline: auto;
+    max-width: 30rem;
+    height: var(--tabbar-height);
+    align-items: stretch;
+    gap: 0.25rem;
+    padding: 0.375rem;
+    background: var(--color-dock);
+    border-radius: var(--radius-pill);
+    box-shadow: var(--shadow-floating);
+  }
+  :root[data-theme="dark"] .tabbar {
+    /* the dark dock is a raised tint, so it needs an edge to read as raised */
+    outline: var(--rule-w) solid var(--color-border-strong);
+    outline-offset: calc(-1 * var(--rule-w));
+  }
+  .tabbar-item {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.2rem;
+    min-height: 2.75rem;
+    border-radius: var(--radius-pill);
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--color-dock-muted);
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out);
+  }
+  .tabbar-item svg {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+  /* `data-active` is More's version of aria-current: a button opens the sheet
+     rather than being a page, but while you are on API key, Releases or a
+     legal page, More is where you are. */
+  .tabbar-item[aria-current="page"],
+  .tabbar-item[data-active="true"] {
+    background: var(--color-dock-active);
+    color: var(--color-dock-ink);
+  }
+  .tabbar-item[aria-current="page"] svg,
+  .tabbar-item[data-active="true"] svg {
+    color: var(--color-dock-accent);
+  }
+  .tabbar-item:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  .tabbar-item:active {
+    background: var(--color-dock-active);
+  }
+
+  /* ========================================================================
+     MORE SHEET — a native modal <dialog>: top layer, focus containment,
+     Escape and ::backdrop come from the platform rather than being rebuilt.
+     Bottom-anchored. The padding lives on `.sheet-body`, not the dialog, so a
+     click whose target is the <dialog> itself can only be a backdrop click.
+     ======================================================================== */
+
+  .sheet {
+    margin: auto auto 0;
+    padding: 0;
+    border: none;
+    width: 100%;
+    max-width: 32rem;
+    max-height: calc(100% - var(--safe-top) - var(--space-xl));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: var(--color-surface);
+    color: var(--color-ink);
+    border-radius: var(--radius-card) var(--radius-card) 0 0;
+    box-shadow: var(--shadow-floating);
+  }
+  .sheet::backdrop {
+    background: var(--color-backdrop);
+  }
+  .sheet[open] {
+    animation: sheet-in var(--dur-mid) var(--ease-out);
+  }
+  .sheet-body {
+    padding: 0.625rem var(--space-sm) calc(max(var(--space-sm), var(--safe-bottom)) + var(--space-2xs));
+  }
+  .sheet-handle {
+    display: block;
+    width: 2.5rem;
+    height: 0.25rem;
+    margin: 0 auto 0.75rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-border-strong);
+  }
+  .sheet-title {
+    margin: 0 0 0.375rem 0.25rem;
+    font-family: var(--font-serif);
+    font-size: 1.625rem;
+    font-weight: 400;
+    line-height: 1.2;
+    color: var(--color-ink);
+  }
+  .sheet-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .sheet-list + .sheet-list {
+    margin-top: 0.375rem;
+    padding-top: 0.375rem;
+    border-top: var(--rule-w) solid var(--color-rule);
+  }
+  .sheet-row {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.875rem;
+    width: 100%;
+    min-height: 3.5rem;
+    padding: 0.375rem 0.25rem;
+    border-radius: var(--radius-control);
+    font-size: 1.0625rem;
+    font-weight: 600;
+    color: var(--color-ink);
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color var(--dur-short) var(--ease-out);
+  }
+  .sheet-row:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  .sheet-row:active {
+    background: var(--color-tint);
+  }
+  .sheet-row[aria-current="page"] .sheet-label {
+    color: var(--color-accent);
+  }
+  .sheet-icon {
+    display: grid;
+    place-items: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    flex-shrink: 0;
+    border-radius: 0.625rem;
+    background: var(--color-tint);
+    color: var(--color-ink);
+  }
+  .sheet-icon svg {
+    width: 1.125rem;
+    height: 1.125rem;
+  }
+  .sheet-label {
+    flex: 1;
+    min-width: 0;
+  }
+  .sheet-chevron {
+    width: 1.125rem;
+    height: 1.125rem;
+    color: var(--color-muted);
+    flex-shrink: 0;
+  }
+  /* The theme switch's track and knob. State is the button's own
+     aria-checked, so what is drawn is exactly what is announced. */
+  .switch {
+    position: relative;
+    width: 3rem;
+    height: 1.75rem;
+    flex-shrink: 0;
+    border-radius: var(--radius-pill);
+    background: var(--color-border-strong);
+    transition: background-color var(--dur-short) var(--ease-out);
+  }
+  .switch::after {
+    content: "";
+    position: absolute;
+    top: 0.1875rem;
+    left: 0.1875rem;
+    width: 1.375rem;
+    height: 1.375rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-surface);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    transition: transform var(--dur-short) var(--ease-out);
+  }
+  .sheet-row[aria-checked="true"] .switch {
+    background: var(--color-accent);
+  }
+  .sheet-row[aria-checked="true"] .switch::after {
+    transform: translateX(1.25rem);
+  }
+  :root[data-theme="dark"] .switch::after {
+    background: var(--color-ink);
+  }
+
+  /* ========================================================================
+     SHELL MODE — which chrome this display mode gets. `data-shell` is
+     stamped on <html> by the pre-paint script in app/layout.tsx, so the right
+     nav is on screen at first paint; both variants are always in the DOM and
+     the inactive one is display:none, which also takes it out of the tab
+     order and the accessibility tree. No attribute (script blocked) = web.
+     ======================================================================== */
+
+  :root[data-shell="app"] .tabbar {
+    display: flex;
+  }
+  :root[data-shell="app"] .page-end,
+  :root[data-shell="app"] .nav-links,
+  :root[data-shell="app"] .menu-toggle,
+  :root[data-shell="app"] .menu-panel {
+    display: none;
+  }
+  /* Reserve the dock's footprint — its own height, the gap it floats on, and
+     the gesture bar — so content can never come to rest underneath it. On a
+     `fixed` frame this shortens the measured band; on a `flow` frame it is
+     the scroll runway past the last line. */
+  :root[data-shell="app"] .shell {
+    padding-bottom: calc(var(--tabbar-height) + max(var(--space-sm), var(--safe-bottom)) + var(--space-sm));
   }
 
   /* ========================================================================
@@ -1666,10 +1922,10 @@ h3 {
      colour is `--color-rule`, the same hairline every other rule on the page is
      drawn in.
 
-     DELIBERATELY OUTSIDE the nav icon-button family. `.theme-toggle`,
-     `.menu-toggle` and `.menu-close` share a 2.75rem/2rem box; this is a flat
+     DELIBERATELY OUTSIDE the nav icon-button family. `.theme-toggle` and
+     `.menu-toggle` share a 2.75rem box; this is a flat
      1.75rem at every width. That divergence is a user call, not drift, and the
-     reason it holds up is that those three are nav chrome sitting in a 52-62px
+     reason it holds up is that those are nav chrome sitting in a 68-76px
      band, while this sits in a 0.68rem micro-label row — matching them made it
      the loudest thing on the page. It is the only member of its size class, so
      it carries its own value rather than a shared one; do not "restore
@@ -1779,9 +2035,11 @@ h3 {
      inline version introduced a `sm:` (40rem) step that existed nowhere else
      in the app, while every other responsive rule in this file turns at 32rem. */
   .page-title {
-    font-size: 1.5rem;
-    font-weight: 500;
-    line-height: 1.25;
+    font-family: var(--font-serif);
+    font-size: 2rem;
+    font-weight: 400;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
     color: var(--color-ink);
     margin: 0;
   }
@@ -1992,11 +2250,6 @@ h3 {
     width: auto;
   }
 
-  .foot {
-    justify-content: space-between;
-    text-align: left;
-  }
-
   /* The shell stops growing: one viewport, measured, nothing scrolls but the
      panes that opt in. */
   .shell,
@@ -2016,62 +2269,6 @@ h3 {
     margin-top: var(--space-sm);
     margin-bottom: 0;
     padding-bottom: 0;
-  }
-
-  /* nav: tabs inline, pill translucent again */
-  .nav {
-    position: relative; /* anchors nothing on desktop; kept for parity */
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    padding: 0.55rem 0.55rem 0.55rem 1.1rem;
-  }
-  .menu-toggle,
-  .menu-head,
-  .menu-scrim {
-    display: none;
-  }
-  .nav-links {
-    display: flex;
-    position: static;
-    width: auto;
-    flex-direction: row;
-    gap: 0.2rem;
-    padding: 0;
-    background: none;
-    border-right: none;
-    box-shadow: none;
-    overflow: visible;
-    transform: none;
-    visibility: visible;
-  }
-  .nav-tab {
-    width: auto;
-    min-height: 0;
-    gap: 0;
-    padding: 0.45rem 0.85rem;
-    font-size: 0.78rem;
-    border-radius: var(--radius-pill);
-    color: var(--color-muted);
-  }
-  .nav-tab svg {
-    display: none;
-  }
-  .nav-tab[aria-current="page"] {
-    color: var(--color-accent-ink);
-    background: var(--color-accent);
-  }
-  /* paper-3 would be invisible under the accent fill of the current tab */
-  .nav-tab:active {
-    background: var(--color-paper-3);
-  }
-  .nav-tab[aria-current="page"]:active {
-    background: var(--color-focus);
-  }
-  .theme-toggle,
-  .menu-toggle,
-  .menu-close {
-    width: 2rem;
-    height: 2rem;
   }
 
   /* Analyze: two ruled columns at 3fr / 7fr, one vertical hairline between */
@@ -2142,7 +2339,37 @@ h3 {
   }
 
   .page-title {
-    font-size: 1.75rem;
+    font-size: 2.5rem;
+  }
+}
+
+/* 48rem is where the four destinations fit inline beside the brand and the
+   theme toggle (the Desktop boards). Below it they live in the phone menu. */
+@media (min-width: 48rem) {
+  .nav {
+    min-height: 4.75rem;
+  }
+  .brand {
+    font-size: 1.3125rem;
+  }
+  /* Scoped to the web shell because this block is unlayered and would
+     otherwise beat the layered app-shell hide regardless of specificity. */
+  :root:not([data-shell="app"]) .nav-links {
+    display: flex;
+  }
+  .menu-toggle,
+  .menu-panel,
+  .nav-wrap[data-menu-open="true"] + .menu-panel {
+    display: none;
+  }
+}
+
+/* While the phone menu is open it IS the content band: the views step out of
+   layout entirely. Scoped below 48rem so a menu left open while the window
+   widens can never blank the page. */
+@media (width < 48rem) {
+  .nav-wrap[data-menu-open="true"] ~ section[data-view] {
+    display: none;
   }
 }
 
@@ -2150,7 +2377,6 @@ h3 {
    any size, and hover-revealed affordances stay permanent because there is no
    hover to reveal them with. */
 @media (pointer: coarse) {
-  .nav-tab,
   .tab,
   .btn,
   .cap-summary,
@@ -2164,12 +2390,6 @@ h3 {
        rule keeps the glyph in the middle of the box they create rather than
        leaving 30px of dead target hanging off one side. */
     min-width: 2.75rem;
-  }
-  .theme-toggle,
-  .menu-toggle,
-  .menu-close {
-    width: 2.75rem;
-    height: 2.75rem;
   }
   /* The back button keeps its 1.75rem PAINTED box on touch and grows only its
      HIT area, via an invisible ::before. Shrinking the button was the user's
@@ -2207,14 +2427,21 @@ h3 {
 }
 
 @media (hover: hover) {
-  .nav-tab:hover {
+  .nav-tab:not([aria-current="page"]):hover {
     color: var(--color-ink);
+    background: var(--color-tint);
   }
   .theme-toggle:hover,
-  .menu-toggle:hover,
-  .menu-close:hover {
-    color: var(--color-ink);
-    background: var(--color-paper-3);
+  .menu-toggle:hover {
+    background: var(--color-tint);
+    border-color: var(--color-input-border);
+  }
+  .menu-item:not([aria-current="page"]):hover,
+  .sheet-row:hover {
+    background: var(--color-tint);
+  }
+  .tabbar-item:not([aria-current="page"]):not([data-active="true"]):hover {
+    color: var(--color-dock-ink);
   }
   .btn-primary:hover:not(:disabled) {
     background: var(--color-focus);
@@ -2283,6 +2510,15 @@ h3 {
   }
   50% {
     opacity: 0.35;
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
   }
 }
 

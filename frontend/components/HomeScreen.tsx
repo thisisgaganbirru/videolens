@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import AppNav from "@/components/AppNav";
+import BottomTabBar from "@/components/BottomTabBar";
+import SiteFooter from "@/components/SiteFooter";
 import CapabilityNotice from "@/components/CapabilityNotice";
 import UploadForm from "@/components/UploadForm";
 import RunStatusView from "@/components/RunStatusView";
@@ -260,15 +262,10 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
         </section>
       )}
 
-      <div className="page-end">
-        <footer className="foot">
-          <span>VideoLens AI</span>
-          <nav className="foot-legal" aria-label="Legal">
-            <a href="/privacy">Privacy</a>
-            <a href="/terms">Terms</a>
-          </nav>
-        </footer>
-      </div>
+      {/* Both shells' chrome is always rendered; `<html data-shell>` decides
+          which shows (footer in a browser tab, dock in the installed app). */}
+      <SiteFooter />
+      <BottomTabBar activeTab={activeTab} onSelectTab={goToMainTab} />
     </div>
   );
 }
