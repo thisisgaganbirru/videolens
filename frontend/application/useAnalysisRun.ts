@@ -5,6 +5,7 @@ import type {
   AnalysisCompleteness,
   MediaSource,
   RunStatus,
+  RunSourceKind,
   RunStatusResponse,
   SourceMetadata,
   VideoAnalysis,
@@ -129,11 +130,17 @@ export function useAnalysisRun() {
     setStatus(run.status);
     setStage(run.stage);
     if (run.source_metadata) setSourceMetadata(run.source_metadata);
-    /* A run reopened from History starts as "file" (openRun has no source to
-       go on). Source metadata and these two stages only ever exist for link
-       runs, so either one settles it; otherwise the progress strip would draw
-       "File received" over a link. Never flips a link run back to "file". */
-    if (run.source_metadata || run.stage === "downloading" || run.stage === "analyzing_captions") {
+    /* `source_kind` is the server's record of how the run arrived, so when
+       the response carries it, it decides — both ways. Runs stored before the
+       field existed omit it; only then does the old inference apply: source
+       metadata and these two stages only ever exist for link runs, so either
+       one settles it (otherwise the progress strip would draw "File received"
+       over a link). The inference never flips a link run back to "file". */
+    if (run.source_kind === "link") {
+      setSourceKind("url");
+    } else if (run.source_kind === "file") {
+      setSourceKind("file");
+    } else if (run.source_metadata || run.stage === "downloading" || run.stage === "analyzing_captions") {
       setSourceKind("url");
     }
     if (run.status === "complete") {
@@ -303,8 +310,12 @@ export function useAnalysisRun() {
     setError(null);
   }, [clearReconnect, stopTimers]);
 
+  /* `sourceKindHint` is the History summary's `source_kind`, when it has one,
+     so a reopened run shows the right frames before its first status
+     response lands. Absent (legacy rows), the run starts as "file" and
+     `applyRun` corrects it. */
   const openRun = useCallback(
-    async (runId: string) => {
+    async (runId: string, sourceKindHint?: RunSourceKind | null) => {
       stopTimers();
       clearReconnect();
       setError(null);
@@ -313,7 +324,7 @@ export function useAnalysisRun() {
       setSourceMetadata(null);
       setSourceName(null);
       setRetrySource(null);
-      setSourceKind("file");
+      setSourceKind(sourceKindHint === "link" ? "url" : "file");
       setStatus("processing");
       const generation = ++generationRef.current;
       try {

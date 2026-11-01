@@ -6,8 +6,9 @@
  * Phase 1 of the editorial redesign restyled BASE and SHELL/NAV/FOOTER;
  * Phase 2 rebuilt Analyze (intake, progress, results — the ANALYZE section
  * near the end of the components layer) and retired the legacy token
- * aliases. History, API key, Releases and the legal pages are Phases 3-4 and
- * still use the older panel vocabulary (.surface/.pane/.col-label).
+ * aliases. Phase 3 rebuilt History as a poster grid (HISTORY block). API
+ * key, Releases and the legal pages are Phase 4 and still use the older panel
+ * vocabulary (.surface/.pane/.col-label).
  *
  * Mobile-first @media (min-width: ...) throughout.
  *
@@ -158,7 +159,8 @@ h3 {
      pulled out to the viewport edges the same way the nav and footer bands
      are, so its scrollbar sits at the window edge rather than inside the
      gutter, and padded back in so content keeps the shell's left edge. */
-  .shell > section[data-view="analyze"] {
+  .shell > section[data-view="analyze"],
+  .shell > section[data-view="history"] {
     margin-inline: calc((100% - 100cqi) / 2);
     padding-inline: calc((100cqi - 100%) / 2);
   }
@@ -577,7 +579,7 @@ h3 {
      sentence inside a panel it would carry full-view weight.
 
      So this speaks the system's own language instead: a rule and alignment, no
-     box, at the panel's own reading size (0.8rem, matching .history-row's
+     box, at the panel's own reading size (0.8rem, matching the old history row's
      title — a notch above .pending-note's 0.74rem, because a failure outranks
      "Loading…", and well below the 0.92rem of a failed view). The retry
      control it now carries is what earns it the two-element stack rather than a
@@ -1505,127 +1507,381 @@ h3 {
   }
 
   /* ========================================================================
-     HISTORY
-     Only what RunSummary carries: run_id, status, title, created_at.
+     HISTORY — poster grid (Phase 3; design/shots/HistoryA*.png,
+     HistoryMobile.png, HistoryWeb.png). Serif page header, filter pills +
+     search + sort, day-bucketed groups of 3:4 posters (16:9 spanning two
+     columns for landscape runs). Thumbnails are flat --poster-N tints until
+     real thumbnails exist; the tint is a stable hash of run_id
+     (components/history.ts).
      ======================================================================== */
 
-  .history-list {
-    list-style: none;
+  .history {
+    padding-top: clamp(1.5rem, 0.9rem + 2.6vw, 3rem);
+    padding-bottom: var(--space-xl);
+    min-width: 0;
+  }
+  .history-title {
     margin: 0;
-    padding: 0;
+    font-family: var(--font-serif);
+    font-weight: 400;
+    font-size: clamp(2.25rem, 1.85rem + 1.25vw, 3rem);
+    line-height: 1.1;
+    letter-spacing: -0.015em;
+    color: var(--color-ink);
+  }
+  .history-lede {
+    margin: 0.5rem 0 0;
+    max-width: 30rem;
+    font-size: clamp(1rem, 0.97rem + 0.15vw, 1.0625rem);
+    line-height: 1.5;
+    color: var(--color-ink-2);
+  }
+  .history-state {
+    margin-top: var(--space-lg);
   }
 
-  /* Runs bucketed by day, derived from created_at — the only extra structure
-     available without inventing fields RunSummary doesn't carry. */
-  .history-group {
-    padding: var(--space-md) 0 var(--space-2xs);
-    font-size: 0.6rem;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--color-muted);
+  /* ---- controls ----
+     Phone: search (with sort beside it) on one row, then the pill row, which
+     scrolls sideways and bleeds off the right edge as drawn. From 48rem: pills
+     left, search and sort right, one row. DOM order is pills, search, sort —
+     the desktop reading order. */
+  .history-controls {
+    margin-top: var(--space-md);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "search sort"
+      "filters filters";
+    gap: var(--space-xs) var(--space-2xs);
+    align-items: center;
   }
-  .history-list > li:first-child .history-group {
-    padding-top: 0;
+  .history-filters {
+    grid-area: filters;
+    display: flex;
+    gap: 0.5rem;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    /* room for the 2px + 2px focus ring, which a scroll box would clip */
+    padding: 0.25rem;
+    margin: -0.25rem;
+    margin-right: calc(-1 * var(--page-gutter));
+    padding-right: var(--page-gutter);
+  }
+  .history-filters::-webkit-scrollbar {
+    display: none;
+  }
+  .history-search {
+    grid-area: search;
+    min-width: 0;
+  }
+  .history-search .field {
+    width: 100%;
+  }
+  /* Chromium's clear glyph is a fixed off-palette blue; Escape still clears
+     the field, and the no-matches state carries "Show all runs". */
+  .history-search .field::-webkit-search-cancel-button {
+    appearance: none;
+  }
+  .history-sort {
+    grid-area: sort;
+    position: relative;
   }
 
-  /* The pane drops its side padding for this view and the rows carry it
-     instead, so hover fills and separators span the full panel while the text
-     still lines up on the normal text edge. */
-  .tab-view .pane,
-  [data-view="history"] .pane {
-    padding-inline: 0;
-  }
-
-  .history-row {
+  .filter-pill {
     all: unset;
     box-sizing: border-box;
     cursor: pointer;
-    width: 100%;
-    display: flex;
+    flex-shrink: 0;
+    display: inline-flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--space-sm);
-    padding: 0.95rem 0;
-    border-bottom: var(--rule-w) solid var(--color-rule);
+    min-height: 2.75rem;
+    padding: 0 1.125rem;
+    border-radius: var(--radius-pill);
+    border: var(--rule-w) solid var(--color-border-strong);
+    background: var(--color-surface);
+    color: var(--color-ink);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out);
+  }
+  .filter-pill[aria-pressed="true"] {
+    background: var(--color-ink);
+    border-color: var(--color-ink);
+    color: var(--color-paper);
+  }
+  .filter-pill:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+
+  .sort-select {
+    appearance: none;
+    box-sizing: border-box;
+    height: 2.75rem;
+    padding: 0 2.5rem 0 1.125rem;
+    border-radius: var(--radius-pill);
+    border: var(--rule-w) solid var(--color-border-strong);
+    background: var(--color-surface);
+    color: var(--color-ink);
+    font-family: inherit;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    cursor: pointer;
     transition: background-color var(--dur-short) var(--ease-out);
   }
-  .history-row:last-child {
-    border-bottom: none;
-  }
-  .history-row:focus-visible {
+  .sort-select:focus-visible {
     outline: 2px solid var(--color-focus);
-    outline-offset: -2px;
+    outline-offset: 2px;
   }
-  .history-row .h-left {
-    display: flex;
-    align-items: center;
-    gap: 0.7rem;
-    min-width: 0;
-    flex: 1;
-  }
-  .history-row .h-title {
-    font-size: 0.8rem;
-    line-height: 1.35;
+  .sort-chevron {
+    position: absolute;
+    right: 0.875rem;
+    top: 50%;
+    width: 1rem;
+    height: 1rem;
+    margin-top: -0.5rem;
     color: var(--color-ink);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    pointer-events: none;
+  }
+
+  /* ---- groups ---- */
+  .history-group {
+    margin-top: var(--space-md);
+  }
+  .history-group + .history-group {
+    margin-top: var(--space-lg);
+  }
+  .history-group-label {
+    margin: 0 0 0.875rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+
+  /* ---- the grid ----
+     2 columns on a phone, 5 on the desktop board, 3 and 4 between. `dense`
+     back-fills the hole a two-column landscape poster leaves at a row's end;
+     `align-items: start` keeps a row from stretching posters to the tallest
+     title in it. */
+  .poster-grid {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-flow: row dense;
+    align-items: start;
+    gap: 1.25rem 0.875rem;
+  }
+  .poster-item {
     min-width: 0;
   }
-  /* the "Untitled run" / "Failed run" fallbacks the real panel renders when
-     title is null — muted so they read as absent rather than as a name */
-  .history-row .h-title[data-fallback] {
-    color: var(--color-muted);
-  }
-  .history-row .h-meta {
-    font-size: 0.68rem;
-    color: var(--color-muted);
+  .poster-item[data-orientation="landscape"] {
+    grid-column: span 2;
   }
 
-  /* status as a colour-coded dot rather than a word: it reads down the left
-     edge as a column you can scan, instead of repeating in every row */
-  .h-dot {
-    width: 0.45rem;
-    height: 0.45rem;
-    border-radius: 50%;
-    flex-shrink: 0;
-    background: var(--color-accent);
-  }
-  .history-row[data-run-status="failed"] .h-dot {
-    background: var(--color-danger);
-  }
-  .history-row[data-run-status="processing"] .h-dot,
-  .history-row[data-run-status="queued"] .h-dot {
-    background: var(--color-border-strong);
-    animation: pip-pulse 1.1s var(--ease-in-out) infinite;
-  }
-
-  .h-text {
+  .poster {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
     display: flex;
     flex-direction: column;
-    gap: 0.1rem;
+    width: 100%;
     min-width: 0;
+    border-radius: var(--radius-poster);
+    -webkit-tap-highlight-color: transparent;
   }
-  /* run_id, short-hash style — mono suits it and it's genuinely in the payload */
-  .h-sub {
-    font-size: 0.62rem;
-    letter-spacing: 0.05em;
+  .poster:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 4px;
+  }
+
+  .poster-thumb {
+    position: relative;
+    display: block;
+    aspect-ratio: 3 / 4;
+    border-radius: var(--radius-poster);
+    overflow: hidden;
+    background: var(--poster-1);
+    transition: transform var(--dur-short) var(--ease-out);
+  }
+  .poster-item[data-orientation="landscape"] .poster-thumb {
+    aspect-ratio: 16 / 9;
+  }
+  .poster-thumb[data-tint="2"] { background: var(--poster-2); }
+  .poster-thumb[data-tint="3"] { background: var(--poster-3); }
+  .poster-thumb[data-tint="4"] { background: var(--poster-4); }
+  .poster-thumb[data-tint="5"] { background: var(--poster-5); }
+  /* hover wash: an ink veil faded in by opacity, so nothing reflows */
+  .poster-thumb::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--color-ink);
+    opacity: 0;
+    transition: opacity var(--dur-short) var(--ease-out);
+    pointer-events: none;
+  }
+  .poster:active .poster-thumb {
+    transform: scale(0.985);
+  }
+
+  /* Chips invert with the theme, as drawn: the platform chip and play disc
+     are surface-on-tint (white in light, near-black in dark); the duration
+     chip is the ink pill (dark in light, pale in dark). */
+  .poster-chip,
+  .poster-badge {
+    position: absolute;
+    z-index: 1;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    white-space: nowrap;
+  }
+  .poster-chip {
+    top: 0.625rem;
+    left: 0.625rem;
+    max-width: calc(100% - 1.25rem);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 0.1875rem 0.5625rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-surface);
+    color: var(--color-ink);
+    font-weight: 600;
+  }
+  .poster-badge {
+    right: 0.625rem;
+    bottom: 0.625rem;
+    padding: 0.125rem 0.4375rem;
+    border-radius: 0.4375rem;
+    background: var(--color-ink);
+    color: var(--color-surface);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  /* Run state takes the duration's slot. Failed is the muted danger notice,
+     not a red alarm: red is for errors and this is one, quietly. */
+  .poster-badge[data-kind="failed"] {
+    background: var(--color-danger-soft);
+    color: var(--color-danger);
+    box-shadow: inset 0 0 0 var(--rule-w) var(--color-danger-border);
+  }
+  .poster-badge[data-kind="processing"] {
+    background: var(--color-surface);
+    color: var(--color-ink-2);
+    font-weight: 600;
+  }
+
+  .poster-play {
+    position: absolute;
+    z-index: 1;
+    top: 50%;
+    left: 50%;
+    width: 2.5rem;
+    height: 2.5rem;
+    margin: -1.25rem 0 0 -1.25rem;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--color-surface);
+    color: var(--color-ink);
+    transition: transform var(--dur-short) var(--ease-out);
+  }
+  .poster-glyph {
+    width: 0.875rem;
+    height: 0.875rem;
+  }
+  .poster-glyph[data-glyph="play"] {
+    fill: currentColor;
+    /* a triangle's optical centre sits right of its box centre */
+    transform: translateX(1px);
+  }
+  .poster-glyph[data-glyph="audio"] {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .poster-title {
+    margin-top: 0.625rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    line-height: 1.33;
+    color: var(--color-ink);
+    text-wrap: pretty;
+    overflow-wrap: anywhere;
+  }
+  .poster-title[data-fallback] {
     color: var(--color-muted);
   }
-  .h-right {
-    display: flex;
-    align-items: center;
-    gap: var(--space-sm);
-    flex-shrink: 0;
+  .poster-date {
+    margin-top: 0.125rem;
+    font-size: 0.8125rem;
+    line-height: 1.4;
+    color: var(--color-muted);
   }
-  /* The reveal-on-hover arrow has no touch equivalent, so it is permanent by
-     default and only hides itself where a real hover exists (see @media
-     (hover: hover) below). */
-  .h-go {
-    width: 0.8rem;
-    height: 0.8rem;
-    color: var(--color-accent);
-    transition: opacity var(--dur-short) var(--ease-out), transform var(--dur-short) var(--ease-out);
+
+  /* ---- empty / no matches ---- */
+  .history-empty {
+    margin-top: var(--space-xl);
+    max-width: 28rem;
+  }
+  .history-empty-title {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-size: 1.5rem;
+    line-height: 1.2;
+    color: var(--color-ink);
+  }
+  .history-empty-body {
+    margin: 0.5rem 0 var(--space-md);
+    line-height: 1.55;
+    color: var(--color-ink-2);
+  }
+
+  @media (min-width: 40rem) {
+    .poster-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1.5rem 1.25rem;
+    }
+    .poster-play {
+      width: 2.75rem;
+      height: 2.75rem;
+      margin: -1.375rem 0 0 -1.375rem;
+    }
+  }
+  @media (min-width: 48rem) {
+    .history-controls {
+      margin-top: var(--space-lg);
+      grid-template-columns: minmax(0, 1fr) minmax(0, 16.25rem) auto;
+      grid-template-areas: "filters search sort";
+      gap: var(--space-2xs);
+    }
+    .history-filters {
+      flex-wrap: wrap;
+      overflow: visible;
+      margin-right: -0.25rem;
+      padding-right: 0.25rem;
+    }
+    .history-group {
+      margin-top: var(--space-lg);
+    }
+    .history-group + .history-group {
+      margin-top: var(--space-xl);
+    }
+  }
+  @media (min-width: 52rem) {
+    .poster-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+  @media (min-width: 64rem) {
+    .poster-grid {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
   }
 
   /* ========================================================================
@@ -3087,7 +3343,8 @@ h3 {
     flex: 1;
     min-height: 0;
   }
-  .shell > section[data-view="analyze"] {
+  .shell > section[data-view="analyze"],
+  .shell > section[data-view="history"] {
     overflow-y: auto;
   }
   /* The band runs to the bottom edge, as on every desktop board: reach back
@@ -3102,7 +3359,8 @@ h3 {
   /* With a page-wide scroller under it, the footer's top hairline is the
      only edge between content and chrome; the gap above it would show
      scrolled content stopping short of the rule, so it is closed here. */
-  .shell > section[data-view="analyze"] + .page-end {
+  .shell > section[data-view="analyze"] + .page-end,
+  .shell > section[data-view="history"] + .page-end {
     margin-top: 0;
   }
 
@@ -3166,8 +3424,7 @@ h3 {
 @media (pointer: coarse) {
   .tab,
   .btn,
-  .cap-toggle,
-  .history-row {
+  .cap-toggle {
     min-height: 2.75rem;
     /* Both axes, because WCAG 2.5.5 asks for both and — unlike `.text-link` —
        this is a standalone control, not a link inline in a block of text, so it
@@ -3206,10 +3463,6 @@ h3 {
   /* the row opens up one step on touch, since both controls are now 44 wide */
   .crumb-bar {
     gap: var(--space-sm);
-  }
-  .h-go {
-    opacity: 1;
-    transform: none;
   }
 }
 
@@ -3265,18 +3518,18 @@ h3 {
   .cap-toggle:hover {
     background: var(--color-tint);
   }
-  .history-row:hover {
+  .poster:hover .poster-thumb::after {
+    opacity: 0.04;
+  }
+  :root[data-theme="dark"] .poster:hover .poster-thumb::after {
+    opacity: 0.06;
+  }
+  .poster:hover .poster-play {
+    transform: scale(1.06);
+  }
+  .filter-pill:not([aria-pressed="true"]):hover,
+  .sort-select:hover {
     background: var(--color-tint);
-  }
-  /* the affordance only appears on the row you're pointed at */
-  .h-go {
-    opacity: 0;
-    transform: translateX(-0.25rem);
-  }
-  .history-row:hover .h-go,
-  .history-row:focus-visible .h-go {
-    opacity: 1;
-    transform: none;
   }
   .foot-legal a:hover {
     color: var(--color-ink);

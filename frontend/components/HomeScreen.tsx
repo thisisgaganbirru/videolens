@@ -16,6 +16,7 @@ import { useAnalysisRun } from "@/application/useAnalysisRun";
 import { useCapabilities } from "@/application/useCapabilities";
 import { useSharedUrl } from "@/application/useSharedUrl";
 import { goToMainTab, useMainTab, type MainTab } from "@/application/useMainTab";
+import type { RunSourceKind } from "@/domain/entities";
 
 /**
  * The app shell for one tab.
@@ -84,11 +85,13 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      drops this flag on its own). */
   const connectionLost = Boolean(error) && (status === "queued" || status === "processing");
 
-  const handleOpenRun = (runId: string) => {
+  const handleOpenRun = (runId: string, sourceKind?: RunSourceKind | null) => {
     /* Pushes a history entry, so back from a run lands on the list it was
-       opened from rather than dropping out of the app. */
+       opened from rather than dropping out of the app. The summary's
+       `source_kind`, when it has one, seeds the run's frames before the
+       first status response arrives. */
     goToMainTab("analyze");
-    void openRun(runId);
+    void openRun(runId, sourceKind);
   };
 
   /* No `data-frame` here any more. Phase 2 retired the inner results pane:
@@ -278,14 +281,13 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
           selector so a fifth tab inherits the alignment instead of silently
           missing it — and so `legal`/`offline`, which are sections too but not
           tabs, stay out of it. */}
+      {/* History has no `.col-label`/`.surface`/`.pane` since Phase 3: like
+          Analyze, the section itself is the scroller from 32rem up, between
+          the fixed nav and footer (see app-shell-layout.md), and the page
+          carries its own serif header. */}
       {activeTab === "history" && (
-        <section className="tab-view" data-view="history" aria-label="History">
-          <p className="col-label">History</p>
-          <div className="surface">
-            <div className="pane">
-              <HistoryPanel onOpenRun={handleOpenRun} />
-            </div>
-          </div>
+        <section data-view="history" aria-label="History">
+          <HistoryPanel onOpenRun={handleOpenRun} onAnalyze={() => goToMainTab("analyze")} />
         </section>
       )}
 
