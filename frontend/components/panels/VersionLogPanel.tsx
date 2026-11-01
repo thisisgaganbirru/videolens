@@ -1,35 +1,55 @@
 "use client";
 
-import { ExternalLink } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { useVersionLog } from "@/application/useVersionLog";
-import { formatDate } from "@/components/format";
+import { formatDay } from "@/components/format";
+import { orderReleases, releaseSubtitle, releaseVersion } from "@/components/releases";
 
-/* No drawn spec for this view in the terminal mockup — it is built by analogy
-   to the history list: hairline-separated rows, square corners, no fill and no
-   shadow, with the accent spent only on the hover/focus affordance. Unlike
-   history, the releases pane keeps its side padding, so a row reads as a line
-   of text rather than a full-bleed band, and hover recolours the title instead
-   of painting an inset block. Every value is a token; nothing is hardcoded. */
+/* Hallmark · theme: editorial · page: Releases
+ * (design/phase4-boards/Releases.png, ReleasesWeb.png, ReleasesMobile.png)
+ * states: loading · error + retry · empty · list · link hover · link focus
+ *
+ * Serif header, a lede naming the running version, then one white card per
+ * release: serif "Version X.Y.Z", a Latest pill on the newest, the date. The
+ * boards draw bullet notes in each card; `/api/releases` carries no release
+ * body (name, tag, date, url only), so the card shows the release name when
+ * it says more than the version, and links to the full notes on GitHub
+ * rather than inventing bullets.
+ *
+ * Order and "Latest" are decided here, not trusted from the wire: the backend
+ * passes GitHub's order through, so `orderReleases` sorts newest first by
+ * publish date (version as the tie-break) before the first card is badged. */
+
+/* Baked in at build time from package.json by next.config.mjs — the same
+   number Android's versionName reads. Absent (an unusual build), the lede just
+   drops its second sentence rather than claiming a version. */
+const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION;
 
 export default function VersionLogPanel() {
+  return (
+    <div className="releases">
+      <header className="view-head">
+        <h1 className="view-title">Releases</h1>
+        <p className="view-lede">
+          What changed in each version.
+          {APP_VERSION ? ` You are on version ${APP_VERSION}.` : null}
+        </p>
+      </header>
+      <ReleaseList />
+    </div>
+  );
+}
+
+function ReleaseList() {
   const { entries, error, retrying, retry } = useVersionLog();
 
-  /* .error-inline, the third rung of the ladder documented in globals.css above
-     .pending-note — and it is that rung *because* it now carries a retry.
-     `.error-note`, the rung below, is defined as a rejection sitting beside the
-     control that caused it; nothing here was user-triggered, so that definition
-     does not describe this either. The rung that can be made to fit honestly is
-     this one, and it fits by supplying the thing that was actually missing:
-     the release fetch fails when the device is offline, and offline ends. Until
-     now the only recovery was a full reload or the accident of switching tabs
-     and back. This is also the same object HistoryPanel renders one tab over —
-     a fetch-on-mount gateway list with the same four states — so it gets the
-     same treatment and the same `.btn .btn-secondary` control.
-     `role="alert"` not `role="status"`: the earlier reasoning for `status` was
-     "there is nothing to act on", which the retry retires. */
+  /* .error-inline: a panel-scoped failure with a retry, the same object
+     HistoryPanel renders for the same fetch-on-mount failure (the release
+     fetch fails when the device is offline, and offline ends). `role=alert`
+     because there is something to act on. */
   if (error)
     return (
-      <div role="alert" className="error-inline">
+      <div role="alert" className="error-inline view-state">
         <p>{error}</p>
         <button
           type="button"
@@ -41,38 +61,49 @@ export default function VersionLogPanel() {
         </button>
       </div>
     );
-  if (entries === null) return <p className="pending-note">Loading…</p>;
-  if (entries.length === 0) return <p className="pending-note">No releases yet.</p>;
+  if (entries === null)
+    return (
+      <p role="status" className="pending-note view-state">
+        Loading releases…
+      </p>
+    );
+  if (entries.length === 0)
+    return <p className="pending-note view-state">No releases published yet.</p>;
+
+  const ordered = orderReleases(entries);
 
   return (
-    <ul className="m-0 list-none p-0">
-      {entries.map((entry) => (
-        <li
-          key={entry.tag}
-          className="border-b border-[var(--color-rule)] last:border-b-0"
-        >
-          <a
-            href={entry.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="group flex min-h-12 items-center justify-between gap-[var(--space-sm)] py-[var(--space-xs)] no-underline outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)]"
-          >
-            <span className="h-text">
-              <span className="text-[0.8rem] leading-[1.35] text-[var(--color-ink)] transition-colors duration-[var(--dur-short)] group-hover:text-[var(--color-accent)]">
-                {entry.name}
-              </span>
-              {/* tag and date are both genuinely in VersionLogEntry */}
-              <span className="h-sub">
-                {entry.tag} &middot; {formatDate(entry.publishedAt)}
-              </span>
-            </span>
-            <ExternalLink
-              className="h-3.5 w-3.5 shrink-0 text-[var(--color-muted)] transition-colors duration-[var(--dur-short)] group-hover:text-[var(--color-accent)]"
-              aria-hidden="true"
-            />
-          </a>
-        </li>
-      ))}
-    </ul>
+    <ol className="release-list">
+      {ordered.map((entry, index) => {
+        const version = releaseVersion(entry);
+        const subtitle = releaseSubtitle(entry);
+        return (
+          <li key={entry.tag || entry.url} className="release-card">
+            <div className="release-head">
+              <h2 className="release-title">{version ? `Version ${version}` : entry.name}</h2>
+              {index === 0 ? <span className="release-latest">Latest</span> : null}
+              {entry.publishedAt ? (
+                <time className="release-date" dateTime={entry.publishedAt}>
+                  {formatDay(entry.publishedAt)}
+                </time>
+              ) : null}
+            </div>
+            {subtitle ? <p className="release-note">{subtitle}</p> : null}
+            {entry.url ? (
+              <a
+                href={entry.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="release-link"
+              >
+                Read the notes on GitHub
+                <ArrowUpRight aria-hidden="true" />
+                <span className="sr-only"> (opens in a new tab)</span>
+              </a>
+            ) : null}
+          </li>
+        );
+      })}
+    </ol>
   );
 }

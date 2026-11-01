@@ -2,7 +2,7 @@ import LegalShell, { LegalSection } from "@/components/LegalShell";
 
 export default function PrivacyPage() {
   return (
-    <LegalShell title="Privacy Policy" effective="Effective August 1, 2026" current="privacy">
+    <LegalShell title="Privacy" effective="Effective August 1, 2026" current="privacy">
       <LegalSection heading="Media processing">
         Uploaded or downloaded media is used only to perform the requested analysis. Media is temporarily processed by our backend and Gemini, then deleted after the run finishes or fails.
       </LegalSection>

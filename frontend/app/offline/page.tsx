@@ -1,3 +1,4 @@
+import { WifiOff } from "lucide-react";
 import AppNav from "@/components/AppNav";
 import BottomTabBar from "@/components/BottomTabBar";
 import SiteFooter from "@/components/SiteFooter";
@@ -23,10 +24,13 @@ import SiteFooter from "@/components/SiteFooter";
  * not be rendered as disabled — the page cannot know when connectivity
  * returns, and the first thing a user does on this screen is retry.
  *
- * `data-frame="fixed"` locks nav and footer to the viewport. Nothing here
- * scrolls: this is a blocking state, not a document, so it keeps the app's
- * centred `.home-center` + `.run-state` idiom and gets neither the crumb bar
- * nor `.legal-doc`.
+ * Phase 4 (design/phase4-boards/Offline*.png): a tint disc with the
+ * wifi-off glyph, a serif title, two short lines, actions — centred in a
+ * `.view-scroll` section (HomeScreen's scrolling model, no `data-frame`).
+ * The boards also say "Your History is still here." and offer Open History;
+ * both are left out because they are not true yet — History is fetched from
+ * the server, and the worker answers `/?view=history` with this very page
+ * while offline. They come back when history moves client-side.
  *
  * No wordmark in the body. The nav directly above already is one, and two
  * stacked wordmarks read as repetition — the same call the legal footer makes.
@@ -41,30 +45,23 @@ import SiteFooter from "@/components/SiteFooter";
  */
 export default function OfflinePage() {
   return (
-    <div className="shell" data-view="offline" data-frame="fixed">
+    <div className="shell" data-view="offline">
       <AppNav activeTab={null} />
 
-      <section data-view="offline" aria-label="Offline">
-        <div className="home-center">
-          {/* Bare `.run-state` — the app's own centred-state container, at the
-              app's own width. The page previously overrode it to 32rem, which
-              only re-derived a measure the shell already owns. */}
-          <div className="run-state">
-            <div className="flex flex-col items-center gap-[var(--space-xs)] text-center">
-              <h1 className="page-title">You are offline</h1>
-              {/* `.prose` caps at --measure, which is a reading width for
-                  left-aligned columns; centred, this sentence spilled one word
-                  onto a second line. `balance` splits it into two even lines
-                  instead, and degrades to the normal wrap where unsupported. */}
-              <p className="prose [text-wrap:balance]">
-                Video analysis requires a network connection. Reconnect, then return to your run.
-              </p>
-            </div>
-
-            <a href="/" className="btn btn-primary">
-              Try again
-            </a>
-          </div>
+      <section className="view-scroll" data-view="offline" aria-label="Offline">
+        {/* Neutral, not red: nothing failed, the network is just absent. */}
+        <div className="offline">
+          <span className="offline-frame" aria-hidden="true">
+            <WifiOff />
+          </span>
+          <h1 className="offline-title">You&apos;re offline</h1>
+          <p className="offline-lede">
+            VideoLens needs a connection to analyze new videos. A run you already started keeps
+            going on the server.
+          </p>
+          <a href="/" className="btn btn-ink btn-pill offline-action">
+            Try again
+          </a>
         </div>
       </section>
 

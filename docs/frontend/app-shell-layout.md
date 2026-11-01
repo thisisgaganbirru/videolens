@@ -18,7 +18,8 @@ shells").
 - `frontend/components/theme.ts` — the light/dark constants shared by the pre-paint script and the toggle.
 - `frontend/app/layout.tsx` — `<html>`/`<body>`, the pre-paint theme script, and the `.viewport` flex column the shell sits in.
 - `frontend/app/tokens.css` — palette, type, space, shape, motion tokens.
-- `frontend/app/globals.css` — the shared class vocabulary (`.shell`, `.nav`, `.nav-tab`, `.tab-view`, `.workspace`, `.surface`, `.pane`, …).
+- `frontend/app/globals.css` — the shared class vocabulary (`.shell`, `.nav`, `.nav-tab`, `.view-scroll`, `.view-head`/`.view-title`, …).
+- `frontend/components/useMediaQuery.ts` — `useSyncExternalStore` wrapper over `matchMedia` (server snapshot `false`); for the rare case where React, not just CSS, must know the width (History's hidden sort).
 
 ## Structure
 
@@ -63,7 +64,7 @@ when its content is taller than the band (measured: Main at 1280×989 is
 `.viewport` scrolls, as before. The footer band at ≥ 32rem reaches back through
 the shell's bottom gutter (`margin-bottom: -max(1rem, safe-bottom)`), so it sits
 on the window's bottom edge as drawn (y 932 at 1280×989, same as Main.png).
-History joined Analyze in Phase 3: `section[data-view="history"]` is full-bleed and the scroller from 32rem, with no `.col-label`/`.surface`/`.pane`. API Key and Releases keep the old behaviour, where `.surface` remains transparent with `.tab-view .pane` dropping `padding-inline` to align flush left with section headers.
+History joined Analyze in Phase 3. **Phase 4 (2026-11-01) made it universal:** every view section is `<section class="view-scroll">` — Analyze, History, API key, Releases on `/`, plus `/privacy`, `/terms` and `/offline` — and the three scroller rules in `globals.css` target `.shell > section.view-scroll` instead of listing `data-view`s. `data-frame="fixed"` is no longer set by any route (its CSS remains, unused). The Terminal-era panel frame — `.tab-view`, `.surface`, `.pane`, `.home-center`, `.legal-doc`, `.legal-body`, `.page-title` — is deleted. `.col-label`/`.card-label` survive only for the dev preview harnesses. A new view: render `section.view-scroll`, then a centred column (`.key-page`/`.releases`/`.legal-page` share one 43.5rem rule) with a `.view-head` (`h1.view-title` + `.view-lede`).
 De-boxing was a specific fix: two bordered tinted rectangles side by side read
 as a PowerPoint slide.
 
@@ -386,3 +387,5 @@ back/forward was measured and the Capacitor mapping is read from
 - 2026-11-01 · frontend agent · confirmed Privacy/Terms are already More-sheet rows (no change made); recorded the remaining gap for installed windows wider than 37.5rem as a Known issue
 - 2026-11-01 · frontend agent · owner decision: installed windows wider than 37.5rem show the footer (top bar AND footer); the app-shell footer hide moved inside the ≤ 37.5rem query; Privacy/Terms known issue closed; shell table and footer text corrected
 - 2026-11-01 · frontend agent (Phase 3) · History section scrolls like Analyze (full-bleed scroller from 32rem); dock clearance re-measured on History (last poster 700 / dock 764 at 390×844)
+- 2026-11-01 · frontend agent (Phase 4) · every view and standalone route is now a `section.view-scroll` (scroller selector generalised, `data-frame` dropped from legal/offline); deleted `.tab-view`/`.surface`/`.pane`/`.home-center`/`.legal-doc`/`.legal-body`/`.page-title`; added `useMediaQuery`; More sheet and phone menu re-checked against MoreMobile.png / MenuWeb.png, unchanged
+- 2026-11-01 · frontend agent (Phase 4, boards) · offline section is now a flex column filling the band at every width so its block centres on phones too; `NEXT_PUBLIC_APP_VERSION` added to next.config.mjs `env` (read from package.json; `agentRules: false` untouched); legal crumb bar removed per the boards

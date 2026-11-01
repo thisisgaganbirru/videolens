@@ -104,7 +104,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
       <AppNav activeTab={activeTab} onSelectTab={goToMainTab} />
 
       {activeTab === "analyze" && (
-        <section data-view="analyze" aria-label="Analyze">
+        <section className="view-scroll" data-view="analyze" aria-label="Analyze">
           {status === "idle" && (
             <div className="intake-layout">
               {/* Always in the DOM, empty and zero-height when the deployment
@@ -276,40 +276,26 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
         </section>
       )}
 
-      {/* `.tab-view` carries the top margin that lines these labels up with
-          `.workspace`'s. It is a class rather than a list of view names in the
-          selector so a fifth tab inherits the alignment instead of silently
-          missing it — and so `legal`/`offline`, which are sections too but not
-          tabs, stay out of it. */}
-      {/* History has no `.col-label`/`.surface`/`.pane` since Phase 3: like
-          Analyze, the section itself is the scroller from 32rem up, between
-          the fixed nav and footer (see app-shell-layout.md), and the page
-          carries its own serif header. */}
+      {/* Every view below is its own `.view-scroll` section: from 32rem up the
+          section itself is the scroller, full-bleed between the fixed nav and
+          footer, scrolling only when its content is taller than that band
+          (see app-shell-layout.md). Each page carries its own serif header —
+          the Terminal-era `.col-label`/`.surface`/`.pane` frame is gone. */}
       {activeTab === "history" && (
-        <section data-view="history" aria-label="History">
+        <section className="view-scroll" data-view="history" aria-label="History">
           <HistoryPanel onOpenRun={handleOpenRun} onAnalyze={() => goToMainTab("analyze")} />
         </section>
       )}
 
       {activeTab === "api-key" && (
-        <section className="tab-view" data-view="api-key" aria-label="API key">
-          <p className="col-label">API key</p>
-          <div className="surface">
-            <div className="pane">
-              <ApiKeyPanel budgetCapability={dailyBudget} />
-            </div>
-          </div>
+        <section className="view-scroll" data-view="api-key" aria-label="API key">
+          <ApiKeyPanel budgetCapability={dailyBudget} />
         </section>
       )}
 
       {activeTab === "releases" && (
-        <section className="tab-view" data-view="releases" aria-label="Releases">
-          <p className="col-label">Releases</p>
-          <div className="surface">
-            <div className="pane">
-              <VersionLogPanel />
-            </div>
-          </div>
+        <section className="view-scroll" data-view="releases" aria-label="Releases">
+          <VersionLogPanel />
         </section>
       )}
 
