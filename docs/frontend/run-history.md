@@ -6,33 +6,75 @@ Shows the caller's own past runs (newest first, backend-capped at 20) and lets t
 - `frontend/application/useRunHistory.ts` — fetches on mount via `runsGateway.listRuns()`; classifies failures and owns the retry.
 - `frontend/infrastructure/runsGateway.ts` — `FetchRunsGateway`; the only place that knows whether a call failed in transport or in HTTP.
 - `frontend/domain/errors.ts` — `ApiError` and `NetworkError`, the two-case error contract every gateway method obeys.
-- `frontend/components/panels/HistoryPanel.tsx` — renders loading/error/empty/list states; each item shows title (or "Untitled run"/"Failed run" fallback) and `formatDate(created_at) · status`.
-- `frontend/components/format.ts` — the shared `formatDate` helper (also used by the release-notes panel).
+- `frontend/domain/entities.ts` — `RunSummary` (with the Phase 3 optional fields), `RunSourceKind`, `RunPlatform`, `RunOrientation`.
+- `frontend/components/history.ts` — **pure** helpers, no React: `posterTint` (FNV-1a of `run_id` → 1..5), `platformLabel`, `isAudio`, `isLandscape`, `formatDuration`, `posterBadge`, `posterTitle`, `dayBucket`, `posterDate`, `matchesFilter`, `matchesQuery`, `sortRuns`, `buildHistory`, `posterLabel`.
+- `frontend/components/panels/HistoryPanel.tsx` — renders the page header, the four states, the controls and the poster grid. Props: `onOpenRun(runId, sourceKind?)`, `onAnalyze()`.
+- `frontend/components/HomeScreen.tsx` — renders `<section data-view="history">` (no `.col-label`/`.surface`/`.pane` any more) and passes the summary's `source_kind` on to `openRun`.
+- `frontend/app/globals.css` — the HISTORY block (`.history*`, `.filter-pill`, `.sort-select`, `.poster*`), hover rules in `@media (hover: hover)`, and the History section scroller next to Analyze's.
 
-**Ownership**: history is scoped server-side by the caller's `Principal` (see `backend/docs/auth.md` — anonymous callers are scoped by `X-Client-ID`), not filtered client-side.
+**Ownership**: history is scoped server-side by the caller's `Principal` (see `backend/docs/auth.md` — anonymous callers are scoped by `X-Client-ID`), not filtered client-side. Filtering *within* the returned list (pills, search, sort) is client-side.
 
-**Layout** (Terminal redesign — see `design-direction-terminal.md`): single
-column. Runs are bucketed by day into `.history-group` headers derived from
-`created_at`; status is a colour-coded `.h-dot` reading down the left edge
-rather than a word. History rows (`.history-row`), group headers (`.history-group`),
-and flat states align flush left with section headers.
+## Layout — poster grid (Phase 3, 2026-11-01)
 
-**Render only what `RunSummary` carries.** It is exactly `run_id`, `status`,
-`title`, `created_at` (`domain/entities.ts:53`) — **there is no platform,
-duration, or thumbnail, because the API doesn't return them.** A duration and a
-status pill were both drawn in an early mockup pass and removed once checked
-against source. The day label and the 6-char short-hash run ID are *derived*
-from real fields, not new data.
+Source of truth: `design/shots/HistoryA.png`, `HistoryADark.png`,
+`HistoryMobile.png` (installed app), `HistoryWeb.png` (phone browser).
 
-State hooks: `.history-row[data-run-status]`, and `.h-title[data-fallback]`
-which mutes the "Untitled run" / "Failed run" fallbacks.
+- **Header**: `h1.history-title` "History" in Newsreader (36→48px), lede
+  "Your recent analyses. Open one to read its notes again."
+- **Controls** (populated state only): filter pills All / Instagram / TikTok /
+  YouTube / Files (`button[aria-pressed]` in a `role="group"`; active = filled
+  ink pill), search (`input[type=search].field.field-pill`, matches title +
+  `summary_snippet`, every whitespace term must match), sort (native `<select>`
+  styled as a pill: Newest / Oldest). From 48rem: pills left, search (260px) +
+  sort right. Phone: search with sort beside it, then the pill row, which
+  scrolls sideways and bleeds off the right edge. A visually hidden polite
+  status announces "N runs shown" only once something has narrowed the list.
+- **Groups**: `h2.history-group-label` eyebrows TODAY / EARLIER THIS WEEK /
+  EARLIER (+ UNDATED for an unparseable `created_at`, always last). "This
+  week" = the previous six calendar days, the window where a bare weekday
+  ("Thu") is unambiguous. Oldest-first reverses the group order too.
+- **Grid**: `ul.poster-grid`, 2 columns → 3 (40rem) → 4 (52rem) → 5 (64rem),
+  `grid-auto-flow: row dense`, `align-items: start`. Landscape runs
+  (`orientation === "landscape"`) `grid-column: span 2` with a 16:9 thumb;
+  everything else (including null orientation) is a 3:4 portrait.
+- **Poster**: the whole card is one `<button class="poster">` whose
+  accessible name starts with the title (`posterLabel`). Thumb = flat
+  `--poster-N` tint picked by a stable hash of `run_id`; platform chip top-left
+  (surface pill), round play disc centred (waveform `AudioLines` for
+  `audio_file`), badge bottom-right. Under it: title (600, wraps) and date
+  ("Today, 9:41 PM", "Yesterday, …", "Thu, 7:02 PM", "Oct 12, 7:02 PM", year
+  added outside the current one). Focus: 2px green ring, 4px offset, around the
+  whole card. Hover: 4% ink veil + play disc scale 1.06 (opacity/transform
+  only; the global reduced-motion rule collapses them).
+- **Fallbacks for legacy rows** (every new field is optional and nullable):
+  no platform → "Link"/"File" chip from `source_kind`, else no chip; no
+  duration → no badge; no orientation → portrait; no title → muted "Untitled
+  run". **Run state outranks duration** in the badge slot: `failed` → "Failed"
+  (danger-soft fill, danger text, danger-border hairline — muted, red only
+  because it is an error), `queued`/`processing` → "Processing" (surface
+  pill). Failed and in-progress runs still count toward the backend's 20.
+- **Files filter** = `source_kind === "file"` or platform `audio_file` /
+  `video_file`.
+- **Scrolling**: like Analyze, from 32rem `section[data-view="history"]` is the
+  scroller between the fixed nav and footer (full-bleed so its scrollbar is at
+  the window edge); below 32rem `.viewport` scrolls. In the installed-app shell
+  the dock's footprint is already reserved by `.shell`'s bottom padding —
+  measured at 390×844 scrolled to the end: last poster bottom 700, dock top 764.
+
+**Retired**: `.history-list`, `.history-row`, `.h-*` (status dot list from the
+Terminal redesign) and the "Render only what `RunSummary` carries" rule — the
+backend now sends platform, duration, snippet and orientation.
 
 ## The four states, and how a failure is worded
 
-Three of them are unchanged: `runs === null` → a muted `.pending-note`
-"Loading…" (`role="status"`), `runs.length === 0` → a muted `.pending-note`
-"No previous runs yet." — **the empty case is a 200 with `{"runs": []}` and is
-not an error**, and a populated response → the day-grouped list.
+Three of them keep their semantics, restyled in Phase 3: `runs === null` →
+a muted `.pending-note` "Loading your runs…" (`role="status"`),
+`runs.length === 0` → `.history-empty` (serif "No runs yet.", one line, and an
+"Analyze a video" secondary button that goes to the intake) — **the empty case
+is a 200 with `{"runs": []}` and is not an error**, and a populated response →
+the poster grid. A fifth, client-side state: filters/search that match nothing
+→ `.history-empty` "No runs match." with a "Show all runs" button that resets
+the filter and the query (the sort is kept).
 
 The fourth used to collapse every failure into one red box reading "Could not
 load history." That string was reachable *only* when the request never reached
@@ -151,3 +193,4 @@ painting 66.8px buttons (44 content + 20.8 padding + 2 border) instead of the
 - 2026-08-15 · frontend agent · ported HistoryPanel to day-grouped rows with status dots; fixed duplicate React keys on non-adjacent "Undated" groups
 - 2026-08-15 · frontend agent (history error handling) · split transport from server failures (`NetworkError`), added a keyboard-reachable retry, replaced the panel's `.error-block` with a new `.error-inline`, added `.error-note`, and fixed `.btn`'s `content-box` touch targets (66.8px → 44px)
 - 2026-08-15 · doc-accuracy agent · corrected two stale claims against live code: `VersionLogPanel` has moved to `.error-inline` with a real retry (was recorded as not-yet-done), and `useAnalysisRun.ts` now classifies via the shared `application/gatewayError.ts` (`classifyGatewayError`) and exposes `errorKind` (was recorded as an open follow-up); documented the shared classifier itself
+- 2026-11-01 · frontend agent (Phase 3) · replaced the day-grouped row list with the editorial poster grid (filters, search, sort, day buckets, landscape spans, tint hash, legacy fallbacks, Failed/Processing badges); pure helpers in components/history.ts; History section is now its own scroller; empty + no-matches states restyled

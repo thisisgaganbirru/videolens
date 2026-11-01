@@ -63,7 +63,7 @@ when its content is taller than the band (measured: Main at 1280×989 is
 `.viewport` scrolls, as before. The footer band at ≥ 32rem reaches back through
 the shell's bottom gutter (`margin-bottom: -max(1rem, safe-bottom)`), so it sits
 on the window's bottom edge as drawn (y 932 at 1280×989, same as Main.png).
-Other tabs keep the old behaviour, while `.surface` on non-results tabs (History, API Key, Releases) remains transparent with `.tab-view .pane` dropping `padding-inline` to align flush left with section headers.
+History joined Analyze in Phase 3: `section[data-view="history"]` is full-bleed and the scroller from 32rem, with no `.col-label`/`.surface`/`.pane`. API Key and Releases keep the old behaviour, where `.surface` remains transparent with `.tab-view .pane` dropping `padding-inline` to align flush left with section headers.
 De-boxing was a specific fix: two bordered tinted rectangles side by side read
 as a PowerPoint slide.
 
@@ -385,3 +385,4 @@ back/forward was measured and the Capacitor mapping is read from
 - 2026-11-01 · frontend agent · Phase 2: dock + More sheet phone-only (≤ 37.5rem), wider installed windows get the top bar and no footer; Analyze section is now the full-bleed scroller at ≥ 32rem (`data-frame` dropped from HomeScreen); footer reaches the bottom edge on desktop; documented the More-sheet → status-bar sync path
 - 2026-11-01 · frontend agent · confirmed Privacy/Terms are already More-sheet rows (no change made); recorded the remaining gap for installed windows wider than 37.5rem as a Known issue
 - 2026-11-01 · frontend agent · owner decision: installed windows wider than 37.5rem show the footer (top bar AND footer); the app-shell footer hide moved inside the ≤ 37.5rem query; Privacy/Terms known issue closed; shell table and footer text corrected
+- 2026-11-01 · frontend agent (Phase 3) · History section scrolls like Analyze (full-bleed scroller from 32rem); dock clearance re-measured on History (last poster 700 / dock 764 at 390×844)

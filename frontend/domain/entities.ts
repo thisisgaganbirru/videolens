@@ -57,11 +57,26 @@ export interface SourceMetadata {
  *  quiet, safe default with no type-level licence needed. */
 export type AnalysisCompleteness = "full" | "captions_only";
 
+/** How a run's media arrived. The server's word on it, recorded at create
+ *  time — the authority wherever it is present. Absent on runs stored before
+ *  the field existed. */
+export type RunSourceKind = "link" | "file";
+
+/** Where a run's media came from, as the backend classifies it. `other` is a
+ *  link to a site with no dedicated label. */
+export type RunPlatform = "youtube" | "instagram" | "tiktok" | "audio_file" | "video_file" | "other";
+
+export type RunOrientation = "landscape" | "portrait";
+
 export interface RunStatusResponse {
   run_id: string;
   status: RunStatus;
   stage: string | null;
   result: VideoAnalysis | null;
+  /* Optional: older stored runs (and older backends) omit all three. */
+  source_kind?: RunSourceKind | null;
+  platform?: RunPlatform | null;
+  duration_seconds?: number | null;
   source_metadata?: SourceMetadata | null;
   /** Optional on the wire: a backend older than the caption fallback omits it
    *  entirely, and the gateway casts rather than validates. Absent means
@@ -79,6 +94,17 @@ export interface RunSummary {
   status: RunStatus;
   title: string | null;
   created_at: string;
+  /* Phase 3 (History poster grid). Every one is optional AND nullable: runs
+     stored before these fields existed come back without them, and the
+     gateway casts rather than validates. The poster renders each piece only
+     when it is actually present — see components/history.ts. */
+  source_kind?: RunSourceKind | null;
+  platform?: RunPlatform | null;
+  duration_seconds?: number | null;
+  /** The first lines of the summary, for client-side search only. */
+  summary_snippet?: string | null;
+  /** Absent means portrait: most runs are short vertical clips. */
+  orientation?: RunOrientation | null;
 }
 
 export interface RunListResponse {

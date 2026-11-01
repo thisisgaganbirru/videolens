@@ -56,7 +56,17 @@ in flight the failed view stays up with its button reading "Starting…".
 
 Beyond those, this is a straightforward state machine that mirrors the backend's status/stage contract exactly.
 
-**`sourceKind` for reopened runs.** `openRun` starts at `"file"` (it has no source to go on); `applyRun` switches it to `"url"` as soon as a status response carries `source_metadata` or the stage is `downloading` / `analyzing_captions` — all three exist only for link runs (backend `process_run.py` stores metadata right after the download). It never switches back. **Known issue (narrowed 2026-11-01):** a link run reopened while normalizing or later, whose download returned no metadata, still reads as a file run and shows the File received frame; a real fix needs a source-kind field on `RunStatusResponse`.
+**`sourceKind` for reopened runs (fixed Phase 3, 2026-11-01).** The backend
+now stores `source_kind` (`"link" | "file"`) on every new run and returns it on
+both `GET /api/runs` and `GET /api/runs/{id}`. It is the authority:
+`openRun(runId, sourceKindHint?)` seeds `sourceKind` from the History
+summary's `source_kind` (so the right frames show before the first response),
+and `applyRun` sets it from the detail response's `source_kind` when present —
+in either direction. Only when `source_kind` is null/absent (runs stored before
+the field existed) does the old heuristic apply: `source_metadata` or a
+`downloading` / `analyzing_captions` stage → `"url"`, never back. The residual
+known issue is therefore limited to legacy link runs with no metadata reopened
+after the download stage.
 
 No frontend test runner is configured for this project; verification here has relied on `tsc --noEmit` plus `next build` plus manual review, not automated unit tests.
 
@@ -68,3 +78,4 @@ No frontend test runner is configured for this project; verification here has re
 - 2026-08-29 · frontend agent · reconciled the capability strip and caption-only note against the dev-side results-view restructure
 - 2026-11-01 · frontend agent · Phase 2: reconnect-with-countdown after a failed poll (4/8/16/30s backoff, wall-clock deadline, `reconnectNow`), `retry()`/`canRetry` resubmitting the original source, `sourceName` for the progress chip
 - 2026-11-01 · frontend agent · `applyRun` infers `sourceKind: "url"` from `source_metadata` or a link-only stage, so a reopened link run no longer gets the upload-only File received frame; known issue narrowed
+- 2026-11-01 · frontend agent (Phase 3) · `source_kind` from the summary/detail is now authoritative for `sourceKind` (`openRun` takes a hint; `applyRun` honours the detail); heuristic kept as the legacy fallback
