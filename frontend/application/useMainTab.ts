@@ -1,6 +1,7 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
+import { IN_APP_ENTRY_KEY } from "@/application/backNavigation";
 
 /* Which of the shell's four destinations is showing is a property of the URL,
    not of a component. It lives here because reading and writing that URL is
@@ -61,7 +62,11 @@ function tabFromLocation(): MainTab {
  */
 export function goToMainTab(tab: MainTab): void {
   if (tabFromLocation() === tab) return;
-  window.history.pushState(null, "", mainTabHref(tab));
+  /* The marker says "the entry under this one is an app view", which is what
+     the installed app's Back link asks on browsers without the Navigation API
+     (older iOS standalone). Next's patched pushState copies its own router
+     state in beside it. */
+  window.history.pushState({ [IN_APP_ENTRY_KEY]: true }, "", mainTabHref(tab));
 }
 
 /**

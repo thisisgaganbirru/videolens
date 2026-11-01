@@ -2517,6 +2517,52 @@ h3 {
     }
   }
 
+  /* The installed app's Back link (components/AppBackLink.tsx) above the
+     title of API key, Releases, Privacy and Terms. Hidden in the web shell —
+     display:none, so it is out of the tab order and the accessibility tree,
+     and since data-shell is stamped pre-paint it never flashes. Shown in the
+     app shell at every width: iOS standalone has no back button on an iPad
+     either.
+
+     Quiet by design: Hanken 15px in muted ink, no box. The 44px target is
+     padding, pulled back out with negative margins — 12px into the column's
+     top padding, 6px to the left so the chevron lines up with the title — so
+     the title moves down by only the link's visible line plus its gap
+     (~32px), not by the whole target. */
+  .app-back {
+    display: none;
+    align-items: center;
+    gap: 0.125rem;
+    min-height: 2.75rem;
+    margin: calc(-1 * var(--space-xs)) 0 0 -0.375rem;
+    padding: 0 0.625rem 0 0.375rem;
+    font-family: var(--font-ui);
+    font-size: 0.9375rem;
+    font-weight: 500;
+    line-height: 1;
+    color: var(--color-muted);
+    text-decoration: none;
+    border-radius: var(--radius-control);
+    -webkit-tap-highlight-color: transparent;
+    transition: color var(--dur-instant) var(--ease-out);
+  }
+  .app-back svg {
+    width: 1.125rem;
+    height: 1.125rem;
+    flex: none;
+  }
+  :root[data-shell="app"] .app-back {
+    display: inline-flex;
+  }
+  .app-back:active {
+    color: var(--color-ink);
+  }
+  .app-back:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 0;
+    color: var(--color-ink);
+  }
+
   /* ========================================================================
      PAGE-SCOPED — the document vocabulary the standalone routes add *inside*
      the shared shell, not a replacement for it. Every one of these sits
@@ -3546,6 +3592,9 @@ h3 {
   .menu-item:not([aria-current="page"]):hover,
   .sheet-row:hover {
     background: var(--color-tint);
+  }
+  .app-back:hover {
+    color: var(--color-ink);
   }
   .tabbar-item:not([aria-current="page"]):not([data-active="true"]):hover {
     color: var(--color-dock-ink);

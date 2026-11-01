@@ -5,6 +5,7 @@ The three standalone pages that render *outside* the app shell: `/privacy`,
 
 **Files**
 - `frontend/components/LegalShell.tsx` — the shared frame for the two *documents*: `AppNav`, a `.view-scroll` section holding the `.legal-page` column (crumb bar, title, effective date, clauses), footer, plus the `LegalSection` clause wrapper.
+- `frontend/components/AppBackLink.tsx` — the app-shell-only Back link `LegalShell` renders above the title (see Phase 4 layout).
 - `frontend/components/AppNav.tsx` — the nav band. All three routes render it; see `app-shell-layout.md`.
 - `frontend/components/ThemeToggle.tsx` — the theme button, rendered inside `AppNav`, so it is literally the same control on every route rather than a lookalike. Exports `toggleTheme()` too.
 - `frontend/app/privacy/page.tsx` — privacy copy only.
@@ -125,6 +126,15 @@ are deleted from `globals.css`.
   boards' tint "Sample text — replace before launch" notice is not rendered:
   the copy is the real policy text, not sample text (its Contact clause still
   carries its own pre-launch placeholder).
+- **App-shell Back link (2026-11-01, owner decision).** The crumb bar stays
+  gone in the web shell. In the installed app (`html[data-shell="app"]`)
+  `LegalShell` renders `<AppBackLink />` above the `<article>`: a quiet
+  `‹ Back` (Hanken 15px, muted, 44px target, green focus ring) that goes
+  `history.back()` when the previous entry is in-app (e.g. the History tab the
+  More sheet was opened from) and to `/` otherwise (cold open). Hidden with
+  `display:none` in the web shell. `/offline` does **not** get it — it is not
+  opened from the More sheet, and its Try again already goes home. Full
+  behaviour and measurements: `app-shell-layout.md` § "App-shell Back link".
 - **Offline**: `.offline` (28rem), centred in the band at every width — the
   offline section is a flex column filling the band, so the block centres on
   phones too. A 76px round tint disc with lucide `WifiOff` (ink, never red),
@@ -636,3 +646,4 @@ including a cold start with the HTTP cache cleared via CDP
 - 2026-11-01 · frontend agent · footers on /privacy, /terms and /offline replaced by the shared `SiteFooter` (web shell) + `BottomTabBar` (app shell, Privacy/Terms in the More sheet as plain `<a>` so they still work offline); routing contract and plain-anchor rule unchanged — see app-shell-layout.md "Two shells"
 - 2026-11-01 · frontend agent (Phase 4) · editorial restyle of Privacy, Terms and Offline (no board): `.view-scroll` section replaces `data-frame="fixed"`, serif `.view-title` + `.legal-meta`, `.legal-section`/`.legal-heading`/`.legal-text` clauses at `--measure`, Offline as a dashed WifiOff tile + serif title + plain `<a>` Try again; deleted `.legal-doc`/`.legal-body`/`.page-title`/`.home-center`
 - 2026-11-01 · frontend agent (Phase 4, boards) · rebuilt Privacy/Terms/Offline to design/phase4-boards: crumb bar removed (boards draw none; all .crumb-* CSS deleted), titles Privacy/Terms, meta directly under title, no section rules, tighter section rhythm; Offline as a round tint disc + "You're offline" + new lede, centred on phones; "Your History is still here"/Open History omitted (not true offline yet); "Effective" kept over "Last updated"; sample-text notice not rendered
+- 2026-11-01 · frontend agent (app Back link) · `LegalShell` renders `<AppBackLink />` above the Privacy/Terms title, visible only in the app shell (`display:none` in web, so the boards' crumb-less web layout is unchanged); Back = history.back() when the previous entry is in-app, else `/`; /offline unchanged
