@@ -1,11 +1,18 @@
 # App shell layout
 
-The one-viewport frame every tab renders inside, in the Terminal design
-direction (see `design-direction-terminal.md` for what's locked and why).
+The one-viewport frame every tab renders inside. Visual system:
+`design-direction-editorial.md` (2026-11-01; the Terminal direction it replaced
+is kept as history). The frame mechanics below — flex chain, measured heights,
+URL tabs — carried over unchanged; the chrome around them did not (see "Two
+shells").
 
 **Files**
 - `frontend/components/HomeScreen.tsx` — the shell for one tab: nav band, active view, footer band. Takes the tab as a prop; `RoutedHomeScreen` (same file) is the variant that reads it from the URL. Also the single caller of `useCapabilities()` — see `capability-reporting.md`.
-- `frontend/components/AppNav.tsx` — the whole nav band as one component: brand, the four tab links, the mobile drawer, the theme toggle. Rendered by `HomeScreen` **and** `LegalShell`.
+- `frontend/components/AppNav.tsx` — the top bar as one component: brand, the four tab links (desktop, web shell), theme toggle, phone hamburger + full-screen menu panel. Exports `TAB_LABEL`. Rendered by `HomeScreen`, `LegalShell` and `/offline`.
+- `frontend/components/SiteFooter.tsx` — the web shell's footer (one copy; was three).
+- `frontend/components/BottomTabBar.tsx` — the installed-app dock: Analyze, History, More. Owns the More sheet's open state.
+- `frontend/components/MoreSheet.tsx` — the More `<dialog>`; contents are `MORE_SHEET_GROUPS` (data).
+- `frontend/components/shell.ts` — `ShellMode`, `SHELL_STORAGE_KEY`; `navClick.ts` — `isPlainLeftClick` shared by every nav.
 - `frontend/application/useMainTab.ts` — the tab as a property of the URL: `MAIN_TABS`, `mainTabHref`, `goToMainTab`, `useMainTab`.
 - `frontend/app/page.tsx` — the `<Suspense>` boundary `useSearchParams` requires on a statically rendered route.
 - `frontend/components/theme.ts` — the light/dark constants shared by the pre-paint script and the toggle.
@@ -31,7 +38,7 @@ Two height traps worth knowing, both hit for real during the mockup work:
   every measured height below it. `UpdateBanner` and the standalone routes
   each set it for this reason.
 
-**Nav** is a floating pill — translucent with `--color-nav-bg` tint (a soft visible green tint in light theme), `backdrop-filter`, pulled half a rem
+**Nav (Terminal era — replaced 2026-11-01, see "Two shells").** Was a floating pill — translucent with `--color-nav-bg` tint (a soft visible green tint in light theme), `backdrop-filter`, pulled half a rem
 past the shell gutter so it sits proud of the content. Four tabs: Analyze,
 History, API Key, Releases. It is one component, `AppNav`, rendered by every
 route — see "Tab routing" below for why that only became possible once the tabs
@@ -48,7 +55,7 @@ while `.surface` on non-results tabs (History, API Key, Releases) remains transp
 De-boxing was a specific fix: two bordered tinted rectangles side by side read
 as a PowerPoint slide.
 
-**Footer** is a compact bar — wordmark left, legal links right, hairline above.
+**Footer** (web shell only) is a compact bar — "VideoLens AI" left, underlined Privacy/Terms right, full-bleed hairline above. Hidden in the app shell.
 
 ## Responsive model
 
@@ -57,16 +64,39 @@ desktop-first `@container` queries measuring `.viewport`, purely so one artifact
 could show web and mobile via a demo switch; the design doc calls for inverting
 that in the real implementation, and it is inverted here.
 
-Mobile: nav collapses to wordmark · menu · theme, with tabs moving into a left
-drawer over a dimmed scrim. Touch ergonomics come from `@media (pointer: coarse)`
+Mobile (< 48rem, web shell): the bar is brand · theme · hamburger, and the
+hamburger opens a full-screen menu panel in place of the content (the drawer and
+scrim are gone as of 2026-11-01). Touch ergonomics come from `@media (pointer: coarse)`
 (44px targets) rather than width, and hover-only affordances are made permanent
 there and under `@media (hover: hover)`.
 
-**The drawer bug, do not reintroduce:** `backdrop-filter` on `.nav` silently
+**The drawer bug (historical — drawer removed 2026-11-01; still true of any future overlay), do not reintroduce:** `backdrop-filter` on `.nav` silently
 makes it the containing block for every absolutely-positioned descendant *even
 at `position: static`*. The drawer's `inset: 0` then resolves against the nav
 pill and renders as a tiny scrolling box inside the nav row. The fix is
 `backdrop-filter: none` at mobile width.
+
+## Two shells (2026-11-01)
+
+`<html data-shell="web"|"app">` is stamped before first paint (detection and the
+`videolens_shell` testing override: `design-direction-editorial.md`). Every route
+renders **both** chromes; CSS shows one.
+
+| | web (browser tab) | app (installed PWA / Capacitor) |
+|---|---|---|
+| Top bar | brand · tab links (≥ 48rem) · theme · hamburger (< 48rem) | brand · theme only |
+| Phone menu | `.menu-panel`, sibling of `.nav-wrap`, full-width 60px cards; hides the content section while open | none |
+| Bottom | `SiteFooter` | `BottomTabBar` (fixed dock, inset by `--page-gutter`/safe areas, max 30rem) |
+| Privacy / Terms | footer | More sheet |
+
+This is a **deliberate exception to "same footer on every route"**: the rule is
+now "same chrome on every route *within a shell*". Both shells still render on
+`/`, `/privacy`, `/terms`, `/offline`.
+
+- **Content never sits under the dock.** In app mode `.shell` gets `padding-bottom: calc(var(--tabbar-height) + max(var(--space-sm), var(--safe-bottom)) + var(--space-sm))`, so the scroller's last line clears the bar. Measured at 390×844: dock top 764, Analyze content ends 565, legal scroller ends 748.
+- **Top bar is sticky, full-bleed.** `.viewport` is `container-type: inline-size`; `.nav-wrap` and `.page-end` break out of the shell's gutter with `margin-inline: calc((100% - 100cqi) / 2)` + matching padding — full width without `100vw` (which counts the scrollbar and causes horizontal scroll).
+- **More sheet** is a native modal `<dialog>` opened with `showModal()`: top layer, inert page, Escape via `cancel`, `::backdrop` click closes (dialog has no own padding, so only a backdrop click targets the element), focus returns to More on every close path. Add rows by editing `MORE_SHEET_GROUPS` — three row kinds: `tab` (in-place nav on `/`), `route` (plain `<a>`, works from `/offline`), `theme` (`role="switch"`, reuses `toggleTheme`).
+- **Cascade-layer trap.** The responsive `@media` blocks in `globals.css` are *unlayered*, so they beat anything in `@layer components` regardless of specificity. The ≥ 48rem `.nav-links { display: flex }` is therefore written `:root:not([data-shell="app"]) .nav-links` — unscoped, it would resurrect the links in app mode. Any new unlayered responsive rule touching chrome needs the same guard.
 
 ## Tab routing
 
@@ -203,6 +233,16 @@ every nav in the app. Do not collapse this back into one rule.
 
 ## Known issues
 
+**Phase 1 editorial (2026-11-01):**
+
+- **Capacitor `SystemBars style: "DARK"` was left as-is** (out of Phase 1 scope). On the now-light paper it likely gives light status-bar icons on a light bar — needs an owner decision and a device check (`docs/frontend/android-live-reload.md`; agents don't run the native build).
+- **Tabbing past the last More-sheet row** moves focus to the browser chrome and back, not straight to the first row. That is native `showModal()` behaviour (the page behind stays inert, measured); a hand-rolled wrap-around trap was not added.
+- **App mode on a wide window** keeps the bottom dock (centred, max 30rem). Owner to confirm for installed desktop PWAs.
+- **`--color-focus` now equals the accent**, so legacy hover rules that used `--color-focus` as a hover tint are visual no-ops until Phase 2 re-skins those views.
+- Not verified on a physical device: Playwright/Chromium at 1280×989 and 390×844 only, where `env(safe-area-inset-*)` is 0.
+
+**Terminal era (historical — the drawer, pill nav and `.wordmark` below no longer exist):**
+
 - **Visually verified** against `mockups/terminal-redesign.html` via Playwright
   (Chromium, 1440×900 and 390×844, light and dark, plus iPhone 13 touch
   emulation). Confirmed: the mobile drawer renders full-height at the viewport
@@ -307,3 +347,4 @@ back/forward was measured and the Capacitor mapping is read from
 - 2026-08-29 · frontend agent · `HomeScreen` now calls `useCapabilities()` once and owns the always-present `.cap-slot` live region inside `.intake`; the slot is zero-height and carries no CSS on a healthy deployment, so the idle Analyze layout is unchanged (measured identical). New `.cap-*` block in globals.css sits after `.error-inline`
 - 2026-08-15 · doc-accuracy agent · marked two Known issues fixed against live code: `/offline` now renders `<AppNav activeTab={null} />` (was brand-only), and `.page-end`'s negative `margin-bottom` closes the 16px flow-vs-fixed footer gap at 390px (was open) — both cross-checked against `legal-offline-routes.md`, which had already recorded the fixes and flagged this doc as stale
 - 2026-08-16 · main session · wired `--safe-top` into `.nav-wrap`'s `padding-top` after a user screenshot on a physical Android device (`build8`) showed the nav pill sitting flush against the status bar; not caught by the earlier Playwright emulation pass since Chromium doesn't produce a nonzero `env(safe-area-inset-top)`. Not re-verified on device by this agent — only reasoned from the same `max()` pattern already used for the other three safe-area sides
+- 2026-11-01 · frontend agent · editorial redesign Phase 1: two shells (web top bar + full-screen phone menu + footer / app bottom dock + More sheet) chosen by pre-paint `data-shell`; drawer, scrim and pill nav removed; sticky full-bleed bar via cqi; measured no document scroll in all 32 width×theme×shell×route combos

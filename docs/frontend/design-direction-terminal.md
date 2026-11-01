@@ -1,5 +1,10 @@
 # Terminal design direction (locked mockup)
 
+> **SUPERSEDED 2026-11-01** by `design-direction-editorial.md` (warm paper,
+> Hanken Grotesk + Newsreader, green accent, separate web/app shells). Kept as
+> history: it explains why the one-viewport frame and URL tabs exist, which the
+> editorial direction keeps. Its palette, mono type, pill nav and drawer are gone.
+
 **Status: implemented.** `frontend/` now ships this direction — see
 `app-shell-layout.md` for the shell, and the per-feature docs for each view.
 This file remains the authority on *why* the design is what it is; where the
@@ -93,3 +98,6 @@ Checked against source rather than invented:
 ## Tests
 
 None; it's a static reference file with no imports and no build step.
+
+## Changelog
+- 2026-11-01 · frontend agent · marked superseded by design-direction-editorial.md
