@@ -3,7 +3,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import type { FreeRunsStatus } from "@/domain/entities";
 import { apiKeyStore, freeRunsGateway, nativeShell } from "@/infrastructure/container";
-import { noteReadResult, onReconnectChance } from "@/application/serverReachability";
+import { forgetReadResult, isReadFailing, noteReadResult, onReconnectChance } from "@/application/serverReachability";
 
 /* Free runs (Phase 5b): an anonymous device gets a few runs per UTC day
    without a Gemini key. This module holds the one copy of what the app knows
@@ -59,7 +59,7 @@ export function refreshFreeRuns(): Promise<FreeRunsStatus | null> {
   inFlight = freeRunsGateway
     .fetchStatus()
     .then((status) => {
-      noteReadResult();
+      noteReadResult("free-runs");
       refusedSinceLastRead = false;
       publish({ status });
       return status;
@@ -67,7 +67,7 @@ export function refreshFreeRuns(): Promise<FreeRunsStatus | null> {
     .catch((err: unknown) => {
       /* Quiet here; whether the server was reachable at all is reported to
          serverReachability, which says so on Analyze (refinement 4). */
-      noteReadResult(err);
+      noteReadResult("free-runs", err);
       if (!refusedSinceLastRead) publish({ status: null });
       return null;
     })
@@ -159,12 +159,20 @@ export function useFreeRuns(): { banner: FreeRunsBanner | null; blocked: boolean
   const hasKey = useSyncExternalStore(subscribeKey, hasKeySnapshot, hasKeyServerSnapshot);
 
   useEffect(() => {
-    if (hasKey) return;
+    if (hasKey) {
+      /* No read is made on a saved key, so a failure from before the key
+         was saved must not keep the "can't reach" notice up (refinement
+         11): nothing would ever retry it. */
+      forgetReadResult("free-runs");
+      return;
+    }
     void refreshFreeRuns();
     /* The launch read failed for want of a connection: read again when it
-       may be back (refinement 4, LCH-06), so the pill appears on its own. */
+       may be back (refinement 4, LCH-06), so the pill appears on its own.
+       Refinement 11: also whenever this read is the one holding the notice
+       up. After a 402 the status is kept, so `null` alone would miss it. */
     return onReconnectChance(() => {
-      if (snapshot.status === null) void refreshFreeRuns();
+      if (snapshot.status === null || isReadFailing("free-runs")) void refreshFreeRuns();
     });
   }, [hasKey]);
 
