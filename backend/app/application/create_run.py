@@ -1,5 +1,6 @@
 import os
 import uuid
+from datetime import datetime, timezone
 
 from ..domain.entities import FreeRunClaim, Principal, Run
 from ..domain.errors import (
@@ -11,6 +12,7 @@ from ..domain.errors import (
     RunSchedulingError,
     TermsNotAcceptedError,
 )
+from ..domain.policies import seconds_until_next_utc_day
 from ..domain.run_facts import file_platform
 from ..domain.ports import (
     DeviceTokenSigner,
@@ -145,7 +147,9 @@ class CreateRunUseCase:
         if not gemini_api_key and not await self._spend_cap.try_consume():
             raise QuotaExceededError(
                 "VideoLens AI has reached its limit for today. Add your own Gemini key "
-                "from the menu to keep going, or try again tomorrow."
+                "from the menu to keep going, or try again tomorrow.",
+                # The budget is per UTC day (DailyBudget), so it frees at midnight UTC.
+                retry_after_seconds=seconds_until_next_utc_day(datetime.now(timezone.utc)),
             )
 
         saved = None

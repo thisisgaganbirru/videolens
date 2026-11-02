@@ -317,10 +317,10 @@ the section band every time (at 140: band 57-140, field 53-105, message
   `detail` is a short user-facing sentence — the backend's curated 503s); a
   4xx keeps a usable `detail` string, else a generic line (FastAPI's 422
   arrays are not shown); a 429 reads `Retry-After` (seconds or HTTP date) as
-  "You're going a bit fast. Try again in about N minutes." **The backend sends
-  no `Retry-After` and does not list it in `expose_headers`** (Retry-After is
-  not CORS-safelisted), so today the 429 path falls back to the backend's
-  `detail`; it starts working once the backend sends and exposes the header.
+  "You're going a bit fast. Try again in about N minutes." Since refinement 7
+  the backend sends `Retry-After` (delta-seconds until the rate-limit window
+  frees) on the 429 and lists it in CORS `expose_headers`, so this wording is
+  live; without the header it still falls back to the backend's `detail`.
 
 ## Changelog
 
@@ -342,3 +342,4 @@ the section band every time (at 140: band 57-140, field 53-105, message
 - 2026-11-02 · frontend agent (refinement 4) · field errors moved next to their controls (#url-error / #terms-error / #file-error, each aria-describedby), terms checkbox gets aria-invalid + danger outline + focus, control+message revealed with revealField (INT-01, INT-03)
 - 2026-11-02 · frontend agent (refinement 5) · revealField clips to the scrolling section and prefers field + error message (message bottom edge visible) over the group with Analyze in a short landscape band (INT-01b)
 - 2026-11-02 · frontend agent (refinement 6) · INT-04 all field errors at once (first invalid focused); INT-16 0-byte file rejected; A11-13 44x44 terms hit area; RUN-16 create-run failure wording
+- 2026-11-02 · frontend agent (refinement 7) · RUN-16 note updated: the backend now sends and exposes Retry-After on 429, so "Try again in about N minutes" is live

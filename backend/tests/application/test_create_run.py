@@ -58,10 +58,12 @@ class CreateRunUseCaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_rejects_when_daily_quota_exceeded(self) -> None:
         use_case = self._make_use_case(spend_allowed=False)
-        with self.assertRaises(QuotaExceededError):
+        with self.assertRaises(QuotaExceededError) as caught:
             await use_case.execute(
                 principal=PRINCIPAL, accept_terms=True, file=None, url="https://x.test/v.mp4", gemini_api_key=None
             )
+        # The budget frees at the next UTC midnight: the API sends this as Retry-After.
+        self.assertTrue(1 <= caught.exception.retry_after_seconds <= 86400)
         self.assertEqual(self.spend_cap.consume_calls, 1)
         self.assertEqual(self.queue.enqueued, [])
 

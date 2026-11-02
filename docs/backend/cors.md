@@ -57,6 +57,15 @@ offline server. Check the backend's Railway **HTTP logs** instead: an
 origin. `400` on a preflight only ever means a disallowed origin, method, or
 header, so once the method and header lists are known good, it is the origin.
 
+## Exposed response headers
+
+`expose_headers=["Retry-After"]` (refinement 7). Only CORS-safelisted response
+headers are readable by a cross-origin `fetch`, and `Retry-After` is not one;
+the web app and the Android WebView (`https://localhost`) are both
+cross-origin to the API, so without this `res.headers.get("Retry-After")` in
+`runsGateway.ts` is always null. Add any other header the client must read
+here too.
+
 ## Tests
 
 - `backend/tests/infrastructure/test_config.py` — native origins are always
@@ -64,7 +73,10 @@ header, so once the method and header lists are known good, it is the origin.
 - `backend/tests/interface/api/test_cors.py` — drives a real preflight
   through the assembled app: `https://localhost` gets `200`, an unrelated
   origin gets `400`.
+- `backend/tests/interface/api/test_retry_after.py` — a cross-origin response
+  lists `retry-after` in `access-control-expose-headers`.
 
 ## Changelog
 
 - 2026-08-20 · main session · always allow the Capacitor Android WebView origins in code; documented why the APK's `Origin` is `https://localhost` and how to spot a rejected preflight in the Railway HTTP logs
+- 2026-11-02 · frontend agent (refinement 7) · expose_headers=["Retry-After"] so the client can read the 429 wait
