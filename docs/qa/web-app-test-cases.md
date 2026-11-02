@@ -827,8 +827,22 @@ check is pixel-based: a screenshot of the solid 70% of each visible fade (chevro
 
 Observation: at 320x640 and 150% font the footer wraps and takes about 170 px, leaving a content band of about 330 px, so a forced click on the tab row can land on the footer. This is the short-viewport extreme, not reported as a defect.
 
+### 2026-11-02 · videolens-65 (web QA) · run 11 (refinement 13 retest, HEAD a69c188)
+
+CSS-only. Playwright, Chromium, `:3005` dev server, mocked `/api`; root font simulated with `html{font-size:N%}`. No real runs used.
+
+| # | Item | Result | Notes |
+|---|---|---|---|
+| 1 | D-R12-1 header, 320/360/390 x 100-200% font, light+dark, `/`, `/app`, History, API key, Privacy, results | PASS | 180 page checks. Menu and theme toggle 44x44, 8px apart, on screen, nothing clipped, no hscroll. 320@100%: theme 208-252, menu 260-304. 320@200%: theme 192-236, menu 244-288. 360@200%: theme 232-276, menu 284-328. Nav height 68 everywhere. D-R12-1 fixed. |
+| 2 | More-sheet theme control, 320/360 x 100-200% | PASS | No label wider than its segment (min slack 9.8 px), every segment >=44px tall and wide, none outside the sheet. 320: indented row at 100%, full-width row at 115-130%, stacked from 150%. 360: indented row at 100-115%, full-width row at 130%, stacked from 150%. Dark selects dark (`data-theme=dark`, radio checked) at 100% and 200% at both widths. |
+| 3 | Web footer 320/360 x 130/150/200% | PASS | Footer h / band (640px viewport): 320@130% 56/495 no wrap; 320@150% 76/473 wraps; 320@200% 86/454 wraps; 360@130% 56/495; 360@150% 56/492; 360@200% 86/454 wraps. Links 44px tall everywhere. Wrap starts at 150% at 320, 200% at 360. |
+| 4 | Normal-scale regression 390/1280, light+dark | PASS | `/privacy` nav and footer strips pixel-identical to the run 10 baseline at 390 light and 1280 dark (the only baselines that existed). No hscroll on `/`, `/app`, `/terms`, `/privacy` at 390/1280, light and dark. Nav 68 (390) / 76 (1280), footer 56. 390 sheet theme control indented row, 94x44 segments. Results and History were not pixel-compared; their headers were covered by item 1. |
+
+Harness note: a first run clicked a hidden "More" match, so every sheet check timed out. That was a script bug, not an app defect; fixed and re-run.
+
 ## Changelog
 
+- 2026-11-02 · videolens-65 (web QA) · run 11: refinement 13 retest, items 1-4 PASS (header 44px and on screen up to 200% font, theme control fits and stacks from 150%, footer links 44px, normal-scale unchanged); D-R12-1 fixed
 - 2026-11-02 · videolens-65 (web QA) · run 10: refinement 12 retest, items 1, 2, 4 PASS (tab fades clean, threshold 359/360 correct); item 3 FAIL D-R12-1 (the menu button is 41 px off-screen at 320 wide, 150% font)
 - 2026-11-02 · videolens-65 (web QA) · run 9: refinement 11 retest items 1-4 all PASS (D-R10-1 and D-R10-2 verified fixed), no defects
 - 2026-11-02 · videolens-65 (web QA) · run 8: refinement 10 retest, items 1, 3a, 3c, 4 PASS; item 2 PASS with D-R10-1 (a partial 5xx is masked by the other healthy read); item 3b FAIL D-R10-2 (Download .md overflows its card at 320/360 wide at 130% font)
