@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Hanken_Grotesk, Newsreader } from "next/font/google";
 import ServiceWorkerRegistration from "@/components/ServiceWorkerRegistration";
-import UpdateBanner from "@/components/UpdateBanner";
+import UpdatePrompt from "@/components/UpdatePrompt";
 import { NATIVE_SCHEME_FLAG, SYSTEM_DARK_QUERY, THEME_COLOR, THEME_STORAGE_KEY } from "@/components/theme";
 import { SHELL_STORAGE_KEY } from "@/components/shell";
 import { LANDING_REDIRECT_SCRIPT } from "@/application/landingRedirect";
@@ -142,7 +142,7 @@ export default function RootLayout({
       </head>
       <body className="h-[100dvh] overflow-clip bg-[var(--color-paper)] text-[var(--color-ink)] antialiased select-none">
         <div className="viewport">
-          <UpdateBanner />
+          <UpdatePrompt />
           {children}
           <ServiceWorkerRegistration />
         </div>

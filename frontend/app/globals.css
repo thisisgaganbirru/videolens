@@ -35,7 +35,12 @@ html {
 
 html,
 body {
-  min-width: 20rem;
+  /* 320 CSS px, the narrowest phone width this layout is built for — in px,
+     not rem (refinement 10): as `20rem` it grew with the root font size, so
+     at Android font scale 1.3 the page claimed 416px on a 320px screen and
+     everything past 320 (the nav's theme toggle, the update prompt's right
+     edge) was cut off. */
+  min-width: 320px;
   overflow-x: clip;
 }
 
@@ -2767,7 +2772,9 @@ h3 {
     height: 1.125rem;
     flex: none;
   }
-  :root[data-shell="app"] .app-back {
+  :root[data-shell="app"] .app-back,
+  .app-back--everywhere {
+    /* Refinement 10: Privacy and Terms show it on the web too (owner). */
     display: inline-flex;
   }
   .app-back:active {
@@ -3077,85 +3084,94 @@ h3 {
     font-size: 0.9375rem;
   }
 
-  /* ---- update banner (native Android only; refinement 9) ----
-     The free-runs strip's voice as a full-width band above the shell: surface
-     fill, one hairline under it, 15px copy (ink headline, ink-2 line), the
-     near-black pill and a quiet round dismiss. `flex-shrink: 0` is
-     load-bearing: it sits directly in .viewport (a flex column) and must not
-     squeeze the measured one-viewport frame below it. Both controls are 44px
-     targets; nothing here is smaller than the 2.75rem floor. */
-  .update-banner {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    gap: var(--space-xs);
-    min-height: 3.5rem;
-    padding: var(--space-2xs) var(--space-2xs) var(--space-2xs) var(--page-gutter);
-    background: var(--color-surface);
-    border-bottom: var(--rule-w) solid var(--color-rule);
-  }
-  .update-banner__text {
-    flex: 1 1 auto;
-    min-width: 0;
-    margin: 0;
-    font-size: 0.9375rem;
-    line-height: 1.4;
-    color: var(--color-ink-2);
-  }
-  .update-banner__text strong {
-    font-weight: 600;
-    color: var(--color-ink);
-  }
-  .update-banner__action {
-    flex: 0 0 auto;
-    min-height: 2.75rem;
-    padding: 0.5rem 1.125rem;
-    font-size: 0.9375rem;
-  }
-  .update-banner__dismiss {
-    all: unset;
+  /* ---- update prompt (native Android only; refinement 10) ----
+     A centred card in a native modal <dialog> (components/UpdatePrompt.tsx).
+     The top layer takes it out of .viewport's flow entirely, so the measured
+     nav / content band / footer frame never moves; it replaces the R9 band
+     that sat above the shell.
+
+     Sized for the worst cases device QA found on the band: 320 and 343 CSS px
+     wide with Android font scale 1.3. The actions wrap (each wants ~9.5em
+     before it shares a row) and stack full width when two do not fit, and the
+     button labels themselves may wrap rather than overflow. Sideways on a
+     phone (915x360) the dialog is capped to the viewport less a margin and
+     scrolls inside, so no button is ever cut off. */
+  .update-prompt {
     box-sizing: border-box;
-    cursor: pointer;
-    flex: 0 0 auto;
+    width: min(100% - 2 * var(--page-gutter), 24rem);
+    max-width: none;
+    max-height: calc(100% - 2 * var(--space-sm));
+    margin: auto;
+    padding: 0;
+    border: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: var(--color-surface);
+    color: var(--color-ink);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-floating);
+  }
+  .update-prompt::backdrop {
+    background: var(--color-backdrop);
+  }
+  .update-prompt[open] {
+    animation: prompt-in var(--dur-mid) var(--ease-out);
+  }
+  .update-prompt__card {
+    padding: var(--space-md);
+  }
+  .update-prompt__mark {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 2.75rem;
     height: 2.75rem;
+    margin-bottom: var(--space-sm);
     border-radius: var(--radius-pill);
-    color: var(--color-ink-2);
-    transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out);
-  }
-  .update-banner__dismiss svg {
-    width: 1.125rem;
-    height: 1.125rem;
-  }
-  .update-banner__dismiss:focus-visible {
-    outline: 2px solid var(--color-focus);
-    outline-offset: -2px;
-  }
-  .update-banner__dismiss:active {
     background: var(--color-tint);
+    color: var(--color-ink);
   }
-  /* A phone below ~25rem: the version line would wrap the band to three
-     lines; the headline and the pill say enough. */
-  @media (max-width: 25rem) {
-    .update-banner__text span {
+  .update-prompt__mark svg {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+  .update-prompt__title {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-size: 1.625rem;
+    font-weight: 400;
+    line-height: 1.2;
+    color: var(--color-ink);
+    overflow-wrap: anywhere;
+  }
+  .update-prompt__text {
+    margin: var(--space-2xs) 0 0;
+    font-size: 1rem;
+    line-height: 1.5;
+    color: var(--color-ink-2);
+    overflow-wrap: anywhere;
+  }
+  .update-prompt__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+    margin-top: var(--space-md);
+  }
+  .update-prompt__btn {
+    flex: 1 1 9.5em;
+    min-width: 0;
+    white-space: normal;
+  }
+  /* Sideways: less air, so the card stays well inside 360px. */
+  @media (max-height: 31.25rem) {
+    .update-prompt__card {
+      padding: var(--space-sm) var(--space-md);
+    }
+    .update-prompt__mark {
       display: none;
     }
-  }
-  /* Sideways (the same 31.25rem test the dock uses): one 44px row. At 360px
-     tall the old 56px band took 16% of the screen; this is 45px with its
-     rule. The version line stays — there is width to spare. */
-  @media (max-height: 31.25rem) {
-    .update-banner {
-      min-height: 0;
-      padding-block: 0;
-    }
-    .update-banner__text {
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+    .update-prompt__actions {
+      margin-top: var(--space-sm);
     }
   }
 
@@ -4200,10 +4216,6 @@ h3 {
   .btn-ink:hover:not(:disabled) {
     background: var(--color-ink-2);
   }
-  .update-banner__dismiss:hover {
-    background: var(--color-tint);
-    color: var(--color-ink);
-  }
   .btn-secondary:hover:not(:disabled):not([aria-disabled="true"]) {
     background: var(--color-tint);
   }
@@ -4300,6 +4312,17 @@ h3 {
     transform: translateY(100%);
   }
   to {
+    transform: none;
+  }
+}
+
+@keyframes prompt-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+  to {
+    opacity: 1;
     transform: none;
   }
 }
