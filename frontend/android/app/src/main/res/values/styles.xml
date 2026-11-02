@@ -13,6 +13,10 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <!-- Refinement 3, #3: the window behind the WebView follows the OS night
+             mode (@color/app_background is night-qualified), so nothing light
+             shows between the splash and the page's first paint in dark mode. -->
+        <item name="android:windowBackground">@color/app_background</item>
     </style>
 
 

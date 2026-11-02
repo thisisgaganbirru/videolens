@@ -99,11 +99,29 @@ Below API 31 the compat library draws the same background and icon through
 2. The hand-off to the web splash: the native mark sits dead centre, the web
    splash's mark sits a little above centre (wordmark under it), so a small
    jump is expected; there must be no white flash between them.
-3. The gap between the launch theme ending and the WebView's first frame:
-   `AppTheme.NoActionBar` has no `windowBackground` of its own, so that gap
-   shows the DayNight default (grey/white). If it is visible, the fix is
-   `<item name="android:windowBackground">@color/splash_background</item>` on
-   `AppTheme.NoActionBar`; not applied, as it was outside the listed change.
+3. The gap between the launch theme ending and the WebView's first frame.
+   *Fixed in refinement 3 (#3), see below.*
+
+### No light flash before first paint (refinement 3, #3)
+
+LCH-02 on the bundled APK: dark OS, a light flash between the splash and the
+first paint. Two light surfaces sat in that gap: `capacitor.config.ts`
+`android.backgroundColor` (`#F6F4EE`, one value, which `Bridge` applies to the
+WebView inside `BridgeActivity.onCreate`), and `AppTheme.NoActionBar`'s window
+background (the DayNight default). Both now follow the OS night mode:
+
+| Where | What |
+|---|---|
+| `res/values/splash.xml`, `res/values-night/splash.xml` | new `@color/app_background`: `#F6F4EE` / `#0E100F` (same as `splash_background`) |
+| `res/values/styles.xml` `AppTheme.NoActionBar` | `android:windowBackground` = `@color/app_background` (no `values-night/styles.xml` needed: the colour is the qualified resource) |
+| `MainActivity.applyNightBackground()` | right after `super.onCreate` (same frame as the Bridge's own call, before anything draws) sets the WebView and decor-view background to `@color/app_background`; re-applied in `onConfigurationChanged`, because `uiMode` is in the manifest's `configChanges` (no recreate on a night-mode flip) |
+| `capacitor.config.ts` | `backgroundColor` unchanged (`#F6F4EE`); the comment now says it is only the fallback. Light mode is pixel-identical |
+
+It follows the OS, not the in-app stored theme (native cannot read that before
+the page runs). An explicit in-app light choice on a dark phone therefore still
+goes dark paper → light page, the expected, documented mismatch.
+Verified: `./gradlew assembleDebug` after `npm run android:sync`. Not verified
+on a device (no emulator access for this agent).
 
 ## Welcome
 
@@ -177,3 +195,4 @@ Capacitor bridge.
 - 2026-11-01 · frontend agent (Phase 5d) · created: installed-app splash and one-time Welcome, FirstRunStore port and adapter, SharedUrlSource.pending()
 - 2026-11-01 · frontend agent (refinement 1) · Android launch screen: BrandMark vector + paper colours (light/night), postSplashScreenTheme, stock splash.png removed; splash script moved to the root head; storage-crash known issue closed
 - 2026-11-02 · frontend agent (refinement 2) · noted that the device-following default theme makes the launch screen and first page agree when no theme is stored (LCH-02/03)
+- 2026-11-02 · frontend agent (refinement 3) · window + WebView background follow the OS night mode (`@color/app_background`, `MainActivity.applyNightBackground`), closing the dark-launch light flash (LCH-02)

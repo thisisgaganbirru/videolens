@@ -7,8 +7,11 @@ const config: CapacitorConfig = {
   android: {
     allowMixedContent: false,
     // Light `--color-paper` (app/tokens.css): the WebView's colour before the
-    // first paint. One value only, so it cannot follow the OS; the pre-paint
-    // script stamps the real theme before the page's first frame.
+    // first paint. One value only, so it cannot follow the OS. Kept as the
+    // fallback only: MainActivity.applyNightBackground() overrides it in the
+    // same frame with the night-qualified @color/app_background (#F6F4EE /
+    // #0E100F), so a dark-mode launch no longer flashes light (refinement 3,
+    // #3). Light mode is unchanged: both values are #F6F4EE.
     backgroundColor: "#F6F4EE",
   },
   plugins: {
