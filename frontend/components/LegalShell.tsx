@@ -40,7 +40,7 @@ export default function LegalShell({ title, effective, current, children }: Lega
     <div className="shell" data-view="legal">
       <AppNav activeTab={null} />
 
-      <section className="view-scroll" data-view="legal" aria-label={title}>
+      <main className="view-scroll" data-view="legal" aria-label={title}>
         <div className="legal-page">
           <AppBackLink />
           <article className="select-text">
@@ -51,7 +51,7 @@ export default function LegalShell({ title, effective, current, children }: Lega
             <div className="legal-copy">{children}</div>
           </article>
         </div>
-      </section>
+      </main>
 
       <SiteFooter current={current} />
       <BottomTabBar activeTab={null} currentRoute={current} />

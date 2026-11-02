@@ -109,7 +109,7 @@ are deleted from `globals.css`.
 
 - **Scroll model.** `data-frame="fixed"` is dropped from all three routes.
   Each renders `<section class="view-scroll">`, the same scroller Analyze,
-  History, API key and Releases use (`.shell > section.view-scroll` in
+  History, API key and Releases use (`.shell > main.view-scroll` in
   `globals.css`): from 32rem it is the full-bleed region between the fixed nav
   and footer, `overflow-y: auto` so a short page shows no scrollbar; below
   32rem `.viewport` scrolls. Measured at 1366×900, 390×844 web and app, both
@@ -700,6 +700,22 @@ real-service-worker offline pass (production build, `setOffline(true)`,
 including a cold start with the HTTP cache cleared via CDP
 `Network.clearBrowserCache` so the SW cache was the only source).
 
+## Refinement 6 (2026-11-02)
+
+**OFF-03, a real 404.** `app/not-found.tsx` replaces Next's bare 404 with the
+app's chrome: `.shell` + `AppNav activeTab={null}` + `main.view-scroll
+data-view="not-found"` + `SiteFooter` + `BottomTabBar activeTab={null}`.
+Content mirrors /offline (shares its CSS): a tint disc with a compass, h1
+"This page doesn't exist.", one line ("The address may be mistyped, or the
+page has moved."), and two links, "Open VideoLens" (/app) and "Go to the home
+page" (/). Title "Page not found · VideoLens AI". The static export writes it
+as `out/404.html` (head script passes `node --check`). The service worker is
+unchanged and deliberately does not precache it: navigation is network-first,
+so online an unknown path gets the server's 404 page; offline it gets /offline
+(the SW cannot tell "no such page" from "needs the network"), which has the
+same chrome. Both verified with the SW active against the export served like a
+static host, in the web and installed shells.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported privacy/terms/offline off the Midnight Glass classes
@@ -715,3 +731,4 @@ including a cold start with the HTTP cache cleared via CDP
 - 2026-11-01 · frontend agent (Phase 5a) · Offline page gets the board's "Your History is still here." + Open History (`<a href="/?view=history">`); service worker serves `/?view=history` from the cached shell offline (allowlisted view); cache digest now includes the template; verified with the real worker and the server stopped
 - 2026-11-01 · frontend agent (Phase 5a) · Privacy: "Information retained" now says the server keeps a run about an hour after it starts and then deletes it; new "Your History" section (IndexedDB only, never sent back, 20 most recent, cleared with site data, browser may evict e.g. Safari after 7 days unvisited). Effective date left unchanged — owner to decide
 - 2026-11-01 · frontend agent (Phase 5c) · SW: precache /app, / (now the landing) offline-capable, History offline moved to /app?view=history, legacy /?view=history via the landing's redirect; offline page links → /app; measured with the server killed
+- 2026-11-02 · frontend agent (refinement 6) · OFF-03 app/not-found.tsx with shared chrome (out/404.html); SW unchanged
