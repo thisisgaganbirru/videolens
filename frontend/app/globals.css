@@ -1092,7 +1092,7 @@ h3 {
     overflow-x: auto;
     /* A tab brought into view (chosen, or focused by the arrow keys) stops
        clear of the edge chevrons' fade, not underneath it (refinement 11). */
-    scroll-padding-inline: calc(2.75rem + 4px); /* chevron width + the list's 4px padding */
+    scroll-padding-inline: 48px; /* = .tab-more width: 44px + the list's 4px padding */
     overscroll-behavior-x: contain;
     scrollbar-width: none;
     padding: 4px;
@@ -1139,8 +1139,20 @@ h3 {
      from the list's scroll position; the matching side gets a fade into the
      card surface with a chevron on it. The fade stops one rule-width above
      the bottom, so the 1px row rule stays continuous under it. Nothing shows
-     when the tabs fit, which is every width at the normal text size. */
+     when the tabs fit: at the normal text size the row overflows only below
+     360 CSS px (at 320 it is 41px too wide, so the chevron shows there).
+     Refinement 12 (device QA): the list bleeds 4px past the wrapper on each
+     side (the focus-ring padding above, cancelled by -4px margin), and its
+     scrollport is that padding box. Pinned to the wrapper's edges, the fades
+     left those 4px open and tab text peeked past each chevron. They now
+     start at the list's outer edge (--tab-bleed) and are widened by the same
+     amount, so the covered band still ends where scroll-padding stops a
+     chosen tab: 48px in from the scrollport. The fade and chevron are fixed
+     px, not rem: they only appear when the text is large, and a rem fade
+     grew with it (61px a side at 130%, 92px at 200%) until no tab fit
+     between the two. */
   .tab-scroller {
+    --tab-bleed: 4px; /* = .tab-list padding / negative margin */
     position: relative;
     flex-shrink: 0;
     min-width: 0;
@@ -1152,23 +1164,23 @@ h3 {
     top: 0;
     bottom: var(--rule-w);
     z-index: 1;
-    width: 2.75rem;
+    width: calc(44px + var(--tab-bleed));
     display: none;
     align-items: center;
     cursor: pointer;
     color: var(--color-ink);
   }
   .tab-more svg {
-    width: 1.125rem;
-    height: 1.125rem;
+    width: 18px;
+    height: 18px;
   }
   .tab-more--start {
-    left: 0;
+    left: calc(-1 * var(--tab-bleed));
     justify-content: flex-start;
     background: linear-gradient(to right, var(--color-surface) 70%, transparent);
   }
   .tab-more--end {
-    right: 0;
+    right: calc(-1 * var(--tab-bleed));
     justify-content: flex-end;
     background: linear-gradient(to left, var(--color-surface) 70%, transparent);
   }
@@ -1614,7 +1626,8 @@ h3 {
   /* Refinement 11 (device QA): on a phone this is a wrapping flex row, not
      the two-row grid it was. With large text at 320 px the sort select took
      so much of the search row that the placeholder clipped ("Search your").
-     The field now has a floor (8.5rem, which scales with the text), and when
+     The field now has a floor (see .history-search; refinement 12 moved it
+     from 8.5rem to the placeholder's width in ch), and when
      the field and the sort cannot both meet it the sort drops under the
      field. At normal sizes the row is unchanged: search, sort, then pills. */
   .history-controls {
@@ -1642,10 +1655,20 @@ h3 {
   .history-filters::-webkit-scrollbar {
     display: none;
   }
+  /* Refinement 12 (device QA): the field's floor is measured in the
+     placeholder's own characters, not rem. "Search runs" is 11 characters;
+     12ch (ch tracks the field's actual font size, whatever scales it) plus
+     the pill's 1rem + 1rem padding is always wide enough for it, so the sort
+     drops under the field before the placeholder could clip. 8.5rem was not:
+     at Android font scale 1.5 the text outgrew it while the sort still fit
+     beside it ("Search ru"). Alone on its row the field takes the full
+     width. At 100% text the floor is ~140px, so the phone row is unchanged
+     at 320-430 px; from 48rem the grid below takes over. */
   .history-search {
     grid-area: search;
-    flex: 1 1 8.5rem;
+    flex: 1 1 calc(12ch + 2rem);
     min-width: 0;
+    font-size: 1rem; /* = .field, so ch here is the field's ch */
   }
   .history-search .field {
     width: 100%;
