@@ -274,6 +274,22 @@ whole form, where the soft keyboard covered it.
   the keyboard (390x844 to 514, 844x390 to 190, 360x640 to 360): field and
   message both inside the visible band, 8px apart, dock hidden.
 
+### Landscape keyboard: the message wins (refinement 5, INT-01b)
+
+android-66 (bundled APK, landscape, keyboard up, ~140px usable): an invalid or
+empty link showed the field and Analyze, with the message ~5px from view.
+Cause: `revealField` measured the window band, but the installed app scrolls
+`section.view-scroll` under a fixed header, so the real band was ~83px; the
+link form group did not fit, and the fallback centred the field alone. Now
+`revealField` clips the band to the field's scroller and reveals, in order:
+the group plus error when it fits; else field + its `role="alert"` message
+(from `aria-describedby`; the capability note is ignored) centred; else that
+pair aligned so the message's bottom edge is visible (4px gap), at the cost of
+the field's top edge. Simulated at 844x390 shrunk to 140/160/190 and 390x844
+shrunk to 420/520, light and dark, empty and invalid link: message fully inside
+the section band every time (at 140: band 57-140, field 53-105, message
+113-135.5).
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported UploadForm to the unboxed .intake; returns a fragment since HomeScreen supplies the wrapper
@@ -292,3 +308,4 @@ whole form, where the soft keyboard covered it.
 - 2026-11-01 · frontend agent (refinement 1) · terms storage guarded; prefill comes from HomeScreen (share or expired "analyze again"), used shares dismissed on start-over so the field clears
 - 2026-11-02 · frontend agent (refinement 2) · link form `noValidate`; aria-invalid/red state only for link errors (a terms error marks the checkbox); `.only-pointer`/`.only-touch` replace the drop-title classes and fix the touch lede
 - 2026-11-02 · frontend agent (refinement 4) · field errors moved next to their controls (#url-error / #terms-error / #file-error, each aria-describedby), terms checkbox gets aria-invalid + danger outline + focus, control+message revealed with revealField (INT-01, INT-03)
+- 2026-11-02 · frontend agent (refinement 5) · revealField clips to the scrolling section and prefers field + error message (message bottom edge visible) over the group with Analyze in a short landscape band (INT-01b)
