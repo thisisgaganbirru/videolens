@@ -760,8 +760,31 @@ Test file: `test-15s.mp4` (testsrc 720x1280, 15 s). Banner before the first run:
 
 Observations (not defects, reported for the lead): the failed Instagram run's History row is titled "Untitled run" with a generic "Link" label and a "Failed" badge (no platform name). The R1 Source panel shows the YouTube description verbatim, including unrelated links (the video's real description). The on-page counter I read right after the failed run was not re-read before the reload, so the stale-counter issue (refinement 9) was not exercised.
 
+### 2026-11-02 · videolens-65 (web QA) · run 7 (refinement 9 retest, HEAD 79d69fc)
+
+:3005 dev server (HMR, not restarted; served the new copy), headless Chromium 1217, fresh context per scenario. Items 1-6, 7b/7c, 8 and 10 used
+`/api` route mocks (Python Playwright, `%TEMP%\qaweb\run7`); 7a and 9 also ran against the **real** backend :8000 (Instagram link, no Gemini spend,
+free runs 3 to 3). Spot checks at 1280 light and 390 dark (screenshots in `%TEMP%\qaweb\run7`). No defects.
+
+| # | Result | Evidence |
+|---|---|---|
+| 1 Stage/media copy | PASS | mp3: Queued "In line", Normalizing "Preparing your audio" (hint shown), Uploading "Sending your audio for analysis", Analyzing "Listening to your audio" (hint gone); the word "video" never appears. mp4: "Preparing / Sending / Reading your video". (A mocked file run forced into `downloading` says "Fetching it from the link first": an impossible state for a file, a mock artifact.) |
+| 2 Out of free runs | PASS | Note "No free runs left today, so analyzing is paused. Add key to keep going." shown at 1280 light and 390 dark; Analyze link and Browse files both `aria-describedby="intake-blocked"` and disabled; Add key href `/app?view=api-key`, click lands on the API key tab. |
+| 3 "YouTube" spelling | PASS | With `platform: "Youtube"` from the server: source card "YouTube", source toggle "Source: YouTube, jawed", Markdown export "- **Platform:** YouTube". No "Youtube" anywhere. |
+| 4 Expired copy | PASS | "The server no longer has this run, and its result never reached this device." No "hour" in the page. |
+| 5 Free-runs refresh | PASS | Visibility hidden then visible re-read `/api/free-runs` (3 to 2, calls 1 to 2); after a run completes and "Analyze another file", the banner shows the new count. |
+| 6 "Choose the file again" | PASS | Terms ticked: the file chooser opens. Terms unticked: no chooser, the alert "Accept the media-use terms before analysis." shows and the checkbox is unchecked. |
+| 7 Refund line | PASS | Mock: failed at Downloading, count unchanged: "This didn't use one of your free runs." shown (also when the refund lands after the first failed poll, and at 390 dark); failed at Analyzing with count dropped: no line. Real backend: same line, "3 free runs left" before and after. |
+| 8 Privacy/Terms Back | PASS (with note) | Back is `href="/app"` on both pages, and clicking it lands on `/app` (fresh entry and from the app). It is `display:none` on the web by design (app shell only, `AppBackLink`), so a user cannot see or click it; I clicked it via script. |
+| 9 Failed link title | PASS | Real failed Instagram run: History row "Instagram" / Failed / "Instagram link", not "Untitled run". |
+| 10 Plain web, no update banner | PASS | /app shows no update or new-version text. |
+| 11 Blocked-download advice | NOT EXERCISED | Needs a real 403/429 from a site; not triggerable here. |
+
+Notes: the mocked Markdown export showed `NaN:NaN` timestamps because my fixture used the wrong transcript-segment field names, not an app defect.
+
 ## Changelog
 
+- 2026-11-02 · videolens-65 (web QA) · run 7: refinement 9 retest items 1-10 PASS, 11 NOT EXERCISED, no defects (item 8's Back link is hidden on the web by design)
 - 2026-11-02 · videolens-65 (web QA) · run 6: RUN-R1 and RUN-R2 REAL both PASS on :3005 (dev), FREE-02b PASS, run 5 stuck-row check N/A
 - 2026-11-02 · frontend-43 · created
 - 2026-11-02 · frontend-43 · named Python Playwright as the runner (already installed, no installs)
