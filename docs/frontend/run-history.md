@@ -335,6 +335,32 @@ the sort drops under the field; at normal sizes the row is unchanged. From
 set there explicitly). Verified at 320/360/390 at 130% and 390/1280 at 100%:
 placeholder fits, no overlap, no page scroll.
 
+## Refinement 12 (2026-11-02) — search floor from the placeholder, not rem
+
+Device QA: at 320 px with Android font scale 1.5 the placeholder clipped to
+"Search ru" while the sort still sat beside the field (it wrapped only by
+2.0). The 8.5rem floor did not track the field's text there. The floor on
+`.history-search` is now **`flex: 1 1 calc(12ch + 2rem)`**: "Search runs" is
+11 characters, `ch` follows the field's own font size (the wrapper sets
+`font-size: 1rem`, the same as `.field`, so its `ch` is the field's), and
+2rem is the pill's 1rem + 1rem inline padding. If the field and the sort
+cannot both meet their content widths, flex-wrap drops the sort under the
+field; alone on its row the field takes the full width. No breakpoint.
+
+At 100% text the floor is ~140px, so the phone row is unchanged (search and
+sort share a row at 320, 360 and 390); from 48rem the grid takes over as
+before. If the placeholder copy changes, change the `12ch` with it.
+
+Verified in `scratchpad\refine12\verify.py`: "Search runs" fits fully at 320
+and 360 with 100/115/130/150/200% root font (light, plus dark at 150/200),
+no overlap, no page scroll; 390 and 1280 at 100% (light and dark) produce
+identical search/sort/pill boxes to the refinement 11 rule re-injected for
+comparison. A text-only zoom emulation (font sizes scaled, rem lengths not,
+the way WebView text zoom can behave) also passes at 115–200%; with the old
+rule the same emulation clips at 360/2.0 and is 1.4px from clipping at
+320/1.3. The exact device case (sort beside a clipped field at 1.5) did not
+reproduce in desktop Chromium, so it needs a device recheck.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported HistoryPanel to day-grouped rows with status dots; fixed duplicate React keys on non-adjacent "Undated" groups
@@ -349,3 +375,4 @@ placeholder fits, no overlap, no page scroll.
 - 2026-11-02 · frontend agent (refinement 6) · RUN-13 expired runs badge "Expired" (neutral), data-run-status="expired"
 - 2026-11-02 · frontend agent (refinement 9) · platform chip uses the shared domain/platforms.ts names; link runs that failed before metadata show a platform from the URL host and a title like "Instagram link" or the host
 - 2026-11-02 · frontend agent (refinement 11) · History placeholder "Search runs"; phone toolbar wraps the sort under the search when large text leaves no room (device QA)
+- 2026-11-02 · frontend agent (refinement 12) · search field floor is now `calc(12ch + 2rem)` (the placeholder's own width) instead of 8.5rem, so the sort wraps under the field before "Search runs" can clip at large text (device QA, 320 / font scale 1.5)
