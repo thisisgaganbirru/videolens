@@ -436,6 +436,42 @@ NOTES:
 - a11y: after a dismiss, focus falls back to `<body>`.
 - Question: with every path returning 503, the intake shows no server notice at all — no free-runs banner and no "Can't reach the server". LCH-06b only covers an unreachable server.
 
+### 2026-11-02 · android-66 (device QA) · run 12 (refinement 10, `refine10-debug.apk` at ad39660, real backend then mock)
+
+Build installed at 15:39:43. Emulator API 35. Evidence is in `%TEMP%\qa13\`. Part A ran against the real backend; Part B ran against the lead's mock on :8000.
+
+**Part A (real backend).**
+- **A1 PASS.** The Terms/Privacy Back link (69×44, y 89–133) sits above the h1 (y 133). Back lands on `/app.html` from all three paths: intake → Terms, More → Privacy, and a cold-opened Terms (via `location.replace`).
+- **A2 PASS, with a MINOR.** At 320 css px, at fonts 1.0 and 1.3, intake, History and the result all have scrollWidth 320. The nav theme toggle (44×44, x 260–304) is not clipped.
+  - MINOR: on the result, the "Download .md" pill overflows the card. At font 1.3 it runs 7 px past the card border (pill 141–311, card 16–304). At 1.15 it reaches 11 px into the card padding. It fits at 1.0. The row doesn't wrap.
+  - Note: changing the font scale recreates the activity, so the open result is lost and the app lands back on the intake.
+  - COSMETIC: the History search placeholder is truncated at 320 px.
+
+**Part B, item 3: update popup (MOCK version_code 99999, dismiss key cleared).** PASS.
+- **Layout.** Every configuration has the dialog `open` and `:modal`, the card centred (offset 0,0), focus starting on "Get the update", and no overlap or clipping.
+  - Portrait 412×863, light and dark: card 16–396 × 312–551, buttons 160×44 side by side. Backdrop `rgba(0,0,0,.45)` in light, `.6` in dark.
+  - 320 px and 343 px at font 1.3: buttons stack (240 and 263 wide).
+  - Landscape 915×360, light and dark: compact card (no icon), 266–650 × 102–258.
+  - Landscape at font 1.3: card 80–280, fits in the height.
+  - Caveat: the emulator would not rotate the app (the display reported rotation 1 but the app stayed portrait). Landscape was emulated with `wm size 2400x1080`, a real 915×360 viewport but not a true device rotation.
+  - COSMETIC: in landscape at font 1.3, "Get the update" wraps to two lines (both buttons 72 px tall) rather than stacking.
+- **Ordering.** A screen recording shows native splash → in-app Splash → intake → backdrop → popup, so the popup appears only after the Splash. Welcome wasn't re-checked, because it shows only once.
+- **Dismiss.** A backdrop tap, Escape (keyevent 111), hardware Back and "Later" each close the popup, store `videolens-update-dismissed=99999` and move focus to the H1 `.intake-title` (never `<body>`). Back does not exit the app. Each one persists across a cold launch: no popup.
+- **"Get the update"** opens Chrome (`target=_blank`, the mock's href) and closes the popup without storing a dismiss (`null`). Focus goes to the H1, and the popup shows again on the next cold launch.
+- **Tab** cycles Later ↔ Get the update inside the dialog.
+- Under the mock, every other path returns 503, so the intake behind the popup shows "Can't reach the server right now. You can still open past runs in History."
+
+**Part B, item 4: version comparison.** PASS. Before MOCK 1 and null, the dismiss key was cleared, so a missing popup can only come from the version check.
+- **MOCK 100000.** With `99999` stored, the popup comes back on a cold launch. Back then stores `100000`. The text reads "Version 9.9.9" because the mock returns that `version_name` for every code; UpdatePrompt renders the server's `version_name`.
+- **MOCK 1** (same as installed) and **`latest: null`.** `/api/releases` returns 200 and no popup shows.
+
+**Part B, item 5: 503.** PASS.
+- **MOCK 503 on every path.** `/api/releases` returns 503. No popup shows, and the intake shows "Can't reach the server right now. You can still open past runs in History." with a History link. This answers run 11's question about a silent 503.
+- **Recovery.** I backgrounded the app with Home. The lead restored the real backend (3 free runs). When I brought the app back, it re-fetched `/api/free-runs` (200) and `/api/capabilities` (200). The notice gave way to "Limited: link downloads." and "3 free runs left. Add your own key for more."
+- The releases check runs on a cold launch only, not on resume.
+
+No real runs were spent. The device was restored afterwards: font 1.0, wm size reset, auto-rotate on, light theme.
+
 ## Changelog
 
 - 2026-11-02 · android-66 (device QA) · added section 19 (update banner, UPD-01..07) and run 9 (UPD partial on the mock: UPD-01/03 PASS, UPD-04 partial, rest PAUSED) and run 10 (real runs: terms persistence, RUN-01 retry with a YouTube link, RUN-02/02b/03/04/05/07/08, ORI-02, HIS-01, FREE-01..05, RUN-06b/06c/06d/06e, LCH-06b/06c, FREE-02b PASS; FREE-02c not exercised (YouTube 403 mid-download); stale free-runs count after a refund logged as known (R9); stage timings incl. Normalizing ~60 s for a 170 s file); added FREE-02b/02c rows to section 6
@@ -452,3 +488,4 @@ NOTES:
 - 2026-11-01 · videolens-ff (lead) · First version of the full Android app test suite, for the bundled-APK QA pass after the Phase 5 refinement fixes.
 - 2026-11-02 · frontend agent (refinement 3) · added RUN-06b..e (404 expiry on every path, airplane-mode regression) and ORI-05 (nothing under the dock at rest); LCH-02 is the retest for the dark-launch flash fix
 - 2026-11-02 · android-66 (device QA) · run 11: refinement 9 retest on refine9-debug.apk (79d69fc): R9-1..10 PASS except R9-7 partial (the reaches-analysis-then-fails half not exercised); update banner on the mock: dismiss, newer version_code, external link and the no-update states PASS; layout cases SUPERSEDED by the R10 popup; banner overlap at 320/343 css px with large fonts
+- 2026-11-02 · android-66 (device QA) · run 12: refinement 10 retest on refine10-debug.apk (ad39660): A1 Back link and A2 320px/font 1.3 PASS (MINOR: "Download .md" pill overflows the result card at font ≥1.15); update popup layout (portrait/landscape-emulated, light/dark, 320/343 at font 1.3), ordering after the Splash, backdrop/Escape/Back/Later dismiss with focus to the H1, "Get the update", Tab trap, MOCK 100000/1/null and 503 with the "Can't reach the server" notice and recovery on resume all PASS; COSMETIC landscape-font-1.3 button label wrap
