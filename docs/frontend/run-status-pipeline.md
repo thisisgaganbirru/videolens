@@ -137,6 +137,20 @@ pressing it lands on the intake with `https://youtu.be/expired1` in the field
 and the terms box still ticked. Screenshots `r1-expired-390.png`,
 `r1-expired-again-390.png`.
 
+## Refinement 6 (2026-11-02)
+
+**RUN-08.** `RunStatusView` takes `lostCause` (default `network`). When the
+connection-lost state is caused by the server answering with an error
+(`lostCause === "server"`), it says so: pill "Server trouble", title "The
+server is having trouble", lede "It answered with an error, not a result. The
+page tries again on its own and picks up where it left off.", notice "The
+server is having trouble right now. Trying again in N seconds.", live region
+"The server is having trouble. Trying again in N seconds.", frame caption
+"Waiting for the server" with the `ServerOff` icon. Same tone, countdown,
+backoff and Retry now as "Connection lost", which stays the wording when there
+was no answer at all. If a retry then fails on the network, the screen switches
+back to "Connection lost".
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported RunStatusView to the centred .run-state pipeline; returns a fragment (.run-state > .status is a direct-child selector)
@@ -147,3 +161,4 @@ and the terms box still ticked. Screenshots `r1-expired-390.png`,
 - 2026-11-01 · frontend agent · design/newshots round: captions route (missed/skipped frames, own title + lede), File received first frame for uploads, notice card split from centred actions with no source chip in failed/lost, lost lede + "Stop watching" from ProgressLostWeb; `STAGE_ALIASES`/`FILE_STEP` TODO(design) slots closed
 - 2026-11-01 · frontend agent (Phase 4) · audit only, no change: Failed, Connection lost, Captions and Upload (File received) states and frame states done/active/waiting/failed/lost/missed/skipped verified at 1366, phone web and phone app, light and dark; danger pairs recomputed (see design-direction-editorial.md)
 - 2026-11-01 · frontend agent (refinement 1) · expired-run view: honest copy, no stage strip, "Analyze it again" with the link refilled
+- 2026-11-02 · frontend agent (refinement 6) · RUN-08 server-trouble wording for 5xx polls (lostCause prop)

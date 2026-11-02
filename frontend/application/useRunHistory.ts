@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { HistoryRecord, RunSummary } from "@/domain/entities";
 import { StorageUnavailableError } from "@/domain/errors";
-import { bootHistory } from "@/application/historySync";
+import { EXPIRED_MESSAGE, bootHistory } from "@/application/historySync";
 import { historyStore } from "@/infrastructure/container";
 
 /* History is read from this browser (IndexedDB, via `HistoryStore`), not from
@@ -24,6 +24,10 @@ export type RunHistoryError = { kind: RunHistoryErrorKind; message: string };
  *  for the stored poster (owned and revoked by this hook). */
 export interface HistoryEntry extends RunSummary {
   thumbnail_url: string | null;
+  /** Refinement 6 (RUN-13): failed only because the server forgot the run
+   *  before its result reached this browser (`EXPIRED_MESSAGE`). Nothing was
+   *  wrong with the source, so the row says "Expired", not "Failed". */
+  expired: boolean;
 }
 
 const STORAGE_MESSAGE = "History can't be saved in this browser.";
@@ -43,6 +47,7 @@ function toEntry(record: HistoryRecord, thumbnailUrl: string | null): HistoryEnt
     width: record.width,
     height: record.height,
     thumbnail_url: thumbnailUrl,
+    expired: record.status === "failed" && record.error === EXPIRED_MESSAGE,
   };
 }
 

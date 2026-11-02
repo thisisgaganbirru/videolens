@@ -46,6 +46,16 @@ export interface CapabilitiesGateway {
   fetchReport(): Promise<CapabilityReport>;
 }
 
+/** The run this browser tab is watching, kept for the tab's lifetime so a
+ *  reload mid-run picks the same run back up (refinement 6, RUN-06 web).
+ *  Per tab on purpose: two tabs may each be watching their own run. Never
+ *  throws; unreadable storage reads as "no run". */
+export interface ActiveRunStore {
+  get(): string | null;
+  set(runId: string): void;
+  clear(): void;
+}
+
 export interface ApiKeyStore {
   get(): string;
   set(apiKey: string): void;

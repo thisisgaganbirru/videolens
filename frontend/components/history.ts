@@ -85,11 +85,18 @@ export function formatDuration(seconds: number | null | undefined): string | nul
 export type PosterBadge =
   | { kind: "duration"; text: string }
   | { kind: "failed"; text: string }
+  | { kind: "expired"; text: string }
   | { kind: "processing"; text: string };
 
+/** A summary plus, when the caller knows it, whether a failed run only
+ *  expired (History's own record says so; the server never does). */
+export type PosterRun = RunSummary & { expired?: boolean };
+
 /** The bottom-right slot. Run state outranks duration: a failed or unfinished
- *  run says so there instead. */
-export function posterBadge(run: RunSummary): PosterBadge | null {
+ *  run says so there instead. An expired run is not a failure of anything the
+ *  user did (refinement 6, RUN-13), so it gets its own neutral word. */
+export function posterBadge(run: PosterRun): PosterBadge | null {
+  if (run.status === "failed" && run.expired) return { kind: "expired", text: "Expired" };
   if (run.status === "failed") return { kind: "failed", text: "Failed" };
   if (run.status === "queued" || run.status === "processing") return { kind: "processing", text: "Processing" };
   const duration = formatDuration(run.duration_seconds);
@@ -226,7 +233,7 @@ export function buildHistory<T extends RunSummary>(
 
 /** The poster's accessible name: title first (so it contains the visible
  *  label, WCAG 2.5.3), then whatever the poster shows around it. */
-export function posterLabel(run: RunSummary, now: Date): string {
+export function posterLabel(run: PosterRun, now: Date): string {
   const parts = [posterTitle(run)];
   const platform = platformLabel(run);
   if (platform) parts.push(platform);

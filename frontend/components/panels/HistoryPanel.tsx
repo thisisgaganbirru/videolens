@@ -254,7 +254,7 @@ function Poster({
       <button
         type="button"
         className="poster"
-        data-run-status={run.status}
+        data-run-status={run.expired ? "expired" : run.status}
         aria-label={posterLabel(run, now)}
         onClick={() => onOpen(run.run_id, run.source_kind)}
       >

@@ -20,7 +20,7 @@ import {
 } from "@/application/historySync";
 import { markFreeRunsUsed, noteRunAccepted, refreshFreeRuns } from "@/application/useFreeRuns";
 import { ApiError } from "@/domain/errors";
-import { apiKeyStore, historyStore, runsGateway } from "@/infrastructure/container";
+import { activeRunStore, apiKeyStore, historyStore, runsGateway, sharedUrlSource } from "@/infrastructure/container";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -59,6 +59,16 @@ const SUBMIT_FALLBACK = "Could not submit media.";
 const OPEN_FALLBACK = "Could not load that run.";
 const POLL_FALLBACK = "Something went wrong.";
 
+/** Why the poll is down (refinement 6, RUN-08). `network`: no answer at all
+ *  (offline, refused, DNS). `server`: the server answered, with an error
+ *  (a 5xx, or a body this app could not read). Same reconnect either way;
+ *  the screen just says the true thing. A 404 is neither: it is "expired". */
+export type LostCause = "network" | "server";
+
+function lostCauseOf(err: unknown): LostCause {
+  return classifyGatewayError(err, POLL_FALLBACK).kind === "server" ? "server" : "network";
+}
+
 export function useAnalysisRun() {
   const [status, setStatus] = useState<RunStatus | "idle">("idle");
   const [stage, setStage] = useState<string | null>(null);
@@ -93,6 +103,7 @@ export function useAnalysisRun() {
   const [reconnectIn, setReconnectIn] = useState<number | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
+  const [lostCause, setLostCause] = useState<LostCause>("network");
   /* Refinement 1, #7: the run on screen is one the server forgot before its
      result reached this browser (History's EXPIRED_MESSAGE). Nothing about the
      source was wrong, so the failed view drops its "try a different link"
@@ -132,13 +143,23 @@ export function useAnalysisRun() {
     tickRef.current = null;
   }, []);
 
-  useEffect(() => stopTimers, [stopTimers]);
+  /* Unmount also retires the generation, so a request still in flight (a
+     resume started by a render that is being replaced) cannot write History
+     or the active-run marker on its way back. */
+  useEffect(
+    () => () => {
+      stopTimers();
+      generationRef.current += 1;
+    },
+    [stopTimers]
+  );
 
   const clearReconnect = useCallback(() => {
     attemptRef.current = 0;
     setReconnectIn(null);
     setReconnecting(false);
     setReconnectAttempt(0);
+    setLostCause("network");
   }, []);
 
   const fail = useCallback((err: unknown, fallback: string) => {
@@ -171,11 +192,13 @@ export function useAnalysisRun() {
       setSourceKind("url");
     }
     if (run.status === "complete") {
+      activeRunStore.clear();
       setResult(run.result);
       setCompleteness(run.completeness ?? "full");
       return true;
     }
     if (run.status === "failed") {
+      activeRunStore.clear();
       setError(run.error || "Video analysis failed.");
       return true;
     }
@@ -192,6 +215,7 @@ export function useAnalysisRun() {
     async (runId: string, generation: number, knownUrl: string | null) => {
       stopTimers();
       clearReconnect();
+      activeRunStore.clear();
       setStatus("failed");
       setStage(null);
       setError(EXPIRED_MESSAGE);
@@ -211,6 +235,9 @@ export function useAnalysisRun() {
   const startPolling = useCallback(
     (runId: string, generation: number) => {
       runIdRef.current = runId;
+      /* Refinement 6 (RUN-06 web): this tab is now watching `runId`; a reload
+         before it settles picks it back up (see `resume`). */
+      activeRunStore.set(runId);
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = setInterval(async () => {
         try {
@@ -234,6 +261,7 @@ export function useAnalysisRun() {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
           fail(err, POLL_FALLBACK);
+          setLostCause(lostCauseOf(err));
           scheduleReconnectRef.current(generation);
         }
       }, POLL_INTERVAL_MS);
@@ -264,6 +292,7 @@ export function useAnalysisRun() {
           return;
         }
         fail(err, POLL_FALLBACK);
+        setLostCause(lostCauseOf(err));
         attemptRef.current += 1;
         scheduleReconnectRef.current(generation);
       }
@@ -322,6 +351,7 @@ export function useAnalysisRun() {
       setSubmitting(true);
       stopTimers();
       clearReconnect();
+      activeRunStore.clear();
       setError(null);
       setExpired(null);
       setResult(null);
@@ -386,6 +416,7 @@ export function useAnalysisRun() {
        "analyze another file" bounced straight back to the pipeline. */
     stopTimers();
     clearReconnect();
+    activeRunStore.clear();
     runIdRef.current = null;
     liveUrlRef.current = null;
     generationRef.current += 1;
@@ -405,11 +436,18 @@ export function useAnalysisRun() {
   /* `sourceKindHint` is the History summary's `source_kind`, when it has one,
      so a reopened run shows the right frames before its first status
      response lands. Absent (legacy rows), the run starts as "file" and
-     `applyRun` corrects it. */
+     `applyRun` corrects it.
+
+     `resumed` (refinement 6, RUN-06 web): this is the run this tab was
+     watching before a reload. The tab itself knows the run, so a 404 is
+     "expired" even without a History record (IndexedDB may be blocked), and
+     a failed read is a lost connection to reconnect from, not a reason to
+     drop back to the intake. */
   const openRun = useCallback(
-    async (runId: string, sourceKindHint?: RunSourceKind | null) => {
+    async (runId: string, sourceKindHint?: RunSourceKind | null, { resumed = false }: { resumed?: boolean } = {}) => {
       stopTimers();
       clearReconnect();
+      if (!resumed) activeRunStore.clear();
       setError(null);
       setResult(null);
       setCompleteness("full");
@@ -425,7 +463,7 @@ export function useAnalysisRun() {
       /* Whether this browser has its own record of the run. A 404 for one it
          knows means "expired"; for an id it has never seen it just means
          "not found" (refinement 3, #1). */
-      let known = false;
+      let known = resumed;
       let knownUrl: string | null = null;
       /* History first: a finished run reopens from this browser with no
          network at all. Only a record without a result (still running, or
@@ -436,12 +474,23 @@ export function useAnalysisRun() {
         if (record) {
           known = true;
           knownUrl = record.source_url ?? record.source_metadata?.source_url ?? null;
+          if (record.source_kind) setSourceKind(record.source_kind === "link" ? "url" : "file");
+        }
+        /* A resumed link run gets back what the live run had: its link on
+           the source chip, "Analyze it again" if it expires, and "Try again"
+           if it fails. */
+        if (resumed && knownUrl) {
+          liveUrlRef.current = knownUrl;
+          setSourceName(describeSource({ url: knownUrl }));
+          setRetrySource({ url: knownUrl });
         }
         /* What this browser remembers about an upload: its name (never sent
            to or kept by the server) and its length. */
         if (record?.file_name) setSourceName(record.file_name);
         if (typeof record?.duration_seconds === "number") setDurationSeconds(record.duration_seconds);
         if (record && ((record.status === "complete" && record.result) || record.status === "failed")) {
+          /* Settled while nobody was watching: nothing left to resume. */
+          if (resumed) activeRunStore.clear();
           setSourceKind(record.source_kind === "link" ? "url" : "file");
           if (record.source_metadata) setSourceMetadata(record.source_metadata);
           setStatus(record.status);
@@ -474,12 +523,37 @@ export function useAnalysisRun() {
           void expireRun(runId, generation, knownUrl);
           return;
         }
+        if (resumed) {
+          /* The run may well still be going; this tab just could not ask.
+             The connection-lost screen, counting down to the next try. */
+          runIdRef.current = runId;
+          fail(err, POLL_FALLBACK);
+          setLostCause(lostCauseOf(err));
+          scheduleReconnectRef.current(generation);
+          return;
+        }
         setStatus("idle");
         fail(err, OPEN_FALLBACK);
       }
     },
     [applyRun, clearReconnect, expireRun, fail, startPolling, stopTimers]
   );
+
+  /* Refinement 6 (RUN-06 web): on a load of the app, pick up the run this tab
+     was watching when it was reloaded, and show it (progress, result, failed
+     or expired) instead of a fresh intake. Only when the load carries no
+     other intent: a link shared in takes the intake, and an address naming
+     another tab (`?view=history`) opens that tab. Returns whether it resumed. */
+  const resume = useCallback((): boolean => {
+    if (typeof window === "undefined") return false;
+    const view = new URLSearchParams(window.location.search).get("view");
+    if (view && view !== "analyze") return false;
+    if (sharedUrlSource.pending()) return false;
+    const runId = activeRunStore.get();
+    if (!runId) return false;
+    void openRun(runId, null, { resumed: true });
+    return true;
+  }, [openRun]);
 
   /* Resubmit the run that just failed, same link or same file. Only offered
      while `canRetry` is true. */
@@ -504,10 +578,12 @@ export function useAnalysisRun() {
     reconnectIn,
     reconnecting,
     reconnectAttempt,
+    lostCause,
     submit,
     retry,
     reconnectNow,
     reset,
     openRun,
+    resume,
   };
 }
