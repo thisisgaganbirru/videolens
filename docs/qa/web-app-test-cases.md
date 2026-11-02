@@ -745,8 +745,24 @@ Backend :8000 (health 200) and dev server :3005 were up at the start. Banner bef
 
 Incidental, from the outage: the stage list showed "Waiting for connection" with a retry countdown, "Retry now" and "Stop watching", as designed.
 
+### 2026-11-02 · videolens-65 (web QA) · run 6 (RUN-R1/R2, FREE-02b)
+
+Real backend :8000 (HEAD d032e59), **dev server :3005** (not a production build; the lead directed it), headless Chromium 1217 from a throwaway
+persistent profile, 1280x800 light. Test link: `https://www.youtube.com/watch?v=jNQXAC9IVRw` (the Instagram link needs cookies this backend lacks).
+Test file: `test-15s.mp4` (testsrc 720x1280, 15 s). Banner before the first run: "3 free runs left."
+
+| Case | Result | Evidence |
+|---|---|---|
+| RUN-R1 REAL | PASS | Queued 0.3 s, Downloading to 3.6 s, Normalizing 3.6-6.7 s, Uploading 6.7-12.9 s, Analyzing 12.9-22.1 s: result in about 22 s (Normalizing was NOT slow this time, about 3 s). Tabs TL;DR, Notes, Transcript (timestamped, 3 lines), On-screen ("No on-screen text was detected") all render. History row "Me at the zoo", YouTube, 0:19, thumbnail 320x240 (server image). Free runs 3 to 2. One POST, no console errors. |
+| RUN-R2 REAL | PASS | Queued, "File received" Done at 1.5 s, result at about 19 s (intermediate stages not captured by the 1 s poll). Tabs: TL;DR, Notes, Transcript ("No spoken content was detected", although the file has a tone, which is fine), On-screen lists 0:00 "0" to 0:14 "14". History row "Color Bars Test Pattern with Audio Tone", Video file, 0:15, portrait poster 180x320. Free runs 2 to 1. One POST, no console errors. |
+| FREE-02b (web) | PASS | Instagram link: Downloading to Failed in about 6.5 s, "This post isn't public - Instagram only serves it to signed-in viewers." Banner stayed "1 free run left" after a reload: the failed run was refunded. |
+| Run 5 stuck History row to Expired | N/A | That row lived in frontend-43's throwaway profile, which was not available. Not recreated. |
+
+Observations (not defects, reported for the lead): the failed Instagram run's History row is titled "Untitled run" with a generic "Link" label and a "Failed" badge (no platform name). The R1 Source panel shows the YouTube description verbatim, including unrelated links (the video's real description). The on-page counter I read right after the failed run was not re-read before the reload, so the stale-counter issue (refinement 9) was not exercised.
+
 ## Changelog
 
+- 2026-11-02 · videolens-65 (web QA) · run 6: RUN-R1 and RUN-R2 REAL both PASS on :3005 (dev), FREE-02b PASS, run 5 stuck-row check N/A
 - 2026-11-02 · frontend-43 · created
 - 2026-11-02 · frontend-43 · named Python Playwright as the runner (already installed, no installs)
 - 2026-11-02 · frontend-43 · run 1: ran the mocked suite against the production build on :3016; logged results and 12 minor findings
