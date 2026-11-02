@@ -5,7 +5,7 @@ The three standalone pages that render *outside* the app shell: `/privacy`,
 
 **Files**
 - `frontend/components/LegalShell.tsx` — the shared frame for the two *documents*: `AppNav`, a `.view-scroll` section holding the `.legal-page` column (crumb bar, title, effective date, clauses), footer, plus the `LegalSection` clause wrapper.
-- `frontend/components/AppBackLink.tsx` — the app-shell-only Back link `LegalShell` renders above the title (see Phase 4 layout).
+- `frontend/components/AppBackLink.tsx` — the Back link `LegalShell` renders above the title; on Privacy and Terms it shows in every shell since refinement 10 (see Phase 4 layout).
 - `frontend/components/AppNav.tsx` — the nav band. All three routes render it; see `app-shell-layout.md`.
 - `frontend/components/ThemeToggle.tsx` — the theme button, rendered inside `AppNav`, so it is literally the same control on every route rather than a lookalike. Exports `toggleTheme()` too.
 - `frontend/app/privacy/page.tsx` — privacy copy only.
@@ -132,7 +132,15 @@ are deleted from `globals.css`.
   `‹ Back` (Hanken 15px, muted, 44px target, green focus ring) that goes
   `history.back()` when the previous entry is in-app (e.g. the History tab the
   More sheet was opened from) and to `/` otherwise (cold open). Hidden with
-  `display:none` in the web shell. `/offline` does **not** get it — it is not
+  `display:none` in the web shell. **[Refinement 10, owner: "it should be
+  visible on every other, not only app": Privacy and Terms now render
+  `<AppBackLink everywhere />` (`.app-back--everywhere`), so it shows in the
+  web shell too, at every width. Web target `/app`; in the installed app a
+  cold-open Back still lands on `/app.html` (R9 `canonicalizeAppPath`).
+  API key and Releases are unchanged (app shell only: on the web they are nav
+  tabs). Measured on the web at 390x844 and 1280x800, light and dark: link
+  69x44 directly above the title, no horizontal scroll; cold Back → `/app`;
+  from `/app?view=history` → back to History.]** `/offline` does **not** get it (still true after refinement 10; its links stay plain `<a>`) — it is not
   opened from the More sheet, and its Try again already goes home. Full
   behaviour and measurements: `app-shell-layout.md` § "App-shell Back link".
 - **Offline**: `.offline` (28rem), centred in the band at every width — the
@@ -767,3 +775,4 @@ entry), privacy Back (after the app) and the dock from privacy all end on
 - 2026-11-02 · frontend agent (refinement 6) · OFF-03 app/not-found.tsx with shared chrome (out/404.html); SW unchanged
 - 2026-11-02 · frontend agent (refinement 8) · NF-01: installed app sent to `/404.html` for unknown extensionless paths; home-page link hidden in the installed shell
 - 2026-11-02 · frontend agent (refinement 9) · installed app canonicalizes /app to /app.html (asset server only) so Back and the dock agree; web unchanged
+- 2026-11-02 · frontend agent (refinement 10) · Privacy/Terms Back link visible on every shell (`AppBackLink everywhere`), web target /app, app cold-open still /app.html; /offline unchanged (no Back link, plain <a>)

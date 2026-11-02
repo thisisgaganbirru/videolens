@@ -79,6 +79,18 @@ now. You can still open past runs in History.", or "You're offline right now.
 the pill appears on its own. Nothing is blocked. See
 `capability-reporting.md` for the other half.
 
+**Refinement 10: a 5xx counts as unreachable.** With the backend down,
+Railway's edge answers every path with a 502/503, so the read did get "an
+answer", the flag was cleared, and the intake showed nothing at all (no pill, no
+notice). `noteReadResult` now flags unreachable for a `NetworkError` **or** an
+`ApiError` whose `status` is 500 or above. A 4xx is the server itself refusing
+and keeps clearing the flag. `capabilitiesGateway.ts` now passes `res.status`
+into its `ApiError` too, so the two launch reads agree (otherwise a later
+capabilities 503 without a status would clear what the free-runs 503 set).
+Verified in `scratchpad\refine10\verify.py` with route interception: 500/502/503
+on every `/api` path show "Can't reach the server"; 400 shows no notice; a
+healthy reply on the next window `focus` clears it and the pill appears.
+
 ## Refinement 9 (2026-11-02) — staying current, and proving a refund
 
 **Re-reads.** `revalidateFreeRuns()` (a no-op on the user's own key) runs:
@@ -109,3 +121,4 @@ no line; BYOK → no line and zero `/api/free-runs` reads.
 - 2026-11-01 · frontend agent (Phase 5c) · Add key now links to /app?view=api-key (via mainTabHref)
 - 2026-11-02 · frontend agent (refinement 4) · free-runs read reports reachability; re-read on online/focus/visible while the unreachable notice is up (LCH-06)
 - 2026-11-02 · frontend agent (refinement 9) · re-read on visibilitychange, Capacitor resume, run settle and intake return; failed view states "This didn't use one of your free runs." only when the re-read count proves the refund (2.5s recheck for the backend's set_error-before-refund ordering)
+- 2026-11-02 · frontend agent (refinement 10) · 5xx from the free-runs (and capabilities) read now counts as unreachable, so a Railway 502/503 shows the "Can't reach the server" notice; 4xx unchanged

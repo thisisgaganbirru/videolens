@@ -37,8 +37,9 @@ Two height traps worth knowing, both hit for real during the mockup work:
   deliberately.
 - Anything sitting directly inside `.viewport` (which is `display: flex;
   flex-direction: column`) needs `shrink-0`, or it compresses and throws off
-  every measured height below it. `UpdateBanner` and the standalone routes
-  each set it for this reason.
+  every measured height below it. The standalone routes set it for this
+  reason. (`UpdateBanner` did too; since refinement 10 the update prompt is a
+  top-layer `<dialog>` and takes no space in `.viewport`.)
 
 **Nav (Terminal era — replaced 2026-11-01, see "Two shells").** Was a floating pill — translucent with `--color-nav-bg` tint (a soft visible green tint in light theme), `backdrop-filter`, pulled half a rem
 past the shell gutter so it sits proud of the content. Four tabs: Analyze,
@@ -125,6 +126,8 @@ confined to the phone-width app shell: the rule is "same chrome on every route
 - **Cascade-layer trap.** The responsive `@media` blocks in `globals.css` are *unlayered*, so they beat anything in `@layer components` regardless of specificity. The ≥ 48rem `.nav-links { display: flex }` is therefore written `:root:not([data-shell="app"]) .nav-links` — unscoped, it would resurrect the links in app mode. Any new unlayered responsive rule touching chrome needs the same guard.
 
 ### App-shell Back link (2026-11-01)
+
+**Refinement 10:** Privacy and Terms now show the link in the web shell too (`<AppBackLink everywhere />`); API key and Releases stay app-only. See `legal-offline-routes.md`.
 
 The Phase 4 crumb/back bar stays **removed in the web shell** (desktop and
 phone browser). In the **app shell only** (`html[data-shell="app"]`), API key,
@@ -473,8 +476,8 @@ with `THEME_COLOR[theme]`.
 - The completed-run two-column layout is **not** visually verified: it needs a
   backend, and history/API-key were checked against a mocked `/api/runs`. The
   `.workspace` grid is unexercised visually.
-- **The `--z-*` scale is aspirational.** Only `--z-banner` has a caller
-  (`UpdateBanner`); `globals.css` improvises `1/3/4/5/10` inline and none of
+- **The `--z-*` scale is aspirational.** Only `--z-banner` had a caller
+  (`UpdateBanner`, removed in refinement 10; now none); `globals.css` improvises `1/3/4/5/10` inline and none of
   those match the declared `0/10/30/50`. Left alone deliberately in review:
   wiring it means changing live stacking values on a drawer whose paint order is
   verified correct (with the drawer open, `elementFromPoint` at the nav pill's
@@ -764,3 +767,4 @@ This was a real miss, not just noise, and only for APKs built on Windows.
 - 2026-11-02 · frontend agent (refinement 6) · A11-02 view band is <main> on every route (one landmark per page); footer link height measured at 44px
 - 2026-11-02 · frontend agent (refinement 7) · THM-01b-6: System paints from the native OS night state (NativeThemePlugin getSystemNight + systemNightChanged; theme.ts adoptDeviceTheme; head-script listener stands down) instead of the WebView's stale prefers-color-scheme; documented the harmless Capacitor "Error injecting safe area CSS" launch log
 - 2026-11-02 · frontend agent (refinement 8) · RSC segment prefetch 404s in the APK traced to a Next 16.4 Windows-only export bug (nested `__next.app/__PAGE__.txt`); `scripts/fix-export-segments.mjs` flattens them in `build:mobile`; cost was one extra `/app.txt` fetch per navigation, never a full reload
+- 2026-11-02 · frontend agent (refinement 10) · UpdateBanner references updated (now a top-layer dialog, no `.viewport` space); Privacy/Terms Back link shows on the web too; `html, body` min-width is 320px, not 20rem
