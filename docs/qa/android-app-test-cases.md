@@ -505,6 +505,50 @@ NOTES:
 - Not a defect: the source card for "Me at the zoo" reads "Microplastics are accumulating in human brains…". That is the run's stored `source_metadata.description` as yt-dlp fetched it for jNQXAC9IVRw (the uploader's current description), not a mix-up between runs.
 - No real runs spent. Partial-outage handling (D-R10-1) was covered on the web, per the lead. The device was restored afterwards: font 1.0, wm size reset, auto-rotate on, light theme, dismiss key null.
 
+### 2026-11-02 · android-66 (device QA) · run 14 (refinement 12, `refine12-debug.apk` at 5ac8522, real backend)
+
+Build: a full `adb install --no-streaming -r`, lastUpdateTime 17:24:48. Emulator API 35. Evidence is in `%TEMP%\qa15\`. The width was set to 320 css px with `wm size 840x2400`. The result was "Me at the zoo - The First YouTube Video", reopened from History. Font changes were made live; the app no longer reloads on them since R11.
+
+**Item 1, tab-row fades at 320 px.**
+- **Method.** `fades.js` checks two things at scroll 0, after a real tap on the end chevron, after a real tap on the start chevron, and at mid-scroll:
+  - that each visible fade reaches the `.tab-list` edge;
+  - that no tab label glyph (Range client rects) lies in an uncovered strip between a fade and the list edge.
+  `tabclear.js` checks each chosen tab against the visible fades.
+- **Fonts 1.0, 1.3 and 1.5: PASS.**
+  - The fades now sit at 33–81 and 239–287, the list's own edges (R11: 37–81 and 239–283). uncoveredStrips=0 and peek=none in every state.
+  - A zoomed screenshot at 1.0 mid-scroll shows no glyph past either chevron.
+  - The chevrons page the row both ways (scroll 0 → 40/41, 96/97 and 139/140).
+  - Every chosen tab is clear of the fades: On-screen, TL;DR, Transcript and Notes, at each of 1.0, 1.3 and 1.5. At 1.3 and 1.5, Transcript stops exactly at the end fade (239), and Notes at 1.5 starts exactly at the start fade (81).
+
+- **Font 2.0: PASS, better than documented.**
+  - No peek in any state, and the chevrons page the row (0 → 178 → 0 of 249).
+  - Every chosen tab lands clear: On-screen 143–283 at the end, TL;DR 37–115, Notes 81–159, and Transcript 101–239 between both fades.
+  - The doc's "geometric limit" (Transcript and On-screen can't clear at 320/2.0) does not occur on the device. Here the list is 254 px wide (33–287), not the ~182 px estimated, which leaves a 158 px band between the fades.
+- **No chevrons at the normal text size from 360 px up: PASS.**
+  - At 360, 390 and 412 px with font 1.0, both fades are off.
+  - At 360 the list is 1 px over (0/1), which is its own end padding, as documented.
+
+**Item 2, History search at 320 and 360 px, fonts 1.0, 1.15, 1.3, 1.5 and 2.0: PASS.**
+- `hist.js` compares the placeholder's text width (canvas `measureText` in the input font) against the space inside the input's padding.
+- "Search runs" fits in all ten combinations. The sort drops under a full-width field before the placeholder could clip:
+  - at 320, from font 1.3 (space available 254 for 111/128/170 px of text at 1.3/1.5/2.0);
+  - at 360, from font 1.5.
+- Below those thresholds the sort stays on the same row. Closest margin: 360 at 1.3, 111 of 158.
+- The R11 failure ("Search ru" at 320/1.5) is gone.
+
+**Item 3, nav menu button at 320/1.5: NOT REPRODUCED on the device** (there is no such button in the installed app).
+- The app header holds only the wordmark and the theme toggle, on the result view and on Terms. The toggle is 44×44 at x 260–304, in view, and not clipped by any overflow ancestor.
+- Navigation lives in the dock: Analyze 22–111, History 115–205 and More 209–298, labels unclipped (scrollWidth equals clientWidth).
+- The menu button the agent saw is presumably the web (non-installed) shell's, which this device can't check.
+- COSMETIC, found on the way, in the More sheet at 320/1.5: the theme control's "System" label (text 77–150) is 2 px wider than its segment (77–148) and has no side padding. "Light" and "Dark" have about 11 px each. It fits at 320 for 1.3 and below, and at 360/1.5.
+
+**Item 4, smoke test at 412 px, font 1.0, cold launch, real backend: PASS.**
+- **Intake.** No popup. `/api/releases`, `/api/free-runs` and `/api/capabilities` all return 200, and the intake shows "Limited: link downloads." and "3 free runs left."
+- **History.** 20 rows, no horizontal scroll.
+- **Result** (Test Pattern Video). The actions sit on one row with Download inside the card, and there are no chevrons. Each tab shows its own panel: TL;DR with its key takeaway, Notes with the markdown, Transcript with "No spoken content was detected.", and On-screen with timed text.
+
+No real runs spent. The device was restored afterwards: font 1.0, wm size reset, auto-rotate on, light theme, CDP forward removed, adb reverse 8000 kept.
+
 ## Changelog
 
 - 2026-11-02 · android-66 (device QA) · added section 19 (update banner, UPD-01..07) and run 9 (UPD partial on the mock: UPD-01/03 PASS, UPD-04 partial, rest PAUSED) and run 10 (real runs: terms persistence, RUN-01 retry with a YouTube link, RUN-02/02b/03/04/05/07/08, ORI-02, HIS-01, FREE-01..05, RUN-06b/06c/06d/06e, LCH-06b/06c, FREE-02b PASS; FREE-02c not exercised (YouTube 403 mid-download); stale free-runs count after a refund logged as known (R9); stage timings incl. Normalizing ~60 s for a 170 s file); added FREE-02b/02c rows to section 6
@@ -523,3 +567,4 @@ NOTES:
 - 2026-11-02 · android-66 (device QA) · run 11: refinement 9 retest on refine9-debug.apk (79d69fc): R9-1..10 PASS except R9-7 partial (the reaches-analysis-then-fails half not exercised); update banner on the mock: dismiss, newer version_code, external link and the no-update states PASS; layout cases SUPERSEDED by the R10 popup; banner overlap at 320/343 css px with large fonts
 - 2026-11-02 · android-66 (device QA) · run 12: refinement 10 retest on refine10-debug.apk (ad39660): A1 Back link and A2 320px/font 1.3 PASS (MINOR: "Download .md" pill overflows the result card at font ≥1.15); update popup layout (portrait/landscape-emulated, light/dark, 320/343 at font 1.3), ordering after the Splash, backdrop/Escape/Back/Later dismiss with focus to the H1, "Get the update", Tab trap, MOCK 100000/1/null and 503 with the "Can't reach the server" notice and recovery on resume all PASS; COSMETIC landscape-font-1.3 button label wrap
 - 2026-11-02 · android-66 (device QA) · run 13: refinement 11 retest on refine11-debug.apk (e1f4426): results header at 320 (Download own row at 1.15/1.3, chevrons page, chosen tab clear of fades), live font change without reload (also theme and rotation), History "Search runs" at 320 up to font 1.3, and the landscape popup labels on one line at font 1.3 all PASS; mismatch: end chevron shows at 320/font 1.0 (tabs overflow 41px); COSMETIC 4px tab text past each fade; MINOR placeholder truncates at font 1.5
+- 2026-11-02 · android-66 (device QA) · run 14: refinement 12 retest on refine12-debug.apk (5ac8522): tab-row fades cover the list edges at 320 for fonts 1.0/1.3/1.5/2.0 with no peek (2.0 also clears every chosen tab, better than the documented limit); no chevrons from 360 at font 1.0; History "Search runs" fits at 320/360 for fonts 1.0–2.0 with the sort wrapping first; smoke PASS; nav menu clip at 320/1.5 not reproduced (no menu button in the app header); COSMETIC: More-sheet "System" segment 2px over at 320/1.5
