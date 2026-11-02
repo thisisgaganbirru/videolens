@@ -6,8 +6,14 @@ const GEMINI_API_KEY_STORAGE_KEY = "videolens-gemini-api-key";
 // user's own quota is spent instead of the shared one - never written
 // anywhere else, never logged.
 export class LocalStorageApiKeyStore implements ApiKeyStore {
+  private readonly listeners = new Set<() => void>();
+
   get(): string {
-    return window.localStorage.getItem(GEMINI_API_KEY_STORAGE_KEY) || "";
+    try {
+      return window.localStorage.getItem(GEMINI_API_KEY_STORAGE_KEY) || "";
+    } catch {
+      return "";
+    }
   }
 
   set(apiKey: string): void {
@@ -17,5 +23,21 @@ export class LocalStorageApiKeyStore implements ApiKeyStore {
     } else {
       window.localStorage.removeItem(GEMINI_API_KEY_STORAGE_KEY);
     }
+    this.listeners.forEach((listener) => listener());
+  }
+
+  /* Same-tab writes notify directly (above); another tab's arrive as a
+     `storage` event. The window listener exists only while subscribed. Added
+     in Phase 5b so the free-run banner disappears the moment a key is saved. */
+  subscribe(listener: () => void): () => void {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key === GEMINI_API_KEY_STORAGE_KEY) listener();
+    };
+    this.listeners.add(listener);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      this.listeners.delete(listener);
+      window.removeEventListener("storage", onStorage);
+    };
   }
 }

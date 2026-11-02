@@ -1,9 +1,8 @@
 import type { MediaSource, RunCreateResponse, RunListResponse, RunStatusResponse } from "@/domain/entities";
 import { ApiError, NetworkError } from "@/domain/errors";
-import type { ApiKeyStore, RunsGateway } from "@/domain/ports";
+import type { ApiKeyStore, DeviceTokenStore, RunsGateway } from "@/domain/ports";
 import { API_BASE_URL } from "./apiBase";
-
-const CLIENT_ID_KEY = "videolens-client-id";
+import { getClientId } from "./clientId";
 
 /* The one place in the app that knows the difference between "the server said
    no" and "there was no server to say anything". `fetch` rejects (with a
@@ -14,29 +13,42 @@ const CLIENT_ID_KEY = "videolens-client-id";
 const UNREACHABLE = "Can't reach the server. It may be offline, or your connection dropped.";
 const UNREADABLE = "The server replied with something this app could not read.";
 
-function getClientId(): string {
-  let clientId = window.localStorage.getItem(CLIENT_ID_KEY);
-  if (!clientId) {
-    clientId = crypto.randomUUID();
-    window.localStorage.setItem(CLIENT_ID_KEY, clientId);
-  }
-  return clientId;
+/* An error body's `code` and a 402's `limit`/`used`, carried onto the
+   `ApiError` so the hook can branch on `code` (`free_runs_used`,
+   `device_token_invalid`) instead of matching the sentence. */
+function errorExtras(body: unknown): { code?: string; limit?: number; used?: number } {
+  if (typeof body !== "object" || body === null) return {};
+  const b = body as Record<string, unknown>;
+  return {
+    code: typeof b.code === "string" ? b.code : undefined,
+    limit: typeof b.limit === "number" ? b.limit : undefined,
+    used: typeof b.used === "number" ? b.used : undefined,
+  };
 }
 
 export class FetchRunsGateway implements RunsGateway {
-  constructor(private readonly apiKeyStore: ApiKeyStore) {}
+  constructor(
+    private readonly apiKeyStore: ApiKeyStore,
+    private readonly deviceTokenStore: DeviceTokenStore
+  ) {}
 
   /* BYOK: the Gemini key travels ONLY on run creation (POST /api/runs), the
      one endpoint that reads it (backend interface/api/routes.py create_run).
      Polling a run and listing history never needed it, and before 2026-11-01
      it rode along on every one of those requests too — dozens per run, each a
      fresh copy of the secret on the wire for no reason. `X-Client-ID` still
-     goes everywhere: it scopes which runs a caller can see. */
+     goes everywhere: it scopes which runs a caller can see.
+
+     `X-Device-Token` (Phase 5b) rides on run creation too, and only there — it
+     is what the server counts a free run against. Sent alongside a key as
+     well; the server simply does not count bring-your-own-key runs. */
   private requestHeaders({ withGeminiKey }: { withGeminiKey: boolean }): HeadersInit {
     const headers: Record<string, string> = { "X-Client-ID": getClientId() };
     if (withGeminiKey) {
       const geminiApiKey = this.apiKeyStore.get();
       if (geminiApiKey) headers["X-Gemini-Api-Key"] = geminiApiKey;
+      const deviceToken = this.deviceTokenStore.get();
+      if (deviceToken) headers["X-Device-Token"] = deviceToken;
     }
     return headers;
   }
@@ -80,7 +92,7 @@ export class FetchRunsGateway implements RunsGateway {
 
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      throw new ApiError(body?.detail || `Could not create run (${res.status})`, res.status);
+      throw new ApiError(body?.detail || `Could not create run (${res.status})`, res.status, errorExtras(body));
     }
 
     return this.parse<RunCreateResponse>(res);

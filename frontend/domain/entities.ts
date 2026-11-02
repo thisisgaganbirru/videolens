@@ -191,3 +191,19 @@ export interface CapabilityReport {
   mode: "local" | "distributed" | (string & {});
   capabilities: Capability[];
 }
+
+/** This device's free-run allowance for the current UTC day, from
+ *  `GET /api/free-runs`. Only meaningful without a bring-your-own key: a
+ *  caller with their own Gemini key has no limit and never sees it. */
+export interface FreeRunsStatus {
+  /** The random, server-issued token that counts this device's runs. Not tied
+   *  to a person. Replaced whenever the server answers with a different one. */
+  deviceToken: string;
+  limit: number;
+  used: number;
+  remaining: number;
+  /** ISO 8601 UTC instant the count resets (next UTC midnight). */
+  resetsAt: string;
+  /** `false`: the deployment has no free-run limit — show nothing. */
+  enabled: boolean;
+}

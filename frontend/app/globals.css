@@ -2752,6 +2752,26 @@ h3 {
     .intake-layout .divider {
       margin: var(--space-xs) 0;
     }
+    /* Phase 5b: the free-run banner adds ~90px above the eyebrow, which made
+       a 1366x768 window scroll by 43px (measured). Win it back only while the
+       banner is showing, so the bannerless intake is unchanged. */
+    .intake-layout:has(.free-runs) {
+      padding-top: var(--space-sm);
+    }
+    .intake-layout:has(.free-runs) .intake-title {
+      margin-bottom: var(--space-sm);
+    }
+    .intake-layout .free-runs-slot {
+      margin-bottom: var(--space-sm);
+    }
+    .intake-layout .free-runs {
+      padding-block: var(--space-2xs);
+    }
+    /* The spent sentence is two lines; at 1.45 it stood 3px taller than the
+       pill and tipped the window into scrolling. */
+    .intake-layout .free-runs__text {
+      line-height: 1.35;
+    }
   }
   .intake {
     display: flex;
@@ -2793,6 +2813,53 @@ h3 {
     font-weight: 500;
     line-height: 1.5;
     overflow-wrap: anywhere;
+  }
+
+  /* ---- free runs (Phase 5b · IntakeFreeApp.png, IntakeLimitApp.png) ----
+     A white strip above the eyebrow: sentence left, near-black "Add key"
+     pill right. The spent state only swaps the sentence and draws the strip's
+     hairline in --color-danger-border — a decorative edge, so its contrast is
+     not load-bearing; the words say the state. The slot is the live region
+     and is always rendered, empty (zero-height, no margin) when quiet. */
+  .free-runs-slot:empty {
+    display: none;
+  }
+  .free-runs-slot {
+    margin-bottom: var(--space-md);
+  }
+  .free-runs {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-xs) var(--space-xs) var(--space-xs) var(--space-sm);
+    background: var(--color-surface);
+    border: var(--rule-w) solid var(--color-rule);
+    border-radius: var(--radius-poster);
+  }
+  .free-runs[data-state="spent"] {
+    border-color: var(--color-danger-border);
+  }
+  .free-runs__text {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    font-size: 0.9375rem;
+    line-height: 1.45;
+    color: var(--color-ink-2);
+  }
+  .free-runs__text strong {
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  /* The spent sentence is two lines on the board, the headline on its own. */
+  .free-runs[data-state="spent"] .free-runs__text strong {
+    display: block;
+  }
+  .free-runs__action {
+    flex: 0 0 auto;
+    min-height: 2.5rem;
+    padding: 0.5rem 1.125rem;
+    font-size: 0.9375rem;
   }
 
   .intake-card {

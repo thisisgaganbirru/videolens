@@ -48,6 +48,8 @@ only when there is a source to resubmit — a run reopened from History has none
 so its failed view shows only "Analyze another file". While the resubmission is
 in flight the failed view stays up with its button reading "Starting…".
 
+**Free runs (Phase 5b).** In `submit`, a 401 with `ApiError.code === "device_token_invalid"` calls `refreshFreeRuns()` (which stores the fresh token) and sends the same `createRun` once more. A 402 `free_runs_used` calls `markFreeRunsUsed(limit, used)`, sets no error (the limit banner says it), and returns the screen to idle if the submit came from the failed view's retry. An accepted run calls `noteRunAccepted()` to re-read the count. See `free-runs.md`.
+
 **History writes (Phase 5a).** `submit` calls `recordSubmitted` right after the 202 (even if the screen has since moved on — the run exists); `applyRun` calls `recordRunResponse(run)` for every response it applies. Both live in `application/historySync.ts` and never throw. See `run-history.md`.
 
 **openRun(runId)** — Phase 5a: reads `historyStore.get(runId)` first. A `complete` record with a `result`, or a `failed` record, is applied straight from the store (status, result, completeness, source_metadata, sourceKind, error) with **no request** — this is what makes reopening work offline. Otherwise (still running, or no usable store) it continues as follows: used by the History panel to resume viewing a past run. Clears any active poll first, optimistically sets status to processing, fetches the run once - if it's still in progress, starts polling it like a normal submit; if it's already complete or failed, just shows the result or error directly without polling.
@@ -82,3 +84,4 @@ No frontend test runner is configured for this project; verification here has re
 - 2026-11-01 · frontend agent · `applyRun` infers `sourceKind: "url"` from `source_metadata` or a link-only stage, so a reopened link run no longer gets the upload-only File received frame; known issue narrowed
 - 2026-11-01 · frontend agent (Phase 3) · `source_kind` from the summary/detail is now authoritative for `sourceKind` (`openRun` takes a hint; `applyRun` honours the detail); heuristic kept as the legacy fallback
 - 2026-11-01 · frontend agent (Phase 5a) · `submit`/`applyRun` file runs into the browser History (`historySync.ts`); `openRun` reopens complete/failed runs from IndexedDB with no network, falling back to the server only when the record lacks a result
+- 2026-11-01 · frontend agent (Phase 5b) · `submit` retries once on 401 `device_token_invalid`, marks the limit on 402 `free_runs_used` (no error line; back to idle from a failed-view retry), and refreshes the free-run count after a 202

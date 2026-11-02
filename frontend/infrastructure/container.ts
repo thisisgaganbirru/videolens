@@ -4,6 +4,8 @@
 
 import { LocalStorageApiKeyStore } from "./apiKeyStore";
 import { FetchCapabilitiesGateway } from "./capabilitiesGateway";
+import { LocalStorageDeviceTokenStore } from "./deviceTokenStore";
+import { FetchFreeRunsGateway } from "./freeRunsGateway";
 import { IndexedDbHistoryStore } from "./historyStore";
 import { FetchRunsGateway } from "./runsGateway";
 import { ApiUpdateChecker } from "./updateCheck";
@@ -12,7 +14,12 @@ import { FetchVersionLogGateway } from "./versionLogGateway";
 import { CapacitorSystemBarsStyler } from "./systemBars";
 
 export const apiKeyStore = new LocalStorageApiKeyStore();
-export const runsGateway = new FetchRunsGateway(apiKeyStore);
+/* One device-token store behind both the status read (which may replace the
+   token) and run creation (which sends it), so a refreshed token is the one
+   the next submit carries. */
+export const deviceTokenStore = new LocalStorageDeviceTokenStore();
+export const runsGateway = new FetchRunsGateway(apiKeyStore, deviceTokenStore);
+export const freeRunsGateway = new FetchFreeRunsGateway(deviceTokenStore);
 export const capabilitiesGateway = new FetchCapabilitiesGateway();
 export const versionLogGateway = new FetchVersionLogGateway();
 export const updateChecker = new ApiUpdateChecker();

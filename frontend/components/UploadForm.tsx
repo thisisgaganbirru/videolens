@@ -20,6 +20,11 @@ interface UploadFormProps {
    *  request (so a rejection does not wipe the typed URL), which means it is
    *  the form that has to show the wait. */
   submitting?: boolean;
+  /** Out of free runs and no key saved (Phase 5b): the free-run banner above
+   *  the card says so and offers "Add key". Analyze, Browse files and drop are
+   *  all refused — none of them could succeed — but the link field stays
+   *  editable, so a typed link survives saving a key and coming back. */
+  blocked?: boolean;
   /** The most recent link shared into the app, or null. A new object per
    *  arrival, so re-sharing the same link still fills the field. `HomeScreen`
    *  owns the listener and has already returned the shell to a fresh intake by
@@ -78,11 +83,15 @@ export default function UploadForm({
   onSubmit,
   disabled,
   submitting,
+  blocked,
   sharedUrl,
   urlCapability,
   submitError,
 }: UploadFormProps) {
   const busy = disabled || submitting;
+  /* Every way of starting a run. `busy` alone still governs the link field and
+     the terms box, which stay usable while blocked. */
+  const cannotStart = busy || blocked;
   const [url, setUrl] = useState("");
   const [dragActive, setDragActive] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -145,6 +154,7 @@ export default function UploadForm({
 
   const submitUrl = (event: FormEvent) => {
     event.preventDefault();
+    if (blocked) return;
     const value = url.trim();
     /* The button stays enabled with an empty field, as drawn on Main.png: a
        greyed-out primary action gives no reason, an error on press does. */
@@ -223,7 +233,7 @@ export default function UploadForm({
           />
           <button
             type="submit"
-            disabled={busy}
+            disabled={cannotStart}
             aria-busy={pendingKind === "url" && submitting ? true : undefined}
             className="btn btn-primary"
           >
@@ -247,8 +257,15 @@ export default function UploadForm({
 
       <div
         data-dragging={dragActive ? "true" : undefined}
+        data-blocked={blocked ? "true" : undefined}
         onDragOver={(event) => {
           event.preventDefault();
+          /* Out of free runs: say "no" with the cursor rather than lighting
+             the zone up as if the drop would be taken. */
+          if (blocked) {
+            event.dataTransfer.dropEffect = "none";
+            return;
+          }
           setDragActive(true);
         }}
         onDragLeave={() => setDragActive(false)}
@@ -258,7 +275,7 @@ export default function UploadForm({
           /* The drop zone has no disabled state of its own, so it is the one
              entry point that could still fire mid-submit. The hook guards
              against the double submit; this stops the drop looking accepted. */
-          if (busy) return;
+          if (cannotStart) return;
           const file = event.dataTransfer.files?.[0];
           if (!acceptedTerms) {
             rejectUnaccepted();
@@ -287,7 +304,7 @@ export default function UploadForm({
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
-          disabled={busy || checking || !acceptedTerms}
+          disabled={cannotStart || checking || !acceptedTerms}
           aria-busy={checking || (pendingKind === "file" && submitting) || undefined}
           className="btn btn-secondary"
         >
