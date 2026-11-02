@@ -61,6 +61,8 @@ type MoreSheetProps = {
   onSelectTab?: (tab: MainTab) => void;
   /** The theme as painted when the sheet opened, kept current by `onToggleTheme`. */
   dark: boolean;
+  /** No stored choice: the theme is the device's (refinement 2, #3). */
+  followsDevice: boolean;
   onToggleTheme: () => void;
   /** Fired by the dialog's own `close` event, however it closed. */
   onClose: () => void;
@@ -72,6 +74,7 @@ export default function MoreSheet({
   currentRoute,
   onSelectTab,
   dark,
+  followsDevice,
   onToggleTheme,
   onClose,
 }: MoreSheetProps) {
@@ -100,7 +103,12 @@ export default function MoreSheet({
       return (
         <button type="button" role="switch" aria-checked={dark} className="sheet-row" onClick={onToggleTheme}>
           {icon}
-          <span className="sheet-label">{row.label}</span>
+          <span className="sheet-label">
+            {row.label}
+            {/* Says why the switch is already on (or off) before anyone
+                touched it. Gone after the first press: that stores a choice. */}
+            {followsDevice && <span className="sheet-sublabel">Following your device</span>}
+          </span>
           <span className="switch" aria-hidden="true" />
         </button>
       );
