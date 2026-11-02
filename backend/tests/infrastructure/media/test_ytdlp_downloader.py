@@ -141,5 +141,71 @@ class SourceMetadataExtractionTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(saved.metadata.like_count)
 
 
+class FormatCapTests(unittest.IsolatedAsyncioTestCase):
+    """The options handed to YoutubeDL: a 720p soft cap via format_sort."""
+
+    async def _options_for(self, settings: Settings) -> dict:
+        downloaded_path = os.path.join(settings.temp_dir, "download.mp4")
+        with open(downloaded_path, "wb") as fh:
+            fh.write(b"fake video bytes")
+        downloader = MagicMock()
+        downloader.__enter__.return_value = downloader
+        downloader.__exit__.return_value = False
+        downloader.extract_info.return_value = {"requested_downloads": [{"filepath": downloaded_path}]}
+        downloader.prepare_filename.return_value = downloaded_path
+        with patch(
+            "app.infrastructure.media.ytdlp_downloader.validate_public_url"
+        ), patch(
+            "app.infrastructure.media.ytdlp_downloader._media_binary",
+            return_value=os.path.join("opt", "ffmpeg", "bin", "ffmpeg"),
+        ), patch(
+            "app.infrastructure.media.ytdlp_downloader.YoutubeDL", return_value=downloader
+        ) as youtube_dl:
+            await download_url(settings, "run-fmt", "https://www.youtube.com/watch?v=x")
+        return youtube_dl.call_args.args[0]
+
+    async def test_defaults_to_a_720p_soft_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            options = await self._options_for(
+                Settings(temp_dir=temp_dir, ytdlp_cookies_file="", ytdlp_cookies_from_browser="")
+            )
+
+        self.assertEqual(options["format_sort"], ["res:720"])
+        # Selector keeps every fallback: split streams, progressive file, audio only.
+        self.assertEqual(options["format"], "bestvideo*+bestaudio/best/bestaudio")
+        # No hard height filter in the selector - it would reject sources with
+        # no <=720p variant and drop formats of unknown height.
+        self.assertNotIn("height", options["format"])
+        # Merging split streams still uses the configured FFmpeg.
+        self.assertEqual(options["ffmpeg_location"], os.path.join("opt", "ffmpeg", "bin"))
+
+    async def test_cap_follows_the_setting(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            options = await self._options_for(
+                Settings(
+                    temp_dir=temp_dir,
+                    ytdlp_cookies_file="",
+                    ytdlp_cookies_from_browser="",
+                    ytdlp_max_height=480,
+                )
+            )
+
+        self.assertEqual(options["format_sort"], ["res:480"])
+
+    async def test_zero_removes_the_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            options = await self._options_for(
+                Settings(
+                    temp_dir=temp_dir,
+                    ytdlp_cookies_file="",
+                    ytdlp_cookies_from_browser="",
+                    ytdlp_max_height=0,
+                )
+            )
+
+        self.assertNotIn("format_sort", options)
+        self.assertEqual(options["format"], "bestvideo*+bestaudio/best/bestaudio")
+
+
 if __name__ == "__main__":
     unittest.main()

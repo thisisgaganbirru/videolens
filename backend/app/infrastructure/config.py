@@ -83,6 +83,13 @@ class Settings(BaseSettings):
 
     ytdlp_cookies_file: str = ""
     ytdlp_cookies_from_browser: str = ""
+    # Tallest video yt-dlp fetches for a URL run. A soft cap via yt-dlp's
+    # format_sort "res:N": the largest variant at or under N wins, and a source
+    # with nothing that small falls back to its smallest variant rather than
+    # failing. FFmpeg re-encodes everything anyway and Gemini doesn't need more
+    # than 720p, so a bigger download only costs time, memory and exposure to
+    # mid-download 403s. <= 0 removes the cap (yt-dlp's own "best").
+    ytdlp_max_height: int = 720
     ffmpeg_location: str = ""
 
     allowed_extensions: tuple[str, ...] = (".mp3", ".mp4", ".mov")
