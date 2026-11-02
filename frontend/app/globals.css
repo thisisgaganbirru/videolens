@@ -242,27 +242,38 @@ h3 {
     padding-top: var(--safe-top);
   }
 
+  /* Refinement 13 (D-R12-1): the bar's chrome is capped in px so it stops
+     growing with the root font. At 320 px and 150% text the rem-sized bar
+     (28.5px wordmark, two 66px buttons, 24px gaps) needed 361px of a 272px
+     row and pushed Menu 41px off-screen; at 200% it was 161px off. Every
+     `min(<rem>, <px>)` below equals the old rem value at 100%, so normal
+     scale is pixel-identical; past it the bar holds still. The buttons stay
+     44px — a target does not get easier to hit by growing past that — and
+     the wordmark is a logotype, so it may stop at 22px while the body text
+     keeps scaling. Content-driven, not a breakpoint: nothing here reads the
+     viewport width. */
   .nav {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-sm);
-    min-height: 4.25rem;
+    gap: min(var(--space-sm), 16px);
+    min-height: min(4.25rem, 68px);
   }
 
   .brand {
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
-    font-size: 1.1875rem;
+    gap: min(0.5rem, 8px);
+    font-size: min(1.1875rem, 22px);
     font-weight: 700;
     letter-spacing: -0.02em;
     color: var(--color-ink);
     white-space: nowrap;
   }
   .brand-mark {
-    width: 1.625rem;
-    height: 1.625rem;
+    /* 26px beside a 19px word at 100%; the same ratio at the 22px cap. */
+    width: min(1.625rem, 30px);
+    height: min(1.625rem, 30px);
     flex-shrink: 0;
   }
   .brand-ring {
@@ -296,7 +307,7 @@ h3 {
   .nav-actions {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: min(0.5rem, 8px);
   }
 
   /* ---- desktop destinations (web shell only, from 48rem) ----
@@ -346,8 +357,8 @@ h3 {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 2.75rem;
-    height: 2.75rem;
+    width: 44px;
+    height: 44px;
     flex-shrink: 0;
     color: var(--color-ink);
     background: var(--color-surface);
@@ -366,8 +377,8 @@ h3 {
   }
   .theme-toggle svg,
   .menu-toggle svg {
-    width: 1.125rem;
-    height: 1.125rem;
+    width: 18px;
+    height: 18px;
   }
   /* Which glyph shows is decided by the attribute the blocking script in
      layout.tsx stamps, not by React state — that keeps the toggle free of any
@@ -2424,24 +2435,32 @@ h3 {
      (the hairline is on `.page-end`, which runs full-bleed)
      ======================================================================== */
 
+  /* Refinement 13: at 320 px and 150% text "VideoLens AI" and the two links
+     cannot share a line (they need ~287px of 272 even with tighter gaps), so
+     the bar wraps; what it no longer does is grow its spacing with the text.
+     The rem gaps, the 3.5rem floor and the 2.75rem link height made the
+     wrapped footer 146px tall at 150% and 195px at 200%, leaving a ~330px
+     content band. Capped in px (each equal to the old value at 100%) and with
+     no row gap — the links' own 44px height spaces the two lines — it is
+     ~100px at 150%. Text still scales; targets stay 44px. */
   .foot {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-sm);
+    gap: 0 min(var(--space-sm), 16px);
     flex-wrap: wrap;
-    min-height: 3.5rem;
+    min-height: min(3.5rem, 56px);
     font-size: 0.875rem;
     color: var(--color-muted);
   }
   .foot-legal {
     display: flex;
-    gap: var(--space-md);
+    gap: min(var(--space-md), 24px);
   }
   .foot-legal a {
     display: inline-flex;
     align-items: center;
-    min-height: 2.75rem;
+    min-height: 44px;
     color: inherit;
     text-decoration: underline;
     text-underline-offset: 3px;
@@ -2666,6 +2685,11 @@ h3 {
     padding: 0.375rem 0.25rem;
     border: none;
     min-width: 0;
+    /* Refinement 13: the segmented control below sizes itself from the room
+       this fieldset has, measured in em, so the switch points move with the
+       text size rather than with the viewport. */
+    container: theme-choice / inline-size;
+    font-size: 1rem;
   }
   .theme-choice__legend {
     padding: 0;
@@ -2693,6 +2717,8 @@ h3 {
     display: grid;
     place-items: center;
     min-height: 2.75rem;
+    min-width: 0;
+    padding-inline: 0.375rem;
     border-radius: var(--radius-pill);
     font-size: 0.9375rem;
     font-weight: 600;
@@ -2721,6 +2747,31 @@ h3 {
   }
   .segmented__option:active {
     background: var(--color-paper);
+  }
+  /* Refinement 13: room for the three labels at any text size. Measured
+     need, in em of this fieldset: "System" (the widest label) is ~3.1em of
+     text at the 0.9375rem label size, plus 0.375rem padding a side, so a row
+     of three equal segments needs ~12.3em with the track's gaps and padding,
+     and ~15.7em with the 3.375rem indent that lines it up under the label.
+     The switch points below leave ~0.3–0.45em of slack for font metrics.
+     Tier 1: too narrow for the indent, the track takes the full width under
+     the icon. Tier 2: too narrow for a row, the three stack, each still a
+     full-width 44px target. 320 px at 100% keeps the indented row it has
+     always had. */
+  @container theme-choice (width < 16em) {
+    .segmented {
+      margin-left: 0;
+    }
+  }
+  @container theme-choice (width < 12.75em) {
+    .segmented {
+      grid-template-columns: minmax(0, 1fr);
+      padding: 3px;
+      border-radius: var(--radius-control);
+    }
+    .segmented__option {
+      border-radius: calc(var(--radius-control) - 3px);
+    }
   }
 
   /* A switch's track and knob — the More sheet's theme row and the
@@ -4133,10 +4184,10 @@ h3 {
    theme toggle (the Desktop boards). Below it they live in the phone menu. */
 @media (min-width: 48rem) {
   .nav {
-    min-height: 4.75rem;
+    min-height: min(4.75rem, 76px);
   }
   .brand {
-    font-size: 1.3125rem;
+    font-size: min(1.3125rem, 24px);
   }
   /* Both shells: from Phase 2 an installed window this wide has the top bar
      too (the app-shell hide is scoped to <=37.5rem, so this unlayered rule no
@@ -4160,7 +4211,7 @@ h3 {
     display: none;
   }
   :root[data-shell="app"] .nav {
-    min-height: 3.5rem;
+    min-height: min(3.5rem, 56px);
   }
 
   /* Refinement 2, #7. At ~390px tall the portrait dock (64px, stacked
