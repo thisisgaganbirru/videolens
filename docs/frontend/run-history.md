@@ -1,18 +1,98 @@
 # Run history panel
 
-Shows the caller's own past runs (newest first, backend-capped at 20) and lets them reopen one.
+Shows this browser's own past runs (newest first, capped at 20) and lets them reopen one — **offline too**. Since Phase 5a (2026-11-01) History lives in the browser (IndexedDB), not on the server.
 
 **Files**
-- `frontend/application/useRunHistory.ts` — fetches on mount via `runsGateway.listRuns()`; classifies failures and owns the retry.
-- `frontend/infrastructure/runsGateway.ts` — `FetchRunsGateway`; the only place that knows whether a call failed in transport or in HTTP.
-- `frontend/domain/errors.ts` — `ApiError` and `NetworkError`, the two-case error contract every gateway method obeys.
-- `frontend/domain/entities.ts` — `RunSummary` (with the Phase 3 optional fields), `RunSourceKind`, `RunPlatform`, `RunOrientation`.
+- `frontend/domain/entities.ts` — `HistoryRecord` (the stored shape, below), `HistoryPatch`, `RunSummary` (+ `width`/`height`), `RunStatusResponse` (+ `thumbnail`/`width`/`height`/`orientation`), `RunSourceKind`, `RunPlatform`, `RunOrientation`.
+- `frontend/domain/ports.ts` — `HistoryStore` (`list`, `get`, `upsert`, `subscribe`).
+- `frontend/domain/errors.ts` — `ApiError` (now carries the HTTP `status`), `NetworkError`, `StorageUnavailableError`.
+- `frontend/infrastructure/historyStore.ts` — `IndexedDbHistoryStore`, `HISTORY_LIMIT = 20`. Hand-written wrapper, no dependency. Registered in `infrastructure/container.ts` as `historyStore`.
+- `frontend/application/historySync.ts` — every History **write**, React-free: `recordSubmitted`, `recordRunResponse`, `bootHistory` (one-time import + re-check of unfinished runs), `patchFromRun`, `dataUrlToBlob`, `snippetOf`, `EXPIRED_MESSAGE`.
+- `frontend/application/useRunHistory.ts` — reads the store, re-reads on `subscribe`, owns the poster object URLs (created per read, revoked on the next read and on unmount); exports `useHistoryBoot()` (mounted once in `HomeScreen`). Returns `HistoryEntry` = `RunSummary` + `thumbnail_url`.
+- `frontend/application/useAnalysisRun.ts` — writes on submit and on every applied status response; `openRun` reads the store first.
+- `frontend/infrastructure/runsGateway.ts` — `FetchRunsGateway`; `listRuns()` is now called **only** by the one-time import.
 - `frontend/components/history.ts` — **pure** helpers, no React: `posterTint` (FNV-1a of `run_id` → 1..5), `platformLabel`, `isAudio`, `isLandscape`, `formatDuration`, `posterBadge`, `posterTitle`, `dayBucket`, `posterDate`, `matchesFilter`, `matchesQuery`, `sortRuns`, `buildHistory`, `posterLabel`.
 - `frontend/components/panels/HistoryPanel.tsx` — renders the page header, the four states, the controls and the poster grid. Props: `onOpenRun(runId, sourceKind?)`, `onAnalyze()`.
 - `frontend/components/HomeScreen.tsx` — renders `<section data-view="history">` (no `.col-label`/`.surface`/`.pane` any more) and passes the summary's `source_kind` on to `openRun`.
 - `frontend/app/globals.css` — the HISTORY block (`.history*`, `.filter-pill`, `.sort-select`, `.poster*`), hover rules in `@media (hover: hover)`, and the History section scroller next to Analyze's.
 
-**Ownership**: history is scoped server-side by the caller's `Principal` (see `backend/docs/auth.md` — anonymous callers are scoped by `X-Client-ID`), not filtered client-side. Filtering *within* the returned list (pills, search, sort) is client-side.
+**Ownership**: History is whatever this browser stored — per-browser by construction. The server still scopes `GET /api/runs/{id}` by the caller's `Principal` (`X-Client-ID` for anonymous callers). Filtering (pills, search, sort) is client-side over the stored ≤20.
+
+## Where History comes from (Phase 5a, 2026-11-01) — supersedes the fetch-on-mount model
+
+The server keeps a run for `RUN_TTL_SECONDS` (default 3600) and then forgets
+it, so the browser files each run itself:
+
+| when | written by | what |
+| --- | --- | --- |
+| the server accepts a run (202) | `recordSubmitted` (from `useAnalysisRun.submit`) | `run_id`, `status: queued`, client `created_at`, `source_kind`; for uploads `platform` = `audio_file` (audio/* or .mp3) else `video_file` |
+| every status response the screen applies (poll, reconnect, reopen) | `recordRunResponse` → `patchFromRun` | status, platform, duration, width/height/orientation, `source_metadata` (+ its title), the server `thumbnail` (data URL → Blob); on `complete` the full `result`, `completeness`, title, `summary_snippet` (same 160-char word-boundary rule as the backend); on `failed` the `error` |
+| first app load ever (flag `videolens-history-imported` in localStorage) | `bootHistory` → `importOnce` | `GET /api/runs`, then `GET /api/runs/{id}` for each, so runs made before 5a are kept. The flag is set only once the list came back (an offline first load retries next time). Failures are silent. **After this the app never calls `GET /api/runs` again.** |
+| every app load | `bootHistory` → `reconcileUnfinished` | each stored `queued`/`processing` run is asked about **once**; a 404 (`ApiError.status`) marks it `failed` with `EXPIRED_MESSAGE` ("This run expired on the server before its result reached this browser."). Unreachable → left alone |
+
+Writes only include fields the response actually carries, so a later response
+without a field never erases an earlier one. A per-run signature
+(status/thumbnail/width/platform/result) skips identical 3-second poll writes.
+Every write swallows its own failure — History is never the reason an analysis
+does not show.
+
+**Thumbnails are the server's** (links and uploads alike). There is **no
+browser-side frame grab**: owner decision 2026-11-01 — the server cuts a poster
+from the normalised file for uploads too, and nothing on screen shows a poster
+before a run is done (`RunStatusView` draws none), so a client grab would be a
+second, throw-away thumbnail. Audio and failed runs have none (tint placeholder).
+
+**Reopening** (`useAnalysisRun.openRun`): the store first — a `complete` record
+with a `result`, or a `failed` record, is shown with no network at all. Anything
+else (still running, or no usable store) falls through to `GET /api/runs/{id}`
+and polls as before.
+
+**Cap**: `upsert` enforces it inside the same readwrite transaction — after the
+put, `count()`; if over 20, walk the `created_at` index oldest-first and delete
+the excess. Verified by importing 22 runs: 20 kept, the two oldest gone.
+
+**Persistence**: `navigator.storage.persist()` is asked once (feature-detected,
+not awaited) the first time History is written. Without it Safari can evict
+after 7 days without a visit, Chrome under storage pressure.
+
+**Cross-tab**: writes post on a `BroadcastChannel("videolens-history")`; the
+store's subscribers in other tabs re-read.
+
+### The stored record
+
+`HistoryRecord` in IndexedDB database `videolens` v1, store `runs`, keyPath
+`run_id`, index `created_at`:
+
+`run_id`, `created_at` (ISO), `status`, `title`, `source_kind`, `platform`,
+`duration_seconds`, `width`, `height`, `orientation`, `summary_snippet`,
+`thumbnail` (JPEG `Blob`, longest side ≤320px, ~10–14 KB, or null), `result`
+(`VideoAnalysis`), `source_metadata`, `completeness`, `error`, `updated_at`.
+Everything except `run_id`/`created_at`/`status`/`updated_at` is nullable.
+
+### Poster thumbnail
+
+`<img class="poster-img" alt="" decoding="async">` absolutely filling
+`.poster-thumb` with `object-fit: cover` (and `max-width: none` against the
+preflight `img` rule), under the chips, play disc and hover veil; the tint stays
+behind it. Plain `<img>` because the source is a `blob:` URL that `next/image`
+cannot optimise (one `eslint-disable-next-line @next/next/no-img-element`, with
+the reason inline). **Landscape** = `width > height` when both are known, else
+`orientation === "landscape"`, else portrait (`components/history.ts`
+`isLandscape`). `sortRuns`/`buildHistory`/`HistoryGroup` are generic over
+`T extends RunSummary` so the entries keep their `thumbnail_url`.
+
+### States, revised
+
+- Loading (`runs === null`), empty, populated and no-matches are unchanged.
+- **`storage`** — `StorageUnavailableError` (no `indexedDB`, or open refused/
+  blocked, e.g. some private modes). Rendered in the calm `.history-empty`
+  voice (`data-error-kind="storage"`, `role="status"`), not the red ladder:
+  "History can't be saved in this browser." + why + an "Analyze a video"
+  button. The app still works; verified a link run completes with `indexedDB`
+  removed.
+- **`unknown`** — any other read failure: the existing `.error-inline` + retry.
+- The `unreachable`/`server` kinds described further down no longer apply to
+  History (it makes no request to list); that text is kept for history.
 
 ## Layout — poster grid (Phase 3, 2026-11-01)
 
@@ -206,3 +286,4 @@ painting 66.8px buttons (44 content + 20.8 padding + 2 border) instead of the
 - 2026-11-01 · frontend agent (Phase 3) · replaced the day-grouped row list with the editorial poster grid (filters, search, sort, day buckets, landscape spans, tint hash, legacy fallbacks, Failed/Processing badges); pure helpers in components/history.ts; History section is now its own scroller; empty + no-matches states restyled
 - 2026-11-01 · frontend agent (Phase 4) · phone controls: search full width on its own row above the pills, sort hidden below 48rem and ordering forced to Newest there via `useMediaQuery` (desktop choice preserved); scroller selector is now `.view-scroll`
 - 2026-11-01 · frontend agent (Phase 4, boards) · title size follows the shared `.view-title`/`.history-title` change to clamp(2.25rem, 1.75rem + 1.6vw, 3rem) made for the Phase 4 boards (36px phone, 48px at 1280); no other History change
+- 2026-11-01 · frontend agent (Phase 5a) · History moved into the browser: `HistoryStore` port + `IndexedDbHistoryStore` (cap 20, oldest dropped, persist() once, cross-tab), writes from `useAnalysisRun` via `application/historySync.ts`, one-time import from `GET /api/runs`, unfinished runs re-checked once per load (404 → expired), reopen from IndexedDB offline, server thumbnails as Blobs in the poster grid (landscape by width>height), calm storage-unavailable state; no client-side frame grab (owner decision)

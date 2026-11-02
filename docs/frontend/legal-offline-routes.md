@@ -143,10 +143,14 @@ are deleted from `globals.css`.
   going on the server.", and **`<a href="/">` Try again** (`.btn-ink`) —
   still a plain anchor (the eslint override for `app/offline/**` stays),
   because an RSC navigation cannot resolve with the network down.
-  Deviation: the boards' "Your History is still here." and **Open History**
-  button are omitted because they are not true yet — History is fetched from
-  the server, and the service worker answers `/?view=history` with this page
-  while offline. Add both when run history moves client-side.
+  **Phase 5a (supersedes the Phase 4 deviation):** the lede is now the board's
+  "VideoLens needs a connection to analyze new videos. Your History is still
+  here." and `.offline-actions` holds Try again (`.btn-ink`) + **Open History**
+  (`<a href="/?view=history">`, `.btn-secondary .btn-pill`), side by side,
+  wrapping on the narrowest phones. Both are true now: History is in IndexedDB
+  and the worker serves its address offline (below). The old "A run you
+  already started keeps going on the server." sentence was dropped to match
+  the board.
 
 ## The measure
 
@@ -463,6 +467,26 @@ without a size jump, which in a single-face type system is otherwise expensive.
 
 ## What the service worker serves offline
 
+**Phase 5a update (2026-11-01).** `/?view=history` is now served from the
+cached `/` shell offline (`OFFLINE_CAPABLE_VIEWS = ["history"]` +
+`cachedAppView()` in `sw.template.js`): History reads IndexedDB, so it is
+complete with no network. Every other view of `/` (bare `/`, `?view=api-key`,
+`?view=releases`) and unknown paths still get `/offline` — it is still an
+allowlist. Inside that shell, opening a stored run switches to Analyze by
+`pushState` (no request) and renders from IndexedDB. Pressing Analyze there
+gives an intake whose submit fails with the honest "Can't reach the server"
+sentence — acceptable, since the user chose to go there.
+`build-sw.mjs` now also digests the template's own bytes, so a policy-only
+change renames the cache and sweeps the old one (it changes every build
+anyway). **Measured** on `next build` + `next start -p 3007` with the real
+worker controlling, History seeded, then the **server process stopped**
+(Playwright's `setOffline` alone did not stop the worker's own `fetch` from
+reaching the live server in this setup, so it is not a sufficient offline test
+here): `/?view=history` → History with 6 posters; `/offline` → Open History →
+History; reopening a run → its result; `/`, `/?view=api-key`,
+`/?view=releases`, `/nope` → offline page; `/privacy` → Privacy; React
+hydrated. The table below is the pre-5a measurement.
+
 The navigate branch used to be `fetch(req).catch(() => caches.match("/offline"))`
 — it never consulted the cache for the **requested** URL, so `/privacy` and
 `/terms` rendered the offline page even though both documents were sitting in
@@ -647,3 +671,5 @@ including a cold start with the HTTP cache cleared via CDP
 - 2026-11-01 · frontend agent (Phase 4) · editorial restyle of Privacy, Terms and Offline (no board): `.view-scroll` section replaces `data-frame="fixed"`, serif `.view-title` + `.legal-meta`, `.legal-section`/`.legal-heading`/`.legal-text` clauses at `--measure`, Offline as a dashed WifiOff tile + serif title + plain `<a>` Try again; deleted `.legal-doc`/`.legal-body`/`.page-title`/`.home-center`
 - 2026-11-01 · frontend agent (Phase 4, boards) · rebuilt Privacy/Terms/Offline to design/phase4-boards: crumb bar removed (boards draw none; all .crumb-* CSS deleted), titles Privacy/Terms, meta directly under title, no section rules, tighter section rhythm; Offline as a round tint disc + "You're offline" + new lede, centred on phones; "Your History is still here"/Open History omitted (not true offline yet); "Effective" kept over "Last updated"; sample-text notice not rendered
 - 2026-11-01 · frontend agent (app Back link) · `LegalShell` renders `<AppBackLink />` above the Privacy/Terms title, visible only in the app shell (`display:none` in web, so the boards' crumb-less web layout is unchanged); Back = history.back() when the previous entry is in-app, else `/`; /offline unchanged
+- 2026-11-01 · frontend agent (Phase 5a) · Offline page gets the board's "Your History is still here." + Open History (`<a href="/?view=history">`); service worker serves `/?view=history` from the cached shell offline (allowlisted view); cache digest now includes the template; verified with the real worker and the server stopped
+- 2026-11-01 · frontend agent (Phase 5a) · Privacy: "Information retained" now says the server keeps a run about an hour after it starts and then deletes it; new "Your History" section (IndexedDB only, never sent back, 20 most recent, cleared with site data, browser may evict e.g. Safari after 7 days unvisited). Effective date left unchanged — owner to decide

@@ -13,6 +13,7 @@ import ApiKeyPanel from "@/components/panels/ApiKeyPanel";
 import HistoryPanel from "@/components/panels/HistoryPanel";
 import VersionLogPanel from "@/components/panels/VersionLogPanel";
 import { useAnalysisRun } from "@/application/useAnalysisRun";
+import { useHistoryBoot } from "@/application/useRunHistory";
 import { useCapabilities } from "@/application/useCapabilities";
 import { useSharedUrl } from "@/application/useSharedUrl";
 import { goToMainTab, useMainTab, type MainTab } from "@/application/useMainTab";
@@ -58,6 +59,11 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   const { notice, urlDownload, dailyBudget } = useCapabilities();
 
   const sharedUrl = useSharedUrl();
+
+  /* Once per app load: seed History from the server the first time, and
+     re-check runs this browser last saw unfinished. Here, not in the History
+     panel, because it has to happen whichever tab the app opens on. */
+  useHistoryBoot();
 
   /* A link shared into the app is a request to analyze *that*, so it takes the
      screen over: whatever tab is showing, and whatever run is on it, gives way

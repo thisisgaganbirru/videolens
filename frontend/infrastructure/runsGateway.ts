@@ -80,7 +80,7 @@ export class FetchRunsGateway implements RunsGateway {
 
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      throw new ApiError(body?.detail || `Could not create run (${res.status})`);
+      throw new ApiError(body?.detail || `Could not create run (${res.status})`, res.status);
     }
 
     return this.parse<RunCreateResponse>(res);
@@ -90,7 +90,7 @@ export class FetchRunsGateway implements RunsGateway {
     const res = await this.send(`/api/runs/${runId}`);
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      throw new ApiError(body?.detail || `Could not fetch run status (${res.status})`);
+      throw new ApiError(body?.detail || `Could not fetch run status (${res.status})`, res.status);
     }
     return this.parse<RunStatusResponse>(res);
   }
@@ -99,7 +99,7 @@ export class FetchRunsGateway implements RunsGateway {
     const res = await this.send("/api/runs");
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      throw new ApiError(body?.detail || `Could not fetch run history (${res.status})`);
+      throw new ApiError(body?.detail || `Could not fetch run history (${res.status})`, res.status);
     }
     return this.parse<RunListResponse>(res);
   }
