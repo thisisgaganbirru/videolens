@@ -290,6 +290,38 @@ shrunk to 420/520, light and dark, empty and invalid link: message fully inside
 the section band every time (at 140: band 57-140, field 53-105, message
 113-135.5).
 
+## Refinement 6 (2026-11-02)
+
+- **INT-04, every error at once.** The single `error`/`errorField` slot is now
+  `errors: FieldErrors` (`Partial<Record<"url" | "file" | "terms", string>>`).
+  `submitUrl` runs every check and shows every failure in one press: an empty
+  or invalid link *and* unticked terms both render, each under its own control
+  with its own `aria-describedby`/`aria-invalid`. `showErrors(next)` focuses
+  and reveals the **first invalid control in DOM order** (`FIELD_ORDER`: link,
+  file, terms). Editing a control clears only that control's message
+  (`clearError(field)`); `clearError()` with no field clears all.
+- **INT-16, empty file.** `validateFile` rejects `file.size === 0` with "This
+  file is empty. Choose another one." (after the extension check), shown under
+  the file control; nothing is POSTed.
+- **A11-13, terms target size.** The checkbox sits in a `span.terms-box`, a
+  44x44 (2.75rem) hit area with negative margins (`-0.65rem -0.75rem`) so the
+  20x20 box and the text keep their exact positions (checkbox `margin` moved
+  to 0; the old `0.1rem` top offset is now carried by the box's centring). It
+  is inside the `<label>`, so a tap anywhere in the square toggles it — the
+  harness taps all four corners at 390 and 1366 in both shells. The
+  invalid-text rule became `.terms-row:has(…) > span:not(.terms-box)`.
+- **RUN-16, create-run failures** are worded in the gateway
+  (`infrastructure/runsGateway.ts`, `createRunFailureMessage`) and shown by the
+  form's existing `.intake-alert`: a 5xx never shows its raw body ("The server
+  had a problem starting this run. Try again in a moment.", except a 503 whose
+  `detail` is a short user-facing sentence — the backend's curated 503s); a
+  4xx keeps a usable `detail` string, else a generic line (FastAPI's 422
+  arrays are not shown); a 429 reads `Retry-After` (seconds or HTTP date) as
+  "You're going a bit fast. Try again in about N minutes." **The backend sends
+  no `Retry-After` and does not list it in `expose_headers`** (Retry-After is
+  not CORS-safelisted), so today the 429 path falls back to the backend's
+  `detail`; it starts working once the backend sends and exposes the header.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported UploadForm to the unboxed .intake; returns a fragment since HomeScreen supplies the wrapper
@@ -309,3 +341,4 @@ the section band every time (at 140: band 57-140, field 53-105, message
 - 2026-11-02 · frontend agent (refinement 2) · link form `noValidate`; aria-invalid/red state only for link errors (a terms error marks the checkbox); `.only-pointer`/`.only-touch` replace the drop-title classes and fix the touch lede
 - 2026-11-02 · frontend agent (refinement 4) · field errors moved next to their controls (#url-error / #terms-error / #file-error, each aria-describedby), terms checkbox gets aria-invalid + danger outline + focus, control+message revealed with revealField (INT-01, INT-03)
 - 2026-11-02 · frontend agent (refinement 5) · revealField clips to the scrolling section and prefers field + error message (message bottom edge visible) over the group with Analyze in a short landscape band (INT-01b)
+- 2026-11-02 · frontend agent (refinement 6) · INT-04 all field errors at once (first invalid focused); INT-16 0-byte file rejected; A11-13 44x44 terms hit area; RUN-16 create-run failure wording

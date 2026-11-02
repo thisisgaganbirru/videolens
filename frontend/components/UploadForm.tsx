@@ -62,11 +62,22 @@ interface UploadFormProps {
   submitError?: string | null;
 }
 
+type ErrorField = "url" | "file" | "terms";
+type FieldErrors = Partial<Record<ErrorField, string>>;
+/** DOM order of the three controls: the first invalid one takes focus. */
+const FIELD_ORDER: ErrorField[] = ["url", "file", "terms"];
+const TERMS_MESSAGE = "Accept the media-use terms before analysis.";
+
 function validateFile(file: File): string | null {
   const dot = file.name.lastIndexOf(".");
   const ext = dot >= 0 ? file.name.slice(dot).toLowerCase() : "";
   if (!ACCEPTED_EXTENSIONS.includes(ext)) {
     return "Only MP3, MP4, and MOV files are supported.";
+  }
+  /* Refinement 6 (INT-16): a 0-byte file used to be POSTed and refused by the
+     server a round trip later. Nothing in it can be analyzed. */
+  if (file.size === 0) {
+    return "This file is empty. Choose another one.";
   }
   if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
     return `File is larger than the ${MAX_FILE_SIZE_MB}MB limit.`;
@@ -117,27 +128,41 @@ export default function UploadForm({
   const [dragActive, setDragActive] = useState(false);
   const [checking, setChecking] = useState(false);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  /* Which control the error is about. Only a link error marks the link field
-     invalid (red border, aria-invalid): the terms error is about the checkbox,
-     and a file error about a file the field never saw (refinement 2, #4).
-     Refinement 4 (INT-01/03/05): the message renders right under that control
-     (not at the foot of the card, where a soft keyboard covered it), is its
-     aria-describedby, and the control plus message are scrolled into view. */
-  const [errorField, setErrorField] = useState<"url" | "terms" | "file" | null>(null);
+  /* One message per control, each shown right under the control it is about.
+     Only a link error marks the link field invalid (red border,
+     aria-invalid): the terms error is about the checkbox, and a file error
+     about a file the field never saw (refinement 2, #4). Refinement 4
+     (INT-01/03/05): each message is its control's aria-describedby, and the
+     control plus message are scrolled into view. Refinement 6 (INT-04): a
+     map rather than one slot, so a press of Analyze with an empty link AND
+     the terms unticked says both at once instead of one per press. */
+  const [errors, setErrors] = useState<FieldErrors>({});
   /* Bumped on every rejection, so pressing Analyze twice on the same empty
      field brings it back into view the second time too. */
   const [errorSeq, setErrorSeq] = useState(0);
-  const revealRef = useRef<"url" | "terms" | "file" | null>(null);
-  const showError = useCallback((message: string, field: "url" | "terms" | "file") => {
-    setError(message);
-    setErrorField(field);
-    revealRef.current = field;
+  const revealRef = useRef<ErrorField | null>(null);
+  /** Replace the shown errors with `next`, and focus + reveal the first of
+   *  them in DOM order (link, file, terms). */
+  const showErrors = useCallback((next: FieldErrors) => {
+    const first = FIELD_ORDER.find((field) => next[field]);
+    if (!first) return;
+    setErrors(next);
+    revealRef.current = first;
     setErrorSeq((n) => n + 1);
   }, []);
-  const clearError = useCallback(() => {
-    setError(null);
-    setErrorField(null);
+  const showError = useCallback(
+    (message: string, field: ErrorField) => showErrors({ [field]: message }),
+    [showErrors]
+  );
+  /** Drop one control's message (it was edited), or all of them. */
+  const clearError = useCallback((field?: ErrorField) => {
+    setErrors((current) => {
+      if (!field) return Object.keys(current).length ? {} : current;
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
   }, []);
   /* Which of the two entry points is waiting. Both are disabled while a submit
      is in flight, but only the one the user actually pressed should say so —
@@ -178,8 +203,7 @@ export default function UploadForm({
   useEffect(() => {
     if (!sharedUrl) return;
     setUrl(sharedUrl.url);
-    setError(null);
-    setErrorField(null);
+    setErrors({});
   }, [sharedUrl]);
 
   const handleFile = useCallback(
@@ -218,18 +242,18 @@ export default function UploadForm({
     if (blocked) return;
     const value = url.trim();
     /* The button stays enabled with an empty field, as drawn on Main.png: a
-       greyed-out primary action gives no reason, an error on press does. */
-    if (!value) {
-      showError("Paste a link to analyze.", "url");
-      return;
+       greyed-out primary action gives no reason, an error on press does.
+       Every check runs and every failure shows at once (refinement 6,
+       INT-04); focus goes to the first one in DOM order. */
+    const next: FieldErrors = {};
+    if (!value) next.url = "Paste a link to analyze.";
+    else {
+      const validationError = validateUrl(value);
+      if (validationError) next.url = validationError;
     }
-    if (!acceptedTerms) {
-      showError("Accept the media-use terms before analysis.", "terms");
-      return;
-    }
-    const validationError = validateUrl(value);
-    if (validationError) {
-      showError(validationError, "url");
+    if (!acceptedTerms) next.terms = TERMS_MESSAGE;
+    if (next.url || next.terms) {
+      showErrors(next);
       return;
     }
     clearError();
@@ -238,7 +262,7 @@ export default function UploadForm({
   };
 
   const rejectUnaccepted = () => {
-    showError("Accept the media-use terms before analysis.", "terms");
+    showError(TERMS_MESSAGE, "terms");
   };
 
   /* URL downloads are the one capability with a consequence the user can act
@@ -253,7 +277,7 @@ export default function UploadForm({
      region: it reaches a screen-reader user at the moment they focus the input
      — which is when it matters — instead of competing with the summary strip's
      announcement on load. */
-  const describedBy = [error && errorField === "url" ? "url-error" : null, urlNotice ? "url-capability" : null]
+  const describedBy = [errors.url ? "url-error" : null, urlNotice ? "url-capability" : null]
     .filter(Boolean)
     .join(" ");
 
@@ -286,12 +310,12 @@ export default function UploadForm({
             value={url}
             onChange={(event) => {
               setUrl(event.target.value);
-              clearError();
+              clearError("url");
             }}
             placeholder="YouTube, TikTok, or Instagram link"
             autoComplete="url"
             disabled={busy}
-            aria-invalid={error && errorField === "url" ? "true" : undefined}
+            aria-invalid={errors.url ? "true" : undefined}
             aria-describedby={describedBy || undefined}
             className="field"
           />
@@ -303,9 +327,9 @@ export default function UploadForm({
           >
             {pendingKind === "url" && submitting ? "Sending…" : "Analyze link"}
           </button>
-          {error && errorField === "url" && (
+          {errors.url && (
             <p id="url-error" role="alert" className="error-note field-error">
-              {error}
+              {errors.url}
             </p>
           )}
         </div>
@@ -377,7 +401,7 @@ export default function UploadForm({
           onClick={() => inputRef.current?.click()}
           disabled={cannotStart || checking || !acceptedTerms}
           aria-busy={checking || (pendingKind === "file" && submitting) || undefined}
-          aria-describedby={error && errorField === "file" ? "file-error" : undefined}
+          aria-describedby={errors.file ? "file-error" : undefined}
           className="btn btn-secondary"
         >
           {pendingKind === "file" && submitting
@@ -402,29 +426,35 @@ export default function UploadForm({
           }}
         />
       </div>
-      {error && errorField === "file" && (
+      {errors.file && (
         <p id="file-error" role="alert" className="error-note field-error">
-          {error}
+          {errors.file}
         </p>
       )}
       </div>
 
       <div data-reveal-group>
       <label className="terms-row">
-        <input
-          ref={termsRef}
-          type="checkbox"
-          checked={acceptedTerms}
-          disabled={busy}
-          aria-invalid={error && errorField === "terms" ? "true" : undefined}
-          aria-describedby={error && errorField === "terms" ? "terms-error" : undefined}
-          onChange={(event) => {
-            const accepted = event.target.checked;
-            setAcceptedTerms(accepted);
-            writeTermsAccepted(accepted);
-            clearError();
-          }}
-        />
+        {/* Refinement 6 (A11-13): the box is drawn 20x20, but this wrapper
+            is a 44x44 tap target around it (negative margins, so the row
+            does not move). It is inside the label, so a tap anywhere on it
+            toggles the box. */}
+        <span className="terms-box">
+          <input
+            ref={termsRef}
+            type="checkbox"
+            checked={acceptedTerms}
+            disabled={busy}
+            aria-invalid={errors.terms ? "true" : undefined}
+            aria-describedby={errors.terms ? "terms-error" : undefined}
+            onChange={(event) => {
+              const accepted = event.target.checked;
+              setAcceptedTerms(accepted);
+              writeTermsAccepted(accepted);
+              clearError("terms");
+            }}
+          />
+        </span>
         <span>
           I will only submit media I own or am allowed to process, and I agree to the{" "}
           <a className="text-link" href="/terms">
@@ -438,9 +468,9 @@ export default function UploadForm({
         </span>
       </label>
 
-      {error && errorField === "terms" && (
+      {errors.terms && (
         <p id="terms-error" role="alert" className="error-note field-error">
-          {error}
+          {errors.terms}
         </p>
       )}
       </div>
