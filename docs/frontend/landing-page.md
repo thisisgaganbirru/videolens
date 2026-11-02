@@ -113,6 +113,13 @@ height, so the CTAs are never pushed off-screen. Measured in dev (iframe
 probes): 1366×768, 1440×900, 1920×1080 and 1024×700, hero = band and `#how`
 below the band; 1280×600 and 390×844 unchanged.
 
+`#how` ("How it works") is the second screen under the same query: it is also
+`min-height: 100cqb`, a centred flex column, with `margin-top: 0` and
+`scroll-margin-top: 0`. "See how it works" therefore lands it exactly on the
+band with the heading and steps centred (equal space above and below: 291px at
+1920×955, 198px at 1366×768), and "What you get" starts below the fold instead
+of being cut off by the footer.
+
 ## Measured (2026-11-01, `next build` + `next start -p 3015`, Playwright, `/api/*` mocked)
 
 - `/` at 1366×900 and 390×844, light and dark: no horizontal scroll; CTAs
@@ -157,4 +164,5 @@ below the band; 1280×600 and 390×844 unchanged.
 - 2026-11-01 · frontend agent (Phase 5c) · created: tool moved to `/app`, landing at `/`, pre-paint redirects, Capacitor `.html` hop, band tokens
 - 2026-11-01 · videolens-ff (lead) · desktop hero fills the visible band (size container + `100cqb`) so "How it works" no longer peeks in above the footer
 - 2026-11-01 · videolens-ff (lead) · "What you get" footnote (`.landing-wyg-foot`) runs the full card width (dropped `max-width: 44rem`) with `text-wrap: pretty`
+- 2026-11-01 · videolens-ff (lead) · `#how` fills the band and centres its content on desktop, so "See how it works" no longer leaves "What you get" cut off above the footer
 - 2026-11-01 · frontend agent (refinement 1) · redirect script moved into the root layout head (no React script warning), Capacitor hop limited to the asset-server origin, storage-crash known issue closed, escape-trap note; verified in `next start`, a separate `next dev`, and an emulated asset server over `out/`
