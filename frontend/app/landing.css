@@ -282,7 +282,7 @@
    align-items centres the intro and card in it. Short windows (under 40rem
    tall) keep the natural height, so the CTAs never get pushed off-screen. */
 @media (min-width: 60rem) and (min-height: 40rem) {
-  .shell > section.view-scroll[data-view="landing"] {
+  .shell > main.view-scroll[data-view="landing"] {
     container-type: size;
   }
   .landing {

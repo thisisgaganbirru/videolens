@@ -378,6 +378,21 @@ Verified per tab at 390x844 light/dark and 844x390: label, title, flash and
 clipboard text match the tab. Share is not rendered in headless Chromium (no
 `navigator.share`), so its new label is verified by source only.
 
+## Refinement 6 (2026-11-02)
+
+**RES-14, right-to-left results.** Every block of result text takes its
+direction from its own content (`dir="auto"`): the title, the takeaway and
+summary, transcript and on-screen text lines (and the plain-transcript
+fallback), speaker labels, and in Notes every Markdown block (`h1`–`h4`, `p`,
+`ul`/`ol`, `li`, `blockquote`, `th`/`td`). The Markdown renderers pass on only
+what each element uses (`className`, `start`, and a GFM column's `style`), not
+react-markdown's `node`. CSS moved to logical properties where it mattered:
+`.prose-serif ul/ol` and `li` use `padding-inline-start`, and notes tables use
+`text-align: start`. An Arabic note aligns right with its bullets on the right,
+an English one in the same run stays left. Note: `dir="auto"` on a `ul` skips
+children that carry their own `dir`, so the list element itself computes LTR;
+each `li` is what flips, which is what places the marker.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported ResultsView + SourceCard; de-boxed the source card, wired .disclosure and role=tabpanel, rebuilt SourceCard.preview with six states
@@ -393,3 +408,4 @@ clipboard text match the tab. Share is not rendered in headless Chromium (no
 - 2026-11-01 · frontend agent (refinement 1) · Download/Share via DocumentExporter port: Android save opens the share sheet with the full report, Share sends the full report (was active tab), Copy stays per tab; filesystem plugin documented, not added
 - 2026-11-02 · frontend agent (refinement 2) · Android "Download .md" writes a real `<slug>.md` to the cache (@capacitor/filesystem 8.1.5) and shares the file ("Save notes"), text-share fallback; FileProvider already covers the cache; file runs get FileSourceCard (name from IndexedDB `file_name`, duration from the run detail)
 - 2026-11-02 · frontend agent (refinement 4) · Copy's accessible name, tooltip and a new visible confirmation name the active tab ("Copy transcript" / "Transcript copied"); Share relabelled "Share all results" (RES-05)
+- 2026-11-02 · frontend agent (refinement 6) · RES-14 dir="auto" on every result text block incl. Markdown; logical padding/alignment

@@ -42,7 +42,7 @@ export default function OfflinePage() {
     <div className="shell" data-view="offline">
       <AppNav activeTab={null} />
 
-      <section className="view-scroll" data-view="offline" aria-label="Offline">
+      <main className="view-scroll" data-view="offline" aria-label="Offline">
         {/* Neutral, not red: nothing failed, the network is just absent. */}
         <div className="offline">
           <span className="offline-frame" aria-hidden="true">
@@ -61,7 +61,7 @@ export default function OfflinePage() {
             </a>
           </div>
         </div>
-      </section>
+      </main>
 
       <SiteFooter />
       <BottomTabBar activeTab={null} />

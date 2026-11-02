@@ -30,7 +30,7 @@ export default function LandingScreen() {
     <div className="shell" data-view="landing">
       <AppNav activeTab={null} landing />
 
-      <section className="view-scroll" data-view="landing" aria-label="VideoLens AI">
+      <main className="view-scroll" data-view="landing" aria-label="VideoLens AI">
         <div className="landing">
           <div className="landing-hero">
             <div className="landing-intro">
@@ -125,7 +125,7 @@ export default function LandingScreen() {
             </Link>
           </section>
         </div>
-      </section>
+      </main>
 
       <SiteFooter />
       <BottomTabBar activeTab={null} />

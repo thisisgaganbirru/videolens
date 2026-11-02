@@ -88,6 +88,13 @@ state is a bigger claim than one notice line.
 
 **Tests**: none (see `run-analysis-hook.md`).
 
+## Refinement 6 (2026-11-02)
+
+**A11-07.** The "Get a key from Google AI Studio" link (`.key-guide-link`) is
+`--color-accent-strong` (hover `--color-ink`) instead of `--color-accent`:
+6.14:1 on the guide's tint in light, 10.1:1 in dark (was under 4.5:1 in
+light). Existing tokens only.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported ApiKeyPanel; promoted the sr-only label to a visible .card-label, kept the programmatic association
@@ -96,3 +103,4 @@ state is a bigger claim than one notice line.
 - 2026-11-01 · frontend agent (Phase 4) · `X-Gemini-Api-Key` now sent only on `createRun` (was every request); rebuilt the panel as the editorial ApiKey page (reveal toggle, empty-save error, status slot, Remove key, Where-to-get-a-key panel); hook state unified
 - 2026-11-01 · frontend agent (Phase 4, boards) · rebuilt to design/phase4-boards/ApiKey*.png: lede and help copy per boards except two truth deviations (no "few free runs"; phone boards' "held briefly on the server" sentence on every size instead of desktop's "never store it on a server"), header name no longer printed, ExternalLink icon dropped from the AI Studio link, `.key-header` wrapper removed
 - 2026-11-01 · frontend agent (Phase 5b) · lede now the boards' "You get a few free runs" sentence; `ApiKeyStore` gained `subscribe()` so saving or removing a key updates the free-run banner at once; `X-Device-Token` now rides on `createRun` beside the key (see `free-runs.md`)
+- 2026-11-02 · frontend agent (refinement 6) · A11-07 AI Studio link uses --color-accent-strong (6.14:1 light, 10.1:1 dark)

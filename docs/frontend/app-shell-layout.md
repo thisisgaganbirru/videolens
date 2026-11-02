@@ -65,7 +65,7 @@ when its content is taller than the band (measured: Main at 1280×989 is
 `.viewport` scrolls, as before. The footer band at ≥ 32rem reaches back through
 the shell's bottom gutter (`margin-bottom: -max(1rem, safe-bottom)`), so it sits
 on the window's bottom edge as drawn (y 932 at 1280×989, same as Main.png).
-History joined Analyze in Phase 3. **Phase 4 (2026-11-01) made it universal:** every view section is `<section class="view-scroll">` — Analyze, History, API key, Releases on `/`, plus `/privacy`, `/terms` and `/offline` — and the three scroller rules in `globals.css` target `.shell > section.view-scroll` instead of listing `data-view`s. `data-frame="fixed"` is no longer set by any route (its CSS remains, unused). The Terminal-era panel frame — `.tab-view`, `.surface`, `.pane`, `.home-center`, `.legal-doc`, `.legal-body`, `.page-title` — is deleted. `.col-label`/`.card-label` survive only for the dev preview harnesses. A new view: render `section.view-scroll`, then a centred column (`.key-page`/`.releases`/`.legal-page` share one 43.5rem rule) with a `.view-head` (`h1.view-title` + `.view-lede`).
+History joined Analyze in Phase 3. **Phase 4 (2026-11-01) made it universal:** every view section is `<section class="view-scroll">` — Analyze, History, API key, Releases on `/`, plus `/privacy`, `/terms` and `/offline` — and the three scroller rules in `globals.css` target `.shell > section.view-scroll` instead of listing `data-view`s. `data-frame="fixed"` is no longer set by any route (its CSS remains, unused). The Terminal-era panel frame — `.tab-view`, `.surface`, `.pane`, `.home-center`, `.legal-doc`, `.legal-body`, `.page-title` — is deleted. `.col-label`/`.card-label` survive only for the dev preview harnesses. A new view: render `main.view-scroll` (a `section` until refinement 6), then a centred column (`.key-page`/`.releases`/`.legal-page` share one 43.5rem rule) with a `.view-head` (`h1.view-title` + `.view-lede`).
 De-boxing was a specific fix: two bordered tinted rectangles side by side read
 as a PowerPoint slide.
 
@@ -370,7 +370,7 @@ start at 0 after submitting from a scrolled intake.
 
 **Scrollbar gutter (#8).** `scrollbar-gutter: stable` on the real scroller,
 only for `(hover: hover) and (pointer: fine)`: `.viewport` below 32rem, the
-`.shell > section.view-scroll` band from 32rem up (where `.viewport` is
+`.shell > main.view-scroll` band from 32rem up (where `.viewport` is
 `auto`). Touch devices (overlay scrollbars) get no empty gutter. The
 `::-webkit-scrollbar` styling is under the same media query. Measured at 1366
 (classic scrollbars): Analyze, History and API key bands are all 1351px wide,
@@ -401,10 +401,10 @@ tap on it hit History. Cause: below 32rem the phone app shell still scrolled
 sticky overlays: refinement 1's "the scroller ends where the dock begins" was
 only true at the *end* of the scroll. Fix (unlayered, `@media (width < 32rem)`,
 app shell only): the same measured frame as 32rem and up. `.shell` is one
-viewport (`flex: 1; min-height: 0`), the active `section.view-scroll` is the
+viewport (`flex: 1; min-height: 0`), the active `main.view-scroll` is the
 only scroller (`overflow-y: auto`), and the dock ends the column below it with
 an 8px gap (`margin-top: var(--space-2xs)`, as in landscape). The web shell
-keeps page scroll. Also `position: relative` on `.shell > section.view-scroll`:
+keeps page scroll. Also `position: relative` on `.shell > main.view-scroll`:
 Tailwind `.sr-only` spans (API key's "opens in a new tab") were absolutely
 positioned against `.viewport`, escaped the section's clipping and gave the
 whole frame ~320px of scroll on API key in landscape and at 360x640 (nav and
@@ -620,6 +620,24 @@ changed, the hook re-resolves DEFAULT bars (WebView < 140) and, for System,
 repaints from the device. The bridge call is sent before the bar restyle on
 purpose. Device behaviour is android-66's to verify.
 
+## Refinement 6 (2026-11-02)
+
+**A11-02, one `<main>` per page.** The view band is now `<main
+class="view-scroll" data-view="…">` instead of `<section>` on every route
+(HomeScreen's views, the landing page, `LegalShell` for /privacy and /terms,
+/offline, and the new 404). Only one view renders at a time, so each page has
+exactly one `main` landmark. Every selector that named the band
+(`.shell > section.view-scroll`, `.shell > section[data-view…]`,
+`~ section[data-view]`) in `globals.css` and `landing.css` now names `main`;
+nothing else changed in the frame. Checked at 390x844 and 1366x768, light and
+dark, web and installed shells, on /, /app (all four views), /privacy, /terms,
+/offline and an unknown path: one `main`, nav present, footer (web) or dock
+(installed), no horizontal scroll, and the band is the scroller wherever it was
+before (the web shell below 32rem keeps page scroll, as designed).
+
+**A11-13, footer links.** Measured, not changed: `.foot-legal a` are already
+44px tall (`min-height: 2.75rem`) at 390 and 1366.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent (foundation) · rebuilt the shell to the Terminal direction: one-viewport flex chain, pill nav, mobile drawer, 4 tabs, theme toggle
@@ -644,3 +662,4 @@ purpose. Device behaviour is android-66's to verify.
 - 2026-11-02 · frontend agent (refinement 3) · phone app shell (< 32rem) uses the measured frame (section scrolls, dock below it, 8px gap) so nothing sits under the dock at rest; scroll sections are the containing block for `.sr-only`
 - 2026-11-02 · frontend agent (refinement 4) · keyboard reveal now group-aware, instant, visual-viewport aware and repeated on the measured shrink (INT-05); More sheet theme switch replaced by System/Light/Dark radios backed by theme.ts setThemePreference (THM-01)
 - 2026-11-02 · frontend agent (refinement 5) · theme choice mirrored natively (NativeThemePlugin + infrastructure/nativeTheme.ts, AppCompat night mode at attachBaseContext and live, UiModeManager on API 31+) so launch/window/bars follow the app, not the OS (THM-01b); revealField clipped to the scrolling section (INT-01b)
+- 2026-11-02 · frontend agent (refinement 6) · A11-02 view band is <main> on every route (one landmark per page); footer link height measured at 44px

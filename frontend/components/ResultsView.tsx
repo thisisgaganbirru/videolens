@@ -117,7 +117,9 @@ function OnScreenView({
       <p className="t-intro">Text found in the video frames, with the time it appears.</p>
       {segments.length === 0 ? (
         /* An older run, or a model reply without timings: the text alone. */
-        <p className="screen-text">{text}</p>
+        <p className="screen-text" dir="auto">
+          {text}
+        </p>
       ) : (
         <ol className="t-list t-list--screen" aria-label="On-screen text by time">
           {segments.map((segment, index) => (
@@ -129,7 +131,9 @@ function OnScreenView({
               >
                 {formatTimestamp(segment.start_seconds)}
               </time>
-              <p className="t-text">{segment.text.trim()}</p>
+              <p className="t-text" dir="auto">
+                {segment.text.trim()}
+              </p>
             </li>
           ))}
         </ol>
@@ -166,7 +170,7 @@ function TranscriptView({ segments, fallback }: { segments: TranscriptSegment[];
 
   if (segments.length === 0) {
     return (
-      <p className="prose-serif whitespace-pre-wrap break-words">
+      <p className="prose-serif whitespace-pre-wrap break-words" dir="auto">
         {fallback || "No spoken content was detected."}
       </p>
     );
@@ -252,9 +256,13 @@ function TranscriptView({ segments, fallback }: { segments: TranscriptSegment[];
               ) : null}
               <div className="t-body">
                 {segment.speaker ? (
-                  <span className="t-speaker">{highlight(segment.speaker, needle)}</span>
+                  <span className="t-speaker" dir="auto">
+                    {highlight(segment.speaker, needle)}
+                  </span>
                 ) : null}
-                <p className="t-text">{highlight(segment.text, needle)}</p>
+                <p className="t-text" dir="auto">
+                  {highlight(segment.text, needle)}
+                </p>
               </div>
             </li>
           ))}
@@ -615,7 +623,9 @@ export default function ResultsView({
           the download used to live under the last panel, where it read as part
           of that panel and was a long scroll away on a full transcript. */}
       <div className="result-head">
-        <h2 className="result-title">{result.title}</h2>
+        <h2 className="result-title" dir="auto">
+          {result.title}
+        </h2>
         <div className="result-actions">
           <span className="copy-wrap">
             <button
@@ -720,10 +730,48 @@ export default function ResultsView({
               /* The card title above is the h2; the notes' own headings step
                  down beneath it whatever level the model wrote them at, so
                  the outline stays one document. */
-              h1: ({ children }) => <h3 className="notes-h1">{children}</h3>,
-              h2: ({ children }) => <h3>{children}</h3>,
-              h3: ({ children }) => <h4>{children}</h4>,
-              h4: ({ children }) => <h5>{children}</h5>,
+              h1: ({ children }) => (
+                <h3 className="notes-h1" dir="auto">
+                  {children}
+                </h3>
+              ),
+              h2: ({ children }) => <h3 dir="auto">{children}</h3>,
+              h3: ({ children }) => <h4 dir="auto">{children}</h4>,
+              h4: ({ children }) => <h5 dir="auto">{children}</h5>,
+              /* Refinement 6 (RES-14): every block the notes can produce
+                 takes its direction from its own first strong character, so
+                 an Arabic or Hebrew note aligns right (and its list markers
+                 sit on the right) while an English one in the same run does
+                 not. Only the props each element uses are passed on (react-markdown
+                 also hands over `node`, which is not a DOM attribute). */
+              p: ({ children }) => <p dir="auto">{children}</p>,
+              ul: ({ children, className }) => (
+                <ul dir="auto" className={className}>
+                  {children}
+                </ul>
+              ),
+              ol: ({ children, className, start }) => (
+                <ol dir="auto" className={className} start={start}>
+                  {children}
+                </ol>
+              ),
+              li: ({ children, className }) => (
+                <li dir="auto" className={className}>
+                  {children}
+                </li>
+              ),
+              blockquote: ({ children }) => <blockquote dir="auto">{children}</blockquote>,
+              /* `style` carries a GFM column's alignment (`:--:`). */
+              th: ({ children, style }) => (
+                <th dir="auto" style={style}>
+                  {children}
+                </th>
+              ),
+              td: ({ children, style }) => (
+                <td dir="auto" style={style}>
+                  {children}
+                </td>
+              ),
               a: ({ href, children }) => (
                 <a href={href} target="_blank" rel="noreferrer" className="text-link">
                   {children}
@@ -753,10 +801,14 @@ export default function ResultsView({
           <div className="prose-serif">
             <figure className="takeaway">
               <figcaption className="takeaway-label">Key takeaway</figcaption>
-              <p className="takeaway-text break-words">{summary.takeaway}</p>
+              <p className="takeaway-text break-words" dir="auto">
+                {summary.takeaway}
+              </p>
             </figure>
             {summary.rest ? (
-              <p className="whitespace-pre-wrap break-words">{summary.rest}</p>
+              <p className="whitespace-pre-wrap break-words" dir="auto">
+                {summary.rest}
+              </p>
             ) : null}
           </div>
         ) : (

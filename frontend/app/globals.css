@@ -153,13 +153,13 @@ h3 {
     min-height: 0;
   }
 
-  .shell > section[data-view] {
+  .shell > main[data-view] {
     display: flex;
     flex-direction: column;
     flex: 0 0 auto;
   }
 
-  .shell[data-frame="fixed"] > section[data-view] {
+  .shell[data-frame="fixed"] > main[data-view] {
     flex: 1;
     min-height: 0;
   }
@@ -170,7 +170,7 @@ h3 {
      pulled out to the viewport edges the same way the nav and footer bands
      are, so its scrollbar sits at the window edge rather than inside the
      gutter, and padded back in so content keeps the shell's left edge. */
-  .shell > section.view-scroll {
+  .shell > main.view-scroll {
     margin-inline: calc((100% - 100cqi) / 2);
     padding-inline: calc((100cqi - 100%) / 2);
     /* Refinement 3, #2: the containing block for absolutely positioned
@@ -1205,10 +1205,12 @@ h3 {
   .prose-serif h5 {
     font-size: 1.1875rem;
   }
+  /* Logical sides (refinement 6, RES-14): a list the notes mark dir="auto"
+     and that turns out right-to-left keeps its marker gutter on the right. */
   .prose-serif ul,
   .prose-serif ol {
     margin: 0 0 var(--space-sm);
-    padding-left: 1.5rem;
+    padding-inline-start: 1.5rem;
   }
   .prose-serif ul {
     list-style: disc;
@@ -1218,7 +1220,7 @@ h3 {
   }
   .prose-serif li {
     margin-bottom: 0.4rem;
-    padding-left: 0.25rem;
+    padding-inline-start: 0.25rem;
   }
   .prose-serif li::marker {
     color: var(--color-ink);
@@ -1299,10 +1301,12 @@ h3 {
     border-collapse: collapse;
     font-family: var(--font-ui);
     font-size: 0.875rem;
-    text-align: left;
   }
+  /* `start`, not `left` (refinement 6, RES-14): each cell is dir="auto", so
+     a right-to-left cell aligns right and the rest stay left. */
   .notes-table th,
   .notes-table td {
+    text-align: start;
     padding: 0.4rem 0.6rem;
     border-bottom: var(--rule-w) solid var(--color-rule);
     vertical-align: top;
@@ -1782,7 +1786,11 @@ h3 {
     color: var(--color-danger);
     box-shadow: inset 0 0 0 var(--rule-w) var(--color-danger-border);
   }
-  .poster-badge[data-kind="processing"] {
+  /* Expired (refinement 6, RUN-13) is the processing chip's neutral
+     surface: the server forgot the run, nothing failed that the user can
+     fix, so it is not drawn as an error. */
+  .poster-badge[data-kind="processing"],
+  .poster-badge[data-kind="expired"] {
     background: var(--color-surface);
     color: var(--color-ink-2);
     font-weight: 600;
@@ -2095,7 +2103,11 @@ h3 {
     min-height: 2.75rem;
     margin-top: 0.25rem;
     font-weight: 600;
-    color: var(--color-accent);
+    /* Refinement 6 (A11-07): it sits on the tint panel, where the plain
+       accent measured 4.22:1 in light. accent-strong is 6.14:1 there in
+       light and 10.1:1 in dark, so it is the link colour in both themes and
+       ink takes over on hover. */
+    color: var(--color-accent-strong);
     text-decoration: underline;
     text-underline-offset: 0.2em;
     text-decoration-thickness: 1px;
@@ -2238,14 +2250,19 @@ h3 {
   /* ---- Offline (Offline*.png) ----
      A tint disc with the wifi-off glyph, a serif title, two short lines,
      the action. Neutral, never red. Centred in the band. */
-  /* The offline section fills the band at every width (below 32rem the
-     viewport, not the section, scrolls), so the block centres as drawn. */
-  .shell > section[data-view="offline"] {
+  /* The offline band fills the band at every width (below 32rem the
+     viewport, not the band, scrolls), so the block centres as drawn. The
+     404 page (app/not-found.tsx, refinement 6) is the same kind of page —
+     one state, one sentence, the ways out — so it shares every rule here
+     under its own class names. */
+  .shell > main[data-view="offline"],
+  .shell > main[data-view="not-found"] {
     display: flex;
     flex-direction: column;
     flex: 1 0 auto;
   }
-  .offline {
+  .offline,
+  .not-found {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -2254,7 +2271,8 @@ h3 {
     margin: auto;
     padding: var(--space-xl) 0;
   }
-  .offline-frame {
+  .offline-frame,
+  .not-found-frame {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -2264,11 +2282,13 @@ h3 {
     background: var(--color-tint);
     color: var(--color-ink);
   }
-  .offline-frame svg {
+  .offline-frame svg,
+  .not-found-frame svg {
     width: 1.75rem;
     height: 1.75rem;
   }
-  .offline-title {
+  .offline-title,
+  .not-found-title {
     margin: var(--space-md) 0 0;
     font-family: var(--font-serif);
     font-weight: 400;
@@ -2277,7 +2297,8 @@ h3 {
     letter-spacing: -0.015em;
     color: var(--color-ink);
   }
-  .offline-lede {
+  .offline-lede,
+  .not-found-lede {
     margin: 0.5rem 0 0;
     font-size: clamp(1rem, 0.97rem + 0.15vw, 1.0625rem);
     line-height: 1.5;
@@ -2286,14 +2307,16 @@ h3 {
   }
   /* Try again (ink) + Open History (outline), side by side as drawn; they
      wrap rather than squeeze on the narrowest phones. */
-  .offline-actions {
+  .offline-actions,
+  .not-found-actions {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
     gap: 0.75rem;
     margin-top: var(--space-md);
   }
-  .offline-action {
+  .offline-action,
+  .not-found-action {
     min-height: 3rem;
     padding-inline: 1.5rem;
   }
@@ -3101,10 +3124,25 @@ h3 {
     line-height: 1.55;
     color: var(--color-ink-2);
   }
+  /* Refinement 6 (A11-13): a 44x44 tap target around the 20x20 box. The
+     negative margins give the room back, so the box sits exactly where it
+     did (0.1rem below the first line's top, flush with the row's left edge)
+     and the text keeps its place; the extra area overlaps only the card's
+     padding and the gap. Inside the label, so the whole square toggles. */
+  .terms-box {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 2.75rem;
+    height: 2.75rem;
+    margin: -0.65rem -0.75rem -0.65rem -0.75rem;
+    cursor: pointer;
+  }
   .terms-row input[type="checkbox"] {
     width: 1.25rem;
     height: 1.25rem;
-    margin: 0.1rem 0 0;
+    margin: 0;
     flex-shrink: 0;
     accent-color: var(--color-accent);
     cursor: pointer;
@@ -3127,7 +3165,7 @@ h3 {
     outline: 2px solid var(--color-focus);
     outline-offset: 2px;
   }
-  .terms-row:has(input[aria-invalid="true"]) > span {
+  .terms-row:has(input[aria-invalid="true"]) > span:not(.terms-box) {
     color: var(--color-ink);
   }
 
@@ -3806,12 +3844,12 @@ h3 {
     min-height: 0;
     height: auto;
   }
-  .shell > section[data-view],
-  .shell[data-frame="fixed"] > section[data-view] {
+  .shell > main[data-view],
+  .shell[data-frame="fixed"] > main[data-view] {
     flex: 1;
     min-height: 0;
   }
-  .shell > section.view-scroll {
+  .shell > main.view-scroll {
     overflow-y: auto;
   }
   /* The band runs to the bottom edge, as on every desktop board: reach back
@@ -3826,7 +3864,7 @@ h3 {
   /* With a page-wide scroller under it, the footer's top hairline is the
      only edge between content and chrome; the gap above it would show
      scrolled content stopping short of the rule, so it is closed here. */
-  .shell > section.view-scroll + .page-end {
+  .shell > main.view-scroll + .page-end {
     margin-top: 0;
   }
 
@@ -3847,11 +3885,11 @@ h3 {
     min-height: 0;
     height: auto;
   }
-  :root[data-shell="app"] .shell > section[data-view] {
+  :root[data-shell="app"] .shell > main[data-view] {
     flex: 1;
     min-height: 0;
   }
-  :root[data-shell="app"] .shell > section.view-scroll {
+  :root[data-shell="app"] .shell > main.view-scroll {
     overflow-y: auto;
   }
   /* The same 8px the landscape dock keeps above it, so the scroller visibly
@@ -3971,7 +4009,7 @@ h3 {
     .viewport {
       scrollbar-gutter: auto;
     }
-    .shell > section.view-scroll {
+    .shell > main.view-scroll {
       scrollbar-gutter: stable;
     }
   }
@@ -3981,7 +4019,7 @@ h3 {
    layout entirely. Scoped below 48rem so a menu left open while the window
    widens can never blank the page. */
 @media (width < 48rem) {
-  .nav-wrap[data-menu-open="true"] ~ section[data-view] {
+  .nav-wrap[data-menu-open="true"] ~ main[data-view] {
     display: none;
   }
 }
@@ -4087,7 +4125,7 @@ h3 {
     border-color: var(--color-input-border);
   }
   .key-guide-link:hover {
-    color: var(--color-accent-strong);
+    color: var(--color-ink);
   }
   .release-link:hover {
     color: var(--color-accent-strong);
