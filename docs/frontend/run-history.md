@@ -304,6 +304,24 @@ horizontal scroll (the pill row still scrolls sideways inside itself, as drawn).
 The poster's accessible name says "Expired" and the row has
 `data-run-status="expired"`. Reopening it still lands on the expired view.
 
+## Refinement 9 (2026-11-02) — naming a link run that failed early
+
+`components/history.ts`'s `PLATFORM_LABELS` is gone. The chip uses
+`knownPlatformName` from `domain/platforms.ts`, the same names as the result
+screen. Before, a link run that failed before any metadata arrived (an
+Instagram download refusal, for example) showed "Untitled run" under a bare
+"Link" chip, even though this browser stored the link. `useRunHistory`'s
+`toEntry` now falls back, for display only:
+- platform: the server's, else `platformFromUrl(source_url)` (youtube.com and
+  youtu.be → YouTube, instagram.com → Instagram, tiktok.com → TikTok, other
+  hosts → `other`, which the chip shows as "Link");
+- title: the server's, else the upload's file name, else "<Platform> link",
+  else the link's host (`linkHost`, without `www.`/`m.`).
+The stored record is unchanged, and real metadata replaces these when it
+arrives. The Failed badge is kept. Verified: an instagram.com reel shows
+"Instagram" / "Instagram link" / Failed, and example.org shows
+"Link" / "example.org" / Failed.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported HistoryPanel to day-grouped rows with status dots; fixed duplicate React keys on non-adjacent "Undated" groups
@@ -316,3 +334,4 @@ The poster's accessible name says "Expired" and the row has
 - 2026-11-02 · frontend agent (refinement 3) · `isRunGone` + `recordExpired` shared by the startup reconcile and the live/reopen paths, so a row never stays "Processing" after a 404 on screen
 - 2026-11-02 · frontend agent (refinement 4) · sort select shown on phones too, sharing the search row; removed the 48rem Newest-only gate (HIS-03)
 - 2026-11-02 · frontend agent (refinement 6) · RUN-13 expired runs badge "Expired" (neutral), data-run-status="expired"
+- 2026-11-02 · frontend agent (refinement 9) · platform chip uses the shared domain/platforms.ts names; link runs that failed before metadata show a platform from the URL host and a title like "Instagram link" or the host

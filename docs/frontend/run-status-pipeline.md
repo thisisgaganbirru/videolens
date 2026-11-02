@@ -151,6 +151,37 @@ backoff and Retry now as "Connection lost", which stays the wording when there
 was no answer at all. If a retry then fails on the network, the screen switches
 back to "Connection lost".
 
+## Refinement 9 (2026-11-02)
+
+- **Copy by stage and by media.** `progressCopy(stage, mediaKind, sourceKind)`
+  in `RunStatusView.tsx` replaces the one "Reading your video / Longer files
+  take more time to normalize" line. Each stage has its own title and lede;
+  the normalize hint appears only while `normalizing`; "audio" or "video" is
+  named only when the run is known to be one (`useAnalysisRun`'s `mediaKind`:
+  the uploaded file's type, a known video host, or the server's `platform`).
+  An mp3 at Analyzing now reads "Listening to your audio". Queued reads
+  "In line".
+- **Expired copy is true for both causes.** "The server no longer has this run,
+  and its result never reached this device." It used to say the server keeps
+  runs an hour, but a restart loses them too, inside the hour. It names no
+  cause, because the client cannot know which.
+- **"Choose the file again" opens the picker** (expired file runs). See
+  `upload-form.md`, "Refinement 9".
+- **Refund line on the failed view.** `<p class="run-refund">` under the notice
+  says "This didn't use one of your free runs." only when a re-read of
+  `/api/free-runs` proves it. See `free-runs.md`.
+- **Blocked downloads (item 11).** The backend reports a temporary 403/429 block
+  as "The site blocked this download for now - the video itself is fine. Try
+  again in a few minutes." `recoveryAdvice` matched only on stage, so the
+  next-step line said "Try a different link", which is wrong for a block. It now
+  takes the error too. When a link run's message contains "site blocked this
+  download", the line reads "You can try the same link again later, or download
+  the video and upload the file instead." This is checked before the stage,
+  because the block can land before any stage was polled. Only the text reaches
+  the client (no reason code), so this is a phrase match that must stay in step
+  with `_BLOCKED_DOWNLOAD` in `backend/app/infrastructure/media/ytdlp_downloader.py`.
+  If that wording drifts, it falls back to the ordinary download advice.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported RunStatusView to the centred .run-state pipeline; returns a fragment (.run-state > .status is a direct-child selector)
@@ -162,3 +193,4 @@ back to "Connection lost".
 - 2026-11-01 · frontend agent (Phase 4) · audit only, no change: Failed, Connection lost, Captions and Upload (File received) states and frame states done/active/waiting/failed/lost/missed/skipped verified at 1366, phone web and phone app, light and dark; danger pairs recomputed (see design-direction-editorial.md)
 - 2026-11-01 · frontend agent (refinement 1) · expired-run view: honest copy, no stage strip, "Analyze it again" with the link refilled
 - 2026-11-02 · frontend agent (refinement 6) · RUN-08 server-trouble wording for 5xx polls (lostCause prop)
+- 2026-11-02 · frontend agent (refinement 9) · stage- and media-aware progress copy (no "video" on audio, normalize hint only while normalizing); expired copy covers expiry and server loss; refund line on the failed view; blocked-download (403/429) next-step advice via a phrase match on the backend message

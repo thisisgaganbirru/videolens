@@ -343,6 +343,26 @@ message, focus the checkbox with `aria-invalid="true"` and
 shows the same and sends no POST; ticking clears the message; then Browse opens
 the picker and the chosen file sends exactly one POST and leaves the intake.
 
+## Refinement 9 (2026-11-02)
+
+- **Why the intake is paused.** Out of free runs, a note
+  `#intake-blocked` ("No free runs left today, so analyzing is paused. Add key
+  to keep going.") sits at the top of the intake card. Analyze link carries
+  `aria-describedby="intake-blocked"`, and Browse files joins it to
+  `file-error`. The Add key link is ink, weight 600, on the tint, because the
+  accent green on the tint is only about 4:1.
+- **Hand-off from the expired view.** The terms helpers moved to
+  `components/mediaTerms.ts` (`readTermsAccepted`, `writeTermsAccepted`,
+  `MEDIA_FILE_ACCEPT`), so HomeScreen can read them. "Choose the file again"
+  clicks a hidden file input in HomeScreen inside the tap, because a picker
+  opened after the intake mounts would be refused without a live gesture. It
+  then hands the result to the form through the new `handoff` /
+  `onHandoffTaken` props (`IntakeHandoff`: `{kind:"file", file}` gets every
+  Browse check, and `{kind:"terms"}` raises the terms error). With the terms
+  unticked there is no picker and the terms error shows. When out of free runs,
+  nothing opens. The effect defers through `queueMicrotask`, so it does not set
+  state synchronously in an effect.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported UploadForm to the unboxed .intake; returns a fragment since HomeScreen supplies the wrapper
@@ -365,3 +385,4 @@ the picker and the chosen file sends exactly one POST and leaves the intake.
 - 2026-11-02 · frontend agent (refinement 6) · INT-04 all field errors at once (first invalid focused); INT-16 0-byte file rejected; A11-13 44x44 terms hit area; RUN-16 create-run failure wording
 - 2026-11-02 · frontend agent (refinement 7) · RUN-16 note updated: the backend now sends and exposes Retry-After on 429, so "Try again in about N minutes" is live
 - 2026-11-02 · frontend agent (refinement 8) · Browse files stays enabled with the terms unticked; pressing it (click/Enter/Space) or dropping a file shows the terms error, marks/focuses/reveals the checkbox, no picker; dropped non-files ignored; a chosen file still auto-submits
+- 2026-11-02 · frontend agent (refinement 9) · blocked-intake note tied to Analyze/Browse via aria-describedby; terms helpers moved to components/mediaTerms.ts; IntakeHandoff props so the expired view's "Choose the file again" opens the picker directly (terms gate kept)

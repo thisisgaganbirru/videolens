@@ -18,12 +18,15 @@ and `FetchRunsGateway`'s request headers).
 - `entities.ts` — `RunStatus`, `VideoAnalysis`, `TranscriptSegment`,
   `ScreenTextSegment`, `RunCreateResponse`, `RunStatusResponse`,
   `RunSummary`, `RunListResponse`, `MediaSource`.
+- `platforms.ts` — platform display names (`platformName`, `knownPlatformName`,
+  `platformKey`) and the platform of a link judged from its host
+  (`platformFromUrl`, `linkHost`); shared by History and the result screen.
 - `errors.ts` — `ApiError` (optional HTTP `status`, plus the body's `code`/`limit`/`used`), `NetworkError`,
   `StorageUnavailableError`.
 - `ports.ts` — the interfaces infrastructure adapters implement and hooks
   depend on: `RunsGateway`, `ApiKeyStore`, `VersionLogGateway`,
   `UpdateChecker`, `SharedUrlSource` (`take`, `subscribe`, `pending`),
-  `HistoryStore`, `FreeRunsGateway`, `DeviceTokenStore`, `FirstRunStore`, `ActiveRunStore` (plus their associated
+  `HistoryStore`, `FreeRunsGateway`, `DeviceTokenStore`, `FirstRunStore`, `ActiveRunStore`, `UpdateDismissalStore` (plus their associated
   `VersionLogEntry`/`UpdateInfo` types). `entities.ts` also holds
   `HistoryRecord`/`HistoryPatch`.
 
@@ -185,3 +188,4 @@ still imported the old component.
 - 2026-11-01 · frontend agent (Phase 5c/5d) · routes table (`/` landing, `/app` tool); landingRedirect, firstRunScripts, useFirstRun, firstRunStore, FirstRunStore port, SharedUrlSource.pending(); LandingScreen, SampleResult, Splash, Welcome
 - 2026-11-02 · frontend agent (refinement 6) · `ActiveRunStore` port + `SessionStorageActiveRunStore` adapter; `app/not-found.tsx` in the routes table
 - 2026-11-02 · frontend agent (refinement 8) · routes table: installed app reaches the 404 via the head script
+- 2026-11-02 · frontend agent (refinement 9) · `UpdateDismissalStore` port + `LocalStorageUpdateDismissalStore` adapter (container `updateDismissalStore`); `NativeShell.onResume`; `UpdateInfo.versionCode`; pure `domain/platforms.ts` (platform display names, URL-host platform); `components/mediaTerms.ts` (terms flag + accept list shared by UploadForm and HomeScreen)

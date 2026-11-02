@@ -131,6 +131,31 @@ WebView rule: Chromium treats `http://localhost` / `127.0.0.1` as potentially
 trustworthy, so `https://localhost` → `http://localhost:8000` is allowed;
 `10.0.2.2` is not, and would still be blocked as mixed content.
 
+## Banner design and dismissal (refinement 9)
+
+`components/UpdateBanner.tsx` is now an editorial band (`.update-banner` in
+`app/globals.css`): a 15px ink headline "Update available." plus an ink-2
+"Version X is ready to install." (hidden below 25rem), a near-black
+sentence-case "Get the update" pill, and a 44px X that dismisses it. Sideways
+on a phone (`max-height: 31.25rem`) it collapses to one 45px row with the text
+ellipsised. It keeps `flex-shrink: 0`, so the measured one-viewport frame
+below it stays the right height.
+
+**Dismissal remembers the build, not the banner.** `useUpdateCheck().dismiss()`
+stores the offered `versionCode` through the new `UpdateDismissalStore` port
+(`infrastructure/updateDismissalStore.ts`, `LocalStorageUpdateDismissalStore`,
+key `videolens-update-dismissed`, try/catch on every access). The check hides
+an update whose code is `<=` the stored one, so a newer build shows again.
+`UpdateInfo` gained `versionCode` for this.
+
+The link keeps `target="_blank"`: in the WebView that hands the release page to
+Chrome, which is what makes the download and install prompt work.
+
+Verified with Playwright and an emulated Capacitor bridge (`App.getInfo` build
+10, release code 20): light and dark at 390x844, 915x360 and 1280x800; action
+and dismiss 44x44; dismissed code stored as 20 and hidden after reload; shown
+again when the release code became 21; no banner on the plain web.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported UpdateBanner; added shrink-0 so it cannot compress the measured viewport frame
@@ -141,3 +166,4 @@ trustworthy, so `https://localhost` → `http://localhost:8000` is allowed;
 - 2026-11-01 · android-66 (device QA) · added the "Local live-reload on the emulator" section (adb reverse, generated-config server.url, temporary cleartext flag, screencap -d, in-memory free-runs counter)
 - 2026-11-01 · frontend agent (refinement 1) · debug-only network security config (cleartext to localhost/127.0.0.1/10.0.2.2) via src/debug manifest overlay, for bundled-APK QA against a local backend
 - 2026-11-02 · android-66 (device QA) · noted that the "Local live-reload on the emulator" section is superseded: device QA runs on the bundled APK only (see the next section)
+- 2026-11-02 · frontend agent (refinement 9) · banner restyled to the editorial system ("Get the update" pill, 44px dismiss, one-row landscape); dismissal persists the dismissed version_code via the new UpdateDismissalStore port, so a newer build shows again
