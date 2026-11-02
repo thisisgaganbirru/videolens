@@ -111,3 +111,4 @@ never reaches the run). No frontend test runner exists — see
 - 2026-10-02 · gemini-retry agent · resolved the "retry policy is still weak" known issue: transient-only full-jitter backoff around the failing call, optional `GEMINI_FALLBACK_MODEL`; copy unchanged
 - 2026-10-02 · gemini-retry agent · default retry attempts raised 5 → 6 (owner-approved)
 - 2026-11-02 · frontend agent (refinement 7) · 429 sends and exposes Retry-After, so the client's "Try again in about N minutes" wording is live; daily-cap 503 carries one too
+- 2026-11-02 · backend agent (720p download cap) · `_download_failure`: 403/429 blocks get their own cause-only sentence (no upload advice, `recoveryAdvice` supplies it); see `backend/media-validation.md`
