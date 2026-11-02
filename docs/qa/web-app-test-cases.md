@@ -796,8 +796,23 @@ Notes: the mocked Markdown export showed `NaN:NaN` timestamps because my fixture
 | 3c Normal scale 390 and 1280 | PASS | Same eight pages: no horizontal overflow, nothing clipped. |
 | 4 No update popup on web | PASS | No update or new-version text on /app at 390 and 1280. |
 
+### 2026-11-02 · videolens-65 (web QA) · run 9 (refinement 11 retest, HEAD e1f4426)
+
+:3005 dev (HMR), headless Chromium 1217, `/api` mocked by route interception (arrival order controlled by holding and releasing each route), 130% root font via an
+injected style, scripts in `%TEMP%\qaweb\run7` (t10-t12). Items 1-4 all PASS, no defects.
+
+| # | Result | Evidence |
+|---|---|---|
+| 1 D-R10-1 partial outage | PASS | Free-runs 503 alone, capabilities 503 alone, and both 503: the notice shows in **both arrival orders**. A 400 on either read or both: no notice (both orders). Refocus with one read still failing: the notice stays (checked for each read). Refocus with both healthy: the notice clears and "3 free runs left" shows. Both failing, refocus still failing: stays. |
+| 2a Results header at 320 and 360 (130%) | PASS | Light and dark: Download .md on its own full-width row (320: x 48-272 inside card 21-299; 360: 48-312 inside 21-339), text not clipped, page scrollWidth = viewport. |
+| 2b Tab fade and chevron | PASS | End chevron + fade shown at 320/360; click scrolls the row (scrollLeft 0 to 149 at 320, to 109 at 360), start chevron scrolls back to 0. Selecting a tab by click or by arrow keys/Home/End leaves it clear of the fades (Transcript, the middle tab, ends flush against the end fade's edge, within 1 px; On-screen, Notes, TL;DR fully clear). Chevrons are `aria-hidden` with `tabindex=-1`. |
+| 2c Normal scale | PASS | At 390 and 1280, 100% font, light and dark: no chevron (`data-more-*` false, `display:none`), actions on one row (same top), Download inside the card. |
+| 3 History at large text | PASS | 320 and 360 at 130% (light and dark): placeholder "Search runs", fits (text 111px in 234-274px), the sort control sits below the search (sort top 349, search top 276), no page scroll, label text and accessible name "Search your runs". At 390 and 1280 at 100% the sort stays beside the search (same row) and the placeholder fits. |
+| 4 Regression, normal scale | PASS | Landing, /app, History, API key, Releases, Privacy, Terms at 390 and 1280, light and dark: no horizontal overflow, nothing outside the viewport. |
+
 ## Changelog
 
+- 2026-11-02 · videolens-65 (web QA) · run 9: refinement 11 retest items 1-4 all PASS (D-R10-1 and D-R10-2 verified fixed), no defects
 - 2026-11-02 · videolens-65 (web QA) · run 8: refinement 10 retest, items 1, 3a, 3c, 4 PASS; item 2 PASS with D-R10-1 (a partial 5xx is masked by the other healthy read); item 3b FAIL D-R10-2 (Download .md overflows its card at 320/360 wide at 130% font)
 - 2026-11-02 · videolens-65 (web QA) · run 7: refinement 9 retest items 1-10 PASS, 11 NOT EXERCISED, no defects (item 8's Back link is hidden on the web by design)
 - 2026-11-02 · videolens-65 (web QA) · run 6: RUN-R1 and RUN-R2 REAL both PASS on :3005 (dev), FREE-02b PASS, run 5 stuck-row check N/A
