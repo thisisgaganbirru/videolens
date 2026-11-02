@@ -3,6 +3,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import type { FreeRunsStatus } from "@/domain/entities";
 import { apiKeyStore, freeRunsGateway } from "@/infrastructure/container";
+import { noteReadResult, onReconnectChance } from "@/application/serverReachability";
 
 /* Free runs (Phase 5b): an anonymous device gets a few runs per UTC day
    without a Gemini key. This module holds the one copy of what the app knows
@@ -58,11 +59,15 @@ export function refreshFreeRuns(): Promise<FreeRunsStatus | null> {
   inFlight = freeRunsGateway
     .fetchStatus()
     .then((status) => {
+      noteReadResult();
       refusedSinceLastRead = false;
       publish({ status });
       return status;
     })
-    .catch(() => {
+    .catch((err: unknown) => {
+      /* Quiet here; whether the server was reachable at all is reported to
+         serverReachability, which says so on Analyze (refinement 4). */
+      noteReadResult(err);
       if (!refusedSinceLastRead) publish({ status: null });
       return null;
     })
@@ -128,7 +133,13 @@ export function useFreeRuns(): { banner: FreeRunsBanner | null; blocked: boolean
   const hasKey = useSyncExternalStore(subscribeKey, hasKeySnapshot, hasKeyServerSnapshot);
 
   useEffect(() => {
-    if (!hasKey) void refreshFreeRuns();
+    if (hasKey) return;
+    void refreshFreeRuns();
+    /* The launch read failed for want of a connection: read again when it
+       may be back (refinement 4, LCH-06), so the pill appears on its own. */
+    return onReconnectChance(() => {
+      if (snapshot.status === null) void refreshFreeRuns();
+    });
   }, [hasKey]);
 
   /* Spent for today: read again just after the UTC reset the server named, so

@@ -204,7 +204,31 @@ non-text threshold — accepted, because the tag's meaning is carried by its tex
 Not tested on a physical device — emulation only, and never against a live
 backend (the fixture is the exact payload shape in `docs/backend/capabilities.md`).
 
+## Unreachable notice (refinement 4, LCH-06)
+
+Decision (1) above, "failure is silent", still holds for the report itself,
+but a launch with the server unreachable looked identical to a healthy one.
+`useCapabilities` now reports each fetch to `application/serverReachability.ts`
+and, if the first fetch never arrived, fetches again when that module signals
+a reconnect chance (`online`, window `focus`, page visible; only while the
+notice is up). Decision (2) holds on a healthy launch: one request (verified:
+capabilities, free-runs and runs once each; a focus event adds nothing).
+
+`components/ReachabilityNotice.tsx` renders in `.cap-slot` (the polite live
+region) in place of the capability notice while unreachable or offline: the
+same `.cap-notice` card, neutral dot, one sentence and a "History" link
+(`?view=history`). Never red, never blocks the form. Verified at 390x844 and
+844x390, light and dark: notice up and Analyze enabled with `/api/*` refusing
+connections; after the server returns, a focus event removes it and the
+free-runs pill appears; offline (`navigator.onLine` false) shows the offline
+wording, and a visibilitychange after coming back clears it.
+
+Known gap: coming back online after an offline spell during which every read
+had *succeeded* does not probe again, so a server that went down meanwhile is
+only discovered on submit (the offline flag knows nothing about the server).
+
 ## Changelog
 
 - 2026-08-29 · frontend agent · added the capability surface: `CapabilitiesGateway` port + `FetchCapabilitiesGateway` adapter (normalising, not casting), `useCapabilities` hook fetched once in `HomeScreen`, the `CapabilityNotice` intake strip with a `probed`-aware disclosure, and `CapabilityCallout` wired to the URL field and the API-key panel; extracted `infrastructure/apiBase.ts` so two adapters share one origin
 - 2026-11-01 · frontend agent · editorial restyle: compact collapsed card (dot, sentence-case label-first line, Details toggle), red only for `unavailable`, sentence-case states with inline "not checked", plain names map with fallback; callout de-ruled; notice moved to its own intake grid cell (top of the panel column / first on phone) so the intake card no longer moves
+- 2026-11-02 · frontend agent (refinement 4) · added the shared reachability flag, retry on reconnect, and the ReachabilityNotice in the capability slot (LCH-06)

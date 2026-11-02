@@ -11,7 +11,7 @@ The "Analyze" tab's entry point: paste a public media URL, or drag/drop/browse a
 - File: extension allowlist (`.mp3`/`.mp4`/`.mov`), `MAX_FILE_SIZE_MB` (200), and a best-effort duration check (`readMediaDuration`, via a hidden `<video>`/`<audio>` element's `loadedmetadata` event) against `MAX_DURATION_SECONDS` (180) — wrapped in try/catch since this can fail on some browsers/files, in which case it's silently skipped ("Backend performs authoritative validation").
 - URL: must parse as `http:`/`https:`.
 
-**Terms acceptance**: a checkbox, persisted in `localStorage` (`videolens-media-terms-v1`) so it stays checked across sessions once accepted. Required before either submit path proceeds — Browse is disabled until it is ticked; pressing Analyze link without it shows "Accept the media-use terms before analysis." in `#intake-error`.
+**Terms acceptance**: a checkbox, persisted in `localStorage` (`videolens-media-terms-v1`) so it stays checked across sessions once accepted. Required before either submit path proceeds — Browse is disabled until it is ticked; pressing Analyze link without it shows "Accept the media-use terms before analysis." under the terms row (`#terms-error`, refinement 4; it used to be `#intake-error`).
 
 **Analyze link is enabled with an empty field (Phase 2).** It used to be
 disabled until a URL was typed; Main.png draws it as the live green primary
@@ -242,6 +242,38 @@ link is 52px tall (`.link-row .btn` min-height 3.25rem), Browse files 44px.
   pointer, "Paste a link or add a file." on touch. They replace
   `.drop-title--pointer` / `--touch`.
 
+## Refinement 4 (2026-11-02) — field errors sit at their field
+
+Supersedes the `#intake-error` slot described above: there is no foot-of-card
+error any more. android-66 (INT-01) found "Paste a link to analyze." under the
+whole form, where the soft keyboard covered it.
+
+- **One message slot per control**, rendered only for the field the error is
+  about (`errorField`), each a `p.error-note.field-error[role=alert]`:
+  - `#url-error` inside `.link-row`, directly under the field. `.link-row` is a
+    grid (areas `field / error / button` stacked, `field button / error error`
+    from the 28rem container query), so the message is under the field in both
+    arrangements. Spacing is margins, not row-gap, so an absent error leaves no
+    gap. `#media-url` gets `aria-invalid` and `aria-describedby="url-error"`
+    (plus `url-capability` when that note is up).
+  - `#terms-error` right under `.terms-row`; the checkbox gets `aria-invalid`,
+    `aria-describedby="terms-error"`, a 2px `--color-danger` outline (INT-03)
+    and focus.
+  - `#file-error` right under the drop zone, described-by on Browse files.
+    Focus is left alone (the picker just closed).
+- **Focus and reveal.** `showError` records which control and bumps
+  `errorSeq`; an effect after render focuses the control (`preventScroll`) and
+  calls `revealField` (`application/useSoftKeyboard.ts`). The unit revealed is
+  the control's `[data-reveal-group]` ancestor (the link form, the terms row +
+  message, the drop zone + message) when it fits the visible band, else the
+  control. Pressing Analyze twice on an empty field reveals it again. Every
+  link error (empty or malformed) now focuses the field, not just the empty one.
+- **With the keyboard open** focusing `#media-url` opens the keyboard;
+  `useSoftKeyboard` re-reveals the same group once the WebView has shrunk (see
+  `app-shell-layout.md`, Refinement 4). Measured with the WebView shrunk under
+  the keyboard (390x844 to 514, 844x390 to 190, 360x640 to 360): field and
+  message both inside the visible band, 8px apart, dock hidden.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported UploadForm to the unboxed .intake; returns a fragment since HomeScreen supplies the wrapper
@@ -259,3 +291,4 @@ link is 52px tall (`.link-row .btn` min-height 3.25rem), Browse files 44px.
 - 2026-11-01 · frontend agent (Phase 5b) · `blocked` prop (out of free runs, no key): Analyze link and Browse files disabled, drop refused with `dropEffect: none`, submit guarded; the link field and terms box stay usable. Note: the 1536×674 no-overflow measurement above no longer holds (587 vs 540 px without the banner); see `free-runs.md`
 - 2026-11-01 · frontend agent (refinement 1) · terms storage guarded; prefill comes from HomeScreen (share or expired "analyze again"), used shares dismissed on start-over so the field clears
 - 2026-11-02 · frontend agent (refinement 2) · link form `noValidate`; aria-invalid/red state only for link errors (a terms error marks the checkbox); `.only-pointer`/`.only-touch` replace the drop-title classes and fix the touch lede
+- 2026-11-02 · frontend agent (refinement 4) · field errors moved next to their controls (#url-error / #terms-error / #file-error, each aria-describedby), terms checkbox gets aria-invalid + danger outline + focus, control+message revealed with revealField (INT-01, INT-03)

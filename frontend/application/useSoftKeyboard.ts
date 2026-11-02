@@ -18,7 +18,10 @@ import { useEffect } from "react";
 
    The hook only stamps `<html data-keyboard="open">`; globals.css hides the
    dock under that attribute (in the app shell only). On open it also brings
-   the field to the middle of the band once the resize has landed. */
+   the field (with its message, see `revealField`) into the visible band —
+   once after a short settle, and again the moment the shrink is actually
+   measured, because on a slow WebView the keyboard's resize can land after
+   the settle timer (refinement 4, INT-05). */
 
 const TEXT_INPUT_TYPES = new Set(["text", "url", "email", "search", "password", "tel", "number", ""]);
 /* Below this a height change is browser chrome (URL bar) settling, not a
@@ -37,6 +40,55 @@ function isTextEntry(el: Element | null): el is HTMLElement {
 
 function viewportHeight(): number {
   return Math.min(window.innerHeight, window.visualViewport?.height ?? window.innerHeight);
+}
+
+/* Room left clear above and below a revealed field, so it does not sit flush
+   against the keyboard or the top edge. */
+const REVEAL_MARGIN = 16;
+
+function scrollParent(el: HTMLElement): HTMLElement | null {
+  for (let node = el.parentElement; node; node = node.parentElement) {
+    const { overflowY } = getComputedStyle(node);
+    if ((overflowY === "auto" || overflowY === "scroll") && node.scrollHeight > node.clientHeight) return node;
+  }
+  return (document.scrollingElement as HTMLElement | null) ?? null;
+}
+
+/**
+ * Bring a field — and the message that belongs to it — into the part of the
+ * screen the user can actually see (refinement 4, INT-01 / INT-05).
+ *
+ * The unit is the field's `[data-reveal-group]` ancestor (the link form, the
+ * terms row with its error, the drop zone with its error) when that fits in
+ * the visible band, else the field alone. "Visible" is the visual viewport:
+ * in the installed app the WebView itself shrinks for the keyboard, but a
+ * mobile browser shrinks only the visual viewport, and `scrollIntoView` alone
+ * centres in the layout viewport — under the keyboard. So it centres first,
+ * then measures against the visual viewport and nudges the nearest scroller
+ * by whatever is still hidden.
+ *
+ * Instant, not smooth: a smooth scroll started while the keyboard is still
+ * resizing the WebView can be cut short by that resize, which is one way the
+ * landscape field ended up under the keyboard (INT-05).
+ */
+export function revealField(field: HTMLElement): void {
+  const group = field.closest<HTMLElement>("[data-reveal-group]");
+  const vv = window.visualViewport;
+  const top = Math.max(0, vv?.offsetTop ?? 0);
+  const bottom = Math.min(window.innerHeight, top + (vv?.height ?? window.innerHeight));
+  const room = bottom - top - 2 * REVEAL_MARGIN;
+  const target = group && group.getBoundingClientRect().height <= room ? group : field;
+  const inView = (r: DOMRect) => r.top >= top + REVEAL_MARGIN && r.bottom <= bottom - REVEAL_MARGIN;
+  /* Already fully visible: leave the page where the user put it. */
+  if (inView(target.getBoundingClientRect())) return;
+  target.scrollIntoView({ block: "center", inline: "nearest" });
+
+  const rect = target.getBoundingClientRect();
+  let delta = 0;
+  if (rect.bottom > bottom - REVEAL_MARGIN) delta = rect.bottom - (bottom - REVEAL_MARGIN);
+  if (rect.top - delta < top + REVEAL_MARGIN) delta = rect.top - (top + REVEAL_MARGIN);
+  if (Math.abs(delta) < 1) return;
+  scrollParent(target)?.scrollBy({ top: delta });
 }
 
 export function useSoftKeyboard(): void {
@@ -62,7 +114,7 @@ export function useSoftKeyboard(): void {
       window.clearTimeout(settleTimer);
       /* After the keyboard's resize, so "centre" means the visible band. */
       settleTimer = window.setTimeout(() => {
-        if (document.activeElement === field) field.scrollIntoView({ block: "center", behavior: "smooth" });
+        if (document.activeElement === field) revealField(field);
       }, 300);
     };
 
@@ -82,16 +134,29 @@ export function useSoftKeyboard(): void {
         /* The keyboard came back over a field that never lost focus (tap the
            field again after dismissing it with back): no focusin fires, but
            the viewport shrinks. */
-        if (isTextEntry(document.activeElement) && baseline - height > KEYBOARD_MIN_PX) {
+        const field = document.activeElement;
+        if (isTextEntry(field) && baseline - height > KEYBOARD_MIN_PX) {
           shrunk = true;
           setOpen(true);
+          window.requestAnimationFrame(() => {
+            if (document.activeElement === field) revealField(field);
+          });
           return;
         }
         baseline = height;
         return;
       }
       if (baseline - height > KEYBOARD_MIN_PX) {
+        /* The keyboard's room has just been taken (or changed size, e.g. a
+           suggestion strip appearing): keep the focused field in view. */
+        const field = document.activeElement;
         shrunk = true;
+        if (isTextEntry(field)) {
+          const lastHeight = height;
+          window.requestAnimationFrame(() => {
+            if (document.activeElement === field && viewportHeight() === lastHeight) revealField(field);
+          });
+        }
       } else if (shrunk) {
         /* Grew back with focus still in the field: keyboard dismissed. */
         shrunk = false;
