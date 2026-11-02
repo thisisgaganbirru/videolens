@@ -472,6 +472,39 @@ Build installed at 15:39:43. Emulator API 35. Evidence is in `%TEMP%\qa13\`. Par
 
 No real runs were spent. The device was restored afterwards: font 1.0, wm size reset, auto-rotate on, light theme.
 
+### 2026-11-02 · android-66 (device QA) · run 13 (refinement 11, `refine11-debug.apk` at e1f4426, real backend then mock)
+
+Build: a full `adb install --no-streaming -r` (native change: MainActivity `configChanges` gains `fontScale`), lastUpdateTime 16:33:14. Emulator API 35. Evidence is in `%TEMP%\qa14\`, plus `%TEMP%\qa13\R4-*` for the popup shots. The width was set to 320 css px with `wm size 840x2400`. The result was "Me at the zoo - The First YouTube Video", reopened from History.
+
+**Item 1, results header at 320 px: PASS** (one expectation mismatch, one cosmetic).
+- **Font 1.0.** The actions stay on one row (copy 44, share 44, "Download .md" 142 at x141–283, all inside the card at 16–304).
+- **Fonts 1.15 and 1.3.** "Download .md" moves to its own full-width row (x37–283, 246 wide) inside the card. docSW is 320 at every size.
+- **Chevrons.** A real tap on the end chevron pages the row to the end (scrollLeft 0 → 40/41 at 1.0, 0 → 96/97 at 1.3), which shows the start chevron and hides the end one. The start chevron pages back.
+- **Chosen tab clears the fades** at 1.0 and 1.3 (underFade=false, inside the list). This includes On-screen chosen while half-hidden under the end fade, and TL;DR chosen from under the start fade, each scrolled clear by `scrollIntoView`. At 1.3, Transcript in the middle stops exactly at the end fade's edge (239).
+- **MISMATCH with the brief.** At 320 px and font 1.0 the tabs overflow by 41 px (On-screen runs to 324, the list ends at 287), so the end chevron does show. That is correct behaviour for an overflowing row. The results-view doc's "nothing shows at the normal text size" was verified at 390/1280, not 320.
+- **COSMETIC.** The fades sit at 37–81 and 239–283, but `.tab-list` spans 33–287. About 4 px of tab text (a ")" and an "e") peeks out past each chevron; it shows in the 1.0 light and dark shots.
+
+**Item 2, live system font change: PASS.**
+- With the result open, the font went 1.0 → 1.15 → 1.3 → 1.0. The pid (15296) and an in-page marker (`window.__qamark`) both survived, so nothing reloaded.
+- The URL, the result and the selected tab were kept, and text resized live: body 16 → 18.4 → 20.8 → 16 px, h1 28 → 32.2 → 36.4 → 28 px.
+- **Theme toggle** both ways: no reload, the result is kept, and the system bars follow the theme.
+- **Rotation** (`wm user-rotation lock 1`, live, to 915×360 and back) and a `wm size` change: no reload, the result is kept.
+
+**Item 3, History at 320 px: PASS.**
+- The placeholder reads "Search runs" and fits at fonts 1.0, 1.15 and 1.3: 85, 98 and 111 px of text against 133, 125 and 118 px available.
+- The sort select stays on the search row, because there's still room. At font 2.0 it drops below the full-width search field.
+- **MINOR, beyond the brief.** At font 1.5 (a standard Android 14 size step) the placeholder truncates to "Search ru" (128 px of text, 108 px available), and the sort has not wrapped yet.
+
+**Item 4, popup in landscape at font 1.3 (MOCK 99999, dismiss key cleared): PASS.**
+- Real landscape (915×360) in light and dark: "Get the update" and "Later" each sit on one line (`white-space: nowrap`, scrollWidth equal to clientWidth). The buttons are 162×48 side by side; R10 had a two-line label at 72 px.
+- Card 266–650 × 92–268, centred, with no overlap or clipping. The popup stays open across a live rotation.
+- 320 px portrait at font 1.3: the buttons stack (240 wide), each label on one line.
+- Emulator quirk: a cold launch with the rotation locked to 1 still comes up portrait (the same symptom as run 12). A live rotation of the running app works, so the dark case was measured after a live rotation.
+
+NOTES:
+- Not a defect: the source card for "Me at the zoo" reads "Microplastics are accumulating in human brains…". That is the run's stored `source_metadata.description` as yt-dlp fetched it for jNQXAC9IVRw (the uploader's current description), not a mix-up between runs.
+- No real runs spent. Partial-outage handling (D-R10-1) was covered on the web, per the lead. The device was restored afterwards: font 1.0, wm size reset, auto-rotate on, light theme, dismiss key null.
+
 ## Changelog
 
 - 2026-11-02 · android-66 (device QA) · added section 19 (update banner, UPD-01..07) and run 9 (UPD partial on the mock: UPD-01/03 PASS, UPD-04 partial, rest PAUSED) and run 10 (real runs: terms persistence, RUN-01 retry with a YouTube link, RUN-02/02b/03/04/05/07/08, ORI-02, HIS-01, FREE-01..05, RUN-06b/06c/06d/06e, LCH-06b/06c, FREE-02b PASS; FREE-02c not exercised (YouTube 403 mid-download); stale free-runs count after a refund logged as known (R9); stage timings incl. Normalizing ~60 s for a 170 s file); added FREE-02b/02c rows to section 6
@@ -489,3 +522,4 @@ No real runs were spent. The device was restored afterwards: font 1.0, wm size r
 - 2026-11-02 · frontend agent (refinement 3) · added RUN-06b..e (404 expiry on every path, airplane-mode regression) and ORI-05 (nothing under the dock at rest); LCH-02 is the retest for the dark-launch flash fix
 - 2026-11-02 · android-66 (device QA) · run 11: refinement 9 retest on refine9-debug.apk (79d69fc): R9-1..10 PASS except R9-7 partial (the reaches-analysis-then-fails half not exercised); update banner on the mock: dismiss, newer version_code, external link and the no-update states PASS; layout cases SUPERSEDED by the R10 popup; banner overlap at 320/343 css px with large fonts
 - 2026-11-02 · android-66 (device QA) · run 12: refinement 10 retest on refine10-debug.apk (ad39660): A1 Back link and A2 320px/font 1.3 PASS (MINOR: "Download .md" pill overflows the result card at font ≥1.15); update popup layout (portrait/landscape-emulated, light/dark, 320/343 at font 1.3), ordering after the Splash, backdrop/Escape/Back/Later dismiss with focus to the H1, "Get the update", Tab trap, MOCK 100000/1/null and 503 with the "Can't reach the server" notice and recovery on resume all PASS; COSMETIC landscape-font-1.3 button label wrap
+- 2026-11-02 · android-66 (device QA) · run 13: refinement 11 retest on refine11-debug.apk (e1f4426): results header at 320 (Download own row at 1.15/1.3, chevrons page, chosen tab clear of fades), live font change without reload (also theme and rotation), History "Search runs" at 320 up to font 1.3, and the landscape popup labels on one line at font 1.3 all PASS; mismatch: end chevron shows at 320/font 1.0 (tabs overflow 41px); COSMETIC 4px tab text past each fade; MINOR placeholder truncates at font 1.5
