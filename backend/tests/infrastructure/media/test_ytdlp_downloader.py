@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-from yt_dlp.utils import DownloadError
+from yt_dlp.utils import DownloadError, GeoRestrictedError
 
 from app.domain.errors import MediaValidationError
 from app.infrastructure.config import Settings
@@ -84,6 +84,44 @@ class CookieAndErrorHandlingTests(unittest.TestCase):
             with self.subTest(raw=raw):
                 message, _ = _download_failure(DownloadError(raw))
                 self.assertEqual(message, expected)
+
+    def test_real_yt_dlp_geo_block_wording_is_a_region_lock(self) -> None:
+        # Verbatim from yt-dlp 2026.07.04: YouTube's subreason
+        # (extractor/youtube/_video.py), raise_geo_restricted's default
+        # (extractor/common.py), and the hint YoutubeDL.py appends to every
+        # GeoRestrictedError it reports.
+        cases = (
+            "ERROR: The uploader has not made this video available in your country"
+            "\nThis video is available in Japan."
+            "\nYou might want to use a VPN or a proxy server (with --proxy) to workaround.",
+            "ERROR: This video is not available from your location due to geo restriction"
+            "\nYou might want to use a VPN or a proxy server (with --proxy) to workaround.",
+            "ERROR: [someextractor] abc: Geo-restricted to Chile"
+            "\nYou might want to use a VPN or a proxy server (with --proxy) to workaround.",
+        )
+        for raw in cases:
+            with self.subTest(raw=raw):
+                message, detail = _download_failure(DownloadError(raw))
+                self.assertEqual(message, "This video isn't available in this server's region.")
+                self.assertNotIn("VPN", message)
+                self.assertIn("VPN", detail)
+
+    def test_geo_block_wins_over_a_403_in_the_same_error(self) -> None:
+        raw = (
+            "ERROR: unable to download video data: HTTP Error 403: Forbidden. "
+            "The uploader has not made this video available in your country"
+        )
+        message, _ = _download_failure(DownloadError(raw))
+        self.assertEqual(message, "This video isn't available in this server's region.")
+
+    def test_geo_restricted_error_type_is_a_region_lock_whatever_its_wording(self) -> None:
+        original = GeoRestrictedError("Media is not playable here (HTTP Error 403)")
+        error = DownloadError(
+            "ERROR: Media is not playable here (HTTP Error 403)",
+            (GeoRestrictedError, original, None),
+        )
+        message, _ = _download_failure(error)
+        self.assertEqual(message, "This video isn't available in this server's region.")
 
     def test_unrecognised_failure_keeps_its_detail_out_of_the_message(self) -> None:
         message, detail = _download_failure(
