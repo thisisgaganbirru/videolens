@@ -465,11 +465,17 @@ pinned to the wrapper's edges.
 - Unchanged from refinement 11: chevrons page the row by 70%, are
   `aria-hidden` with `tabIndex=-1`, nothing shows when the tabs fit, and a
   chosen or focused tab scrolls clear of the fades.
-- **Geometric limit, 320 px at 200% text:** the list is ~182px wide. A middle
-  tab (Transcript, 138px) cannot fit between two 48px fades (86px band), and
-  On-screen (140px) is 10px wider than the room beside one fade. Choosing
-  them aligns the label's start clear of the start fade; the tail stays under
-  the end fade with its chevron. At 150% and below every tab fits clear.
+- **320 px at 200% text — an emulation artefact, not a device limit**
+  (corrected in refinement 13). Desktop Chromium, emulating 200% by setting
+  the root font size, gives a ~182px list, where a middle tab (Transcript,
+  138px) cannot fit between two 48px fades (86px band) and On-screen (140px)
+  is 10px wider than the room beside one fade. **On the Android device the
+  list is 254px wide and both land clear:** Transcript at x 101–239, On-screen
+  at 143–283 (Android round 14). The device's font scale grows the text but
+  not the rem lengths around it the way the emulation does, so the list keeps
+  far more room. No geometric limit has been seen on a real device; the
+  emulation case still degrades gracefully (the chosen label's start aligns
+  clear of the start fade, the tail sits under the end fade with its chevron).
 
 Verified in `scratchpad\refine12\verify.py`: 320 at 100/115/130/150/200% and
 360 at 130/150%, light and dark — the 4px strip between wrapper and list edge
@@ -497,3 +503,4 @@ and TL;DR (Home) clear of the fades where geometry allows; no chevrons at
 - 2026-11-02 · frontend agent (refinement 9) · source card, source toggle and Markdown export spell platforms through domain/platforms.ts ("YouTube", not yt-dlp's "Youtube")
 - 2026-11-02 · frontend agent (refinement 11) · results header wraps at 320/360 with 130% text (Download drops to its own full row instead of overflowing the card); tab row keeps scrolling but shows an edge fade + chevron on the side with more, chevrons page the row, chosen tab scrolls clear of the fade (D-R10-2)
 - 2026-11-02 · frontend agent (refinement 12) · tab-row fades/chevrons now start at the list's outer edge (`--tab-bleed`), so no tab text peeks past them; fade and chevron fixed px (44px/18px) instead of rem; corrected "nothing shows at normal size" to the measured threshold (chevron below 360 CSS px at 100%)
+- 2026-11-02 · frontend agent (refinement 13) · corrected the R12 "geometric limit at 320/200%": it appears only in desktop Chromium's root-font emulation (~182px list); on the Android device the list is 254px and Transcript (101–239) and On-screen (143–283) both land clear. Doc only
