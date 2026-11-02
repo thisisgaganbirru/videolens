@@ -2,7 +2,7 @@
 
 import { Moon, Sun } from "lucide-react";
 import { useSystemBarsTheme } from "@/application/useSystemBarsTheme";
-import { syncThemeColorMeta, THEME_STORAGE_KEY, type Theme } from "@/components/theme";
+import { setThemePreference, type Theme } from "@/components/theme";
 
 /* Reads and writes the same attribute + key the blocking script in
    app/layout.tsx sets before first paint. No React state is involved: the
@@ -12,17 +12,12 @@ import { syncThemeColorMeta, THEME_STORAGE_KEY, type Theme } from "@/components/
    With nothing stored the page follows the device (refinement 2, #3), and the
    button shows whichever theme that resolved to. Pressing it stores the
    opposite as an explicit choice, which from then on wins over the device —
-   the head script's live listener checks storage before acting. */
+   the head script's live listener checks storage before acting. The way back
+   to following the device is the More sheet's System option (refinement 4,
+   THM-01); this button stays two-way on purpose. */
 export function toggleTheme() {
-  const root = document.documentElement;
-  const next: Theme = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
-  root.setAttribute("data-theme", next);
-  syncThemeColorMeta(next);
-  try {
-    localStorage.setItem(THEME_STORAGE_KEY, next);
-  } catch {
-    /* private mode — the choice just doesn't persist */
-  }
+  const next: Theme = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+  setThemePreference(next);
 }
 
 /* Shared by the app shell and the standalone routes so every page carries the

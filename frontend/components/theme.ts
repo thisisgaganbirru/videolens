@@ -39,6 +39,49 @@ export function storedTheme(): Theme | null {
   }
 }
 
+/**
+ * What the user chose, as the More sheet's three-way control shows it
+ * (refinement 4, THM-01): "system" is the absence of a stored theme.
+ */
+export type ThemePreference = Theme | "system";
+
+export function themePreference(): ThemePreference {
+  return storedTheme() ?? "system";
+}
+
+/** The theme the device asks for right now. Light when it cannot be read. */
+export function deviceTheme(): Theme {
+  try {
+    return window.matchMedia(SYSTEM_DARK_QUERY).matches ? "dark" : "light";
+  } catch {
+    return "light";
+  }
+}
+
+/** Paint `theme` now: the attribute CSS keys off, and the chrome colour. */
+export function paintTheme(theme: Theme): void {
+  document.documentElement.setAttribute("data-theme", theme);
+  syncThemeColorMeta(theme);
+}
+
+/**
+ * Apply and remember a preference. "system" removes the stored theme, which
+ * is all it takes to hand control back to the device: the head script's
+ * `prefers-color-scheme` listener (app/layout.tsx) re-reads storage on every
+ * change and acts only while nothing is stored. Nothing in that script changes
+ * for this, which is the point — one rule ("stored wins, else the device"),
+ * written once, read by both.
+ */
+export function setThemePreference(preference: ThemePreference): void {
+  try {
+    if (preference === "system") localStorage.removeItem(THEME_STORAGE_KEY);
+    else localStorage.setItem(THEME_STORAGE_KEY, preference);
+  } catch {
+    /* private mode: applied for this visit, not remembered */
+  }
+  paintTheme(preference === "system" ? deviceTheme() : preference);
+}
+
 /** `--color-paper` in each theme (see `app/tokens.css`) — keep them equal. */
 export const THEME_COLOR: Record<Theme, string> = {
   light: "#F6F4EE",

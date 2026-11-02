@@ -555,6 +555,42 @@ back/forward was measured and the Capacitor mapping is read from
 `@capacitor/app`'s documented default (`history.back()` while `canGoBack`, then
 `exitApp()`).
 
+## Refinement 4 (2026-11-02)
+
+**Keyboard reveal (INT-01, INT-05).** `useSoftKeyboard` used to call
+`field.scrollIntoView({ block: "center", behavior: "smooth" })` once, 300ms
+after focus. Two ways that leaves the field under the keyboard: the
+keyboard's resize lands after the timer (a slow WebView; android-66 saw it in
+landscape, with only the top "Limited: link downloads" note visible), or the
+smooth scroll is cut short by that resize. Now:
+
+- `revealField(field)` (exported from `application/useSoftKeyboard.ts`) is
+  instant, reveals the field's `[data-reveal-group]` ancestor (field plus its
+  error message) when that fits, measures against the **visual** viewport, and
+  nudges the nearest scroller by whatever is still hidden. A no-op when the
+  target is already fully visible.
+- It runs after the 300ms settle **and** again (next frame) whenever the hook
+  measures the shrink, so a late keyboard re-reveals.
+- Simulated in headless Chromium at 844x390 app shell: focus the field from
+  scrollTop 0, shrink the WebView to 190px 450ms later (after the timer) and
+  30ms later: field at 113-165 of 190 in both cases, dock hidden. Not measured
+  on a device; INT-05 is android-66's retest.
+
+**Theme: System / Light / Dark (THM-01).** The More sheet's "Dark theme"
+switch is replaced by a three-way segmented radio group (`fieldset.theme-choice`,
+`.segmented`, 44px segments, native radios so arrows, the single tab stop and
+the group name come from the platform). `components/theme.ts` gained
+`ThemePreference`, `themePreference()`, `deviceTheme()`, `paintTheme()` and
+`setThemePreference()`; "system" removes `videolens_theme`, after which the
+head script's existing `prefers-color-scheme` listener (it re-reads storage on
+every change) follows the device again. The head script itself is unchanged.
+The header toggle stays two-way and now calls `setThemePreference` too. The
+sublabel reads "Following your device" on System and "Set in this app"
+otherwise. Verified: dark OS gives System checked and dark; Light ignores an OS
+flip; ArrowRight goes Light to Dark; System clears storage and follows the OS
+live both ways; the header toggle stores a choice and More's System gives it
+back; meta theme-color follows.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent (foundation) · rebuilt the shell to the Terminal direction: one-viewport flex chain, pill nav, mobile drawer, 4 tabs, theme toggle
@@ -577,3 +613,4 @@ back/forward was measured and the Capacitor mapping is read from
 - 2026-11-01 · frontend agent (refinement 1) · dock sticky in flow (containment had captured the fixed dock), keyboard hides dock, Android hardware back (NativeShell port, decideBack, native tab switches replace), phase scroll-to-top, scrollbar-gutter on the real scroller (fine pointers only), landscape keeps the dock, #3 native diff documented not applied
 - 2026-11-02 · frontend agent (refinement 2) · default theme follows the device live (stored choice wins; sheet shows "Following your device"); system-bar style from the OS on WebView < 140 (Default, re-sent on OS flip/resume), app theme on 140+; capacitor SystemBars style DEFAULT; landscape: one-row 52px dock, one-line headline, two-column More sheet
 - 2026-11-02 · frontend agent (refinement 3) · phone app shell (< 32rem) uses the measured frame (section scrolls, dock below it, 8px gap) so nothing sits under the dock at rest; scroll sections are the containing block for `.sr-only`
+- 2026-11-02 · frontend agent (refinement 4) · keyboard reveal now group-aware, instant, visual-viewport aware and repeated on the measured shrink (INT-05); More sheet theme switch replaced by System/Light/Dark radios backed by theme.ts setThemePreference (THM-01)

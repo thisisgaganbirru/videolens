@@ -2,12 +2,13 @@
 
 import type { MouseEvent, Ref } from "react";
 import Link from "next/link";
-import { ChevronRight, FileText, KeyRound, Moon, Shield, Tag, type LucideIcon } from "lucide-react";
+import { ChevronRight, FileText, KeyRound, Shield, SunMoon, Tag, type LucideIcon } from "lucide-react";
 import { isPlainLeftClick } from "@/components/navClick";
 import { mainTabHref, type MainTab } from "@/application/useMainTab";
+import type { ThemePreference } from "@/components/theme";
 
 /* Hallmark · theme: editorial · component: bottom sheet (installed-app shell)
- * states: default · hover · focus · active · current · checked (theme switch)
+ * states: default · hover · focus · active · current · checked (theme choice)
  *
  * The More sheet from the App boards: everything the bottom tab bar has no
  * room for. A native modal <dialog>, opened with showModal() by BottomTabBar —
@@ -22,12 +23,19 @@ export type LegalRoute = "privacy" | "terms";
  * One row. Three kinds, because the sheet holds three kinds of thing: a tab
  * that lives on `/app` (in-place navigation), a standalone route (a document
  * navigation, plain `<a>` so it also works from the offline page), and the
- * theme switch.
+ * theme choice (System / Light / Dark).
  */
 export type MoreSheetRow =
   | { kind: "tab"; tab: MainTab; label: string; icon: LucideIcon }
   | { kind: "route"; route: LegalRoute; href: string; label: string; icon: LucideIcon }
   | { kind: "theme"; label: string; icon: LucideIcon };
+
+/** The three theme options, in the order the segmented control draws them. */
+const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
+  { value: "system", label: "System" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+];
 
 /**
  * The sheet's contents, as data. Each inner array is a group; groups are
@@ -38,7 +46,7 @@ export const MORE_SHEET_GROUPS: MoreSheetRow[][] = [
   [
     { kind: "tab", tab: "api-key", label: "API key", icon: KeyRound },
     { kind: "tab", tab: "releases", label: "Releases", icon: Tag },
-    { kind: "theme", label: "Dark theme", icon: Moon },
+    { kind: "theme", label: "Theme", icon: SunMoon },
   ],
   [
     { kind: "route", route: "privacy", href: "/privacy", label: "Privacy", icon: Shield },
@@ -59,11 +67,10 @@ type MoreSheetProps = {
   activeTab: MainTab | null;
   currentRoute?: LegalRoute;
   onSelectTab?: (tab: MainTab) => void;
-  /** The theme as painted when the sheet opened, kept current by `onToggleTheme`. */
-  dark: boolean;
-  /** No stored choice: the theme is the device's (refinement 2, #3). */
-  followsDevice: boolean;
-  onToggleTheme: () => void;
+  /** The stored preference when the sheet opened, kept current by
+   *  `onChooseTheme`. "system" = nothing stored, the device decides. */
+  themePreference: ThemePreference;
+  onChooseTheme: (preference: ThemePreference) => void;
   /** Fired by the dialog's own `close` event, however it closed. */
   onClose: () => void;
 };
@@ -73,9 +80,8 @@ export default function MoreSheet({
   activeTab,
   currentRoute,
   onSelectTab,
-  dark,
-  followsDevice,
-  onToggleTheme,
+  themePreference,
+  onChooseTheme,
   onClose,
 }: MoreSheetProps) {
   /* The dialog has no padding of its own (it is on `.sheet-body`), so the only
@@ -100,17 +106,39 @@ export default function MoreSheet({
     );
 
     if (row.kind === "theme") {
+      /* Refinement 4 (THM-01): a three-way choice, not a switch. A switch
+         could only ever store light or dark, so once used there was no way
+         back to following the device. Native radios in a fieldset: arrow
+         keys, one tab stop and the group name come from the platform. Each
+         segment is a 44px label around a visually hidden radio. */
       return (
-        <button type="button" role="switch" aria-checked={dark} className="sheet-row" onClick={onToggleTheme}>
-          {icon}
-          <span className="sheet-label">
-            {row.label}
-            {/* Says why the switch is already on (or off) before anyone
-                touched it. Gone after the first press: that stores a choice. */}
-            {followsDevice && <span className="sheet-sublabel">Following your device</span>}
-          </span>
-          <span className="switch" aria-hidden="true" />
-        </button>
+        <fieldset className="theme-choice">
+          <legend className="theme-choice__legend">
+            <span className="theme-choice__head">
+              {icon}
+              <span className="sheet-label">
+                {row.label}
+                <span className="sheet-sublabel">
+                  {themePreference === "system" ? "Following your device" : "Set in this app"}
+                </span>
+              </span>
+            </span>
+          </legend>
+          <div className="segmented">
+            {THEME_OPTIONS.map((option) => (
+              <label key={option.value} className="segmented__option">
+                <input
+                  type="radio"
+                  name="theme-preference"
+                  value={option.value}
+                  checked={themePreference === option.value}
+                  onChange={() => onChooseTheme(option.value)}
+                />
+                <span>{option.label}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
       );
     }
 

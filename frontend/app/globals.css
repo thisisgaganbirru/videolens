@@ -1460,6 +1460,31 @@ h3 {
   .result-download {
     padding-inline: 1.125rem;
   }
+  /* Copy's visible confirmation (refinement 4, RES-05): "Transcript copied"
+     in a small ink label under the button for the tick's two seconds.
+     Absolutely placed, so it covers a sliver of the tab row rather than
+     pushing it down and back. Opacity only; reduced motion keeps the fade
+     short (the global reduced-motion rule). */
+  .copy-wrap {
+    position: relative;
+    display: inline-flex;
+  }
+  .copy-flash {
+    position: absolute;
+    top: calc(100% + 0.375rem);
+    left: 0;
+    z-index: 2;
+    padding: 0.3125rem 0.625rem;
+    border-radius: var(--radius-control);
+    background: var(--color-ink);
+    color: var(--color-paper);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    line-height: 1.3;
+    white-space: nowrap;
+    pointer-events: none;
+    animation: copy-flash-in var(--dur-short) var(--ease-out);
+  }
 
   .disclosure {
     all: unset;
@@ -1513,19 +1538,19 @@ h3 {
   }
 
   /* ---- controls ----
-     Phone (HistoryWeb.png, HistoryMobile.png): search alone on a full-width
-     row, then the pill row, which scrolls sideways and bleeds off the right
-     edge as drawn. No sort below 48rem — the boards draw none, and
-     HistoryPanel orders by Newest whenever the control is hidden. From 48rem:
-     pills left, search and sort right, one row. DOM order is pills, search,
-     sort — the desktop reading order. */
+     Phone (HistoryWeb.png, HistoryMobile.png): search on the first row, then
+     the pill row, which scrolls sideways and bleeds off the right edge as
+     drawn. The boards drew no sort on a phone; refinement 4 (HIS-03) puts it
+     at the end of the search row, where it costs the field ~7rem and no new
+     row. From 48rem: pills left, search and sort right, one row. DOM order is
+     pills, search, sort — the desktop reading order. */
   .history-controls {
     margin-top: var(--space-md);
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
-      "search"
-      "filters";
+      "search sort"
+      "filters filters";
     gap: var(--space-xs);
     align-items: center;
   }
@@ -1560,7 +1585,6 @@ h3 {
   .history-sort {
     grid-area: sort;
     position: relative;
-    display: none;
   }
 
   .filter-pill {
@@ -1847,9 +1871,6 @@ h3 {
       grid-template-columns: minmax(0, 1fr) minmax(0, 16.25rem) auto;
       grid-template-areas: "filters search sort";
       gap: var(--space-2xs);
-    }
-    .history-sort {
-      display: block;
     }
     .history-filters {
       flex-wrap: wrap;
@@ -2511,6 +2532,76 @@ h3 {
     color: var(--color-muted);
     flex-shrink: 0;
   }
+  /* ---- the More sheet's theme choice (refinement 4, THM-01) ----
+     System / Light / Dark as one segmented radio group under the row's
+     icon + label. It replaced a switch that could only store light or dark,
+     so "Following your device" could never come back once touched. Native
+     radios (visually hidden, each covering its 44px segment) keep the arrow
+     keys, the single tab stop and the group name. The checked segment is a
+     raised surface on the tint track: no accent fill, because this is a
+     setting, not a call to action. */
+  .theme-choice {
+    margin: 0;
+    padding: 0.375rem 0.25rem;
+    border: none;
+    min-width: 0;
+  }
+  .theme-choice__legend {
+    padding: 0;
+    width: 100%;
+  }
+  .theme-choice__head {
+    display: flex;
+    align-items: center;
+    gap: 0.875rem;
+    font-size: 1.0625rem;
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  .segmented {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.25rem;
+    margin: 0.5rem 0 0 3.375rem;
+    padding: 0.1875rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-tint);
+  }
+  .segmented__option {
+    position: relative;
+    display: grid;
+    place-items: center;
+    min-height: 2.75rem;
+    border-radius: var(--radius-pill);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-ink-2);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out);
+  }
+  .segmented__option input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+  .segmented__option:has(input:checked) {
+    background: var(--color-surface);
+    color: var(--color-ink);
+    box-shadow: 0 0 0 var(--rule-w) var(--color-border-strong);
+  }
+  .segmented__option:has(input:focus-visible) {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  .segmented__option:active {
+    background: var(--color-paper);
+  }
+
   /* A switch's track and knob — the More sheet's theme row and the
      transcript's Timestamps toggle. State is the owning `role="switch"`
      button's own aria-checked, so what is drawn is exactly what is
@@ -2961,25 +3052,43 @@ h3 {
   .link-form {
     container-type: inline-size;
   }
+  /* Refinement 4 (INT-01): a grid, so a link error sits directly under the
+     field it is about in both arrangements — between the field and the
+     button when they stack, under the field+button row when they sit side by
+     side. It used to be a line at the foot of the card, where a soft keyboard
+     covered it. Spacing is margins, not row-gap: an absent error must not
+     leave an empty gap track behind. */
   .link-row {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-xs);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "field"
+      "error"
+      "button";
   }
   .link-row .field {
-    flex: 0 0 auto;
+    grid-area: field;
+  }
+  .link-row .field-error {
+    grid-area: error;
   }
   .link-row .btn {
+    grid-area: button;
+    margin-top: var(--space-xs);
     min-height: 3.25rem;
     font-size: 1.0625rem;
     padding-inline: 1.5rem;
   }
   @container (min-width: 28rem) {
     .link-row {
-      flex-direction: row;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas:
+        "field button"
+        "error error";
+      column-gap: var(--space-xs);
     }
-    .link-row .field {
-      flex: 1 1 auto;
+    .link-row .btn {
+      margin-top: 0;
     }
   }
 
@@ -3000,8 +3109,26 @@ h3 {
     accent-color: var(--color-accent);
     cursor: pointer;
   }
-  .intake-card .error-note {
-    margin-top: var(--space-xs);
+  /* Field-level errors (refinement 4, INT-01/INT-03): each sits right under
+     the control it is about and is wired to it with aria-describedby. */
+  .intake-card .field-error {
+    margin-top: var(--space-2xs);
+  }
+  /* The terms box when it is the reason a run was refused: the same danger
+     edge as an invalid field. Outline, not border — a native checkbox has no
+     border to recolour, and outline does not move the row. Its focus ring
+     (below) wins while it has keyboard focus, as on the field. */
+  .terms-row input[type="checkbox"][aria-invalid="true"] {
+    outline: 2px solid var(--color-danger);
+    outline-offset: 2px;
+    border-radius: 0.1875rem;
+  }
+  .terms-row input[type="checkbox"]:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  .terms-row:has(input[aria-invalid="true"]) > span {
+    color: var(--color-ink);
   }
 
   /* "What you get": the quiet tint panel. Chips are a fixed width so the four
@@ -3892,6 +4019,9 @@ h3 {
   .sheet-row:hover {
     background: var(--color-tint);
   }
+  .segmented__option:not(:has(input:checked)):hover {
+    color: var(--color-ink);
+  }
   .app-back:hover {
     color: var(--color-ink);
   }
@@ -3995,6 +4125,12 @@ h3 {
   }
   to {
     transform: translateX(0);
+  }
+}
+
+@keyframes copy-flash-in {
+  from {
+    opacity: 0;
   }
 }
 

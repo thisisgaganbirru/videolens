@@ -66,7 +66,9 @@ export const viewport: Viewport = {
 /* Blocking, pre-paint: stamps data-theme on <html> before the first frame so
    the theme doesn't flash. Kept deliberately tiny and inline — a deferred
    script or a React effect both paint the wrong theme first. The same key is
-   written by toggleTheme (ThemeToggle and the More sheet's switch).
+   written by setThemePreference in components/theme.ts (the header toggle,
+   and the More sheet's System / Light / Dark choice — System removes it,
+   which is what hands the theme back to the listener below; refinement 4).
 
    A stored "light"/"dark" wins. Nothing stored follows the device
    (prefers-color-scheme), and keeps following it: the listener lives as long
