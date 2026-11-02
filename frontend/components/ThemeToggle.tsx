@@ -7,7 +7,12 @@ import { syncThemeColorMeta, THEME_STORAGE_KEY, type Theme } from "@/components/
 /* Reads and writes the same attribute + key the blocking script in
    app/layout.tsx sets before first paint. No React state is involved: the
    glyph swap is a CSS rule keyed off <html data-theme>, so the button can't
-   disagree with the painted theme. */
+   disagree with the painted theme.
+
+   With nothing stored the page follows the device (refinement 2, #3), and the
+   button shows whichever theme that resolved to. Pressing it stores the
+   opposite as an explicit choice, which from then on wins over the device —
+   the head script's live listener checks storage before acting. */
 export function toggleTheme() {
   const root = document.documentElement;
   const next: Theme = root.getAttribute("data-theme") === "dark" ? "light" : "dark";

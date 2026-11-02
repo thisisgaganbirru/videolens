@@ -17,13 +17,27 @@ export const THEME_STORAGE_KEY = "videolens_theme";
 export type Theme = "light" | "dark";
 
 /**
- * First visit, nothing stored: **light**, regardless of `prefers-color-scheme`.
- * A product decision, not an oversight — a stored choice still wins, this only
- * covers the no-preference case. `tokens.css` already declares light on bare
- * `:root` and carries no `@media (prefers-color-scheme: dark)` block, so the
- * stylesheet and the script agree on the default with nothing to fight over.
+ * Nothing stored: follow the device (`prefers-color-scheme`), live — refinement
+ * 2, #3. It used to be light regardless of the OS, which made the installed
+ * app's launch screen (it follows the OS night mode, the only signal before the
+ * WebView exists) hand off from dark to a light page. A stored "light"/"dark"
+ * still wins; only the no-choice case follows the device.
+ *
+ * `tokens.css` still declares light on bare `:root` with no media block: the
+ * pre-paint script in `app/layout.tsx` always stamps `data-theme`, resolving
+ * the device preference itself, so the stylesheet has nothing to decide.
  */
-export const DEFAULT_THEME: Theme = "light";
+export const SYSTEM_DARK_QUERY = "(prefers-color-scheme: dark)";
+
+/** The stored explicit choice, or null when the device decides. */
+export function storedTheme(): Theme | null {
+  try {
+    const value = localStorage.getItem(THEME_STORAGE_KEY);
+    return value === "light" || value === "dark" ? value : null;
+  } catch {
+    return null;
+  }
+}
 
 /** `--color-paper` in each theme (see `app/tokens.css`) — keep them equal. */
 export const THEME_COLOR: Record<Theme, string> = {

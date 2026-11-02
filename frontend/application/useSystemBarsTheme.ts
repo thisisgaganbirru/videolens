@@ -9,7 +9,9 @@ function paintedTheme(root: HTMLElement): PaintedTheme {
 }
 
 /**
- * Keeps the native status bar and gesture bar icons legible over the page.
+ * Keeps the native status bar and gesture bar icons legible over whatever is
+ * behind them — the page on WebView 140+, the OS-themed window below that (the
+ * adapter decides which; see infrastructure/systemBars.ts).
  *
  * Follows `<html data-theme>` rather than taking the theme as an argument: that
  * attribute is the single source of truth for the painted theme (stamped
@@ -35,6 +37,23 @@ export function useSystemBarsTheme(): void {
     sync();
     const observer = new MutationObserver(sync);
     observer.observe(root, { attributes: true, attributeFilter: ["data-theme"] });
-    return () => observer.disconnect();
+
+    /* WebView < 140 (refinement 2, #2): the bars sit over the OS-themed window,
+       so their style is resolved from the OS night mode, natively, once per
+       call. Re-apply when that can have changed: an OS theme flip seen by the
+       page, and coming back to the foreground (a flip while backgrounded). */
+    if (!systemBarsStyler.followsSystemTheme()) return () => observer.disconnect();
+    const reapply = () => void systemBarsStyler.matchTheme(paintedTheme(root));
+    const onVisible = () => {
+      if (document.visibilityState === "visible") reapply();
+    };
+    const scheme = window.matchMedia?.("(prefers-color-scheme: dark)");
+    scheme?.addEventListener?.("change", reapply);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      observer.disconnect();
+      scheme?.removeEventListener?.("change", reapply);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 }

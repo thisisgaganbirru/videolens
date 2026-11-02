@@ -7,6 +7,7 @@ import MoreSheet, { sheetOwnsLocation, type LegalRoute } from "@/components/More
 import { TAB_LABEL } from "@/components/AppNav";
 import { isPlainLeftClick } from "@/components/navClick";
 import { toggleTheme } from "@/components/ThemeToggle";
+import { storedTheme } from "@/components/theme";
 import { mainTabHref, type MainTab } from "@/application/useMainTab";
 import { useHardwareBack } from "@/application/useHardwareBack";
 import { useSoftKeyboard } from "@/application/useSoftKeyboard";
@@ -51,6 +52,7 @@ export default function BottomTabBar({ activeTab, currentRoute, onSelectTab }: B
      theme.ts), and while the sheet is open nothing but its own switch can
      change it — the rest of the page is inert. */
   const [dark, setDark] = useState(false);
+  const [followsDevice, setFollowsDevice] = useState(true);
 
   /* Both mounted here because every route renders exactly one tab bar
      (refinement 1): the hardware back button (Android shell only) and the
@@ -60,6 +62,7 @@ export default function BottomTabBar({ activeTab, currentRoute, onSelectTab }: B
 
   const openSheet = () => {
     setDark(paintedThemeIsDark());
+    setFollowsDevice(storedTheme() === null);
     sheetRef.current?.showModal();
     setSheetOpen(true);
   };
@@ -74,6 +77,7 @@ export default function BottomTabBar({ activeTab, currentRoute, onSelectTab }: B
   const handleToggleTheme = () => {
     toggleTheme();
     setDark(paintedThemeIsDark());
+    setFollowsDevice(storedTheme() === null);
   };
 
   const handleTabClick = (tab: MainTab) => (event: MouseEvent<HTMLAnchorElement>) => {
@@ -118,6 +122,7 @@ export default function BottomTabBar({ activeTab, currentRoute, onSelectTab }: B
         currentRoute={currentRoute}
         onSelectTab={onSelectTab}
         dark={dark}
+        followsDevice={followsDevice}
         onToggleTheme={handleToggleTheme}
         onClose={handleSheetClose}
       />

@@ -115,13 +115,17 @@ export interface SharedUrlSource {
 export type PaintedTheme = "light" | "dark";
 
 /**
- * Keeps the OS system bars (status bar + gesture/navigation bar) legible over
- * the page. The app is edge-to-edge on native, so the WebView paints under the
- * bars and their icon colour has to follow the app's theme, not the OS's.
+ * Keeps the OS system bars (status bar + gesture/navigation bar) legible. Where
+ * the WebView paints under the bars (Android WebView 140+) the icon colour
+ * follows the app's theme; on older WebViews the bars show the OS-themed
+ * window background, so it follows the OS theme instead (refinement 2, #2).
  * A no-op wherever there are no native bars to style (browser, PWA).
  */
 export interface SystemBarsStyler {
   matchTheme(theme: PaintedTheme): Promise<void>;
+  /** True when the bars' background follows the OS theme, not the page: the
+   *  caller must re-apply when the OS theme changes. */
+  followsSystemTheme(): boolean;
 }
 
 /**
@@ -166,9 +170,9 @@ export type MarkdownDocument = {
 /**
  * Getting a result out of the app (refinement 1, #12/#13). Share and save both
  * hand over the whole report, never one tab. On the Android shell "save"
- * opens the system share sheet with the document text: a blob download goes
- * nowhere in a Capacitor WebView, and writing a real file needs
- * @capacitor/filesystem, which is not installed.
+ * writes a real `<filename>.md` to the app cache and opens the system share
+ * sheet with that file (refinement 2, #1): a blob download goes nowhere in a
+ * Capacitor WebView. In a browser it is a plain download.
  */
 export interface DocumentExporter {
   /** A share sheet exists here (Capacitor, or the Web Share API). */
