@@ -18,11 +18,12 @@ and `FetchRunsGateway`'s request headers).
 - `entities.ts` — `RunStatus`, `VideoAnalysis`, `TranscriptSegment`,
   `ScreenTextSegment`, `RunCreateResponse`, `RunStatusResponse`,
   `RunSummary`, `RunListResponse`, `MediaSource`.
-- `errors.ts` — `ApiError` (with an optional HTTP `status`), `NetworkError`,
+- `errors.ts` — `ApiError` (optional HTTP `status`, plus the body's `code`/`limit`/`used`), `NetworkError`,
   `StorageUnavailableError`.
 - `ports.ts` — the interfaces infrastructure adapters implement and hooks
   depend on: `RunsGateway`, `ApiKeyStore`, `VersionLogGateway`,
-  `UpdateChecker`, `SharedUrlSource`, `HistoryStore` (plus their associated
+  `UpdateChecker`, `SharedUrlSource`, `HistoryStore`, `FreeRunsGateway`,
+  `DeviceTokenStore` (plus their associated
   `VersionLogEntry`/`UpdateInfo` types). `entities.ts` also holds
   `HistoryRecord`/`HistoryPatch`.
 
@@ -48,6 +49,13 @@ and `FetchRunsGateway`'s request headers).
   `navigator.storage.persist()` once; `BroadcastChannel` for other tabs).
   Opens lazily, so constructing it during prerender is safe. Implements
   `HistoryStore`. See `docs/frontend/run-history.md`.
+- `freeRunsGateway.ts` — `FetchFreeRunsGateway`: `GET /api/free-runs`,
+  normalises the body and writes back a replaced device token. Implements
+  `FreeRunsGateway`. `deviceTokenStore.ts` — `LocalStorageDeviceTokenStore`
+  (`videolens-device-token`, try/catch-wrapped); one instance is shared with
+  `FetchRunsGateway`, which sends it as `X-Device-Token` on `createRun` only.
+  `clientId.ts` — `getClientId()`, shared by both. See
+  `docs/frontend/free-runs.md`.
 - `container.ts` — builds one instance of each adapter above and exports
   them; every hook imports from here instead of constructing an adapter
   itself.
@@ -59,6 +67,10 @@ needs. Each hook owns its `useState`/`useEffect` and calls out to
   open a past run from history, reset. This is what used to be inline in
   `app/page.tsx`.
 - `useGeminiApiKey.ts` — the BYOK value/saved-state and save/clear actions.
+- `useFreeRuns.ts` — the free-run allowance: a module-level store (shared by
+  the banner and `useAnalysisRun`'s 401/402 handling), `useFreeRuns()` for
+  the banner and `blocked` state, and `refreshFreeRuns` / `markFreeRunsUsed` /
+  `noteRunAccepted`. Reads `apiKeyStore` through `useSyncExternalStore`.
 - `useRunHistory.ts` — reads History from `historyStore` (not the server),
   re-reads on change, owns the poster object URLs; `useHistoryBoot()`.
 - `historySync.ts` — React-free History writes used by `useAnalysisRun` and
@@ -133,3 +145,4 @@ still imported the old component.
 ## Changelog
 
 - 2026-11-01 · frontend agent (Phase 5a) · added the `HistoryStore` port + `IndexedDbHistoryStore` adapter, `application/historySync.ts`, `StorageUnavailableError`, `ApiError.status`; `useRunHistory` now reads the browser store
+- 2026-11-01 · frontend agent (Phase 5b) · added `FreeRunsGateway` + `DeviceTokenStore` ports and their adapters, `clientId.ts`, `ApiKeyStore.subscribe`, `ApiError.code/limit/used`, `application/useFreeRuns.ts`, `components/FreeRunsBanner.tsx`

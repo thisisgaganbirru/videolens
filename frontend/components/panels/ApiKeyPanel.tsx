@@ -18,10 +18,10 @@ import type { Capability } from "@/domain/entities";
  * "Where to get a key" panel. On phones the status pill wraps under the
  * buttons, as the Web/Mobile boards draw it.
  *
- * Copy departs from the boards in two places, both for truth: the lede does
- * not promise "a few free runs" (no per-user free-run allowance exists yet —
- * the deployment has a shared daily budget), and the transport sentence is
- * the phone boards' version on every size, because the desktop board's "We
+ * The lede is the boards' verbatim since Phase 5b, when the per-device daily
+ * free-run allowance (GET /api/free-runs) made "You get a few free runs" true.
+ * Copy departs from the boards in one place, for truth: the transport sentence
+ * is the phone boards' version on every size, because the desktop board's "We
  * never store it on a server" is not quite true — in distributed mode the key
  * waits in a single-use Redis entry until the worker picks the run up.
  *
@@ -96,8 +96,8 @@ export default function ApiKeyPanel({
       <header className="view-head">
         <h1 className="view-title">API key</h1>
         <p className="view-lede">
-          Optional. Add your own Gemini key to run on your own quota instead of the shared one. It
-          is stored in this browser only.
+          Optional. You get a few free runs. Add your own Gemini key to keep going. It is stored in
+          this browser only.
         </p>
       </header>
 

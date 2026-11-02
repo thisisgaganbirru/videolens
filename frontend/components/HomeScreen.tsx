@@ -6,6 +6,8 @@ import AppNav from "@/components/AppNav";
 import BottomTabBar from "@/components/BottomTabBar";
 import SiteFooter from "@/components/SiteFooter";
 import CapabilityNotice from "@/components/CapabilityNotice";
+import FreeRunsBanner from "@/components/FreeRunsBanner";
+import { useFreeRuns } from "@/application/useFreeRuns";
 import UploadForm from "@/components/UploadForm";
 import RunStatusView from "@/components/RunStatusView";
 import ResultsView, { SourceCard, creatorInitials } from "@/components/ResultsView";
@@ -59,6 +61,11 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   const { notice, urlDownload, dailyBudget } = useCapabilities();
 
   const sharedUrl = useSharedUrl();
+
+  /* Here for the same reason as `useCapabilities`: this shell is never
+     unmounted by a tab switch, so the allowance is read once per app load
+     (and again after each run, on a 402, or when the key is removed). */
+  const freeRuns = useFreeRuns();
 
   /* Once per app load: seed History from the server the first time, and
      re-check runs this browser last saw unfinished. Here, not in the History
@@ -126,9 +133,15 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                 {notice && <CapabilityNotice report={notice} />}
               </div>
               <div className="intake">
-                {/* TODO(phase 5): the free-run counter ("2 of 3 free runs
-                    left today") sits here, above the eyebrow — the column is a
-                    plain flow, so one more line needs no layout change. */}
+                {/* Free runs (Phase 5b, IntakeFreeApp / IntakeLimitApp), above
+                    the eyebrow on every shell. The wrapper is always in the DOM
+                    so the polite status region exists before the count lands
+                    and can announce it (and the switch to "used"); empty and
+                    zero-height when a key is saved, the deployment has no
+                    limit, or the allowance could not be read. */}
+                <div className="free-runs-slot" role="status">
+                  {freeRuns.banner && <FreeRunsBanner banner={freeRuns.banner} />}
+                </div>
                 <p className="eyebrow">New analysis</p>
                 <h1 className="intake-title">Turn any short video into clean notes.</h1>
                 <p className="intake-lede">
@@ -138,6 +151,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                 <UploadForm
                   onSubmit={submit}
                   submitting={submitting}
+                  blocked={freeRuns.blocked}
                   sharedUrl={sharedUrl}
                   urlCapability={urlDownload}
                   /* Back at idle with an error means the submit was rejected,

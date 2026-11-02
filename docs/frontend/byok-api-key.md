@@ -42,9 +42,10 @@ icon — the boards draw none). Desktop, phone web and phone app each have a
 board (`ApiKey.png`, `ApiKeyWeb.png`, `ApiKeyMobile.png`); on phones the status
 pill wraps under the buttons as drawn.
 
-**Copy deviations from the boards (truth over fidelity).** The lede omits the
-boards' "You get a few free runs" — no per-user free-run allowance exists yet
-(Phase 5); there is only the deployment's shared daily budget. The help line is
+**Copy deviations from the boards (truth over fidelity).** Since Phase 5b the
+lede is the boards' verbatim, "Optional. You get a few free runs. Add your own
+Gemini key to keep going. It is stored in this browser only.", because the
+per-device free-run allowance now exists (`free-runs.md`). The help line is
 the *phone* boards' sentence on every size — "Your key is stored in this
 browser. It is sent with your own runs and held briefly on the server while a
 run is processed." — because the desktop board's "We never store it on a
@@ -94,3 +95,4 @@ state is a bigger claim than one notice line.
 - 2026-08-29 · frontend agent · added the optional `budgetCapability` prop and the `daily_budget` callout under the Optional label (backend sentence verbatim, no lead) — see `capability-reporting.md`
 - 2026-11-01 · frontend agent (Phase 4) · `X-Gemini-Api-Key` now sent only on `createRun` (was every request); rebuilt the panel as the editorial ApiKey page (reveal toggle, empty-save error, status slot, Remove key, Where-to-get-a-key panel); hook state unified
 - 2026-11-01 · frontend agent (Phase 4, boards) · rebuilt to design/phase4-boards/ApiKey*.png: lede and help copy per boards except two truth deviations (no "few free runs"; phone boards' "held briefly on the server" sentence on every size instead of desktop's "never store it on a server"), header name no longer printed, ExternalLink icon dropped from the AI Studio link, `.key-header` wrapper removed
+- 2026-11-01 · frontend agent (Phase 5b) · lede now the boards' "You get a few free runs" sentence; `ApiKeyStore` gained `subscribe()` so saving or removing a key updates the free-run banner at once; `X-Device-Token` now rides on `createRun` beside the key (see `free-runs.md`)

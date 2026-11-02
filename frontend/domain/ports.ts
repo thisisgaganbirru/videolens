@@ -4,6 +4,7 @@
 
 import type {
   CapabilityReport,
+  FreeRunsStatus,
   HistoryPatch,
   HistoryRecord,
   MediaSource,
@@ -48,6 +49,27 @@ export interface CapabilitiesGateway {
 export interface ApiKeyStore {
   get(): string;
   set(apiKey: string): void;
+  /** Notifies after the stored key changes — from this tab (the API key page
+   *  saving or removing it) or another. The free-run banner listens, so it
+   *  disappears the moment a key is saved. Returns unsubscribe. */
+  subscribe(listener: () => void): () => void;
+}
+
+/** The free-run device token, kept on this device. A random value the server
+ *  issued; not a secret and not tied to a person — it only counts this
+ *  device's free runs per UTC day. `get()` returns "" when there is none, or
+ *  when the browser refuses storage. */
+export interface DeviceTokenStore {
+  get(): string;
+  set(token: string): void;
+}
+
+/** `GET /api/free-runs`: this device's free-run allowance. Read-only on the
+ *  server; it issues a fresh token when the stored one is missing or invalid,
+ *  and the adapter keeps the `DeviceTokenStore` in step with whatever comes
+ *  back. */
+export interface FreeRunsGateway {
+  fetchStatus(): Promise<FreeRunsStatus>;
 }
 
 export type VersionLogEntry = {

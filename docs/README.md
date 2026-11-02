@@ -22,6 +22,11 @@ exception, listed so it isn't mistaken for a stray file:
   reproducibility and container vulnerability gates are now implemented;
   remaining findings stay deferred.
 
+## Free runs quick links
+
+- `frontend/free-runs.md` covers the client half: the device token, the intake banner and limit state, and the 401 retry and 402 handling in `useAnalysisRun`.
+- `backend/free-runs.md` covers the per-device daily free-run allowance (`GET /api/free-runs`, the 401/402 codes on `POST /api/runs`) and how easy it is to bypass.
+
 ## Current design direction
 
 - `frontend/design-direction-editorial.md` — the live visual system (tokens,
@@ -63,3 +68,5 @@ someone else's entry.
 - 2026-08-29 · main session · indexed `railway-environments.md`
 - 2026-08-29 · main session · added `backend/releases.md` for the new `GET /api/releases` endpoint
 - 2026-11-01 · frontend agent · indexed `frontend/design-direction-editorial.md` as the current design direction
+- 2026-11-01 · backend agent (Phase 5b) · indexed `backend/free-runs.md`
+- 2026-11-01 · frontend agent (Phase 5b) · indexed `frontend/free-runs.md`; renamed the quick-links heading to cover both halves

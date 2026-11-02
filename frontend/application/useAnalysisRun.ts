@@ -12,7 +12,9 @@ import type {
 } from "@/domain/entities";
 import { classifyGatewayError } from "@/application/gatewayError";
 import { recordRunResponse, recordSubmitted } from "@/application/historySync";
-import { historyStore, runsGateway } from "@/infrastructure/container";
+import { markFreeRunsUsed, noteRunAccepted, refreshFreeRuns } from "@/application/useFreeRuns";
+import { ApiError } from "@/domain/errors";
+import { apiKeyStore, historyStore, runsGateway } from "@/infrastructure/container";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -278,16 +280,43 @@ export function useAnalysisRun() {
       setSourceKind(source.url ? "url" : "file");
       const generation = ++generationRef.current;
       try {
-        const run = await runsGateway.createRun(source);
+        let run;
+        try {
+          run = await runsGateway.createRun(source);
+        } catch (err) {
+          /* Free runs (Phase 5b): the stored device token was missing or no
+             longer valid. Read the allowance again — the adapter stores the
+             fresh token the server issues — and send the same run once more.
+             Once only: a second refusal is reported like any other. */
+          if (!(err instanceof ApiError && err.code === "device_token_invalid")) throw err;
+          await refreshFreeRuns();
+          if (generationRef.current !== generation) return;
+          run = await runsGateway.createRun(source);
+        }
         /* Filed even if the screen has moved on: the run exists server-side
            and belongs in History either way. */
         recordSubmitted(run.run_id, run.status, source);
+        noteRunAccepted();
         if (generationRef.current !== generation) return;
         setSourceName(describeSource(source));
         setRetrySource(source);
         setStatus(run.status);
         startPolling(run.run_id, generation);
       } catch (err) {
+        /* Out of free runs. Marked even if the screen moved on, and even when
+           the cached count still said runs were left — the 402 is the newer
+           truth. No error line: the limit banner above the card says it, with
+           the one action that fixes it, and the form stays as typed. */
+        if (err instanceof ApiError && err.code === "free_runs_used") {
+          markFreeRunsUsed(err.limit, err.used);
+          if (generationRef.current !== generation) return;
+          /* A retry from the failed view lands here too; the banner lives on
+             the intake, so go back to it. With a key saved the banner is
+             hidden, so the server's own sentence is the only explanation. */
+          setStatus("idle");
+          if (apiKeyStore.get()) fail(err, SUBMIT_FALLBACK);
+          return;
+        }
         if (generationRef.current !== generation) return;
         fail(err, SUBMIT_FALLBACK);
       } finally {

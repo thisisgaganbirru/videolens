@@ -7,11 +7,27 @@
  *  backend's own `detail` where it sent one, so it is already specific and
  *  should be shown as-is rather than replaced with a generic line. */
 export class ApiError extends Error {
-  /** The HTTP status, when there was one. Lets a caller tell "this run no
-   *  longer exists" (404 — the server forgot it) from every other refusal
-   *  without parsing `message`. */
-  constructor(message: string, readonly status?: number) {
+  /** The backend's machine-readable `code`, when the body carried one
+   *  (`free_runs_used`, `device_token_invalid`). Callers branch on this, never
+   *  on `message` — the sentence is for people and may be reworded. */
+  readonly code?: string;
+  /** The free-run allowance and how much of it is spent, sent with a 402
+   *  `free_runs_used`. Absent on every other error. */
+  readonly limit?: number;
+  readonly used?: number;
+
+  /** `status` is the HTTP status, when there was one. Lets a caller tell "this
+   *  run no longer exists" (404 — the server forgot it) from every other
+   *  refusal without parsing `message`. */
+  constructor(
+    message: string,
+    readonly status?: number,
+    extra: { code?: string; limit?: number; used?: number } = {}
+  ) {
     super(message);
+    this.code = extra.code;
+    this.limit = extra.limit;
+    this.used = extra.used;
   }
 }
 
