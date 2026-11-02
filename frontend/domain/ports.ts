@@ -141,3 +141,40 @@ export interface FirstRunStore {
   /** The cold-start splash has played this session. */
   markSplashShown(): void;
 }
+
+/**
+ * The installed Android app's native shell (refinement 1, #4): the hardware
+ * back button and leaving the app. Everywhere else (browser, PWA, iOS) it
+ * reports not-native and its listener never fires.
+ */
+export interface NativeShell {
+  isNative(): boolean;
+  /** Takes over the hardware back button. `canGoBack` is the WebView's own
+   *  history answer. Returns the unsubscribe. */
+  onBackButton(handler: (canGoBack: boolean) => void): () => void;
+  exitApp(): void;
+}
+
+/** One finished analysis as a single Markdown document. */
+export type MarkdownDocument = {
+  /** File name without the extension. */
+  filename: string;
+  title: string;
+  text: string;
+};
+
+/**
+ * Getting a result out of the app (refinement 1, #12/#13). Share and save both
+ * hand over the whole report, never one tab. On the Android shell "save"
+ * opens the system share sheet with the document text: a blob download goes
+ * nowhere in a Capacitor WebView, and writing a real file needs
+ * @capacitor/filesystem, which is not installed.
+ */
+export interface DocumentExporter {
+  /** A share sheet exists here (Capacitor, or the Web Share API). */
+  canShare(): boolean;
+  /** Save resolves to the share sheet rather than a file download. */
+  savesViaShareSheet(): boolean;
+  share(doc: MarkdownDocument): Promise<void>;
+  save(doc: MarkdownDocument): Promise<void>;
+}

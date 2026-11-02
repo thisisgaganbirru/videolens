@@ -48,3 +48,29 @@ export function hasInAppPrevious(): boolean {
     return false;
   }
 }
+
+/* ---- Android hardware back (refinement 1, #4) ---------------------------
+
+   On the Capacitor shell a tab switch *replaces* the history entry (see
+   `goToMainTab`), so the WebView's history holds only the moves that are real
+   "go deeper" steps: opening a run from History, and the document navigations
+   to Privacy/Terms. Back then reads, in order: */
+
+export type BackAction = "close-dialog" | "history-back" | "go-analyze" | "exit";
+
+export type BackContext = {
+  /** A modal (More sheet, Welcome) is open. */
+  dialogOpen: boolean;
+  /** The WebView has an entry to go back to. */
+  canGoBack: boolean;
+  /** On the tool's home: `/app`, Analyze tab. */
+  atRoot: boolean;
+};
+
+/** Pure, so it can be unit-tested without a WebView. */
+export function decideBack({ dialogOpen, canGoBack, atRoot }: BackContext): BackAction {
+  if (dialogOpen) return "close-dialog";
+  if (canGoBack) return "history-back";
+  if (!atRoot) return "go-analyze";
+  return "exit";
+}

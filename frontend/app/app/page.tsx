@@ -2,7 +2,6 @@ import { Suspense } from "react";
 import HomeScreen, { RoutedHomeScreen } from "@/components/HomeScreen";
 import Splash from "@/components/Splash";
 import Welcome from "@/components/Welcome";
-import { SPLASH_INIT_SCRIPT } from "@/application/firstRunScripts";
 import "../first-run.css";
 
 /* The tool: Analyze, History, API key and Releases, addressed as
@@ -22,15 +21,14 @@ import "../first-run.css";
    honest cost: a deep link to `/app?view=history` paints Analyze for the frame
    before hydration, because no static file can know the query string. */
 
-/* Phase 5d, installed app only: the splash's pre-paint flag script, then the
-   splash itself, ahead of the tool in the markup so a cold start's first frame
-   is the splash; Welcome is a modal dialog over the tool, which stays mounted
+/* Phase 5d, installed app only: the splash, ahead of the tool in the markup so
+   a cold start's first frame is the splash (its pre-paint flag script runs from
+   the root layout's <head>, see application/firstRunScripts.ts); Welcome is a modal dialog over the tool, which stays mounted
    underneath it (so a share still lands in the intake). Both are inert in a
    browser tab. See application/useFirstRun.ts. */
 export default function AppPage() {
   return (
     <>
-      <script dangerouslySetInnerHTML={{ __html: SPLASH_INIT_SCRIPT }} />
       <Splash />
       <Suspense fallback={<HomeScreen activeTab="analyze" />}>
         <RoutedHomeScreen />

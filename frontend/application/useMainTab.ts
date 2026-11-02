@@ -2,6 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { IN_APP_ENTRY_KEY } from "@/application/backNavigation";
+import { nativeShell } from "@/infrastructure/container";
 
 /* Which of the shell's four destinations is showing is a property of the URL,
    not of a component. It lives here because reading and writing that URL is
@@ -74,7 +75,7 @@ function tabFromLocation(): MainTab {
  * entry — which is also what makes "open a run from history, press back" land
  * on the history list instead of dropping the user out of the app.
  */
-export function goToMainTab(tab: MainTab): void {
+export function goToMainTab(tab: MainTab, options: { push?: boolean } = {}): void {
   if (tabFromLocation() === tab) return;
   /* The marker says "the entry under this one is an app view", which is what
      the installed app's Back link asks on browsers without the Navigation API
@@ -84,7 +85,26 @@ export function goToMainTab(tab: MainTab): void {
      Capacitor export), so the pushed entry still reloads to this page. */
   const { pathname } = window.location;
   const base = isAppPath(pathname) ? pathname : APP_PATH;
-  window.history.pushState({ [IN_APP_ENTRY_KEY]: true }, "", mainTabHref(tab, base));
+  const href = mainTabHref(tab, base);
+
+  /* Android shell (refinement 1, #4): a tab switch replaces the entry. The
+     hardware back button there means "back out of what I opened", not "undo
+     my last tab tap" — otherwise five taps between Analyze and History cost
+     five presses to leave. `decideBack` sends a non-Analyze tab with nothing
+     under it to Analyze, then exits. Opening a run from History passes
+     `push`, so back from that run still returns to the list.
+
+     A fresh state object, never `history.state` itself: Next's patched
+     replaceState skips its URL sync when handed its own state (`__NA`). The
+     in-app marker is carried over only if this entry already had one. */
+  if (nativeShell.isNative() && !options.push) {
+    const current: unknown = window.history.state;
+    const marked =
+      !!current && typeof current === "object" && !!(current as Record<string, unknown>)[IN_APP_ENTRY_KEY];
+    window.history.replaceState(marked ? { [IN_APP_ENTRY_KEY]: true } : {}, "", href);
+    return;
+  }
+  window.history.pushState({ [IN_APP_ENTRY_KEY]: true }, "", href);
 }
 
 /**

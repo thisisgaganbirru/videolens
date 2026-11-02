@@ -4,6 +4,8 @@ import ServiceWorkerRegistration from "@/components/ServiceWorkerRegistration";
 import UpdateBanner from "@/components/UpdateBanner";
 import { DEFAULT_THEME, THEME_COLOR, THEME_STORAGE_KEY } from "@/components/theme";
 import { SHELL_STORAGE_KEY } from "@/components/shell";
+import { LANDING_REDIRECT_SCRIPT } from "@/application/landingRedirect";
+import { SPLASH_INIT_SCRIPT } from "@/application/firstRunScripts";
 import "./globals.css";
 
 /* Self-hosted at build time by next/font — no request to Google at runtime,
@@ -100,6 +102,16 @@ const SHELL_INIT_SCRIPT = `(function(){var r=document.documentElement,s;try{s=lo
 if(s==="app"||s==="web"){r.setAttribute("data-shell",s);return;}r.setAttribute("data-shell",d()?"app":"web");
 if(r.getAttribute("data-shell")==="web"){document.addEventListener("DOMContentLoaded",function(){if(d())r.setAttribute("data-shell","app");});}})();`;
 
+/* All four pre-paint scripts, in the order they depend on each other: theme,
+   shell (stamps data-shell), then the two route-specific ones that read it —
+   the landing redirect (acts only on `/`, and on the Capacitor export's
+   extensionless routes) and the splash flag (acts only on the tool's own
+   document). The route-specific two used to be rendered by their pages; they
+   moved here in refinement 1 because a page's <script> is re-created by React
+   on client navigation, which never runs it and logs an error. The root
+   layout's head is hydrated, never re-created. See their own files. */
+const PRE_PAINT_SCRIPT = THEME_INIT_SCRIPT + SHELL_INIT_SCRIPT + LANDING_REDIRECT_SCRIPT + SPLASH_INIT_SCRIPT;
+
 export default function RootLayout({
   children,
 }: {
@@ -112,7 +124,7 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT + SHELL_INIT_SCRIPT }} />
+        <script dangerouslySetInnerHTML={{ __html: PRE_PAINT_SCRIPT }} />
       </head>
       <body className="h-[100dvh] overflow-clip bg-[var(--color-paper)] text-[var(--color-ink)] antialiased select-none">
         <div className="viewport">
