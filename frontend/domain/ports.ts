@@ -95,11 +95,25 @@ export interface VersionLogGateway {
 
 export type UpdateInfo = {
   versionName: string;
+  /** The newer build's Android `versionCode`. What a dismissal remembers, so
+   *  dismissing one build never hides a later one (refinement 9). */
+  versionCode: number;
   releaseUrl: string;
 };
 
 export interface UpdateChecker {
   checkForUpdate(): Promise<UpdateInfo | null>;
+}
+
+/**
+ * The update banner's "not now" (refinement 9): the newest build the user
+ * dismissed. Device-local and best-effort — unreadable storage reads as
+ * "nothing dismissed", so the banner shows rather than silently never showing.
+ */
+export interface UpdateDismissalStore {
+  /** The dismissed build's `versionCode`, or null. */
+  dismissedCode(): number | null;
+  dismiss(versionCode: number): void;
 }
 
 /**
@@ -191,6 +205,10 @@ export interface NativeShell {
   /** Takes over the hardware back button. `canGoBack` is the WebView's own
    *  history answer. Returns the unsubscribe. */
   onBackButton(handler: (canGoBack: boolean) => void): () => void;
+  /** The app came back to the foreground (refinement 9). Off the native
+   *  shell nothing is registered; `visibilitychange` covers browsers.
+   *  Returns the unsubscribe. */
+  onResume(handler: () => void): () => void;
   exitApp(): void;
 }
 

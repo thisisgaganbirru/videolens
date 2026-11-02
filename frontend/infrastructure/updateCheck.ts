@@ -60,7 +60,7 @@ export class ApiUpdateChecker implements UpdateChecker {
       if (!(latest.version_code > currentBuild)) return null;
       if (!latest.url) return null;
 
-      return { versionName: latest.version_name, releaseUrl: latest.url };
+      return { versionName: latest.version_name, versionCode: latest.version_code, releaseUrl: latest.url };
     } catch {
       // Update checks are best-effort - never block or break the app over one.
       return null;

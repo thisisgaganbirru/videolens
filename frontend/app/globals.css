@@ -3010,6 +3010,26 @@ h3 {
     overflow-wrap: anywhere;
   }
 
+  /* Refinement 9: why Analyze link and Browse files are disabled, inside the
+     card (the banner above the headline is off screen once the form is
+     scrolled to). Neutral, not danger: nothing the user did was rejected.
+     The disabled controls point at it with aria-describedby. */
+  .intake-blocked {
+    margin: 0 0 var(--space-sm);
+    padding: 0.625rem 0.875rem;
+    border-radius: var(--radius-control);
+    background: var(--color-tint);
+    color: var(--color-ink-2);
+    font-size: 0.9375rem;
+    line-height: 1.5;
+  }
+  /* Ink, not the accent: green on the tint fill is ~4:1, under AA for 15px
+     text. The underline and weight still mark it as the link. */
+  .intake-blocked .text-link {
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+
   /* ---- free runs (Phase 5b · IntakeFreeApp.png, IntakeLimitApp.png) ----
      A white strip above the eyebrow: sentence left, near-black "Add key"
      pill right. The spent state only swaps the sentence and draws the strip's
@@ -3055,6 +3075,88 @@ h3 {
     min-height: 2.5rem;
     padding: 0.5rem 1.125rem;
     font-size: 0.9375rem;
+  }
+
+  /* ---- update banner (native Android only; refinement 9) ----
+     The free-runs strip's voice as a full-width band above the shell: surface
+     fill, one hairline under it, 15px copy (ink headline, ink-2 line), the
+     near-black pill and a quiet round dismiss. `flex-shrink: 0` is
+     load-bearing: it sits directly in .viewport (a flex column) and must not
+     squeeze the measured one-viewport frame below it. Both controls are 44px
+     targets; nothing here is smaller than the 2.75rem floor. */
+  .update-banner {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    min-height: 3.5rem;
+    padding: var(--space-2xs) var(--space-2xs) var(--space-2xs) var(--page-gutter);
+    background: var(--color-surface);
+    border-bottom: var(--rule-w) solid var(--color-rule);
+  }
+  .update-banner__text {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    font-size: 0.9375rem;
+    line-height: 1.4;
+    color: var(--color-ink-2);
+  }
+  .update-banner__text strong {
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  .update-banner__action {
+    flex: 0 0 auto;
+    min-height: 2.75rem;
+    padding: 0.5rem 1.125rem;
+    font-size: 0.9375rem;
+  }
+  .update-banner__dismiss {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    border-radius: var(--radius-pill);
+    color: var(--color-ink-2);
+    transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out);
+  }
+  .update-banner__dismiss svg {
+    width: 1.125rem;
+    height: 1.125rem;
+  }
+  .update-banner__dismiss:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: -2px;
+  }
+  .update-banner__dismiss:active {
+    background: var(--color-tint);
+  }
+  /* A phone below ~25rem: the version line would wrap the band to three
+     lines; the headline and the pill say enough. */
+  @media (max-width: 25rem) {
+    .update-banner__text span {
+      display: none;
+    }
+  }
+  /* Sideways (the same 31.25rem test the dock uses): one 44px row. At 360px
+     tall the old 56px band took 16% of the screen; this is 45px with its
+     rule. The version line stays — there is width to spare. */
+  @media (max-height: 31.25rem) {
+    .update-banner {
+      min-height: 0;
+      padding-block: 0;
+    }
+    .update-banner__text {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
   }
 
   .intake-card {
@@ -3529,6 +3631,19 @@ h3 {
   }
   .run-notice[data-tone="failed"] {
     border-color: var(--color-danger-border);
+  }
+  /* Refinement 9: "This didn't use one of your free runs", under the failed
+     notice, only once the server's count proves it. Neutral ink, not green —
+     it is reassurance, not a success. Empty (and taking no room) otherwise. */
+  .run-refund {
+    margin: var(--space-xs) 0 0;
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    color: var(--color-ink-2);
+    text-align: center;
+  }
+  .run-refund:empty {
+    margin: 0;
   }
   .run-actions {
     width: 100%;
@@ -4084,6 +4199,10 @@ h3 {
   }
   .btn-ink:hover:not(:disabled) {
     background: var(--color-ink-2);
+  }
+  .update-banner__dismiss:hover {
+    background: var(--color-tint);
+    color: var(--color-ink);
   }
   .btn-secondary:hover:not(:disabled):not([aria-disabled="true"]) {
     background: var(--color-tint);
