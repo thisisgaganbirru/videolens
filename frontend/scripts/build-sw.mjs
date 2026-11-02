@@ -41,12 +41,13 @@ const staticDir = isExport
   ? path.join(buildRoot, "_next", "static")
   : path.join(buildRoot, "static");
 
-/* The prerendered HTML for the four precached routes. Its bytes go into the
+/* The prerendered HTML for the five precached routes. Its bytes go into the
  * cache digest because the documents themselves are not content-hashed — a copy
  * change with no chunk change still has to invalidate the old cache. */
 const htmlDir = isExport ? buildRoot : path.join(buildRoot, "server", "app");
 const documentHtml = [
   ["/", "index.html"],
+  ["/app", "app.html"],
   ["/offline", "offline.html"],
   ["/privacy", "privacy.html"],
   ["/terms", "terms.html"],

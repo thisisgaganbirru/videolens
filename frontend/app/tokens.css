@@ -62,6 +62,12 @@
   --color-dock-muted:  #B4B1A8;
   --color-dock-accent: #3FB950;
 
+  /* ---- dark band (Phase 5c: the landing page's closing call to action,
+     LandingWeb.png). Near-black in light mode; in dark mode the same raised
+     tint as the dock, for the same reason. ---- */
+  --color-band:     #15161A;
+  --color-band-ink: #FFFFFF;
+
   /* ---- poster tints (History placeholders until real thumbnails exist) ---- */
   --poster-1: #D9E6DA;
   --poster-2: #EADFCB;
@@ -180,6 +186,9 @@
   --color-dock-ink:    #ECEDE8;
   --color-dock-muted:  #9A9E97;
   --color-dock-accent: #3FB950;
+
+  --color-band:     #212522;
+  --color-band-ink: #ECEDE8;
 
   --poster-1: #243228;
   --poster-2: #352F22;

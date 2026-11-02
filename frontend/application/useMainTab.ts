@@ -9,8 +9,9 @@ import { IN_APP_ENTRY_KEY } from "@/application/backNavigation";
    and because two different route families (the app shell and the legal
    documents) both need to address the tabs without sharing a component tree.
 
-   The address is a query param (`/?view=history`) rather than a route folder
-   (`/history`) on purpose: one page component, one copy of the shell, and it
+   The tool lives at `/app` since Phase 5c (`/` is the landing page). The
+   address is a query param (`/app?view=history`) rather than a route folder
+   (`/app/history`) on purpose: one page component, one copy of the shell, and it
    survives `output: "export"`, which is what the Capacitor build ships. Route
    folders would mean four prerendered pages each carrying the whole shell, and
    a real document navigation on every tab switch. */
@@ -20,10 +21,23 @@ export const MAIN_TABS = ["analyze", "history", "api-key", "releases"] as const;
 
 export type MainTab = (typeof MAIN_TABS)[number];
 
-/** The tab a bare `/` shows, and the one that needs no param to address it. */
+/** The tab a bare `/app` shows, and the one that needs no param to address it. */
 export const DEFAULT_MAIN_TAB: MainTab = "analyze";
 
+/** Where the tool lives. `/` is the landing page (Phase 5c). */
+export const APP_PATH = "/app";
+
 const VIEW_PARAM = "view";
+
+/**
+ * Whether a pathname is the tool's own document. Three spellings, one page:
+ * `next start` serves `/app`, a static host may add the slash, and the
+ * Capacitor export can only reach the file as `/app.html` (its asset server
+ * answers an extensionless path with `index.html`; see app/page.tsx).
+ */
+export function isAppPath(pathname: string): boolean {
+  return pathname === APP_PATH || pathname === `${APP_PATH}/` || pathname === `${APP_PATH}.html`;
+}
 
 export function isMainTab(value: string | null | undefined): value is MainTab {
   return value != null && (MAIN_TABS as readonly string[]).includes(value);
@@ -31,11 +45,11 @@ export function isMainTab(value: string | null | undefined): value is MainTab {
 
 /**
  * The address of a tab. Analyze is the bare route rather than
- * `/?view=analyze` — a default that has to name itself isn't a default, and
- * the shared/bookmarked URL for "the app" should be `/`.
+ * `/app?view=analyze` — a default that has to name itself isn't a default, and
+ * the shared/bookmarked URL for "the app" should be `/app`.
  */
-export function mainTabHref(tab: MainTab): string {
-  return tab === DEFAULT_MAIN_TAB ? "/" : `/?${VIEW_PARAM}=${tab}`;
+export function mainTabHref(tab: MainTab, base: string = APP_PATH): string {
+  return tab === DEFAULT_MAIN_TAB ? base : `${base}?${VIEW_PARAM}=${tab}`;
 }
 
 /** The tab the current browser URL names. Client-only; reads `location`. */
@@ -66,7 +80,11 @@ export function goToMainTab(tab: MainTab): void {
      the installed app's Back link asks on browsers without the Navigation API
      (older iOS standalone). Next's patched pushState copies its own router
      state in beside it. */
-  window.history.pushState({ [IN_APP_ENTRY_KEY]: true }, "", mainTabHref(tab));
+  /* Keep whichever spelling of the app document we are on (`/app.html` in the
+     Capacitor export), so the pushed entry still reloads to this page. */
+  const { pathname } = window.location;
+  const base = isAppPath(pathname) ? pathname : APP_PATH;
+  window.history.pushState({ [IN_APP_ENTRY_KEY]: true }, "", mainTabHref(tab, base));
 }
 
 /**

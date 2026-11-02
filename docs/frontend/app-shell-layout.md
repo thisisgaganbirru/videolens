@@ -140,6 +140,28 @@ and iOS standalone has no back button.
 
 ## Tab routing
 
+**Phase 5c (2026-11-01): the tabs moved from `/` to `/app`.** Read every `/`
+and `/?view=…` in this section and in "App-shell Back link" as `/app` and
+`/app?view=…`. The mechanism is unchanged: `pushState`, `useSearchParams`, the
+Suspense boundary (now in `app/app/page.tsx`). What changed:
+
+- `application/useMainTab.ts` exports `APP_PATH = "/app"`, `isAppPath()`
+  (accepts `/app`, `/app/` and `/app.html`, the Capacitor spelling) and
+  `mainTabHref(tab, base)`. `goToMainTab` pushes onto the current path if it is
+  an app path, else onto `/app`.
+- `AppBackLink` and `backNavigation.ts` use `isAppPath()` where they used to
+  compare with `/`.
+- `/` is the landing (`landing-page.md`). Old `/?view=…` addresses redirect to
+  `/app?view=…` before paint.
+- **The brand.** In a browser tab the brand is a `<Link href="/">` (to the
+  landing) with `aria-current="page"` on `/`. In the installed shell it is a
+  plain `<span>`: the installed app has no landing to go to. `AppNav` renders
+  both (`.brand--link`, `.brand--static`) and CSS keyed on `data-shell` shows
+  one, so the right one is there at first paint.
+- The landing renders the same chrome (`AppNav activeTab={null} landing`,
+  `SiteFooter`, `BottomTabBar activeTab={null}`).
+
+
 The active tab is a **query param on `/`** — `/?view=history`, `/?view=api-key`,
 `/?view=releases`, with no param (or `?view=analyze`) meaning Analyze. It used
 to be `useState` inside `HomeScreen`.
@@ -405,3 +427,4 @@ back/forward was measured and the Capacitor mapping is read from
 - 2026-11-01 · frontend agent (Phase 4) · every view and standalone route is now a `section.view-scroll` (scroller selector generalised, `data-frame` dropped from legal/offline); deleted `.tab-view`/`.surface`/`.pane`/`.home-center`/`.legal-doc`/`.legal-body`/`.page-title`; added `useMediaQuery`; More sheet and phone menu re-checked against MoreMobile.png / MenuWeb.png, unchanged
 - 2026-11-01 · frontend agent (Phase 4, boards) · offline section is now a flex column filling the band at every width so its block centres on phones too; `NEXT_PUBLIC_APP_VERSION` added to next.config.mjs `env` (read from package.json; `agentRules: false` untouched); legal crumb bar removed per the boards
 - 2026-11-01 · frontend agent (app Back link) · added `AppBackLink` (`.app-back`) above the title of API key, Releases, Privacy and Terms in the app shell only (`display:none` in the web shell; every width in the app shell); `application/backNavigation.ts` decides history.back() vs Analyze (Navigation API → `goToMainTab` history-state marker → same-origin referrer); `goToMainTab` now pushes `{ videolensInApp: true }`
+- 2026-11-01 · frontend agent (Phase 5c) · tabs moved to /app (APP_PATH, isAppPath, mainTabHref); brand links to / in a browser tab and is static in the installed shell; landing at / uses the shared chrome

@@ -40,6 +40,15 @@ except where marked *proposed* (the handoff had no dark value for them).
 | `--color-dock` / `-active` | `#15161A` / `#2A2B31` | `#212522` / `#2C312E` |
 | `--color-dock-ink` / `-muted` / `-accent` | `#FFF` / `#B4B1A8` / `#3FB950` | `#ECEDE8` / `#9A9E97` / `#3FB950` |
 
+| `--color-band` / `--color-band-ink` | `#15161A` / `#FFFFFF` | `#212522` / `#ECEDE8` *proposed* |
+
+`--color-band` (Phase 5c) is the landing page's closing "Have a video in
+mind?" band. Light matches the board (near-black). Dark has no board, so it
+reuses the raised tint: it reads as a card, not a contrast band. Contrast: band
+ink on band 18.08 (L) / 13.20 (D); the green `btn-primary` on the band 3.56 (L,
+non-text, needs 3) / 6.11 (D); band against dark paper 1.23 (a surface step,
+like the other cards).
+
 ### Contrast (WCAG 2.x, computed)
 
 | Pair | Ratio | Need |
@@ -142,3 +151,4 @@ generated one). Nothing is persisted outside this doc and `frontend/app/tokens.c
 - 2026-11-01 · frontend agent (Phase 3) · History poster grid built on the existing --poster-1..5 and --radius-poster (no new tokens); new classes .history*, .filter-pill, .sort-select, .poster* in globals.css HISTORY block. See run-history.md
 - 2026-11-01 · frontend agent (Phase 4) · API key / Releases / Privacy / Terms / Offline built editorially (shared `.view-title`, no new tokens); dark-mode contrast audit of danger and new pairs, computed — all text passes, no token change; no-board pages listed
 - 2026-11-01 · frontend agent (Phase 4, boards) · pages rebuilt to design/phase4-boards/; `.view-title` (and History's title) now clamp(2.25rem, 1.75rem + 1.6vw, 3rem) = 36px phone / 48px at 1280 to match the boards; new `.release-latest` pill reuses accent-strong on accent-soft (already audited both themes); no token change
+- 2026-11-01 · frontend agent (Phase 5c) · added --color-band / --color-band-ink (landing closing band) with computed contrast

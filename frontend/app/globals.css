@@ -245,6 +245,27 @@ h3 {
   .brand-dot {
     fill: var(--color-accent);
   }
+  /* Phase 5c: the brand is a link to the landing page in a browser tab and a
+     plain wordmark in the installed app, which has no landing page (`/`
+     redirects to `/app` there). Both are rendered; `data-shell` picks one. */
+  .brand--link {
+    text-decoration: none;
+    border-radius: var(--radius-control);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .brand--link:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 4px;
+  }
+  .brand--static {
+    display: none;
+  }
+  :root[data-shell="app"] .brand--link {
+    display: none;
+  }
+  :root[data-shell="app"] .brand--static {
+    display: inline-flex;
+  }
 
   .nav-actions {
     display: flex;
@@ -3683,6 +3704,9 @@ h3 {
   }
   .app-back:hover {
     color: var(--color-ink);
+  }
+  .brand--link:hover {
+    color: var(--color-ink-2);
   }
   .tabbar-item:not([aria-current="page"]):not([data-active="true"]):hover {
     color: var(--color-dock-ink);

@@ -29,6 +29,18 @@ export class WebShareUrlSource implements SharedUrlSource {
     return native ?? query;
   }
 
+  pending(): boolean {
+    if (typeof window === "undefined") return false;
+    let native = false;
+    try {
+      native = window.localStorage.getItem(NATIVE_TEXT_KEY) !== null;
+    } catch {
+      /* unreadable storage holds no share we could act on */
+    }
+    const params = new URLSearchParams(window.location.search);
+    return native || SHARE_PARAMS.some((param) => params.has(param));
+  }
+
   subscribe(listener: () => void): () => void {
     if (typeof window === "undefined") return () => {};
     window.addEventListener(NATIVE_EVENT, listener);

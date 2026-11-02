@@ -20,7 +20,7 @@ export type LegalRoute = "privacy" | "terms";
 
 /**
  * One row. Three kinds, because the sheet holds three kinds of thing: a tab
- * that lives on `/` (in-place navigation), a standalone route (a document
+ * that lives on `/app` (in-place navigation), a standalone route (a document
  * navigation, plain `<a>` so it also works from the offline page), and the
  * theme switch.
  */

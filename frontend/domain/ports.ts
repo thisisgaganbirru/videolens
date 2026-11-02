@@ -102,6 +102,9 @@ export interface UpdateChecker {
 export interface SharedUrlSource {
   /** The pending shared URL, or `null` if there is none. Consuming. */
   take(): string | null;
+  /** Whether a share is waiting to be taken, without taking it. Lets the
+   *  first-run Welcome step aside for a launch that carried a link. */
+  pending(): boolean;
   /** Notifies when a share lands while the app is already open. Returns an
    *  unsubscribe function. */
   subscribe(listener: () => void): () => void;
@@ -119,4 +122,22 @@ export type PaintedTheme = "light" | "dark";
  */
 export interface SystemBarsStyler {
   matchTheme(theme: PaintedTheme): Promise<void>;
+}
+
+/**
+ * What the installed app's first-run screens remember (Phase 5d): whether the
+ * Welcome screen has been dismissed for good, and whether this session has
+ * already shown the Welcome or the cold-start splash. Every read and write
+ * survives storage that throws or is missing — the answer then errs towards
+ * not showing a screen again.
+ */
+export interface FirstRunStore {
+  /** True once Welcome was dismissed on this device, or shown this session. */
+  welcomeSeen(): boolean;
+  /** Welcome was dismissed with one of its own buttons: never show it again. */
+  markWelcomeSeen(): void;
+  /** Welcome was put on screen: do not show it again this session. */
+  markWelcomeShownThisSession(): void;
+  /** The cold-start splash has played this session. */
+  markSplashShown(): void;
 }

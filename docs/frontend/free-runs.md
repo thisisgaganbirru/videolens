@@ -55,7 +55,7 @@ hydration agree.
 
 - One white strip above the "New analysis" eyebrow on **every** shell (installed app, phone web, desktop web; in the left column on desktop). The sentence is on the left and the near-black `btn btn-ink btn-pill` "Add key" is on the right.
 - Copy: "**3 free runs left.** Add your own key for more." The singular is "**1 free run left.**". When spent: "**You have used your free runs.**" with "Add your own key to keep going." on its own line, and the strip gets a `--color-danger-border` hairline. Nothing else turns red.
-- "Add key" is a real link to `/?view=api-key` (plain click goes through `goToMainTab`; middle-click opens a new tab).
+- "Add key" is a real link to `/app?view=api-key` (was `/?view=api-key` before Phase 5c moved the tool) (plain click goes through `goToMainTab`; middle-click opens a new tab).
 - Blocked: Analyze link uses the existing `.btn-primary:disabled` grey. **Browse files is disabled too, and drop is refused** (`dropEffect = "none"`, no highlight). The board draws Browse looking normal, but a control that cannot succeed should not look pressable. The link field and the terms box stay usable, so a typed link survives saving a key and coming back.
 - Accessibility: the `.free-runs-slot` wrapper is always rendered with `role="status"` (implicitly polite), so the count and the switch to "used" are announced without moving focus. It is `display: none` while empty.
 - Short desktop windows (`min-width: 60rem` and `max-height: 50rem`): while the banner is shown (`.intake-layout:has(.free-runs)`), the top padding drops to 1rem, the headline margin to 1rem, the banner's block padding to 0.5rem and its line-height to 1.35. Measured: 1366×768 fits with no scroll in all six states (3 left, spent, none × light/dark).
@@ -68,3 +68,4 @@ hydration agree.
 ## Changelog
 
 - 2026-11-01 · frontend agent (Phase 5b) · created: device token store, free-runs gateway/port, `useFreeRuns` store, 401 retry-once and 402 limit state in `useAnalysisRun`, `FreeRunsBanner` on all shells, `UploadForm` `blocked`, API key lede and Privacy sentence
+- 2026-11-01 · frontend agent (Phase 5c) · Add key now links to /app?view=api-key (via mainTabHref)

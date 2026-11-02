@@ -1,0 +1,186 @@
+/* Hallmark · installed-app first run (Phase 5d) · genre: editorial · theme: custom (app/tokens.css)
+ * boards: design/shots/SplashApp.png, WelcomeApp.png
+ * Tokens only; no new tokens. Imported by app/app/page.tsx, so it ships with
+ * the tool and nowhere else. Unlayered for the same reason as landing.css.
+ * contrast: muted on paper 5.76 (L) / 6.44+ (D); accent-strong on accent-soft
+ * 6.64 / 9.34 (step numbers); ink-2 on tint passes as on the intake panel. */
+
+/* ---- splash ---- */
+.splash {
+  display: none;
+}
+:root[data-splash] .splash {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--safe-top) var(--page-gutter) max(var(--space-md), var(--safe-bottom));
+  background: var(--color-paper);
+  color: var(--color-ink);
+  /* The backstop: if hydration never happens, the splash still gets out of
+     the way at 2s. A delay, not a duration, so the reduced-motion rule (which
+     zeroes durations) leaves it intact. */
+  animation: splash-backstop 1ms linear 2s forwards;
+}
+:root[data-splash="leaving"] .splash {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  :root[data-splash] .splash {
+    transition: opacity var(--dur-short) var(--ease-out);
+  }
+}
+@keyframes splash-backstop {
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+.splash-centre {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.splash-mark {
+  width: 5.25rem;
+  height: 5.25rem;
+}
+.splash-word {
+  margin: var(--space-sm) 0 0;
+  font-family: var(--font-ui);
+  font-size: 1.875rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+.splash-line {
+  margin: var(--space-2xs) 0 0;
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 1.125rem;
+  color: var(--color-muted);
+}
+.splash-foot {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--color-muted);
+}
+
+/* ---- Welcome ---- */
+.welcome {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  overflow-y: auto;
+}
+.welcome::backdrop {
+  background: var(--color-paper);
+}
+.welcome-body {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 28rem;
+  min-height: 100%;
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  padding: calc(var(--safe-top) + 3.5rem) max(1.25rem, var(--safe-left), var(--safe-right))
+    max(1.25rem, var(--safe-bottom));
+}
+.welcome-mark {
+  width: 2.5rem;
+  height: 2.5rem;
+}
+.welcome-title {
+  margin: var(--space-lg) 0 0;
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: clamp(2.25rem, 1.9rem + 1.6vw, 2.75rem);
+  line-height: 1.08;
+  letter-spacing: -0.015em;
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+.welcome-lede {
+  margin: var(--space-sm) 0 0;
+  font-size: 1.0625rem;
+  line-height: 1.55;
+  color: var(--color-ink-2);
+}
+.welcome-steps {
+  margin: var(--space-md) 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.welcome-step {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: var(--space-sm);
+  align-items: start;
+}
+.welcome-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-strong);
+  font-size: 0.9375rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.welcome-step-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.welcome-step-title {
+  font-size: 1.0625rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--color-ink);
+}
+.welcome-step-text {
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: var(--color-ink-2);
+}
+.welcome-foot {
+  margin-top: auto;
+  padding-top: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+.welcome-note {
+  margin: 0 0 var(--space-2xs);
+  padding: 0.875rem 1rem;
+  border-radius: var(--radius-control);
+  background: var(--color-tint);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: var(--color-ink-2);
+}
+.welcome-btn {
+  min-height: 3rem;
+  font-size: 1.0625rem;
+}
