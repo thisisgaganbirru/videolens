@@ -110,6 +110,8 @@ couldn't verify as a question, not a fact.
 |---|---|---|
 | FREE-01 | Open Analyze before any run. | The banner shows "N free runs left" (record N; should be 2). |
 | FREE-02 | After RUN-01. | The banner decrements by 1. |
+| FREE-02b | *(refund, backend ≥ e5b4842)* Note the count, then submit a link that fails at Downloading (e.g. the login-gated Instagram link). | The count returns to its pre-submit value. A relaunch may be needed to see it. |
+| FREE-02c | *(refund, backend ≥ d032e59)* Note the count, then submit a public link longer than 180 s that downloads. | It is rejected by the duration cap and the count returns to its pre-submit value. No Gemini spend. |
 | FREE-03 | After RUN-02, with 0 left. | The used-up state shows: banner with "Add key", Analyze/Browse disabled, and the link field still editable. |
 | FREE-04 | In the used-up state, paste the link and tap Analyze. | Nothing is submitted; the banner/CTA explains why. |
 | FREE-05 | Kill and relaunch. | The counter value is kept (it's server-side per device token). |
@@ -258,6 +260,20 @@ couldn't verify as a question, not a fact.
 | INT-18 | Terms unticked, tap Browse files (dark portrait, light portrait, dark landscape). | No picker; "Accept the media-use terms before analysis." shows; the checkbox is focused, outlined and in view. |
 | INT-19 | Tick terms, Browse files, pick `test-12s.mp3`. | Submit is attempted; backend down gives "Can't reach the server. It may be offline, or your connection dropped." |
 
+## 19. Update banner (mock `/api/releases` on :8000)
+
+The mock returns `latest` = `{version_code 99999, version_name "9.9.9", url https://example.com/videolens-update-test}`; the installed build is versionCode 1.
+
+| ID | Steps | Expected |
+|---|---|---|
+| UPD-01 | Cold launch with a newer release: portrait and landscape, light and dark. | The banner sits above the header (top 0–56 CSS px), with no overlap and no horizontal scroll; the one-viewport frame still holds. |
+| UPD-02 | Read the banner's copy and styling. | "Version 9.9.9 is available." with an update button (≥44 px), readable in both themes. |
+| UPD-03 | Tap the update button, then Back. | Opens externally (browser), not in the WebView; Back returns to the app with its state intact. |
+| UPD-04 | Banner on every route: More sheet, History, Privacy, Terms, `/404.html`, Welcome/Splash. | Present and not overlapping the chrome on each. |
+| UPD-05 | Font size Largest and a narrow width. | Copy wraps; the button stays tappable. |
+| UPD-06 | No-update states: `latest` null, same or lower versionCode, 503. | No banner. |
+| UPD-07 | Accessibility: TalkBack/role, focus order, label. | Announced sensibly; the button has an accessible name. |
+
 ## Run log
 
 ### 2026-11-01 · android-66 (device QA) · run 1 (bundled APK)
@@ -315,7 +331,67 @@ Lead GO'd the real-run cases (backend health 200 at 11:36), then reported the ba
 RUN-01 attempt: link typed (`RUN01-filled.png`); no run was observed (no stage, no result) before the stop, and health was down at 11:40. The terms checkbox was unticked in the later screenshot (`after-stop.png`); I did not record whether it was ticked when I tapped Analyze, so I can't say whether the submit was blocked by the terms or by the outage. Question: is the terms tick meant to reset on a force-stop and cold launch? (Earlier runs kept it ticked.)
 BLOCKED (backend killed for memory): RUN-*, FREE-*, RUN-06b..e, ORI-02 retest, LCH-06c. No result to log for any of them; no defect logged.
 
+### 2026-11-02 · android-66 (device QA) · run 9 (bundled APK, 04a9a9c (worktree build), update banner on a mock, partial)
+
+Build: unchanged (lastUpdateTime 03:45:20, versionCode 1). The mock on :8000 is described in section 19. Evidence in `%TEMP%\qa10\`.
+PASS: UPD-01. Portrait: the banner is 0–56 px, the header 56–125, the content band 125–775, the dock 783–847, and scrollWidth equals the viewport. Landscape (915x360): banner 0–56, header 56–113, band 113–292 (only 179 px), dock 300–352. Both themes. Note: the banner takes about 16% of the landscape height.
+PASS: UPD-03. ACTION_VIEW opens Chrome; Back returns to MainActivity with the same pid on `/app.html`.
+UPD-02 observations:
+- Copy is "Version 9.9.9 is available."; the button reads "update" in portrait and "download update" in landscape (sm+).
+- The copy is 12.48 px; light rgb(58,59,66) on white, dark rgb(198,201,194) on rgb(23,26,24).
+- The button is 44 px tall, with a 16 px label. Question: the label is larger than the copy; is that type-scale mismatch intended?
+- No dismiss control.
+PARTIAL: UPD-04. The More sheet covers the dock while the banner stays above it, dimmed by the scrim; History is fine. Privacy, Terms, `/404.html` and Welcome/Splash were not reached because the emulator went offline.
+PAUSED (the mock was swapped for the real backend; resumes on a separate GO): rest of UPD-04, UPD-05, UPD-06, UPD-07.
+
+### 2026-11-02 · android-66 (device QA) · run 10 (bundled APK, 04a9a9c (worktree build), real backend, real runs)
+
+Build: unchanged. Emulator API 35, swiftshader, laptop restarted before the run. Backend: the lead's real :8000 via `adb reverse` (HEAD 4e2ef7e). Evidence in `%TEMP%\qa11\`. Stage times come from an in-page `fetch` hook polled through CDP, so they are accurate to the app's 3 s poll.
+PASS:
+- **INT-07 / terms persistence.** Starting state: unticked, key empty. Ticked → `videolens-media-terms-v1` = "accepted" → force-stop → cold launch: still ticked and still "accepted".
+- **RUN-02 (R2, `test-15s.mp4`).** Sending… then POST 202, Normalizing at +4 s (about 3 s), Uploading at +7 s, Analyzing from +13 s, complete at +25 s.
+- **RUN-02b (R3, `test-12s.mp3`).** Already at Analyzing by +3 s; complete at +13 s.
+- **RUN-01 retry.** Link `https://www.youtube.com/watch?v=jNQXAC9IVRw` ("Me at the zoo", public, 19 s): Downloading at +3 s, Uploading at +6 s (Download and Normalize took ≤6 s together), Analyzing from +12 s, complete at +24 s.
+- **170 s file (`test-170s.mp4`, 720x1280, 2.5 MB).** Normalizing about 57–60 s, Uploading about 9 s, Analyzing about 15 s, complete at +88 s. **Normalizing is the main cost on longer files.**
+- **RUN-03.** History shows the in-flight file run and link run as "Processing"; the run continues when you return.
+- **RUN-04 (weak).** Home for 20 s: the run completed in the background (polling never paused), and the result showed on reopen.
+- **RUN-05.** The scroller goes to 0 on each state change.
+- **RUN-07.** A fast double-tap sends exactly one POST.
+- **RUN-08.** After a failed run and after a result: empty link field, terms still ticked.
+- **ORI-02.** Rotating during Analyzing keeps the state; the run completed in landscape and the result was kept on rotating back.
+- **HIS-01.** Frame poster with 0:15 for the mp4; waveform placeholder with "Audio file" and 0:12 for the mp3.
+- **FREE-01..05.**
+  - The count went 3 → 2 on the failed Instagram run. Policy: failures during processing are not refunded.
+  - Used-up state: "You have used your free runs. Add your own key to keep going." Analyze link and Browse files are disabled; the link field stays editable. Add key opens `/app?view=api-key`, and Back returns.
+  - At 0, IME Enter and a tap on Analyze send no request.
+  - The used-up state is kept across a force-stop and relaunch.
+- **RUN-06b.** A restart while Analyzing: one poll shows "Connection lost", then the next poll gets 404 and the expired view appears ("This run expired", "Analyze it again" fills in the link without submitting). The History row shows an Expired badge.
+- **RUN-06c.** The lead restarted the backend at about +39 s, during Normalizing on `test-170s.mp4`. The app showed "Connection lost"; at +55 s a poll got 404 and the expired view appeared ("Choose the file again"). The History row shows failed/file.
+- **RUN-06e** (retest; replaces the earlier BLOCKED). Cut at +12 s during Normalizing with `adb reverse --remove tcp:8000; adb reconnect`. The app showed "Connection lost / Waiting for connection" with a live countdown, "Retry now" and "Stop watching", and never showed expired. Backoff was about 4/8/16/30 s. After the reverse was restored, the run resumed and completed.
+- **RUN-06d.** The lead stopped the backend at about +40 s during Normalizing, then I force-stopped the app. The row stayed "Processing".
+- **LCH-06b.** A cold launch with the backend down shows "Can't reach the server right now. You can still open past runs in History."
+- **LCH-06c.** The backend came up at 13:28:25 and I foregrounded the app at 13:28:37. The notice cleared within 2 s and the banner refreshed to "3 free runs left". Tapping the stale Processing row got a 404; the expired view appeared and the row turned Expired.
+- **FREE-02b** (backend d032e59). Count 3 before. I submitted the Instagram link; the free-runs fetch right after the POST returned 2. The run failed at Downloading about 3 s later ("This post isn't public…"). After a cold relaunch the banner shows "3 free runs left", so the run was refunded.
+- **STB-01.** No app FATAL or Uncaught errors; only system bluetooth and binder lines.
+
+NOT EXERCISED: FREE-02c. `https://www.youtube.com/watch?v=dQw4w9WgXcQ` (3:33) failed at Downloading after about 12 s with "This link couldn't be downloaded. It may be private, deleted, or region-locked." It never reached the duration check. According to the lead, the backend log shows the download started (229 MiB, best format) and then hit "HTTP Error 403: Forbidden" partway through: YouTube throttling, not a private video. The duration-cap refund is covered by unit tests. The run was still refunded (3 → 2 → 3), which is a second FREE-02b data point. To test the cap itself, the lead needs to supply a link over 180 s that downloads.
+
+FAIL (environment): first RUN-01 attempt with the Instagram test link: "This post isn't public - Instagram only serves it to signed-in viewers." at Downloading after 6 s. The backend has no yt-dlp cookies configured, so the suite's link was swapped for the YouTube one above.
+Emulator note for RUN-06e: with airplane mode on, `navigator.onLine` goes false, but `adb reverse` traffic still flows (loopback). Removing the reverse alone leaves the keep-alive socket open. Only `adb reverse --remove tcp:8000; adb reconnect` cuts the traffic. The first attempt completed and used 1 free run.
+NOTES:
+- MINOR (known, covered by refinement 9): after a refunded failure the app does not re-fetch `/api/free-runs`. "Analyze another file" leads to an intake that still shows "2 free runs left" while the server already shows 3 (`FREE02c-intake-insession.png`). Only a relaunch or a resume corrects it, so the user believes the failed link cost a run. Suggested fix: re-fetch when a run reaches `failed`, or when the intake mounts.
+- Known, covered by refinement 9: the failed view has no free-runs banner, so the refund is not visible at the point of failure.
+- Observation: the startup reconcile did not turn the stale Processing row Expired on resume; only tapping the row did.
+- MINOR: "Choose the file again" on the expired file view goes to the intake instead of opening the picker.
+- COSMETIC: during an mp3 run in Analyzing, the status heading reads "Reading your video / Longer files take more time to normalize."
+- COSMETIC: the source card reads "Source: Youtube, jawed" (should be "YouTube").
+- Copy question: the expired view says "The server keeps a run for an hour" even when the run was lost to a restart.
+- MINOR: the used-up reason appears only in the top banner; once the form is scrolled into view, the disabled button gives no inline reason.
+- After a backend restart the banner keeps the stale "used your free runs" until a cold relaunch.
+
 ## Changelog
+
+- 2026-11-02 · android-66 (device QA) · added section 19 (update banner, UPD-01..07) and run 9 (UPD partial on the mock: UPD-01/03 PASS, UPD-04 partial, rest PAUSED) and run 10 (real runs: terms persistence, RUN-01 retry with a YouTube link, RUN-02/02b/03/04/05/07/08, ORI-02, HIS-01, FREE-01..05, RUN-06b/06c/06d/06e, LCH-06b/06c, FREE-02b PASS; FREE-02c not exercised (YouTube 403 mid-download); stale free-runs count after a refund logged as known (R9); stage timings incl. Normalizing ~60 s for a 170 s file); added FREE-02b/02c rows to section 6
 
 - 2026-11-02 · android-66 (device QA) · run 8 Run log: real-run GO stopped by the backend being killed for memory; RUN/FREE/ORI-02/LCH-06c stay BLOCKED, nothing counted against the app
 - 2026-11-02 · android-66 (device QA) · added section 18 (refinement 8 cases) and the run 7 Run log (04a9a9c worktree build): NF-01b, NF-02, HOP-01, LOG-01, INT-18, INT-19, STB-01 and NAV/BCK PASS; note on the Terms Back link landing on /app.html
