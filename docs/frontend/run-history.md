@@ -279,6 +279,21 @@ painting 66.8px buttons (44 content + 20.8 padding + 2 border) instead of the
 `.history-row` already did for exactly this reason. Every `.btn` in the app is
 44px tall on touch as intended; verified on the analyze intake as well as here.
 
+## Sort on every width (refinement 4, HIS-03)
+
+Supersedes "sort is hidden" / "Sort hidden => Newest" above. Portrait had no
+sort while landscape (48rem and up) showed "Newest", so the same app offered
+different controls by rotation. `.history-sort` is no longer `display: none`
+below 48rem: the phone grid is `minmax(0, 1fr) auto` with areas
+`search sort / filters filters`, so the select shares the search row and no
+row is added. `HistoryGrid` dropped the `useMediaQuery` gate and orders by the
+`sort` state directly (`components/useMediaQuery.ts` is now unused; left in
+place). Measured with four seeded IndexedDB runs (today, 1, 3, 10 days ago) at
+360x640, 390x844 light/dark, 844x390 dark, 1280x800: Newest = Alpha, Bravo,
+Charlie, Delta with groups Today / Earlier this week / Earlier; Oldest =
+reversed, groups reversed; YouTube + Oldest = Alpha only; no page or section
+horizontal scroll (the pill row still scrolls sideways inside itself, as drawn).
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported HistoryPanel to day-grouped rows with status dots; fixed duplicate React keys on non-adjacent "Undated" groups
@@ -289,3 +304,4 @@ painting 66.8px buttons (44 content + 20.8 padding + 2 border) instead of the
 - 2026-11-01 · frontend agent (Phase 4, boards) · title size follows the shared `.view-title`/`.history-title` change to clamp(2.25rem, 1.75rem + 1.6vw, 3rem) made for the Phase 4 boards (36px phone, 48px at 1280); no other History change
 - 2026-11-01 · frontend agent (Phase 5a) · History moved into the browser: `HistoryStore` port + `IndexedDbHistoryStore` (cap 20, oldest dropped, persist() once, cross-tab), writes from `useAnalysisRun` via `application/historySync.ts`, one-time import from `GET /api/runs`, unfinished runs re-checked once per load (404 → expired), reopen from IndexedDB offline, server thumbnails as Blobs in the poster grid (landscape by width>height), calm storage-unavailable state; no client-side frame grab (owner decision)
 - 2026-11-02 · frontend agent (refinement 3) · `isRunGone` + `recordExpired` shared by the startup reconcile and the live/reopen paths, so a row never stays "Processing" after a 404 on screen
+- 2026-11-02 · frontend agent (refinement 4) · sort select shown on phones too, sharing the search row; removed the 48rem Newest-only gate (HIS-03)

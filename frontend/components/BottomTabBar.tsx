@@ -6,8 +6,7 @@ import { CircleDot, Clock, Ellipsis } from "lucide-react";
 import MoreSheet, { sheetOwnsLocation, type LegalRoute } from "@/components/MoreSheet";
 import { TAB_LABEL } from "@/components/AppNav";
 import { isPlainLeftClick } from "@/components/navClick";
-import { toggleTheme } from "@/components/ThemeToggle";
-import { storedTheme } from "@/components/theme";
+import { setThemePreference, themePreference, type ThemePreference } from "@/components/theme";
 import { mainTabHref, type MainTab } from "@/application/useMainTab";
 import { useHardwareBack } from "@/application/useHardwareBack";
 import { useSoftKeyboard } from "@/application/useSoftKeyboard";
@@ -39,20 +38,15 @@ type BottomTabBarProps = {
   onSelectTab?: (tab: MainTab) => void;
 };
 
-function paintedThemeIsDark(): boolean {
-  return document.documentElement.getAttribute("data-theme") === "dark";
-}
-
 export default function BottomTabBar({ activeTab, currentRoute, onSelectTab }: BottomTabBarProps) {
   const sheetRef = useRef<HTMLDialogElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
-  /* Read from <html data-theme> when the sheet opens, not mirrored
-     continuously: the attribute is the one source of truth (ThemeToggle,
-     theme.ts), and while the sheet is open nothing but its own switch can
-     change it — the rest of the page is inert. */
-  const [dark, setDark] = useState(false);
-  const [followsDevice, setFollowsDevice] = useState(true);
+  /* Read from storage (theme.ts) when the sheet opens, not mirrored
+     continuously: storage plus <html data-theme> are the one source of truth,
+     and while the sheet is open nothing but its own control can change the
+     preference — the rest of the page, header toggle included, is inert. */
+  const [preference, setPreference] = useState<ThemePreference>("system");
 
   /* Both mounted here because every route renders exactly one tab bar
      (refinement 1): the hardware back button (Android shell only) and the
@@ -61,8 +55,7 @@ export default function BottomTabBar({ activeTab, currentRoute, onSelectTab }: B
   useSoftKeyboard();
 
   const openSheet = () => {
-    setDark(paintedThemeIsDark());
-    setFollowsDevice(storedTheme() === null);
+    setPreference(themePreference());
     sheetRef.current?.showModal();
     setSheetOpen(true);
   };
@@ -74,10 +67,9 @@ export default function BottomTabBar({ activeTab, currentRoute, onSelectTab }: B
     moreRef.current?.focus();
   };
 
-  const handleToggleTheme = () => {
-    toggleTheme();
-    setDark(paintedThemeIsDark());
-    setFollowsDevice(storedTheme() === null);
+  const handleChooseTheme = (next: ThemePreference) => {
+    setThemePreference(next);
+    setPreference(next);
   };
 
   const handleTabClick = (tab: MainTab) => (event: MouseEvent<HTMLAnchorElement>) => {
@@ -121,9 +113,8 @@ export default function BottomTabBar({ activeTab, currentRoute, onSelectTab }: B
         activeTab={activeTab}
         currentRoute={currentRoute}
         onSelectTab={onSelectTab}
-        dark={dark}
-        followsDevice={followsDevice}
-        onToggleTheme={handleToggleTheme}
+        themePreference={preference}
+        onChooseTheme={handleChooseTheme}
         onClose={handleSheetClose}
       />
     </>

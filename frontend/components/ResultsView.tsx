@@ -55,6 +55,21 @@ const TABS = [
 
 type TabKey = (typeof TABS)[number]["key"];
 
+/* Refinement 4 (RES-05): Copy takes only the tab on screen, Share and
+   Download the whole report — and nothing said so. Copy's name, tooltip and
+   confirmation now name the section; Share's name says "all". The wording
+   for each tab, as the object of "Copy …" and the subject of "… copied". */
+const COPY_NOUN: Record<TabKey, string> = {
+  summary: "TL;DR",
+  markdown: "notes",
+  transcript: "transcript",
+  screen_text: "on-screen text",
+};
+
+function capitalise(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 /* TL;DR opens first: the shortest read, the thing to have in front of you the
    moment a run finishes. (Phase 2 briefly opened on Notes to match the boards;
    the owner reverted that on 2026-11-01 — TL;DR is the default.) */
@@ -576,7 +591,11 @@ export default function ResultsView({
   };
 
   /* Copy stays per tab: it is the quick "grab this transcript" action, and
-     its label says so. Share and Download are the whole report. */
+     its label says so ("Copy transcript"). Share and Download are the whole
+     report, and Share's label says that ("Share all results"). */
+  const copyNoun = COPY_NOUN[active];
+  const copyLabel = `Copy ${copyNoun}`;
+  const copiedLabel = `${capitalise(copyNoun)} copied`;
   const copyContent = async () => {
     try {
       await navigator.clipboard.writeText(content);
@@ -598,23 +617,38 @@ export default function ResultsView({
       <div className="result-head">
         <h2 className="result-title">{result.title}</h2>
         <div className="result-actions">
-          <button
-            type="button"
-            onClick={copyContent}
-            className="icon-action"
-            data-state={copied ? "copied" : undefined}
-            aria-label={copied ? "Copied to clipboard" : "Copy this tab"}
-            title={copied ? "Copied" : "Copy this tab"}
-          >
-            {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-          </button>
+          <span className="copy-wrap">
+            <button
+              type="button"
+              onClick={copyContent}
+              className="icon-action"
+              data-state={copied ? "copied" : undefined}
+              aria-label={copied ? copiedLabel : copyLabel}
+              title={copied ? copiedLabel : copyLabel}
+            >
+              {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+            </button>
+            {/* The visible half of the confirmation: a touch screen has no
+                tooltip, and a bare tick does not say *what* was copied. A
+                small label under the button for the tick's two seconds,
+                positioned so nothing moves. The live region is separate and
+                always mounted, so the announcement is not lost. */}
+            {copied && (
+              <span className="copy-flash" aria-hidden="true">
+                {copiedLabel}
+              </span>
+            )}
+            <span className="sr-only" role="status">
+              {copied ? `${copiedLabel} to the clipboard.` : ""}
+            </span>
+          </span>
           {canShare && (
             <button
               type="button"
               onClick={() => void shareContent()}
               className="icon-action"
-              aria-label="Share notes"
-              title="Share notes"
+              aria-label="Share all results"
+              title="Share all results"
             >
               <Share2 aria-hidden="true" />
             </button>

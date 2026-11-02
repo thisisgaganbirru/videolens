@@ -18,11 +18,6 @@ import {
   type HistoryFilter,
   type HistorySort,
 } from "@/components/history";
-import { useMediaQuery } from "@/components/useMediaQuery";
-
-/** Where the sort control appears — the same 48rem the controls row turns at
- *  in globals.css (HISTORY block). Keep the two in step. */
-const SORT_QUERY = "(min-width: 48rem)";
 
 /* History — a poster grid (design/shots/HistoryA*.png, HistoryMobile.png,
    HistoryWeb.png). Everything that decides *what* shows lives in the pure
@@ -136,21 +131,17 @@ function HistoryGrid({
   const searchId = useId();
   const sortId = useId();
 
-  /* The sort control exists only from 48rem (the phone boards draw search on
-     its own full-width row and no sort). Below that it is display:none, and
-     the order is always Newest: a choice the user can no longer see must not
-     go on shaping the list. The desktop choice is kept, not reset, so widening
-     the window again brings it back exactly as it was left. */
-  const sortVisible = useMediaQuery(SORT_QUERY);
-  const effectiveSort: HistorySort = sortVisible ? sort : "newest";
+  /* Sort is on every width since refinement 4 (HIS-03): the phone boards drew
+     none, so portrait had no way to see the oldest runs first while landscape
+     did. On a phone it shares the search row (globals.css, HISTORY block). */
 
   /* "Today" is fixed for the life of this list rather than read on every
      keystroke, so a run cannot hop groups mid-search at midnight. A fresh
      visit to the tab remounts and reads it again. */
   const now = useMemo(() => new Date(), []);
   const groups = useMemo(
-    () => buildHistory(runs, { filter, query, sort: effectiveSort, now }),
-    [runs, filter, query, effectiveSort, now]
+    () => buildHistory(runs, { filter, query, sort, now }),
+    [runs, filter, query, sort, now]
   );
   const shown = groups.reduce((n, group) => n + group.runs.length, 0);
   const narrowed = filter !== "all" || query.trim() !== "";
