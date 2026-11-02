@@ -60,27 +60,47 @@ currently be reached in practice.
 5. **Reduced motion:** the fade only exists under
    `prefers-reduced-motion: no-preference`; with `reduce` it is removed at once.
 
-### Native splash (Android)
+### Native splash (Android) — launch screen (refinement 1, #11)
 
-No `@capacitor/splash-screen` plugin is installed (no match in `package.json`
-or `capacitor.config.ts`). The launch theme is `AppTheme.NoActionBarLaunch`
-(`parent="Theme.SplashScreen"`, `android:background="@drawable/splash"` in
-`android/app/src/main/res/values/styles.xml`). Android shows it until the
-activity draws, then the WebView's first frame takes over, and the web splash
-is that frame. No plugin is involved, so there is no auto-hide timer to fight.
-If someone adds `@capacitor/splash-screen` later, set `launchAutoHide: true`
-with a short `launchShowDuration`, or the two would stack.
+No `@capacitor/splash-screen` plugin is installed, and `installSplashScreen()`
+is not called anywhere. Capacitor's `BridgeActivity` calls
+`setTheme(R.style.AppTheme_NoActionBar)` itself in `onCreate`, so the launch
+theme is dropped without it.
 
-**The native drawable is still Capacitor's stock placeholder**: the blue
-Capacitor "X" on white, in every `drawable*/splash.png`. So today a cold start
-on Android goes Capacitor logo on white → VideoLens splash on paper → app. That
-is two different brands in a row and a white-to-paper colour jump. Replacing
-the drawables (VideoLens mark on `#F6F4EE`, and ideally the Android 12+
-`windowSplashScreen*` attributes) is a change under `frontend/android/`, which
-this phase was not allowed to touch. **Owner action.**
+The launch theme `AppTheme.NoActionBarLaunch` (`parent="Theme.SplashScreen"`,
+core-splashscreen 1.2.0) now uses the Android 12+ splash attributes instead of
+Capacitor's stock bitmap:
 
-**Not checked on a device:** whether the native exit and the web splash's first
-frame line up without a flash.
+| Attribute | Value |
+|---|---|
+| `windowSplashScreenBackground` | `@color/splash_background`: `#F6F4EE` (`values/splash.xml`), `#0E100F` (`values-night/splash.xml`) |
+| `windowSplashScreenAnimatedIcon` | `@drawable/splash_mark`: the web `BrandMark` (ring + dot) as a vector, 96dp across on the 288dp canvas, inside the 192dp safe circle |
+| `postSplashScreenTheme` | `@style/AppTheme.NoActionBar` (only used if `installSplashScreen()` is ever called) |
+
+Ring and dot colours are `@color/splash_ring` / `splash_dot` (ink and accent
+per theme). The old `android:background="@drawable/splash"` item is gone, and
+so are all 11 stock `splash.png` files (`drawable/`, `drawable-port-*`,
+`drawable-land-*`); `styles.xml` was the only reference. The launcher icon
+(`mipmap*/ic_launcher*`) is untouched and still Capacitor's stock icon.
+
+The colours follow the **OS** night mode, the only thing known before the
+WebView exists. A user who picked dark in the app on a light-mode phone sees a
+paper launch screen, then the dark web splash.
+
+Below API 31 the compat library draws the same background and icon through
+`Theme.SplashScreen`'s window background until `BridgeActivity` swaps the theme.
+
+**For device QA (android-66), not checked here (no native build):**
+1. Cold start in light and in dark OS mode: the mark on paper / dark paper,
+   centred, not clipped by the circular mask, no Capacitor "X".
+2. The hand-off to the web splash: the native mark sits dead centre, the web
+   splash's mark sits a little above centre (wordmark under it), so a small
+   jump is expected; there must be no white flash between them.
+3. The gap between the launch theme ending and the WebView's first frame:
+   `AppTheme.NoActionBar` has no `windowBackground` of its own, so that gap
+   shows the DayNight default (grey/white). If it is visible, the fix is
+   `<item name="android:windowBackground">@color/splash_background</item>` on
+   `AppTheme.NoActionBar`; not applied, as it was outside the listed change.
 
 ## Welcome
 
@@ -133,20 +153,23 @@ Capacitor bridge.
 
 ## Known issues
 
-- **Blocked `localStorage` crashes the tool before Welcome mounts.**
-  `UploadForm` reads `videolens-media-terms-v1` in an effect without try/catch,
-  and the throw takes down the page ("This page couldn't load"). This predates
-  Phase 5d. The first-run store handles blocked storage; the page around it
-  does not. Owner decision whether to fix it in `UploadForm`.
+- ~~Blocked `localStorage` crashes the tool before Welcome mounts.~~ Fixed in
+  refinement 1 (#5). With both storages throwing (Playwright, emulated
+  Capacitor): the tool loads, Welcome opens once, dismisses and stays closed for
+  that page load, the terms box works, no page errors.
 - **Cold-start native share vs Welcome.** `MainActivity` writes the shared text
   500 ms after `onCreate` (`postDelayed`). If the bundle has loaded before then,
   `pending()` reads "no share" and Welcome may start to open, then closes when
   the `videolens-share` event arrives. The link is not lost, but the user may
   see Welcome flash. Needs a device check.
 - **Native and web splash hand-off timing** is unverified on a device.
-- **The native launch splash is Capacitor's stock image**, not VideoLens (see
-  "Native splash"). Needs new drawables under `frontend/android/`.
+- **Launch screen replaced, unverified on a device** (refinement 1, #11). See
+  the QA list under "Native splash".
+- **`SPLASH_INIT_SCRIPT` now lives in the root layout `<head>`** (refinement 1,
+  #9) and gates itself on the path (`/app`, `/app/`, `/app.html`). Verified in
+  the emulated asset server over `out/`: `/` → `/app.html`, theme kept.
 
 ## Changelog
 
 - 2026-11-01 · frontend agent (Phase 5d) · created: installed-app splash and one-time Welcome, FirstRunStore port and adapter, SharedUrlSource.pending()
+- 2026-11-01 · frontend agent (refinement 1) · Android launch screen: BrandMark vector + paper colours (light/night), postSplashScreenTheme, stock splash.png removed; splash script moved to the root head; storage-crash known issue closed

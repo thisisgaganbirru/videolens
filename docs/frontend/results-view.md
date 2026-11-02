@@ -311,6 +311,31 @@ app shell, ResultsTranscript 846/846; keyboard End lands on On-screen; search
 with timestamps off; empty search; caption-only note. No page errors, no
 horizontal overflow, no document scroll.
 
+## Share, Download and Copy (refinement 1, #12/#13)
+
+- **Download .md on Android did nothing.** A blob `<a download>` click is
+  dropped by the Capacitor WebView (no download listener). Exports now go
+  through `DocumentExporter` (`domain/ports.ts`) →
+  `infrastructure/documentExporter.ts` → `application/useResultExport.ts`; the
+  component no longer imports Capacitor. On Android "Download .md" opens the
+  system share sheet with the whole report as text (`@capacitor/share`, already
+  installed; dialog "Save notes"), where Drive, Files, notes apps or mail take
+  it. In a browser it is the same blob download as before (verified:
+  `test-video.md`, full report).
+- **A real `.md` file on Android** needs `@capacitor/filesystem` (not
+  installed, not added): `Filesystem.writeFile({ path: "<name>.md", data,
+  directory: Directory.Cache, encoding: Encoding.UTF8 })` then
+  `Share.share({ files: [uri] })`; needs `npm i @capacitor/filesystem` and
+  `cap sync` (adds the native plugin to the Android project).
+- **Share sends the whole report**, the same string as Download (verified
+  byte-identical in a browser via a `navigator.share` spy), labelled "Share
+  notes". It used to send only the active tab.
+- **Copy is unchanged in scope:** it copies the active tab's text (labelled
+  "Copy this tab"). It now swallows a clipboard rejection instead of throwing,
+  and shows no tick then.
+- `canShare` moved from a set-state-in-effect to `useSyncExternalStore`, which
+  removes one of the pre-existing lint errors.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported ResultsView + SourceCard; de-boxed the source card, wired .disclosure and role=tabpanel, rebuilt SourceCard.preview with six states
@@ -323,3 +348,4 @@ horizontal overflow, no document scroll.
 - 2026-11-01 · frontend agent · TL;DR first sentence rendered as a labelled "Key takeaway" block (`components/takeaway.ts` splitter, abbreviation- and decimal-safe; one-sentence and empty summaries handled); Notes blockquotes stay unlabelled; report export unchanged
 - 2026-11-01 · frontend agent · On-screen tab rebuilt text-only from design/newshots (OnScreenView: intro line, time | serif text rows, line breaks kept); TimelineView and .ocr-tag removed; the On-screen TODO(design) closed
 - 2026-11-01 · frontend agent (Phase 4) · audit only, no change: TL;DR / Notes / Transcript / On-screen in that order, TL;DR default, 2px accent underline over the 1px rule — verified at 1366, phone web and phone app, light and dark
+- 2026-11-01 · frontend agent (refinement 1) · Download/Share via DocumentExporter port: Android save opens the share sheet with the full report, Share sends the full report (was active tab), Copy stays per tab; filesystem plugin documented, not added

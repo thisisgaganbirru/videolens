@@ -120,6 +120,23 @@ errors, no horizontal overflow, no document scroll in any of them.
 Design-vs-built pairs for ProgressCaptions, ProgressUploadMobile,
 ProgressFailed and ProgressLostWeb. No page errors, no horizontal overflow.
 
+## Expired run view (refinement 1, #7)
+
+A run reopened from History that the server no longer had (History's
+`EXPIRED_MESSAGE`) used to get the generic failed view: "The run stopped
+while…" plus "Try a different link", over a guessed filmstrip. Both were
+wrong: nothing was wrong with the link, and the stages were unknown.
+`RunStatusView` now takes `expired`, `canRefill` and `onAnalyzeAgain` and,
+for a failed + expired run, renders `ExpiredRunView`: pill "Expired", title
+"This run expired", one sentence (the server keeps a run for an hour; this
+one's result never reached this device; nothing was wrong with the
+link/file), **no filmstrip**, one button: "Analyze it again" (link runs, or
+any run with a stored link) / "Choose the file again" (uploads). Measured at
+390×844: title, pill, lede and single button as above, no `.filmstrip`;
+pressing it lands on the intake with `https://youtu.be/expired1` in the field
+and the terms box still ticked. Screenshots `r1-expired-390.png`,
+`r1-expired-again-390.png`.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported RunStatusView to the centred .run-state pipeline; returns a fragment (.run-state > .status is a direct-child selector)
@@ -129,3 +146,4 @@ ProgressFailed and ProgressLostWeb. No page errors, no horizontal overflow.
 - 2026-11-01 · frontend agent · frame labels bold (700) in every state/theme/layout; server-side cancel recorded as deferred by owner decision (wording unchanged, Try again stays a new run)
 - 2026-11-01 · frontend agent · design/newshots round: captions route (missed/skipped frames, own title + lede), File received first frame for uploads, notice card split from centred actions with no source chip in failed/lost, lost lede + "Stop watching" from ProgressLostWeb; `STAGE_ALIASES`/`FILE_STEP` TODO(design) slots closed
 - 2026-11-01 · frontend agent (Phase 4) · audit only, no change: Failed, Connection lost, Captions and Upload (File received) states and frame states done/active/waiting/failed/lost/missed/skipped verified at 1366, phone web and phone app, light and dark; danger pairs recomputed (see design-direction-editorial.md)
+- 2026-11-01 · frontend agent (refinement 1) · expired-run view: honest copy, no stage strip, "Analyze it again" with the link refilled

@@ -74,6 +74,17 @@ after the download stage.
 
 No frontend test runner is configured for this project; verification here has relied on `tsc --noEmit` plus `next build` plus manual review, not automated unit tests.
 
+## Expired runs (refinement 1, #7)
+
+`openRun` sets `expired` (and `againUrl`) when the History record's `error` is
+`EXPIRED_MESSAGE` (`historySync.ts`), i.e. the server forgot the run before its
+result reached this browser. `againUrl` is `record.source_url` (new optional
+`HistoryRecord` field, written by `recordSubmitted` for link runs; IndexedDB
+only, nothing new is sent to the server), else `source_metadata.source_url`.
+`submit`, `reset` and `openRun` clear it. `HomeScreen` turns it into the
+expired view and an "Analyze it again" that returns to the intake with the
+link filled (see `run-status-pipeline.md`).
+
 ## Changelog
 
 - 2026-08-21 · main session · made reset() clear the poll interval, and added the generation counter that drops a superseded submit/openRun response
@@ -85,3 +96,4 @@ No frontend test runner is configured for this project; verification here has re
 - 2026-11-01 · frontend agent (Phase 3) · `source_kind` from the summary/detail is now authoritative for `sourceKind` (`openRun` takes a hint; `applyRun` honours the detail); heuristic kept as the legacy fallback
 - 2026-11-01 · frontend agent (Phase 5a) · `submit`/`applyRun` file runs into the browser History (`historySync.ts`); `openRun` reopens complete/failed runs from IndexedDB with no network, falling back to the server only when the record lacks a result
 - 2026-11-01 · frontend agent (Phase 5b) · `submit` retries once on 401 `device_token_invalid`, marks the limit on 402 `free_runs_used` (no error line; back to idle from a failed-view retry), and refreshes the free-run count after a 202
+- 2026-11-01 · frontend agent (refinement 1) · `expired` / `againUrl` for runs the server forgot; `source_url` stored on submit (IndexedDB only)

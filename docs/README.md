@@ -9,6 +9,8 @@ Every new feature or component should get (or update) a doc here. Scope is stric
 Everything else here is filed per feature under `backend/` or `frontend/`. The
 exception, listed so it isn't mistaken for a stray file:
 
+- `qa/android-app-test-cases.md` — the full manual test suite for the
+  installed Android app (bundled APK, never live reload).
 - `container-workflows.md` — local/dev/production workflow boundaries,
   hardened container behavior, image publication, and operator requirements.
 - `error-messaging.md` — how a failure becomes a sentence on screen and where

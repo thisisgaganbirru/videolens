@@ -22,8 +22,14 @@ Boards: `design/shots/Landing.png` (phone, 390) and `LandingWeb.png` (desktop, 1
 
 ## Redirects on `/` (before paint)
 
-`LANDING_REDIRECT_SCRIPT` runs inline at the top of the landing page's body,
-before anything paints. It sets `<html data-redirecting>` (which hides the body)
+`LANDING_REDIRECT_SCRIPT` runs inline in the **root layout's `<head>`**
+(`app/layout.tsx`, concatenated after the theme and shell scripts), before
+anything paints. Until refinement 1 it was rendered by the landing page itself;
+a client-side navigation to `/` then made React re-create the `<script>`, which
+never runs and logs "Encountered a script tag while rendering React component".
+The head is only hydrated, never re-created, so the script now gates itself on
+the path instead. The `data-redirecting` hide rule moved from `landing.css` to
+`globals.css` for the same reason (it must apply on any document). It sets `<html data-redirecting>` (which hides the body)
 and calls `location.replace()`, so no history entry is left behind:
 
 | Arrives at | Goes to | Why |
@@ -46,7 +52,9 @@ The static export (`CAPACITOR_BUILD=true`, `output: "export"`, no
 server serves `index.html` for a path it cannot find, so a request for `/app`
 would get the landing page back. The same script handles that: if the landing
 page is running at a path other than `/` or `/index.html`, and that path is one
-of `/app`, `/privacy`, `/terms`, `/offline`, it replaces the location with
+of `/app`, `/privacy`, `/terms`, `/offline`, **and** Capacitor reports native
+**and** the origin is `localhost` with no port (the asset server; live reload
+on `http://localhost:3005` and `next start` never take this branch), it replaces the location with
 `<path>.html` plus the query and hash. `isAppPath()` accepts `/app.html`, and
 `goToMainTab` keeps whichever spelling the page is on, so tab switches stay on
 `/app.html` there. This also covers `/privacy` and `/terms` in Capacitor, which
@@ -92,6 +100,19 @@ shell never sees `/`). Top-bar links go to `/app`, `/app?view=history`,
 `/app?view=api-key`, `/app?view=releases`. They are plain links on `/`, because
 the tabs are not mounted there.
 
+## Hero fills the first screen (desktop)
+
+At `min-width: 60rem` and `min-height: 40rem` the landing section (the scroller
+between the fixed nav and footer) becomes a `container-type: size` container.
+`.landing` drops its top padding there, and `.landing-hero` gets
+`min-height: 100cqb`, i.e. exactly the visible band, so "How it works" starts
+below the fold instead of peeking in, cut off, above the footer. The intro and
+card are centred vertically in it (`align-items: center`). No nav or footer
+height is subtracted from `100dvh`. Shorter windows and phones keep the natural
+height, so the CTAs are never pushed off-screen. Measured in dev (iframe
+probes): 1366×768, 1440×900, 1920×1080 and 1024×700, hero = band and `#how`
+below the band; 1280×600 and 390×844 unchanged.
+
 ## Measured (2026-11-01, `next build` + `next start -p 3015`, Playwright, `/api/*` mocked)
 
 - `/` at 1366×900 and 390×844, light and dark: no horizontal scroll; CTAs
@@ -119,10 +140,21 @@ the tabs are not mounted there.
   answers `/app` with `index.html`, the cached copy of `/app` is the landing,
   whose script then hops to `/app.html`. That works, but it is a wasted hop.
   It belongs to the same pre-existing, unverified question as `/privacy`.
-- **A blocked `localStorage` crashes the tool.** `UploadForm` reads
-  `videolens-media-terms-v1` in an effect without try/catch. That predates this
-  work. Found while testing first run; reported, not fixed.
+- ~~A blocked `localStorage` crashes the tool.~~ Fixed in refinement 1 (#5):
+  `UploadForm`, `clientId` and `apiKeyStore.set` now catch storage errors.
+  Verified with both storages throwing (browser and emulated native): the tool
+  loads, Welcome opens once and dismisses, the terms box works, no page errors.
+- **The template-literal escape trap.** The redirect script is a template
+  literal, so its regex backslashes are doubled (`/\/+$/` in source). A single
+  `\/` once collapsed to `//` mid-refinement-1, commented out the rest of the
+  line and made the whole `<head>` script a syntax error. On the device that
+  showed as no `/` → `/app` redirect and a light landing despite a stored dark
+  theme. Refinement 1's harness now `node --check`s the built head script of
+  every exported page.
 
 ## Changelog
 
 - 2026-11-01 · frontend agent (Phase 5c) · created: tool moved to `/app`, landing at `/`, pre-paint redirects, Capacitor `.html` hop, band tokens
+- 2026-11-01 · videolens-ff (lead) · desktop hero fills the visible band (size container + `100cqb`) so "How it works" no longer peeks in above the footer
+- 2026-11-01 · videolens-ff (lead) · "What you get" footnote (`.landing-wyg-foot`) runs the full card width (dropped `max-width: 44rem`) with `text-wrap: pretty`
+- 2026-11-01 · frontend agent (refinement 1) · redirect script moved into the root layout head (no React script warning), Capacitor hop limited to the asset-server origin, storage-crash known issue closed, escape-trap note; verified in `next start`, a separate `next dev`, and an emulated asset server over `out/`

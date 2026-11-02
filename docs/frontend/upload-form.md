@@ -212,6 +212,20 @@ unchanged. Touch targets measured with `getBoundingClientRect` (Terminal
 era): `analyze url` 120.9x44.0, `browse file` 122.9x44.0. Phase 2: Analyze
 link is 52px tall (`.link-row .btn` min-height 3.25rem), Browse files 44px.
 
+## Refinement 1 (2026-11-01)
+
+- **Storage guarded (#5).** The terms flag is read/written through
+  `readTermsAccepted` / `writeTermsAccepted` (try/catch; same key and the same
+  stored value, `"accepted"`). Blocked storage reads as unticked and a tick is
+  simply not remembered.
+- **Prefill (#7, #14).** The `sharedUrl` prop is now `HomeScreen`'s
+  `formPrefill`: the newer of the live share and an expired run's "Analyze it
+  again" link. A share already used is dismissed when the user starts over
+  ("Analyze another file", "Stop watching"), so the remounted form comes back
+  empty instead of re-taking the old share. Terms stay ticked. Measured: share
+  `/app?share-target=1&url=…` fills the field; after the run, "Analyze another
+  file" shows an empty field with terms still ticked.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported UploadForm to the unboxed .intake; returns a fragment since HomeScreen supplies the wrapper
@@ -227,3 +241,4 @@ link is 52px tall (`.link-row .btn` min-height 3.25rem), Browse files 44px.
 - 2026-11-01 · main session · owner fix: the desktop intake fits one screen with no page scroll. From 60rem the top padding and headline scale with viewport height (72px / 56px only on tall windows), the card rhythm is tighter, and under 50rem of height the card padding and divider tighten further; measured with no overflow at a 1536×674 viewport (content band 540px)
 - 2026-11-01 · main session · owner spec: desktop intake header fixed at a 40px top, eyebrow 13/600/0.08em with a 16px margin under it, H1 Newsreader 50/500 at line-height 1.05 and -0.02em with 20px under it, intro 18px at 1.55 in ink-2 with a 480px max-width and 24px to the card, in a 620px column; replaces the height-scaled padding and headline from the previous entry. Measured exactly in Chrome at 1536×730 with no page scroll; Newsreader is the variable 200–800 face, so 500 is a real weight, not synthesised
 - 2026-11-01 · frontend agent (Phase 5b) · `blocked` prop (out of free runs, no key): Analyze link and Browse files disabled, drop refused with `dropEffect: none`, submit guarded; the link field and terms box stay usable. Note: the 1536×674 no-overflow measurement above no longer holds (587 vs 540 px without the banner); see `free-runs.md`
+- 2026-11-01 · frontend agent (refinement 1) · terms storage guarded; prefill comes from HomeScreen (share or expired "analyze again"), used shares dismissed on start-over so the field clears
