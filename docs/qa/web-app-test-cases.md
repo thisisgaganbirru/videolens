@@ -114,7 +114,7 @@ as a question, not a fact. A defect found in a ▦ case names the viewport.
 | INT-01 ▦ | Click "Analyze link" with the field empty. | Error "Paste a link to analyze." **under the field**, the field is focused and `aria-invalid`, the message is tied by `aria-describedby`; no request sent. |
 | INT-02 | Type `notaurl`, submit. | Valid-URL error under the field; no request. |
 | INT-03 | Untick terms, paste a valid link, submit. | Terms error; the checkbox is marked invalid and focused; Browse files disabled; no request. |
-| INT-04 | Two errors at once (empty link, terms unticked). | Each error sits under its own field; focus goes to the first invalid control; fixing one clears only that one. |
+| INT-04 | Two errors at once (empty link, terms unticked), one press. | Both errors show, each under its own field; focus goes to the link; no request; each message clears only when its own control is edited. |
 | INT-05 | Error clears on input. | Typing a valid URL clears the link error immediately (not on next submit). |
 | INT-06 | Terms persistence: tick, reload. | Still ticked (`videolens-media-terms-v1`). |
 | INT-07 | Terms links. | Terms and Privacy open the legal pages; Back returns to the intake with the typed link kept or cleanly empty (record which). |
@@ -126,7 +126,7 @@ as a question, not a fact. A defect found in a ▦ case names the viewport.
 | INT-13 | File picker: MOV and MP3. | Accepted. |
 | INT-14 | File picker: the `.txt`. | "Only MP3, MP4, and MOV files are supported." |
 | INT-15 | File over the size limit (create a sparse >200 MB file) and one over 3 minutes. | A clear per-reason error before any upload begins. |
-| INT-16 | Zero-byte file and a corrupt MP4. | A clear error (client side or from the server's failed run), no crash, no stuck spinner. |
+| INT-16 | Zero-byte file (and a corrupt MP4). | Zero-byte: "This file is empty. Choose another one." and no request. Corrupt MP4: the server's failed run shows, no crash, no stuck spinner. |
 | INT-17 | Drag and drop a valid file onto the drop zone (desktop). | Drop zone highlights on dragover, un-highlights on dragleave, and the file is accepted as in INT-12. |
 | INT-18 | Drop a `.txt`, then drop two files at once. | The unsupported type shows INT-14's error; with several files, one is used or a clear message appears (record which); no crash. |
 | INT-19 | Drop a file **outside** the drop zone. | The browser does not navigate away to open the file; the page stays. |
@@ -171,17 +171,17 @@ as a question, not a fact. A defect found in a ▦ case names the viewport.
 | RUN-03 | Mock `failed` with an `error` string. | The failed view shows the plain-language message (see `docs/error-messaging.md`), a way to try again, and no raw stack or JSON. The History row shows failed. |
 | RUN-04 | Mock each documented error class (download failed, login-gated link, too long, unsupported, quota, server error). | Each has its own sentence; none says only "Something went wrong". |
 | RUN-05 | Switch to History while a run is processing, then back. | The run keeps progressing; History shows it as in progress; coming back shows the live stage. |
-| RUN-06 | Reload the page mid-run. | The run is resumed from the stored run id: polling continues and reaches the result (or the expired state if the server forgot it). |
+| RUN-06 | Reload the page mid-run. Variants: (a) on `/app`: the run resumes and reaches the result; (b) reload on `?view=history`: History stays, no resume; (c) reload with the API unreachable (offline document reload lands on `/offline` by design): Connection lost, then Retry now resumes; (d) reload after the server forgot the run: the expired view. | As listed per variant. |
 | RUN-07 | "Stop watching and analyze another file". | Returns to a fresh intake; terms stay ticked; the in-flight run remains in History. |
-| RUN-08 | Poll the live run with the mock returning 500 three times, then success. | "Connection lost" is **not** shown for isolated blips; the run recovers silently. |
+| RUN-08 | Poll the live run with (a) 5xx, (b) network errors. | (a) "Server trouble" pill and "The server is having trouble right now…", with the retry countdown and Retry now; (b) "Connection lost". The run recovers by itself in both. |
 | RUN-09 | Poll fails continuously (abort/`route.abort("failed")`). | "Connection lost" with a countdown and **Retry now**; polling backs off; nothing crashes. |
 | RUN-10 | While in Connection lost, restore the mock. | The next retry (or Retry now) resumes the run and clears the notice; the stage list continues. |
 | RUN-11 | While in Connection lost, `context.setOffline(true)` then `false`. | Same recovery on the `online` event without waiting for the countdown. |
 | RUN-12 | Live poll returns **404**. | Within one poll the **expired** view appears ("This run expired") with "Analyze it again" for a link run (prefills the link) or "Choose the file again" for a file run. **Never** stuck on "Connection lost". The History row shows expired, not Processing. |
-| RUN-13 | Reopen from History a row the server has forgotten (mock 404 on `GET /api/runs/{id}`) that is stored as still Processing. | Expired view with its actions (not the intake with a bare "Run not found."); the row turns expired. |
+| RUN-13 | Reopen from History a row the server has forgotten (404 on `GET /api/runs/{id}`) that is stored as still Processing. | Expired view with its actions; the History row badge reads "Expired" (`data-run-status="expired"`). |
 | RUN-14 | Reopen from History a row older than the server TTL that **has** a stored result. | The stored result opens from IndexedDB; no network needed (HIS-09). |
 | RUN-15 | Expired view, "Analyze it again". | Intake with the original link prefilled; terms ticked; no auto-submit. |
-| RUN-16 | Submit while `POST /api/runs` returns 429 (rate limit) and 5xx. | A clear message with when to retry (429) or a generic server message; the form is usable again. |
+| RUN-16 | `POST /api/runs` error responses. | 500 (plain or JSON): "The server had a problem starting this run. Try again in a moment."; 503 with a curated message: that message; 429 with an exposed `Retry-After: 300`: "...about 5 minutes"; 429 without it: the backend message; 400: its message kept; 422: a generic line. Form usable after each. (The backend does not send Retry-After yet; mock the header.) |
 | RUN-17 | Submit while the network is offline. | A clear offline/cannot-reach error in the card; no stuck spinner (see SRV-01). |
 | RUN-18 | Tab hidden for 30 s during a run (`document.visibilityState`), then visible. | Polling resumes on return; the stage is current. |
 | RUN-19 | Two tabs open on `/app`; start a run in tab A. | Tab B does not steal or duplicate the run; History in tab B shows it after its next refresh (record whether it live-updates). |
@@ -206,7 +206,7 @@ as a question, not a fact. A defect found in a ▦ case names the viewport.
 | RES-11 | Hostile content in the mocked result: `<script>alert(1)</script>`, `<img src=x onerror=…>`, `[x](javascript:alert(1))`, raw HTML. | Rendered as inert text or sanitised; no script runs; the `javascript:` link is not clickable. |
 | RES-12 | Long content: a 30k-word transcript, a 2,000-char unbroken string, a very long title, 200 notes bullets. | No horizontal scroll; the band scrolls; the UI stays responsive (< 1 s to switch tabs); the last line is not hidden behind the footer. |
 | RES-13 | Empty and null fields: no on-screen text, no transcript, no summary. | A clear empty state per tab; no "null"/"undefined". |
-| RES-14 | Non-Latin and RTL content (Hindi, Arabic, emoji, CJK). | Renders without tofu; RTL text aligns sensibly; the layout holds. |
+| RES-14 | Non-Latin and RTL content. | No tofu; an Arabic Notes fixture renders `direction: rtl` (bullets on the right) and English stays LTR; layout holds. |
 | RES-15 | "Analyze another file" after a result. | Fresh intake with an **empty** link field; terms stay ticked. |
 | RES-16 | Result page, print preview (Ctrl+P). | Readable; the fixed chrome does not cover content. (COSMETIC if not.) |
 
@@ -255,7 +255,7 @@ as a question, not a fact. A defect found in a ▦ case names the viewport.
 | LEG-04 | In-page anchors and links in the legal text. | Work; external links open safely. |
 | OFF-01 | Install the service worker: visit `/app` online, wait until `navigator.serviceWorker.ready`. | A registration exists for `/`; precache lists the shell routes. |
 | OFF-02 | `context.setOffline(true)`, navigate to `/app`. | The app shell loads from cache. |
-| OFF-03 | Offline, navigate to a **never-cached** route (`/definitely-not-here`). | The branded **/offline** page is shown, with the shared chrome. |
+| OFF-03 | Unknown path, online and offline. | Online: the 404 page with the shared chrome and one `<main>`. Offline: `/offline`. |
 | OFF-04 | `/offline` directly (online). | Renders the same page; its links are plain `<a>` (works with no client router); "Try again" retries and returns when online. |
 | OFF-05 | Offline, reload `/`, `/privacy`, `/terms`. | Each loads from the cache. |
 | OFF-06 | Go back online while on `/offline`. | The page recovers (retry works or the app returns on its own); no stuck state. |
@@ -290,7 +290,7 @@ as a question, not a fact. A defect found in a ▦ case names the viewport.
 | A11-10 | Text-only resize: root font-size 200%. | No overlap; buttons keep their labels. |
 | A11-11 | Screen-reader names for the More/hamburger dialog. | `aria-modal`, labelled, Escape closes, focus is trapped while open and restored after. |
 | A11-12 | `axe-core` on each route (light and dark). | No serious or critical violations; list the minor ones. |
-| A11-13 | Pointer targets at P390. | Interactive targets ≥ 44x44 CSS px (or ≥ 24x24 with spacing); nothing overlaps. |
+| A11-13 | Target size at 390 wide (inline links inside a sentence are exempt). | `.terms-box` is 44x44; footer links are at least 24 px tall; other controls at least 24 px. |
 | A11-14 | Colour is never the only signal (errors, active tab, stage state). | An icon, text or shape accompanies the colour. |
 
 ## 13. Stability and the browser
@@ -651,9 +651,42 @@ output and HIS-04 `aria-pressed` were not verified (harness). OFF-09 is N/A with
 | HIS-14 import runs once | PASS | videolens-history-imported=1 |
 | HIS-12 IndexedDB blocked doesn't crash | PASS | page stays up and shows a 'History can't be saved...' message |
 
+### 2026-11-02 · frontend-43 · run 2 (retest of refinement 6, HEAD b630a8d)
+
+Production build, `next start -p 3016`, headless Chromium, `/api` mocked. Case text updated first per the lead (selectors
+`main.view-scroll` / `main[data-view]`, INT-04, INT-16, RUN-06, RUN-08, RUN-13, RUN-16, OFF-03, A11-13, RES-14).
+
+| ID | Result | Evidence |
+|---|---|---|
+| D1 INT-04 | PASS | both errors on one press, focus on the link, no POST; editing the link clears only its error; ticking terms clears only the terms error (either order) |
+| D2 INT-16 | PASS | "This file is empty. Choose another one.", 0 requests |
+| D3 RUN-06 | PASS (4 variants) | (a) mid-run reload resumes to the result; (b) reload on `?view=history` stays History; (c) reload with the API down shows Connection lost, then Retry now resumes; (d) reload after the run expired shows the expired view |
+| D4 RUN-08 | PASS | poll 503s: "Server trouble" + "The server is having trouble right now…" with countdown and Retry now; network aborts: "Connection lost" |
+| D5 RUN-13 | PASS | badge reads Expired, `data-run-status="expired"` |
+| D6 RUN-16 | PASS (7) | 500 plain/JSON, 503 curated, 429 with Retry-After 300 ("about 5 minutes"), 429 without, 400, 422 all as specified; form usable after each |
+| D8 OFF-03 | PASS | online: 404 with header and footer, one `<main>`, no h-scroll; offline: `/offline` |
+| D9 A11-02 | PASS | exactly one `<main>` on all 8 routes in light and dark, plus the 404 page |
+| D10 A11-07 | PASS | no contrast failures on 7 routes, light and dark (the AI Studio link included) |
+| D11 A11-13 | PASS | `.terms-box` 44x44, footer links 46x44 and 38x44; clicking the box toggles the checkbox |
+| D13 RES-14 | PASS | Arabic Notes: `direction: rtl` on heading, bullet and paragraph, `dir="auto"`; English stays LTR |
+
+Note for the lead on the 18 px: those two were the **inline Terms and Privacy Policy links inside the terms sentence** (38x18 and
+86x18, `display: inline`, measured with `getBoundingClientRect()` on every `a`), not the footer. My D11 row in run 1 mislabelled them.
+Footer links measure 44 px. Inline links in a sentence are exempt from the WCAG 2.5.8 target-size minimum, so I treat this as no defect.
+
+Note on (c): an offline *document* reload on bare `/app` lands on `/offline` by design (the service worker allows only
+`/app?view=history` offline), so "Connection lost" is tested with the document online and the API unreachable.
+
+**Regression (intake, runs, History) at D1366 and P390, light and dark:** 59 PASS, 6 FAIL, 2 BLOCKED in each of the four
+configurations, identical across them. The six are the same harness artifacts as run 1, not app defects: INT-20 (text finder),
+INT-22 (post counter carried over; passed alone in run 1), RUN-17 (route mock still answers offline; passed in isolation), HIS-04
+(attribute read right after each click), HIS-06 (direct IndexedDB seeding bypasses the write-side cap), HIS-12 (assertion; the page
+shows its "History can't be saved" message). RUN-R1 and RUN-R2 are still BLOCKED. No new defects.
+
 ## Changelog
 
 - 2026-11-02 · frontend-43 · created
 - 2026-11-02 · frontend-43 · named Python Playwright as the runner (already installed, no installs)
 - 2026-11-02 · frontend-43 · run 1: ran the mocked suite against the production build on :3016; logged results and 12 minor findings
 - 2026-11-02 · frontend-43 · visual review of THM-06 and RES-14 done; HIS-06 case text fixed (cap applied on write, D7 withdrawn)
+- 2026-11-02 · frontend-43 · run 2: retested refinement 6 (D1-D6, D8-D11, D13 all pass) and the intake/run/History regression at D1366 and P390; updated the case text
