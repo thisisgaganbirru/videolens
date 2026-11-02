@@ -11,6 +11,9 @@ export type ThemePreferenceSource = {
   subscribe(listener: (choice: ThemeChoice) => void): () => void;
   /** Repaint from the device if nothing is stored. */
   followDevice(): void;
+  /** Take the native shell's OS night state as the device theme from now on
+   *  (refinement 7, THM-01b-6), repainting if nothing is stored. */
+  adoptDeviceTheme(theme: PaintedTheme): void;
 };
 
 function paintedTheme(root: HTMLElement): PaintedTheme {
@@ -36,11 +39,45 @@ function paintedTheme(root: HTMLElement): PaintedTheme {
  * changed, DEFAULT-styled bars are re-resolved against it, and a "system"
  * choice is repainted from the device once the WebView has caught up.
  *
+ * Refinement 7, THM-01b-6: in the installed app the OS night state comes from
+ * the native shell (getSystemNight on mount and on return to the foreground,
+ * plus its "systemNightChanged" event), not the WebView's prefers-color-scheme,
+ * which can stay stale after a forced night mode is lifted. It becomes the
+ * device theme a "system" choice paints. In the browser the mirror answers
+ * null and matchMedia stays in charge.
+ *
  * Mount once per route. `ThemeToggle` does it, and every route renders exactly
  * one via `AppNav`.
  */
 export function useSystemBarsTheme(preference: ThemePreferenceSource): void {
-  const { read, subscribe, followDevice } = preference;
+  const { read, subscribe, followDevice, adoptDeviceTheme } = preference;
+
+  useEffect(() => {
+    let active = true;
+    const adopt = (dark: boolean | null) => {
+      if (!active || dark === null) return;
+      adoptDeviceTheme(dark ? "dark" : "light");
+      /* WebView < 140: DEFAULT bars resolve from the activity's night mode,
+         which under "system" just moved with the OS. Re-resolve even when
+         data-theme did not change (the observer below would not fire). */
+      if (systemBarsStyler.followsSystemTheme()) {
+        void systemBarsStyler.matchTheme(paintedTheme(document.documentElement));
+      }
+    };
+    const ask = () => void nativeThemeMirror.systemNight().then(adopt);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") ask();
+    };
+    ask();
+    const unsubscribe = nativeThemeMirror.onSystemNightChange(adopt);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      active = false;
+      unsubscribe();
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [adoptDeviceTheme]);
+
   useEffect(() => {
     const mirror = (choice: ThemeChoice) => {
       void nativeThemeMirror.setPreference(choice).then((changed) => {

@@ -37,7 +37,9 @@ public class MainActivity extends BridgeActivity {
         // not recreate the activity; resources resolve against the new
         // configuration here, so re-read the colour. This also covers a live
         // in-app theme change: AppCompat.setDefaultNightMode lands here too
-        // (refinement 5), instead of recreating.
+        // (refinement 5), instead of recreating. super (BridgeActivity) also
+        // hands the change to every plugin: NativeThemePlugin reports the OS
+        // night state to the page from there (refinement 7, THM-01b-6).
         applyNightBackground();
     }
 

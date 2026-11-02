@@ -151,6 +151,16 @@ export type ThemeChoice = PaintedTheme | "system";
 export interface NativeThemeMirror {
   /** Resolves true when the native night mode actually changed. */
   setPreference(choice: ThemeChoice): Promise<boolean>;
+  /**
+   * The OS's own night state as the native shell reads it, or null where
+   * there is no native shell (or it cannot say). Refinement 7, THM-01b-6: on
+   * Android the WebView's `prefers-color-scheme` can stay stale after the app
+   * lifts a forced night mode, so under "system" this is the value to paint.
+   */
+  systemNight(): Promise<boolean | null>;
+  /** Called with the new OS night state whenever the native shell sees it
+   *  change. Returns an unsubscribe. A no-op where there is no native shell. */
+  onSystemNightChange(listener: (dark: boolean) => void): () => void;
 }
 
 /**

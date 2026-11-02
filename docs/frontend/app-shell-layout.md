@@ -638,6 +638,70 @@ before (the web shell below 32rem keeps page scroll, as designed).
 **A11-13, footer links.** Measured, not changed: `.foot-legal a` are already
 44px tall (`min-height: 2.75rem`) at 390 and 1366.
 
+## Refinement 7 (2026-11-02)
+
+**THM-01b-6, System stays dark after the OS goes light.** Repro (android-66,
+API 35, WebView 124, intermittent): OS dark, Light stored, cold launch (the
+activity starts forced `MODE_NIGHT_NO`), More > System, then `cmd uimode night
+no`. Bars went light, the page stayed dark: in the WebView
+`matchMedia('(prefers-color-scheme: dark)')` stayed true until a cold relaunch.
+Chromium derives that media feature from the WebView's (activity) context,
+which was built under the forced override; after the override is lifted it no
+longer tracks the real system `uiMode`. The native side was right (the bars
+followed), only the WebView's media query was stale.
+
+Fix: under System, in the installed app, the page no longer trusts the media
+query for the OS state.
+
+- `NativeThemePlugin.systemNight()` reads the OS state:
+  `UiModeManager.getNightMode()` YES/NO first (the user-wide setting; never
+  this app's override, since AppCompat overrides only the activity
+  configuration and `setApplicationNightMode` is stored per package); for
+  AUTO/CUSTOM (schedules) or with Battery Saver on (which forces dark without
+  touching that setting) it falls back to the night bit of
+  `Resources.getSystem().getConfiguration()`, the process configuration. That
+  includes the per-package override on API 31+, but it is only consulted
+  under System, and choosing System clears that override.
+- Exposed as `getSystemNight()` → `{ dark }` and a `systemNightChanged`
+  `{ dark }` event, sent from the plugin's own `handleOnConfigurationChanged`
+  (BridgeActivity forwards `MainActivity.onConfigurationChanged` to every
+  plugin), `handleOnResume`, and after `setPreference` changes the mode; only
+  when the value differs from the last one sent.
+- Port `NativeThemeMirror` gains `systemNight()` and `onSystemNightChange()`
+  (`infrastructure/nativeTheme.ts`; null / no-op off Android or on an older
+  APK). `useSystemBarsTheme` asks on mount and on `visibilitychange`, listens
+  for the event, and hands the value to `themePreferenceSource
+  .adoptDeviceTheme`, which makes it what `deviceTheme()` returns from then on
+  and repaints when nothing is stored. It also re-resolves DEFAULT bars on
+  WebView < 140.
+- The head script's `prefers-color-scheme` listener (`app/layout.tsx`) stands
+  down once `window.__videolensNativeScheme` (`NATIVE_SCHEME_FLAG` in
+  `components/theme.ts`) is set, so a stale media query cannot repaint over the
+  native value. First paint still uses the media query (correct on a cold
+  launch). The browser is unchanged: no native value, matchMedia as before.
+
+Rejected: re-applying `setDefaultNightMode(FOLLOW_SYSTEM)` on the
+configuration change. AppCompat returns early when the mode is unchanged, and
+its own `onConfigurationChanged` already re-runs `applyDayNight`, which is why
+the bars were right; neither reaches Chromium's media-query state, which is the
+part that was wrong. Recreating the activity would fix the WebView but loses
+page state, which is what `configChanges uiMode` exists to avoid.
+
+**Capacitor's "Error injecting safe area CSS" on launch: left, harmless.**
+Emitted by Capacitor 8's own `SystemBars` plugin
+(`com/getcapacitor/plugin/SystemBars.java`, `injectSafeAreaCSS`). On API 35+
+`load()` calls `initSafeAreaCSSVariables()`, which runs
+`document.documentElement.style.setProperty('--safe-area-inset-*')` through
+`evaluateJavascript` while the bridge is still being built, before the first
+page has a document, so `documentElement` is null and its try/catch logs the
+error. The same injection re-runs from the insets listener after
+`onPageCommitVisible` / `onDOMReady` and succeeds. No clean fix: it runs inside
+plugin `load()`, before any of our code; the only config switch,
+`insetsHandling: "disable"`, also removes the insets listener that pads the
+WebView below the bars on WebView < 140 (the API 35 emulator ships 124).
+The app does not read the `--safe-area-inset-*` variables (it uses
+`env(safe-area-inset-*)`), so nothing visible depends on the failed call.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent (foundation) · rebuilt the shell to the Terminal direction: one-viewport flex chain, pill nav, mobile drawer, 4 tabs, theme toggle
@@ -663,3 +727,4 @@ before (the web shell below 32rem keeps page scroll, as designed).
 - 2026-11-02 · frontend agent (refinement 4) · keyboard reveal now group-aware, instant, visual-viewport aware and repeated on the measured shrink (INT-05); More sheet theme switch replaced by System/Light/Dark radios backed by theme.ts setThemePreference (THM-01)
 - 2026-11-02 · frontend agent (refinement 5) · theme choice mirrored natively (NativeThemePlugin + infrastructure/nativeTheme.ts, AppCompat night mode at attachBaseContext and live, UiModeManager on API 31+) so launch/window/bars follow the app, not the OS (THM-01b); revealField clipped to the scrolling section (INT-01b)
 - 2026-11-02 · frontend agent (refinement 6) · A11-02 view band is <main> on every route (one landmark per page); footer link height measured at 44px
+- 2026-11-02 · frontend agent (refinement 7) · THM-01b-6: System paints from the native OS night state (NativeThemePlugin getSystemNight + systemNightChanged; theme.ts adoptDeviceTheme; head-script listener stands down) instead of the WebView's stale prefers-color-scheme; documented the harmless Capacitor "Error injecting safe area CSS" launch log

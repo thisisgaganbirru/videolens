@@ -50,8 +50,27 @@ export function themePreference(): ThemePreference {
   return storedTheme() ?? "system";
 }
 
+/**
+ * Refinement 7, THM-01b-6: the installed Android app's report of the OS night
+ * state (NativeThemePlugin, via useSystemBarsTheme), once it has given one.
+ * The WebView's prefers-color-scheme can stay on the old value after the app
+ * lifts a forced night mode (Light stored at launch, then System, then an OS
+ * flip), so where the native shell has spoken it wins. Null everywhere else,
+ * including the browser, where matchMedia is the truth.
+ */
+let nativeDeviceTheme: Theme | null = null;
+
+/**
+ * Set on `window` once the native shell reports the OS night state, so the
+ * head script's prefers-color-scheme listener (app/layout.tsx) stops repainting
+ * from a media query that may be stale. Shared here so both sides spell it the
+ * same way.
+ */
+export const NATIVE_SCHEME_FLAG = "__videolensNativeScheme";
+
 /** The theme the device asks for right now. Light when it cannot be read. */
 export function deviceTheme(): Theme {
+  if (nativeDeviceTheme) return nativeDeviceTheme;
   try {
     return window.matchMedia(SYSTEM_DARK_QUERY).matches ? "dark" : "light";
   } catch {
@@ -109,6 +128,17 @@ export const themePreferenceSource = {
    *  rule applied once more in case no event comes. */
   followDevice(): void {
     if (storedTheme() === null) paintTheme(deviceTheme());
+  },
+  /** The native shell's word on the OS night state (refinement 7): becomes
+   *  the device theme from now on, and repaints if nothing is stored. */
+  adoptDeviceTheme(theme: Theme): void {
+    nativeDeviceTheme = theme;
+    try {
+      (window as unknown as Record<string, unknown>)[NATIVE_SCHEME_FLAG] = true;
+    } catch {
+      /* no window: nothing to tell the head script */
+    }
+    if (storedTheme() === null) paintTheme(theme);
   },
 };
 
