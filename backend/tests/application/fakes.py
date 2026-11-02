@@ -322,6 +322,8 @@ class FakeFreeRunAllowance:
         self.ip_counts: dict[str, int] = {}
         self.consume_calls = 0
         self.refunds: list[FreeRunClaim] = []
+        self.held: dict[str, FreeRunClaim] = {}
+        self.release_calls: list[tuple[str, bool]] = []
 
     @property
     def enabled(self) -> bool:
@@ -351,6 +353,17 @@ class FakeFreeRunAllowance:
         self.refunds.append(claim)
         self.device_counts[claim.device_id] -= 1
         self.ip_counts[claim.client_ip] -= 1
+
+    async def hold(self, run_id: str, claim: FreeRunClaim) -> None:
+        self.held[run_id] = claim
+
+    async def release(self, run_id: str, *, refund: bool) -> bool:
+        self.release_calls.append((run_id, refund))
+        claim = self.held.pop(run_id, None)
+        if claim is None or not refund:
+            return False
+        await self.refund(claim)
+        return True
 
     async def close(self) -> None:
         pass

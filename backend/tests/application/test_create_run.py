@@ -287,6 +287,25 @@ class FreeRunAdmissionTests(unittest.IsolatedAsyncioTestCase):
             await self._run(use_case)
         self.assertEqual(len(self.free_runs.refunds), 1)
 
+    async def test_an_accepted_run_holds_its_free_run_for_the_pipeline(self) -> None:
+        use_case = self._make()
+        run = await self._run(use_case)
+        self.assertIn(run.run_id, self.free_runs.held)
+        self.assertEqual(self.free_runs.held[run.run_id].device_id, "dev-a")
+
+    async def test_a_byok_run_holds_nothing(self) -> None:
+        use_case = self._make()
+        await self._run(use_case, token=None, key="user-key")
+        self.assertEqual(self.free_runs.held, {})
+
+    async def test_a_rejected_intake_drops_the_hold_and_refunds_once(self) -> None:
+        use_case = self._make()
+        self.queue.enqueue_error = ConnectionError("redis down")
+        with self.assertRaises(RunSchedulingError):
+            await self._run(use_case)
+        self.assertEqual(self.free_runs.held, {})
+        self.assertEqual(len(self.free_runs.refunds), 1)
+
     async def test_invalid_source_is_rejected_before_spending_a_free_run(self) -> None:
         use_case = self._make()
         with self.assertRaises(InvalidSourceError):

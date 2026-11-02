@@ -9,7 +9,13 @@ from ..domain.errors import (
     MediaValidationError,
     UserFacingError,
 )
-from ..domain.ports import AnalysisEngine, MediaProcessor, ObjectStore, RunRepository
+from ..domain.ports import (
+    AnalysisEngine,
+    FreeRunAllowance,
+    MediaProcessor,
+    ObjectStore,
+    RunRepository,
+)
 
 logger = logging.getLogger("videolens")
 
@@ -30,11 +36,13 @@ class ProcessRunUseCase:
         media: MediaProcessor,
         storage: ObjectStore,
         analysis: AnalysisEngine,
+        free_runs: FreeRunAllowance,
     ) -> None:
         self._runs = runs
         self._media = media
         self._storage = storage
         self._analysis = analysis
+        self._free_runs = free_runs
 
     async def _analyze_captions(
         self, run_id: str, source_url: str, gemini_api_key: str | None
@@ -127,6 +135,17 @@ class ProcessRunUseCase:
         except BaseException:  # noqa: BLE001 - cancelled on purpose
             pass
 
+    async def _settle_free_run(self, run_id: str, *, refund: bool) -> None:
+        """Hand the run's free run back (`refund`) or just forget it. Runs
+        that took none (own key, allowance off) hold nothing, so this is a
+        no-op for them. Bookkeeping only: a failure here never touches the
+        run's own outcome, and an unreleased hold expires on its own."""
+        try:
+            if await self._free_runs.release(run_id, refund=refund):
+                logger.info("Run %s: the download failed, so its free run was handed back", run_id)
+        except Exception:
+            logger.exception("Could not settle the free run for run %s", run_id)
+
     @staticmethod
     def _log_failure(run_id: str, exc: UserFacingError) -> None:
         if exc.log_detail:
@@ -146,6 +165,12 @@ class ProcessRunUseCase:
         await self._runs.set_status(run_id, RunStatus.PROCESSING)
         metadata = None
         visuals: asyncio.Task[MediaVisuals] | None = None
+        # True only when the run ends because the link could not be fetched:
+        # nothing reached Gemini, so a free run it took is handed back. A
+        # caption fallback that got as far as Gemini and failed there does
+        # not count (that is a Gemini failure), and neither does anything
+        # after a successful download (duration cap, normalize, analyze).
+        download_failed = False
         try:
             if source_url and not source_key:
                 await self._runs.set_stage(run_id, "downloading")
@@ -158,7 +183,11 @@ class ProcessRunUseCase:
                     # transcript beats "please try again".
                     if await self._analyze_captions(run_id, source_url, gemini_api_key):
                         return
+                    download_failed = True
                     raise exc
+                except Exception:
+                    download_failed = True
+                    raise
                 saved_path = downloaded.path
                 run_dir = downloaded.run_dir
                 if downloaded.metadata is not None:
@@ -232,6 +261,7 @@ class ProcessRunUseCase:
             await self._runs.set_error(run_id, "The analysis didn't finish. Please try again.")
         finally:
             await self._discard_visuals(visuals)
+            await self._settle_free_run(run_id, refund=download_failed)
             if source_key:
                 try:
                     await self._storage.delete_source(source_key)

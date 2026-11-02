@@ -202,6 +202,20 @@ class FreeRunAllowance(Protocol):
 
     async def refund(self, claim: FreeRunClaim) -> None: ...
 
+    async def hold(self, run_id: str, claim: FreeRunClaim) -> None:
+        """Remember which free run `run_id` took, so the pipeline can hand it
+        back later without the claim travelling in job arguments (arq logs
+        those). Stores counter keys only, never the raw IP."""
+        ...
+
+    async def release(self, run_id: str, *, refund: bool) -> bool:
+        """Forget the free run held for `run_id`, handing it back first when
+        `refund` is true. Atomic and idempotent: only the first call for a
+        run acts, so a run is never refunded twice. True when a run was
+        handed back; False when nothing was held (BYOK, allowance off,
+        already released, expired) or `refund` was false."""
+        ...
+
     async def close(self) -> None: ...
 
 

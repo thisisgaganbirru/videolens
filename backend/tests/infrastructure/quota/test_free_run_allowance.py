@@ -96,5 +96,53 @@ class FreeRunAllowanceStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(await store.try_consume("dev-b", ""))
 
 
+    async def test_a_held_run_is_handed_back_on_release(self) -> None:
+        store = self._store(per_device=1, per_ip=1)
+        claim = await store.try_consume("dev-a", "1.1.1.1")
+        await store.hold("run-1", claim)
+        self.assertTrue(await store.release("run-1", refund=True))
+        self.assertEqual((await store.status("dev-a")).used, 0)
+        self.assertIsNotNone(await store.try_consume("dev-b", "1.1.1.1"))
+
+    async def test_release_refunds_at_most_once(self) -> None:
+        store = self._store(per_device=3)
+        await store.try_consume("dev-a", "1.1.1.1")
+        claim = await store.try_consume("dev-a", "1.1.1.1")
+        await store.hold("run-1", claim)
+        self.assertTrue(await store.release("run-1", refund=True))
+        self.assertFalse(await store.release("run-1", refund=True))
+        self.assertEqual((await store.status("dev-a")).used, 1)
+
+    async def test_release_without_refund_just_forgets(self) -> None:
+        store = self._store()
+        claim = await store.try_consume("dev-a", "1.1.1.1")
+        await store.hold("run-1", claim)
+        self.assertFalse(await store.release("run-1", refund=False))
+        self.assertFalse(await store.release("run-1", refund=True))
+        self.assertEqual((await store.status("dev-a")).used, 1)
+
+    async def test_releasing_a_run_that_held_nothing_is_a_no_op(self) -> None:
+        store = self._store()
+        await store.try_consume("dev-a", "1.1.1.1")
+        self.assertFalse(await store.release("byok-run", refund=True))
+        self.assertEqual((await store.status("dev-a")).used, 1)
+
+    async def test_a_held_refund_after_midnight_goes_to_the_claims_day(self) -> None:
+        store = self._store(per_device=1)
+        with patch.object(free_run_allowance, "_today", return_value="2026-11-01"):
+            claim = await store.try_consume("dev-a", "1.1.1.1")
+            await store.hold("run-1", claim)
+        with patch.object(free_run_allowance, "_today", return_value="2026-11-02"):
+            self.assertIsNotNone(await store.try_consume("dev-a", "1.1.1.1"))
+            await store.release("run-1", refund=True)
+            # Today's run stays spent: the refund belonged to yesterday.
+            self.assertEqual((await store.status("dev-a")).used, 1)
+
+    async def test_a_hold_never_stores_the_raw_ip(self) -> None:
+        store = self._store()
+        claim = await store.try_consume("dev-a", "203.0.113.7")
+        await store.hold("run-1", claim)
+        self.assertNotIn("203.0.113.7", repr(store._held))
+
 if __name__ == "__main__":
     unittest.main()

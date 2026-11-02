@@ -2,10 +2,12 @@ import asyncio
 import os
 import unittest
 
+from app.application.create_run import CreateRunUseCase
 from app.application.process_run import RUN_INTERRUPTED_MESSAGE, ProcessRunUseCase
 from app.domain.entities import (
     AnalysisCompleteness,
     CaptionTrack,
+    Principal,
     MediaVisuals,
     RunStatus,
     SourceMetadata,
@@ -19,9 +21,14 @@ from app.domain.errors import (
 
 from .fakes import (
     FakeAnalysisEngine,
+    FakeDeviceTokens,
+    FakeFreeRunAllowance,
+    FakeJobQueue,
     FakeMediaProcessor,
     FakeObjectStore,
     FakeRunRepository,
+    FakeSpendCap,
+    FakeUploadedFile,
     RaisingObjectStore,
 )
 
@@ -40,7 +47,14 @@ class ProcessRunUseCaseTests(unittest.IsolatedAsyncioTestCase):
         self.media = FakeMediaProcessor()
         self.storage = storage or FakeObjectStore()
         self.analysis = analysis or FakeAnalysisEngine(result=ANALYSIS)
-        return ProcessRunUseCase(runs=self.runs, media=self.media, storage=self.storage, analysis=self.analysis)
+        self.free_runs = FakeFreeRunAllowance()
+        return ProcessRunUseCase(
+            runs=self.runs,
+            media=self.media,
+            storage=self.storage,
+            analysis=self.analysis,
+            free_runs=self.free_runs,
+        )
 
     async def asyncSetUp(self) -> None:
         self.use_case = self._make_use_case()
@@ -438,6 +452,159 @@ class ProcessRunUseCaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(cancelled.is_set())
         self.assertEqual(self.runs.runs["run-1"].status, RunStatus.FAILED)
         self.assertEqual(self.media.cleaned_up, ["run-1"])
+
+
+class FreeRunDownloadRefundTests(unittest.IsolatedAsyncioTestCase):
+    """A link that cannot be fetched hands its free run back; anything that
+    fails after the media is in hand (or at Gemini) does not."""
+
+    URL = "https://www.instagram.com/p/private"
+    PRIVATE = "This post isn't public."
+
+    def setUp(self) -> None:
+        self.runs = FakeRunRepository()
+        self.media = FakeMediaProcessor()
+        self.analysis = FakeAnalysisEngine(result=ANALYSIS)
+        self.free_runs = FakeFreeRunAllowance()
+        self.use_case = ProcessRunUseCase(
+            runs=self.runs,
+            media=self.media,
+            storage=FakeObjectStore(),
+            analysis=self.analysis,
+            free_runs=self.free_runs,
+        )
+
+    async def _intake(self, *, key: str | None = None, url: str | None = URL, file=None) -> str:
+        """Admit a run through the real intake, so the hold is placed the
+        way production places it."""
+        create = CreateRunUseCase(
+            runs=self.runs,
+            media=self.media,
+            storage=FakeObjectStore(),
+            queue=FakeJobQueue(),
+            spend_cap=FakeSpendCap(),
+            free_runs=self.free_runs,
+            device_tokens=FakeDeviceTokens(),
+            distributed=False,
+        )
+        run = await create.execute(
+            principal=Principal(subject="client:owner", authenticated=False),
+            accept_terms=True,
+            file=file,
+            url=url,
+            gemini_api_key=key,
+            device_token="good:dev-a",
+            client_ip="1.1.1.1",
+        )
+        return run.run_id
+
+    async def test_a_link_that_fails_to_download_refunds_the_free_run(self) -> None:
+        run_id = await self._intake()
+        self.assertEqual(self.free_runs.device_counts["dev-a"], 1)
+        self.media.download_error = MediaValidationError(self.PRIVATE)
+
+        await self.use_case.execute(run_id, source_url=self.URL)
+
+        self.assertEqual(self.runs.runs[run_id].status, RunStatus.FAILED)
+        self.assertEqual(self.free_runs.device_counts["dev-a"], 0)
+        self.assertEqual(self.free_runs.ip_counts["1.1.1.1"], 0)
+        self.assertEqual(len(self.free_runs.refunds), 1)
+
+    async def test_an_unexpected_download_error_also_refunds(self) -> None:
+        run_id = await self._intake()
+        self.media.download_error = RuntimeError("yt-dlp blew up")
+
+        await self.use_case.execute(run_id, source_url=self.URL)
+
+        self.assertEqual(self.free_runs.device_counts["dev-a"], 0)
+
+    async def test_a_failure_at_analyze_is_not_refunded(self) -> None:
+        run_id = await self._intake()
+        self.analysis.error = AnalysisUnavailableError("Gemini is busy.")
+
+        await self.use_case.execute(run_id, source_url=self.URL)
+
+        self.assertEqual(self.runs.runs[run_id].status, RunStatus.FAILED)
+        self.assertEqual(self.free_runs.device_counts["dev-a"], 1)
+        self.assertEqual(self.free_runs.refunds, [])
+        # The hold is still cleared, so nothing can refund it later.
+        self.assertEqual(self.free_runs.held, {})
+
+    async def test_a_byok_run_that_fails_to_download_refunds_nothing(self) -> None:
+        run_id = await self._intake(key="user-key")
+        self.media.download_error = MediaValidationError(self.PRIVATE)
+
+        await self.use_case.execute(run_id, source_url=self.URL, gemini_api_key="user-key")
+
+        self.assertEqual(self.free_runs.consume_calls, 0)
+        self.assertEqual(self.free_runs.refunds, [])
+
+    async def test_never_refunds_the_same_run_twice(self) -> None:
+        run_id = await self._intake()
+        self.media.download_error = MediaValidationError(self.PRIVATE)
+
+        # A retried job (arq max_tries) fails the download a second time.
+        await self.use_case.execute(run_id, source_url=self.URL)
+        await self.use_case.execute(run_id, source_url=self.URL)
+
+        self.assertEqual(len(self.free_runs.refunds), 1)
+        self.assertEqual(self.free_runs.device_counts["dev-a"], 0)
+
+    async def test_a_caption_rescue_completes_the_run_and_keeps_the_free_run(self) -> None:
+        run_id = await self._intake()
+        self.media.download_error = MediaValidationError("HTTP Error 403: Forbidden")
+        self.media.captions = CAPTIONS
+
+        await self.use_case.execute(run_id, source_url=self.URL)
+
+        self.assertEqual(self.runs.runs[run_id].status, RunStatus.COMPLETE)
+        self.assertEqual(self.free_runs.refunds, [])
+        self.assertEqual(self.free_runs.held, {})
+
+    async def test_captions_that_fail_at_gemini_are_not_refunded(self) -> None:
+        run_id = await self._intake()
+        self.media.download_error = MediaValidationError("HTTP Error 403: Forbidden")
+        self.media.captions = CAPTIONS
+        self.analysis.caption_error = AnalysisUnavailableError("Gemini is busy.")
+
+        await self.use_case.execute(run_id, source_url=self.URL)
+
+        self.assertEqual(self.runs.runs[run_id].status, RunStatus.FAILED)
+        self.assertEqual(self.free_runs.refunds, [])
+
+    async def test_too_long_after_downloading_is_not_refunded(self) -> None:
+        run_id = await self._intake()
+        self.media.enforce_duration_error = MediaValidationError("This video is too long.")
+
+        await self.use_case.execute(run_id, source_url=self.URL)
+
+        self.assertEqual(self.runs.runs[run_id].status, RunStatus.FAILED)
+        self.assertEqual(self.free_runs.refunds, [])
+
+    async def test_an_upload_that_fails_processing_is_not_refunded(self) -> None:
+        run_id = await self._intake(url=None, file=FakeUploadedFile())
+        self.analysis.error = MediaValidationError("bad file")
+
+        await self.use_case.execute(
+            run_id, saved_path=f"/tmp/{run_id}/upload.mp4", run_dir=f"/tmp/{run_id}"
+        )
+
+        self.assertEqual(self.runs.runs[run_id].status, RunStatus.FAILED)
+        self.assertEqual(self.free_runs.refunds, [])
+
+    async def test_a_failing_refund_does_not_change_the_run_outcome(self) -> None:
+        run_id = await self._intake()
+        self.media.download_error = MediaValidationError(self.PRIVATE)
+
+        async def broken_release(run_id: str, *, refund: bool) -> bool:
+            raise ConnectionError("redis down")
+
+        self.free_runs.release = broken_release  # type: ignore[method-assign]
+
+        await self.use_case.execute(run_id, source_url=self.URL)
+
+        self.assertEqual(self.runs.runs[run_id].status, RunStatus.FAILED)
+        self.assertEqual(self.runs.runs[run_id].error, self.PRIVATE)
 
 
 if __name__ == "__main__":

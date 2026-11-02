@@ -56,6 +56,7 @@ class Container:
             media=self.media,
             storage=self.object_store,
             analysis=self.analysis_engine,
+            free_runs=self.free_runs,
         )
         self.job_queue = RunQueue(
             settings, local_runner=self.process_run_use_case.execute, key_vault=self.key_vault

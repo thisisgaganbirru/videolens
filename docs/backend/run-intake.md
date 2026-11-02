@@ -11,7 +11,7 @@ Accepts a media source (file or URL) from `POST /api/runs`, applies the intake b
 **Rules enforced, in order**
 1. `accept_terms` must be true, or `TermsNotAcceptedError`.
 2. Exactly one of `file`/`url` must be given, or `InvalidSourceError` (and the uploaded file, if any, is explicitly closed before raising).
-3. `_admit`: if no BYOK key was supplied and free runs are enabled, a valid `X-Device-Token` is required (`DeviceTokenInvalidError`) and one free run is taken from the device and IP counters (`FreeRunsExhaustedError` when either is spent). See `free-runs.md`. Then, still only without a BYOK key, the daily spend cap (`SpendCap.try_consume()`) must allow it, or `QuotaExceededError`. Any failure from here on refunds the free run.
+3. `_admit`: if no BYOK key was supplied and free runs are enabled, a valid `X-Device-Token` is required (`DeviceTokenInvalidError`) and one free run is taken from the device and IP counters (`FreeRunsExhaustedError` when either is spent). See `free-runs.md`. Then, still only without a BYOK key, the daily spend cap (`SpendCap.try_consume()`) must allow it, or `QuotaExceededError`. Any failure from here on refunds the free run. Before `_accept`, the free run is held against the `run_id` (`FreeRunAllowance.hold`) so `ProcessRunUseCase` can hand it back if the link later fails to download; a failed intake drops that hold before refunding.
 4. If a file was given: saved to disk, duration-capped via `MediaProcessor.enforce_duration_cap`. In distributed mode (`distributed=True`, i.e. `queue_enabled`), the file is immediately uploaded to S3 and the local copy deleted — a different process (the worker) will handle it.
 5. The run record is created (`RunRepository.create`) with `source_kind` (`"file"`/`"link"`) and, for uploads, the extension-derived `platform` (`audio_file`/`video_file`) and the probed `duration_seconds` returned by `enforce_duration_cap` — never the original filename. Then handed to `JobQueue.enqueue`.
 
@@ -24,3 +24,4 @@ Accepts a media source (file or URL) from `POST /api/runs`, applies the intake b
 ## Changelog
 - 2026-11-01 · backend agent (Phase 3) · intake records `source_kind`, file `platform` and probed duration on the run
 - 2026-11-01 · backend agent (Phase 5b) · source check now precedes the spend cap; added the free-run admission step and its refund-on-failure
+- 2026-11-02 · backend agent (free-run download refund) · intake now holds the free run per `run_id` for the download-failure refund
