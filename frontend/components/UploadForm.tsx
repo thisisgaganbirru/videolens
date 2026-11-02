@@ -117,6 +117,18 @@ export default function UploadForm({
   const [checking, setChecking] = useState(false);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /* Which control the error is about. Only a link error marks the link field
+     invalid (red border, aria-invalid): the terms error is about the checkbox,
+     and a file error about a file the field never saw (refinement 2, #4). */
+  const [errorField, setErrorField] = useState<"url" | "terms" | "file" | null>(null);
+  const showError = useCallback((message: string, field: "url" | "terms" | "file") => {
+    setError(message);
+    setErrorField(field);
+  }, []);
+  const clearError = useCallback(() => {
+    setError(null);
+    setErrorField(null);
+  }, []);
   /* Which of the two entry points is waiting. Both are disabled while a submit
      is in flight, but only the one the user actually pressed should say so —
      "sending…" on both reads as two things happening at once. */
@@ -138,23 +150,25 @@ export default function UploadForm({
     if (!sharedUrl) return;
     setUrl(sharedUrl.url);
     setError(null);
+    setErrorField(null);
   }, [sharedUrl]);
 
   const handleFile = useCallback(
     async (file: File) => {
       const validationError = validateFile(file);
       if (validationError) {
-        setError(validationError);
+        showError(validationError, "file");
         return;
       }
 
-      setError(null);
+      clearError();
       setChecking(true);
       try {
         const duration = await readMediaDuration(file);
         if (duration > MAX_DURATION_SECONDS) {
-          setError(
-            `Media is ${Math.round(duration)}s long, which exceeds the ${MAX_DURATION_SECONDS}s limit.`
+          showError(
+            `Media is ${Math.round(duration)}s long, which exceeds the ${MAX_DURATION_SECONDS}s limit.`,
+            "file"
           );
           return;
         }
@@ -167,7 +181,7 @@ export default function UploadForm({
       setPendingKind("file");
       onSubmit({ file });
     },
-    [onSubmit]
+    [clearError, onSubmit, showError]
   );
 
   const submitUrl = (event: FormEvent) => {
@@ -177,26 +191,26 @@ export default function UploadForm({
     /* The button stays enabled with an empty field, as drawn on Main.png: a
        greyed-out primary action gives no reason, an error on press does. */
     if (!value) {
-      setError("Paste a link to analyze.");
+      showError("Paste a link to analyze.", "url");
       document.getElementById("media-url")?.focus();
       return;
     }
     if (!acceptedTerms) {
-      setError("Accept the media-use terms before analysis.");
+      showError("Accept the media-use terms before analysis.", "terms");
       return;
     }
     const validationError = validateUrl(value);
     if (validationError) {
-      setError(validationError);
+      showError(validationError, "url");
       return;
     }
-    setError(null);
+    clearError();
     setPendingKind("url");
     onSubmit({ url: value });
   };
 
   const rejectUnaccepted = () => {
-    setError("Accept the media-use terms before analysis.");
+    showError("Accept the media-use terms before analysis.", "terms");
   };
 
   /* URL downloads are the one capability with a consequence the user can act
@@ -211,7 +225,7 @@ export default function UploadForm({
      region: it reaches a screen-reader user at the moment they focus the input
      — which is when it matters — instead of competing with the summary strip's
      announcement on load. */
-  const describedBy = [error ? "intake-error" : null, urlNotice ? "url-capability" : null]
+  const describedBy = [error && errorField === "url" ? "intake-error" : null, urlNotice ? "url-capability" : null]
     .filter(Boolean)
     .join(" ");
 
@@ -229,7 +243,10 @@ export default function UploadForm({
           {submitError}
         </p>
       ) : null}
-      <form onSubmit={submitUrl} className="link-form">
+      {/* noValidate: the field is type="url" for the keyboard and autofill,
+          but the browser's own "Please enter a URL." bubble would pre-empt
+          the app's messages below (refinement 2, #4). submitUrl validates. */}
+      <form onSubmit={submitUrl} className="link-form" noValidate>
         <label htmlFor="media-url" className="intake-card__label">
           Paste a link
         </label>
@@ -240,12 +257,12 @@ export default function UploadForm({
             value={url}
             onChange={(event) => {
               setUrl(event.target.value);
-              setError(null);
+              clearError();
             }}
             placeholder="YouTube, TikTok, or Instagram link"
             autoComplete="url"
             disabled={busy}
-            aria-invalid={error ? "true" : undefined}
+            aria-invalid={error && errorField === "url" ? "true" : undefined}
             aria-describedby={describedBy || undefined}
             className="field"
           />
@@ -312,8 +329,8 @@ export default function UploadForm({
             accessibility tree too. */}
         <div className="drop-text">
           <p className="drop-title">
-            <span className="drop-title--pointer">Drop an audio or video file</span>
-            <span className="drop-title--touch">Add an audio or video file</span>
+            <span className="only-pointer">Drop an audio or video file</span>
+            <span className="only-touch">Add an audio or video file</span>
           </p>
           <p className="hint">
             MP3, MP4, or MOV. Up to {MAX_FILE_SIZE_MB} MB and {MAX_DURATION_SECONDS / 60} minutes.
@@ -354,11 +371,13 @@ export default function UploadForm({
           type="checkbox"
           checked={acceptedTerms}
           disabled={busy}
+          aria-invalid={error && errorField === "terms" ? "true" : undefined}
+          aria-describedby={error && errorField === "terms" ? "intake-error" : undefined}
           onChange={(event) => {
             const accepted = event.target.checked;
             setAcceptedTerms(accepted);
             writeTermsAccepted(accepted);
-            setError(null);
+            clearError();
           }}
         />
         <span>

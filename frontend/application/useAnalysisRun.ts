@@ -70,6 +70,9 @@ export function useAnalysisRun() {
      chip. Known only for runs submitted in this session; a run reopened from
      History has none until its metadata arrives. */
   const [sourceName, setSourceName] = useState<string | null>(null);
+  /* The media's length, from the run detail (or the History record), for the
+     Source card of a file run (refinement 2, #6). */
+  const [durationSeconds, setDurationSeconds] = useState<number | null>(null);
   /* The last submitted source, kept so a failed run can be retried with one
      press instead of re-pasting or re-picking. State rather than a ref because
      the screen reads it (whether to offer "Try again") during render. Cleared
@@ -142,6 +145,7 @@ export function useAnalysisRun() {
     setStatus(run.status);
     setStage(run.stage);
     if (run.source_metadata) setSourceMetadata(run.source_metadata);
+    if (typeof run.duration_seconds === "number") setDurationSeconds(run.duration_seconds);
     /* `source_kind` is the server's record of how the run arrived, so when
        the response carries it, it decides — both ways. Runs stored before the
        field existed omit it; only then does the old inference apply: source
@@ -283,6 +287,7 @@ export function useAnalysisRun() {
       setResult(null);
       setCompleteness("full");
       setSourceMetadata(null);
+      setDurationSeconds(null);
       setStage(null);
       setSourceKind(source.url ? "url" : "file");
       const generation = ++generationRef.current;
@@ -349,6 +354,7 @@ export function useAnalysisRun() {
     setCompleteness("full");
     setSourceMetadata(null);
     setSourceName(null);
+    setDurationSeconds(null);
     setRetrySource(null);
     setError(null);
     setExpired(null);
@@ -367,6 +373,7 @@ export function useAnalysisRun() {
       setCompleteness("full");
       setSourceMetadata(null);
       setSourceName(null);
+      setDurationSeconds(null);
       setRetrySource(null);
       setExpired(null);
       setSourceKind(sourceKindHint === "link" ? "url" : "file");
@@ -378,6 +385,10 @@ export function useAnalysisRun() {
       try {
         const record = await historyStore.get(runId);
         if (generationRef.current !== generation) return;
+        /* What this browser remembers about an upload: its name (never sent
+           to or kept by the server) and its length. */
+        if (record?.file_name) setSourceName(record.file_name);
+        if (typeof record?.duration_seconds === "number") setDurationSeconds(record.duration_seconds);
         if (record && ((record.status === "complete" && record.result) || record.status === "failed")) {
           setSourceKind(record.source_kind === "link" ? "url" : "file");
           if (record.source_metadata) setSourceMetadata(record.source_metadata);
@@ -429,6 +440,7 @@ export function useAnalysisRun() {
     error,
     submitting,
     sourceName,
+    durationSeconds,
     canRetry: retrySource !== null,
     expired: expired !== null,
     againUrl: expired?.againUrl ?? null,

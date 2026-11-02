@@ -123,6 +123,7 @@ export function recordSubmitted(runId: string, status: HistoryRecord["status"], 
   };
   if (source.url) patch.source_url = source.url;
   if (source.file) {
+    patch.file_name = source.file.name;
     const audio = source.file.type.startsWith("audio/") || /\.mp3$/i.test(source.file.name);
     patch.platform = audio ? "audio_file" : "video_file";
   }

@@ -7,6 +7,7 @@ import { ArrowUpRight, Check, ChevronDown, Copy, Share2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { splitTakeaway } from "./takeaway";
+import { formatDuration } from "./history";
 import type {
   AnalysisCompleteness,
   ScreenTextSegment,
@@ -488,6 +489,38 @@ export function SourceCard({ metadata }: { metadata: SourceMetadata }) {
               </time>
             </p>
           )}
+        </footer>
+      )}
+    </article>
+  );
+}
+
+/**
+ * The Source card for an uploaded file (refinement 2, #6). A file run has no
+ * platform metadata — the server keeps neither the name nor anything about the
+ * file beyond its length — so this shows what is honestly known: the name as
+ * picked in this browser (from the submit, or the History record) and the
+ * duration from the run detail. Either may be missing; the caller renders the
+ * card only when at least one is present.
+ */
+export function FileSourceCard({ name, durationSeconds }: { name: string | null; durationSeconds: number | null }) {
+  const duration = formatDuration(durationSeconds);
+  const kind = name && /\.mp3$/i.test(name) ? "Audio file" : name && /\.(mp4|mov)$/i.test(name) ? "Video file" : "Uploaded file";
+  return (
+    <article className="source-card">
+      <div className="source-card__origin">
+        <span className="source-card__platform">{kind}</span>
+      </div>
+      {name && (
+        <p className="source-card__file-name" title={name}>
+          {name}
+        </p>
+      )}
+      {duration && (
+        <footer className="source-card__footer">
+          <p className="source-card__stat">
+            Duration <strong>{duration}</strong>
+          </p>
         </footer>
       )}
     </article>

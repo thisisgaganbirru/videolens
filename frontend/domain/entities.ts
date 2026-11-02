@@ -151,6 +151,10 @@ export interface HistoryRecord {
    *  uploads and imported runs; absent on records written before it existed.
    *  Stays in IndexedDB — never sent anywhere new. */
   source_url?: string | null;
+  /** The uploaded file's name as picked in this browser (refinement 2, #6),
+   *  for the result's Source card. The server never keeps it. Null for links
+   *  and imported runs; absent on records written before it existed. */
+  file_name?: string | null;
   updated_at: string;
 }
 

@@ -10,7 +10,7 @@ import FreeRunsBanner from "@/components/FreeRunsBanner";
 import { useFreeRuns } from "@/application/useFreeRuns";
 import UploadForm from "@/components/UploadForm";
 import RunStatusView from "@/components/RunStatusView";
-import ResultsView, { SourceCard, creatorInitials } from "@/components/ResultsView";
+import ResultsView, { FileSourceCard, SourceCard, creatorInitials } from "@/components/ResultsView";
 import ApiKeyPanel from "@/components/panels/ApiKeyPanel";
 import HistoryPanel from "@/components/panels/HistoryPanel";
 import VersionLogPanel from "@/components/panels/VersionLogPanel";
@@ -41,6 +41,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
     error,
     submitting,
     sourceName,
+    durationSeconds,
     canRetry,
     expired,
     againUrl,
@@ -99,6 +100,13 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      nothing on screen advances until one succeeds (which clears `error` and
      drops this flag on its own). */
   const connectionLost = Boolean(error) && (status === "queued" || status === "processing");
+  /* An uploaded file's Source card (refinement 2, #6): only for a file run,
+     and only when there is something true to show — the name this browser
+     picked, or the length the run detail reported. */
+  const fileSource =
+    !sourceMetadata && sourceKind === "file" && (sourceName || durationSeconds !== null)
+      ? { name: sourceName, durationSeconds }
+      : null;
 
   /* What the intake's link field starts with (refinement 1, #7 and #14). Two
      sources: a link shared into the app, and "Analyze it again" on an expired
@@ -195,8 +203,11 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                 <p className="eyebrow">New analysis</p>
                 <h1 className="intake-title">Turn any short video into clean notes.</h1>
                 <p className="intake-lede">
-                  Paste a link or drop a file. You get a transcript, the text on screen, a short
-                  summary, and notes you can keep.
+                  {/* Same pointer/touch swap as the drop zone's title
+                      (globals.css): "drop" is a lie on a touch screen. */}
+                  <span className="only-pointer">Paste a link or drop a file.</span>
+                  <span className="only-touch">Paste a link or add a file.</span> You get a
+                  transcript, the text on screen, a short summary, and notes you can keep.
                 </p>
                 <UploadForm
                   onSubmit={submit}
@@ -294,7 +305,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     (ResultsMobile.png), so the results are the first thing on
                     screen. From 56rem the column stands beside the results and
                     the pill is display:none — the panel is always open there. */}
-                {sourceMetadata && (
+                {(sourceMetadata || fileSource) && (
                   <button
                     type="button"
                     className="source-toggle"
@@ -302,14 +313,20 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     aria-expanded={sourceOpen}
                     aria-controls="source-panel"
                   >
-                    {sourceMetadata.uploader && (
+                    {sourceMetadata?.uploader && (
                       <span className="source-card__monogram" aria-hidden="true">
                         {creatorInitials(sourceMetadata.uploader)}
                       </span>
                     )}
                     <span className="source-toggle__text">
-                      Source: {sourceMetadata.platform}
-                      {sourceMetadata.uploader ? `, ${sourceMetadata.uploader}` : ""}
+                      {sourceMetadata ? (
+                        <>
+                          Source: {sourceMetadata.platform}
+                          {sourceMetadata.uploader ? `, ${sourceMetadata.uploader}` : ""}
+                        </>
+                      ) : (
+                        <>Source: {fileSource?.name ?? "uploaded file"}</>
+                      )}
                     </span>
                     <ChevronDown className="source-toggle__chevron" aria-hidden="true" />
                   </button>
@@ -317,6 +334,8 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                 <div className="source-panel" id="source-panel" data-open={sourceOpen ? "true" : "false"}>
                   {sourceMetadata ? (
                     <SourceCard metadata={sourceMetadata} />
+                  ) : fileSource ? (
+                    <FileSourceCard name={fileSource.name} durationSeconds={fileSource.durationSeconds} />
                   ) : (
                     <p className="pending-note">
                       No source details for this run — it was an uploaded file.
