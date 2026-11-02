@@ -6,6 +6,7 @@ import type { SharedUrl } from "@/application/useSharedUrl";
 import { ArrowUpFromLine } from "lucide-react";
 import { CapabilityCallout } from "@/components/CapabilityNotice";
 import { isNoticeable } from "@/application/useCapabilities";
+import { revealField } from "@/application/useSoftKeyboard";
 
 const ACCEPTED_EXTENSIONS = [".mp3", ".mp4", ".mov"];
 const MAX_FILE_SIZE_MB = 200;
@@ -119,11 +120,20 @@ export default function UploadForm({
   const [error, setError] = useState<string | null>(null);
   /* Which control the error is about. Only a link error marks the link field
      invalid (red border, aria-invalid): the terms error is about the checkbox,
-     and a file error about a file the field never saw (refinement 2, #4). */
+     and a file error about a file the field never saw (refinement 2, #4).
+     Refinement 4 (INT-01/03/05): the message renders right under that control
+     (not at the foot of the card, where a soft keyboard covered it), is its
+     aria-describedby, and the control plus message are scrolled into view. */
   const [errorField, setErrorField] = useState<"url" | "terms" | "file" | null>(null);
+  /* Bumped on every rejection, so pressing Analyze twice on the same empty
+     field brings it back into view the second time too. */
+  const [errorSeq, setErrorSeq] = useState(0);
+  const revealRef = useRef<"url" | "terms" | "file" | null>(null);
   const showError = useCallback((message: string, field: "url" | "terms" | "file") => {
     setError(message);
     setErrorField(field);
+    revealRef.current = field;
+    setErrorSeq((n) => n + 1);
   }, []);
   const clearError = useCallback(() => {
     setError(null);
@@ -134,10 +144,29 @@ export default function UploadForm({
      "sending…" on both reads as two things happening at once. */
   const [pendingKind, setPendingKind] = useState<"url" | "file" | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const urlRef = useRef<HTMLInputElement>(null);
+  const termsRef = useRef<HTMLInputElement>(null);
+  const browseRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!submitting) setPendingKind(null);
   }, [submitting]);
+
+  /* After the message has rendered: move focus to the control it is about
+     (the link field, or the terms box) and bring the pair into view. A file
+     error leaves focus alone — the picker just closed, and Browse files is
+     already where the user is — but is still scrolled to. Focusing the link
+     field opens the keyboard on a phone; useSoftKeyboard then re-reveals the
+     same group once the keyboard has taken its room. */
+  useEffect(() => {
+    const field = revealRef.current;
+    revealRef.current = null;
+    if (errorSeq === 0 || !field) return;
+    const target = field === "url" ? urlRef.current : field === "terms" ? termsRef.current : browseRef.current;
+    if (!target) return;
+    if (field !== "file") target.focus({ preventScroll: true });
+    revealField(target);
+  }, [errorSeq]);
 
   useEffect(() => {
     setAcceptedTerms(readTermsAccepted());
@@ -192,7 +221,6 @@ export default function UploadForm({
        greyed-out primary action gives no reason, an error on press does. */
     if (!value) {
       showError("Paste a link to analyze.", "url");
-      document.getElementById("media-url")?.focus();
       return;
     }
     if (!acceptedTerms) {
@@ -225,7 +253,7 @@ export default function UploadForm({
      region: it reaches a screen-reader user at the moment they focus the input
      — which is when it matters — instead of competing with the summary strip's
      announcement on load. */
-  const describedBy = [error && errorField === "url" ? "intake-error" : null, urlNotice ? "url-capability" : null]
+  const describedBy = [error && errorField === "url" ? "url-error" : null, urlNotice ? "url-capability" : null]
     .filter(Boolean)
     .join(" ");
 
@@ -246,12 +274,13 @@ export default function UploadForm({
       {/* noValidate: the field is type="url" for the keyboard and autofill,
           but the browser's own "Please enter a URL." bubble would pre-empt
           the app's messages below (refinement 2, #4). submitUrl validates. */}
-      <form onSubmit={submitUrl} className="link-form" noValidate>
+      <form onSubmit={submitUrl} className="link-form" noValidate data-reveal-group>
         <label htmlFor="media-url" className="intake-card__label">
           Paste a link
         </label>
         <div className="link-row">
           <input
+            ref={urlRef}
             id="media-url"
             type="url"
             value={url}
@@ -274,6 +303,11 @@ export default function UploadForm({
           >
             {pendingKind === "url" && submitting ? "Sending…" : "Analyze link"}
           </button>
+          {error && errorField === "url" && (
+            <p id="url-error" role="alert" className="error-note field-error">
+              {error}
+            </p>
+          )}
         </div>
       </form>
 
@@ -290,6 +324,7 @@ export default function UploadForm({
         or
       </div>
 
+      <div data-reveal-group>
       <div
         data-dragging={dragActive ? "true" : undefined}
         data-blocked={blocked ? "true" : undefined}
@@ -337,10 +372,12 @@ export default function UploadForm({
           </p>
         </div>
         <button
+          ref={browseRef}
           type="button"
           onClick={() => inputRef.current?.click()}
           disabled={cannotStart || checking || !acceptedTerms}
           aria-busy={checking || (pendingKind === "file" && submitting) || undefined}
+          aria-describedby={error && errorField === "file" ? "file-error" : undefined}
           className="btn btn-secondary"
         >
           {pendingKind === "file" && submitting
@@ -365,14 +402,22 @@ export default function UploadForm({
           }}
         />
       </div>
+      {error && errorField === "file" && (
+        <p id="file-error" role="alert" className="error-note field-error">
+          {error}
+        </p>
+      )}
+      </div>
 
+      <div data-reveal-group>
       <label className="terms-row">
         <input
+          ref={termsRef}
           type="checkbox"
           checked={acceptedTerms}
           disabled={busy}
           aria-invalid={error && errorField === "terms" ? "true" : undefined}
-          aria-describedby={error && errorField === "terms" ? "intake-error" : undefined}
+          aria-describedby={error && errorField === "terms" ? "terms-error" : undefined}
           onChange={(event) => {
             const accepted = event.target.checked;
             setAcceptedTerms(accepted);
@@ -393,13 +438,12 @@ export default function UploadForm({
         </span>
       </label>
 
-      {/* `.error-note` is the named class for this exact recipe (`.pending-note`
-          at danger ink) — see the four-rung ladder documented in globals.css. */}
-      {error && (
-        <p id="intake-error" role="alert" className="error-note">
+      {error && errorField === "terms" && (
+        <p id="terms-error" role="alert" className="error-note field-error">
           {error}
         </p>
       )}
+      </div>
     </div>
   );
 }

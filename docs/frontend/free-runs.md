@@ -65,7 +65,22 @@ hydration agree.
 - At 1536×674 the intake already scrolls without the banner (587 vs 540 px content band; `upload-form.md`'s 2026-11-01 "no overflow at 1536×674" no longer holds). The banner adds about 46px there. Not addressed here.
 - No frontend test runner. Verified with Playwright against mocked `/api/*` (see the mem entry).
 
+## Unreachable server on launch (refinement 4, LCH-06)
+
+A failed read still hides the pill, but it is no longer the only thing that
+knew. `refreshFreeRuns` reports each result to
+`application/serverReachability.ts` (`noteReadResult`), which flags
+"unreachable" on a `NetworkError` only. `HomeScreen` shows a calm
+`ReachabilityNotice` in the capability slot ("Can't reach the server right
+now. You can still open past runs in History.", or "You're offline right now.
+..." when `navigator.onLine` is false). `useFreeRuns` registers with
+`onReconnectChance`: while the notice is up, `online`, window `focus` and
+`visibilitychange` to visible re-read the allowance if it is still unknown, so
+the pill appears on its own. Nothing is blocked. See
+`capability-reporting.md` for the other half.
+
 ## Changelog
 
 - 2026-11-01 · frontend agent (Phase 5b) · created: device token store, free-runs gateway/port, `useFreeRuns` store, 401 retry-once and 402 limit state in `useAnalysisRun`, `FreeRunsBanner` on all shells, `UploadForm` `blocked`, API key lede and Privacy sentence
 - 2026-11-01 · frontend agent (Phase 5c) · Add key now links to /app?view=api-key (via mainTabHref)
+- 2026-11-02 · frontend agent (refinement 4) · free-runs read reports reachability; re-read on online/focus/visible while the unreachable notice is up (LCH-06)

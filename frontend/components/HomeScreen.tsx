@@ -7,6 +7,8 @@ import BottomTabBar from "@/components/BottomTabBar";
 import SiteFooter from "@/components/SiteFooter";
 import CapabilityNotice from "@/components/CapabilityNotice";
 import FreeRunsBanner from "@/components/FreeRunsBanner";
+import ReachabilityNotice from "@/components/ReachabilityNotice";
+import { useServerReachability } from "@/application/serverReachability";
 import { useFreeRuns } from "@/application/useFreeRuns";
 import UploadForm from "@/components/UploadForm";
 import RunStatusView from "@/components/RunStatusView";
@@ -70,6 +72,11 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      (and again after each run, on a 402, or when the key is removed). */
   const freeRuns = useFreeRuns();
 
+  /* Refinement 4 (LCH-06): both reads above go quiet when they fail, which
+     made an unreachable server look exactly like a healthy one. This watches
+     them (and navigator.onLine), says so on Analyze, and retries them quietly
+     when the connection may be back. Never blocks the form. */
+  const reachability = useServerReachability();
   /* Once per app load: seed History from the server the first time, and
      re-check runs this browser last saw unfinished. Here, not in the History
      panel, because it has to happen whichever tab the app opens on. */
@@ -188,7 +195,11 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                   never sits between the lede and the card. First in the DOM
                   too, so it is read before the form it is about. */}
               <div className="cap-slot" aria-live="polite">
-                {notice && <CapabilityNotice report={notice} />}
+                {reachability !== "ok" ? (
+                  <ReachabilityNotice state={reachability} />
+                ) : (
+                  notice && <CapabilityNotice report={notice} />
+                )}
               </div>
               <div className="intake">
                 {/* Free runs (Phase 5b, IntakeFreeApp / IntakeLimitApp), above

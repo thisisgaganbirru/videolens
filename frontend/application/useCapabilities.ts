@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { Capability, CapabilityReport } from "@/domain/entities";
 import { capabilitiesGateway } from "@/infrastructure/container";
+import { noteReadResult, onReconnectChance } from "@/application/serverReachability";
 
 /* What the deployment says about itself, so a user learns a source will not
    work *before* spending an upload on it rather than after waiting through a
@@ -50,16 +51,35 @@ export function useCapabilities() {
 
   useEffect(() => {
     let cancelled = false;
-    capabilitiesGateway
-      .fetchReport()
-      .then((next) => {
-        if (!cancelled) setReport(next);
-      })
-      .catch(() => {
-        /* Deliberately empty — see (1) above. */
-      });
+    let have = false;
+    let pending = false;
+    const load = () => {
+      if (have || pending) return;
+      pending = true;
+      capabilitiesGateway
+        .fetchReport()
+        .then((next) => {
+          noteReadResult();
+          have = true;
+          if (!cancelled) setReport(next);
+        })
+        .catch((err: unknown) => {
+          /* Still silent here — see (1) above. What it does report is
+             whether the server could be reached at all, which Analyze says
+             on its own (serverReachability, refinement 4 LCH-06). */
+          noteReadResult(err);
+        })
+        .finally(() => {
+          pending = false;
+        });
+    };
+    load();
+    /* (2) still holds on a healthy launch: one fetch. A second happens only
+       when the first never arrived and the connection may be back. */
+    const stop = onReconnectChance(load);
     return () => {
       cancelled = true;
+      stop();
     };
   }, []);
 
