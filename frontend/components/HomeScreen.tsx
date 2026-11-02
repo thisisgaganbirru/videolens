@@ -50,12 +50,23 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
     reconnectIn,
     reconnecting,
     reconnectAttempt,
+    lostCause,
     submit,
     retry,
     reconnectNow,
     reset,
     openRun,
+    resume,
   } = useAnalysisRun();
+
+  /* Refinement 6 (RUN-06 web): a reload mid-run comes back to that run, not
+     to a fresh intake. Once per mount (`resume` is stable), and declared before `useSharedUrl`
+     below on purpose: effects run in order, so this sees a shared link
+     before that hook consumes it (and steps aside). A share arriving later
+     still wins — its reset drops the resumed run. */
+  useEffect(() => {
+    resume();
+  }, [resume]);
 
   /* Called here, once, rather than in the three components that consume it.
      This component is never unmounted by a tab switch (the tabs are a
@@ -182,7 +193,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
       <AppNav activeTab={activeTab} onSelectTab={goToMainTab} />
 
       {activeTab === "analyze" && (
-        <section ref={analyzeRef} className="view-scroll" data-view="analyze" aria-label="Analyze">
+        <main ref={analyzeRef} className="view-scroll" data-view="analyze" aria-label="Analyze">
           {status === "idle" && (
             <div className="intake-layout">
               {/* Always in the DOM, empty and zero-height when the deployment
@@ -293,6 +304,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                 sourceKind={sourceKind}
                 error={error}
                 connectionLost={connectionLost}
+                lostCause={lostCause}
                 sourceLabel={sourceName ?? sourceMetadata?.source_url.replace(/^https?:\/\/(www\.)?/i, "") ?? null}
                 retryInSeconds={reconnectIn}
                 retrying={reconnecting}
@@ -376,30 +388,32 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
               </div>
             </div>
           )}
-        </section>
+        </main>
       )}
 
-      {/* Every view below is its own `.view-scroll` section: from 32rem up the
-          section itself is the scroller, full-bleed between the fixed nav and
+      {/* Every view below is its own `.view-scroll` band: from 32rem up the
+          band itself is the scroller, full-bleed between the fixed nav and
           footer, scrolling only when its content is taller than that band
           (see app-shell-layout.md). Each page carries its own serif header —
-          the Terminal-era `.col-label`/`.surface`/`.pane` frame is gone. */}
+          the Terminal-era `.col-label`/`.surface`/`.pane` frame is gone.
+          Each band is a `<main>` (refinement 6, A11-02): exactly one view
+          renders at a time, so a page has exactly one main landmark. */}
       {activeTab === "history" && (
-        <section className="view-scroll" data-view="history" aria-label="History">
+        <main className="view-scroll" data-view="history" aria-label="History">
           <HistoryPanel onOpenRun={handleOpenRun} onAnalyze={() => goToMainTab("analyze")} />
-        </section>
+        </main>
       )}
 
       {activeTab === "api-key" && (
-        <section className="view-scroll" data-view="api-key" aria-label="API key">
+        <main className="view-scroll" data-view="api-key" aria-label="API key">
           <ApiKeyPanel budgetCapability={dailyBudget} />
-        </section>
+        </main>
       )}
 
       {activeTab === "releases" && (
-        <section className="view-scroll" data-view="releases" aria-label="Releases">
+        <main className="view-scroll" data-view="releases" aria-label="Releases">
           <VersionLogPanel />
-        </section>
+        </main>
       )}
 
       {/* Both shells' chrome is always rendered; `<html data-shell>` decides

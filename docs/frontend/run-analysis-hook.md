@@ -112,6 +112,32 @@ the write lands. File runs get the expired view's "Choose the file again".
 A 404 for an id this browser has never seen keeps the old idle + "Run not
 found." behaviour. Network errors and 5xx keep the reconnect countdown.
 
+## Refinement 6 (2026-11-02)
+
+- **RUN-06 web, resume after reload.** New port `ActiveRunStore`
+  (`domain/ports.ts`), adapter `SessionStorageActiveRunStore`
+  (`infrastructure/activeRunStore.ts`, key `videolens-active-run`, per tab,
+  every access in try/catch so blocked storage just means no resume),
+  registered as `activeRunStore` in `container.ts`. `startPolling` writes the
+  run id; `applyRun` clears it on `complete`/`failed`, as do `expireRun`,
+  `submit` and `reset`. `resume()` reads it and calls
+  `openRun(id, null, { resumed: true })`; `HomeScreen` calls it once on mount.
+  It does nothing unless the URL has no `view` (or `view=analyze`) and
+  `sharedUrlSource.pending()` is empty — a share or another tab in the URL
+  wins. A resumed open treats the run as known (so a 404 is the expired view
+  even without a History record), restores the link on the source chip and
+  for Try again / Analyze it again, clears the marker if History already has
+  the run settled, and on a non-404 failure goes to the connection-lost
+  screen and reconnects instead of dropping to the intake. The hook's unmount
+  cleanup now also bumps the generation, so a response landing after unmount
+  cannot write History or the marker.
+- **RUN-08, server trouble vs no connection.** New `lostCause: "network" |
+  "server"` (exported type `LostCause`), set from `classifyGatewayError` on
+  every poll/reconnect failure and reset by `clearReconnect`. A 5xx (or an
+  unreadable body) is `server`; a thrown fetch is `network`; a 404 stays the
+  expired path. Backoff, countdown and Retry now are unchanged; only
+  `RunStatusView`'s words differ.
+
 ## Changelog
 
 - 2026-08-21 · main session · made reset() clear the poll interval, and added the generation counter that drops a superseded submit/openRun response
@@ -125,3 +151,4 @@ found." behaviour. Network errors and 5xx keep the reconnect countdown.
 - 2026-11-01 · frontend agent (Phase 5b) · `submit` retries once on 401 `device_token_invalid`, marks the limit on 402 `free_runs_used` (no error line; back to idle from a failed-view retry), and refreshes the free-run count after a 202
 - 2026-11-01 · frontend agent (refinement 1) · `expired` / `againUrl` for runs the server forgot; `source_url` stored on submit (IndexedDB only)
 - 2026-11-02 · frontend agent (refinement 3) · a 404 on the live poll, a reconnect or openRun's server fallback now expires the run (History row failed + EXPIRED_MESSAGE, expired view) instead of "Connection lost" / "Run not found."; `liveUrlRef` for the link
+- 2026-11-02 · frontend agent (refinement 6) · RUN-06 web resume via sessionStorage ActiveRunStore; RUN-08 lostCause (network vs server) exposed for the lost screen

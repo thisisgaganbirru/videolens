@@ -294,6 +294,16 @@ Charlie, Delta with groups Today / Earlier this week / Earlier; Oldest =
 reversed, groups reversed; YouTube + Oldest = Alpha only; no page or section
 horizontal scroll (the pill row still scrolls sideways inside itself, as drawn).
 
+## Refinement 6 (2026-11-02)
+
+**RUN-13, Expired rows.** A run that expired on the server is stored as
+`status: "failed"` with `error === EXPIRED_MESSAGE`. `useRunHistory`'s
+`HistoryEntry` now carries `expired` (that test), `posterBadge` returns
+`{ kind: "expired" }` before the failed check, and the row renders an
+"Expired" badge in the neutral (processing) style rather than red "Failed".
+The poster's accessible name says "Expired" and the row has
+`data-run-status="expired"`. Reopening it still lands on the expired view.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported HistoryPanel to day-grouped rows with status dots; fixed duplicate React keys on non-adjacent "Undated" groups
@@ -305,3 +315,4 @@ horizontal scroll (the pill row still scrolls sideways inside itself, as drawn).
 - 2026-11-01 · frontend agent (Phase 5a) · History moved into the browser: `HistoryStore` port + `IndexedDbHistoryStore` (cap 20, oldest dropped, persist() once, cross-tab), writes from `useAnalysisRun` via `application/historySync.ts`, one-time import from `GET /api/runs`, unfinished runs re-checked once per load (404 → expired), reopen from IndexedDB offline, server thumbnails as Blobs in the poster grid (landscape by width>height), calm storage-unavailable state; no client-side frame grab (owner decision)
 - 2026-11-02 · frontend agent (refinement 3) · `isRunGone` + `recordExpired` shared by the startup reconcile and the live/reopen paths, so a row never stays "Processing" after a 404 on screen
 - 2026-11-02 · frontend agent (refinement 4) · sort select shown on phones too, sharing the search row; removed the 48rem Newest-only gate (HIS-03)
+- 2026-11-02 · frontend agent (refinement 6) · RUN-13 expired runs badge "Expired" (neutral), data-run-status="expired"

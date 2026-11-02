@@ -11,9 +11,9 @@
  * ProgressLostWeb), which supersede the older shots where they differ.
  */
 
-import { Check, WifiOff, X } from "lucide-react";
+import { Check, WifiOff, X, ServerOff } from "lucide-react";
 import type { RunStatus } from "@/domain/entities";
-import { reconnectDelayFor } from "@/application/useAnalysisRun";
+import { reconnectDelayFor, type LostCause } from "@/application/useAnalysisRun";
 
 type SourceKind = "file" | "url";
 
@@ -120,6 +120,10 @@ function stepStatus(
   return connectionLost ? "lost" : "active";
 }
 
+/* The lost state when the server answered with an error (refinement 6). */
+const SERVER_TROUBLE_PILL = "Server trouble";
+const SERVER_TROUBLE_CAPTION = "Waiting for the server";
+
 const PILL: Record<"queued" | "processing" | "failed" | "lost" | "complete", string> = {
   queued: "Queued",
   processing: "Processing",
@@ -153,6 +157,10 @@ interface RunStatusViewProps {
   onRetry?: () => void;
   /** Connection lost only: skip the rest of the countdown. */
   onRetryNow?: () => void;
+  /** Connection lost only: whether there was no answer at all (`network`)
+   *  or the server answered with an error (`server`, refinement 6, RUN-08).
+   *  The reconnect is the same; only the words differ. */
+  lostCause?: LostCause;
   /** Failed only: the server forgot this run before its result reached this
    *  browser (refinement 1, #7). Not a failure of the source, so none of the
    *  "try a different link" advice and no stage strip — we never learned
@@ -178,6 +186,7 @@ export default function RunStatusView({
   onReset,
   onRetry,
   onRetryNow,
+  lostCause = "network",
   expired = false,
   canRefill = false,
   onAnalyzeAgain,
@@ -203,6 +212,11 @@ export default function RunStatusView({
     return stepStatus(index, currentIndex, status, connectionLost);
   }
 
+  /* Refinement 6 (RUN-08): a 5xx means the server is there and answering, so
+     "Check your network" was the wrong advice. Same pill tone, countdown and
+     Retry now; its own words. */
+  const serverTrouble = connectionLost && lostCause === "server";
+
   const mode = connectionLost
     ? "lost"
     : status === "failed"
@@ -217,7 +231,9 @@ export default function RunStatusView({
     mode === "failed"
       ? "That didn't work"
       : mode === "lost"
-        ? "Connection lost"
+        ? serverTrouble
+          ? "The server is having trouble"
+          : "Connection lost"
         : captionsRoute
           ? "Reading the captions"
           : "Reading your video";
@@ -226,7 +242,9 @@ export default function RunStatusView({
     mode === "failed"
       ? `${current ? `The run stopped while ${current.verb}. ` : ""}${recoveryAdvice(stage, sourceKind)}`
       : mode === "lost"
-        ? "Check your network. The page reconnects on its own and picks up where it left off."
+        ? serverTrouble
+          ? "It answered with an error, not a result. The page tries again on its own and picks up where it left off."
+          : "Check your network. The page reconnects on its own and picks up where it left off."
         : mode === "queued"
           ? "Your run is in line and starts in a moment. You can leave this open."
           : captionsRoute
@@ -241,7 +259,7 @@ export default function RunStatusView({
     mode === "lost"
       ? retrying
         ? "Trying to reconnect."
-        : `Connection lost. Trying again in ${reconnectDelayFor(reconnectAttempt)} seconds.`
+        : `${serverTrouble ? "The server is having trouble." : "Connection lost."} Trying again in ${reconnectDelayFor(reconnectAttempt)} seconds.`
       : mode === "failed"
         ? `Analysis failed${error ? `: ${error}` : "."}`
         : mode === "complete"
@@ -258,7 +276,7 @@ export default function RunStatusView({
     <>
       <span className="status" data-tone={mode}>
         <span className="pip" aria-hidden="true" />
-        {PILL[mode]}
+        {serverTrouble ? SERVER_TROUBLE_PILL : PILL[mode]}
       </span>
 
       <h1 className="run-title">{title}</h1>
@@ -285,7 +303,9 @@ export default function RunStatusView({
                 </span>
                 <span className="frame-text">
                   <span className="frame-label">{step.label}</span>
-                  <span className="frame-caption">{FRAME_CAPTION[state]}</span>
+                  <span className="frame-caption">
+                  {state === "lost" && serverTrouble ? SERVER_TROUBLE_CAPTION : FRAME_CAPTION[state]}
+                </span>
                 </span>
                 <span className="frame-icon" aria-hidden="true">
                   {state === "done" ? (
@@ -293,7 +313,11 @@ export default function RunStatusView({
                   ) : state === "failed" || state === "missed" ? (
                     <X size={18} strokeWidth={2.5} />
                   ) : state === "lost" ? (
-                    <WifiOff size={18} strokeWidth={2} />
+                    serverTrouble ? (
+                      <ServerOff size={18} strokeWidth={2} />
+                    ) : (
+                      <WifiOff size={18} strokeWidth={2} />
+                    )
                   ) : null}
                 </span>
               </li>
@@ -318,7 +342,9 @@ export default function RunStatusView({
           <p className="run-notice" data-tone={mode}>
             {mode === "failed"
               ? error || "The run stopped before it could finish."
-              : `We can't reach the server right now. ${countdown}`}
+              : serverTrouble
+                ? `The server is having trouble right now. ${countdown}`
+                : `We can't reach the server right now. ${countdown}`}
           </p>
           <div className="run-actions">
             {mode === "failed" && onRetry ? (

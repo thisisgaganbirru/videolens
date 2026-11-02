@@ -2,6 +2,7 @@
    together, mirroring the backend's container.py. Hooks in application/
    import instances from here - they never construct an adapter directly. */
 
+import { SessionStorageActiveRunStore } from "./activeRunStore";
 import { LocalStorageApiKeyStore } from "./apiKeyStore";
 import { FetchCapabilitiesGateway } from "./capabilitiesGateway";
 import { LocalStorageDeviceTokenStore } from "./deviceTokenStore";
@@ -34,3 +35,4 @@ export const firstRunStore = new BrowserFirstRunStore();
 export const nativeShell = new CapacitorNativeShell();
 export const documentExporter = new CapacitorDocumentExporter();
 export const nativeThemeMirror = new CapacitorNativeThemeMirror();
+export const activeRunStore = new SessionStorageActiveRunStore();

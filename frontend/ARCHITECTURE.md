@@ -23,7 +23,7 @@ and `FetchRunsGateway`'s request headers).
 - `ports.ts` — the interfaces infrastructure adapters implement and hooks
   depend on: `RunsGateway`, `ApiKeyStore`, `VersionLogGateway`,
   `UpdateChecker`, `SharedUrlSource` (`take`, `subscribe`, `pending`),
-  `HistoryStore`, `FreeRunsGateway`, `DeviceTokenStore`, `FirstRunStore` (plus their associated
+  `HistoryStore`, `FreeRunsGateway`, `DeviceTokenStore`, `FirstRunStore`, `ActiveRunStore` (plus their associated
   `VersionLogEntry`/`UpdateInfo` types). `entities.ts` also holds
   `HistoryRecord`/`HistoryPatch`.
 
@@ -49,6 +49,10 @@ and `FetchRunsGateway`'s request headers).
   `navigator.storage.persist()` once; `BroadcastChannel` for other tabs).
   Opens lazily, so constructing it during prerender is safe. Implements
   `HistoryStore`. See `docs/frontend/run-history.md`.
+- `activeRunStore.ts` — `SessionStorageActiveRunStore`: the run this tab
+  is watching (`sessionStorage` `videolens-active-run`, try/catch on every
+  access), so a reload resumes it. Implements `ActiveRunStore`. See
+  `docs/frontend/run-analysis-hook.md`.
 - `freeRunsGateway.ts` — `FetchFreeRunsGateway`: `GET /api/free-runs`,
   normalises the body and writes back a replaced device token. Implements
   `FreeRunsGateway`. `deviceTokenStore.ts` — `LocalStorageDeviceTokenStore`
@@ -118,6 +122,7 @@ Routes (Phase 5c):
 | `/app` | `app/app/page.tsx` | The tool: `RoutedHomeScreen` in a `<Suspense>`, plus `Splash` and `Welcome` (installed app only) |
 | `/privacy`, `/terms` | `app/privacy`, `app/terms` | Legal pages (`LegalShell`) |
 | `/offline` | `app/offline/page.tsx` | The service worker's offline fallback |
+| (unknown) | `app/not-found.tsx` | 404 with the shared chrome; exported as `out/404.html` |
 
 Everything about what the page actually looks like and
 does lives in `components/`:
@@ -178,3 +183,4 @@ still imported the old component.
 - 2026-11-01 · frontend agent (Phase 5a) · added the `HistoryStore` port + `IndexedDbHistoryStore` adapter, `application/historySync.ts`, `StorageUnavailableError`, `ApiError.status`; `useRunHistory` now reads the browser store
 - 2026-11-01 · frontend agent (Phase 5b) · added `FreeRunsGateway` + `DeviceTokenStore` ports and their adapters, `clientId.ts`, `ApiKeyStore.subscribe`, `ApiError.code/limit/used`, `application/useFreeRuns.ts`, `components/FreeRunsBanner.tsx`
 - 2026-11-01 · frontend agent (Phase 5c/5d) · routes table (`/` landing, `/app` tool); landingRedirect, firstRunScripts, useFirstRun, firstRunStore, FirstRunStore port, SharedUrlSource.pending(); LandingScreen, SampleResult, Splash, Welcome
+- 2026-11-02 · frontend agent (refinement 6) · `ActiveRunStore` port + `SessionStorageActiveRunStore` adapter; `app/not-found.tsx` in the routes table
