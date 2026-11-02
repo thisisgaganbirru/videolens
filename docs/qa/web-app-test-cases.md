@@ -840,8 +840,19 @@ CSS-only. Playwright, Chromium, `:3005` dev server, mocked `/api`; root font sim
 
 Harness note: a first run clicked a hidden "More" match, so every sheet check timed out. That was a script bug, not an app defect; fixed and re-run.
 
+### 2026-11-02 · videolens-65 (web QA) · run 12 (refinement 14 web no-regression, HEAD 7318f53)
+
+Android-native change plus one head script (`application/nativeFontScale.ts`) that should do nothing on the web. Playwright, Chromium, `:3005`, mocked `/api`, 150% emulated with an injected stylesheet.
+
+| # | Item | Result | Notes |
+|---|---|---|---|
+| 1 | Web root font untouched | PASS | On `/`, `/app`, History, API key and Privacy at 320/390, 100% and 150%, light and dark: `<html>` has no inline `style`, `window.__videolensFontScale` is `undefined`, and the computed root font-size is 16px (100%) or 24px (150%). |
+| 2 | Reduced R13 header and theme-control sweep, 320/390 x 100/150%, light+dark | PASS | Identical to run 11. Header: Menu and theme 44x44, on screen, 8px apart, nav 68 (320@100% theme 208-252 / menu 260-304; 320@150% 200-244 / 252-296; 390@100% 278-322 / 330-374; 390@150% 270-314 / 322-366), no clipping, no hscroll, on the same six pages. Sheet theme control: targets at least 44px, no label wider than its segment; 320 indented row at 100% and stacked at 150%; 390 indented row at 100% and full-width row at 150%. |
+| 3 | Console and hydration, 390 px, light+dark | PASS | `/`, `/app`, `/privacy`, `/terms`, `/offline`: 0 console errors or warnings, 0 page errors, 0 hydration warnings. |
+
 ## Changelog
 
+- 2026-11-02 · videolens-65 (web QA) · run 12: refinement 14 web no-regression, items 1-3 PASS (no inline root font-size or global on the web, header and theme control identical to run 11, no console or hydration errors)
 - 2026-11-02 · videolens-65 (web QA) · run 11: refinement 13 retest, items 1-4 PASS (header 44px and on screen up to 200% font, theme control fits and stacks from 150%, footer links 44px, normal-scale unchanged); D-R12-1 fixed
 - 2026-11-02 · videolens-65 (web QA) · run 10: refinement 12 retest, items 1, 2, 4 PASS (tab fades clean, threshold 359/360 correct); item 3 FAIL D-R12-1 (the menu button is 41 px off-screen at 320 wide, 150% font)
 - 2026-11-02 · videolens-65 (web QA) · run 9: refinement 11 retest items 1-4 all PASS (D-R10-1 and D-R10-2 verified fixed), no defects
