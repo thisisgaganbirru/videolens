@@ -147,6 +147,8 @@ are deleted from `globals.css`.
   "VideoLens needs a connection to analyze new videos. Your History is still
   here." and `.offline-actions` holds Try again (`.btn-ink`) + **Open History**
   (`<a href="/?view=history">`, `.btn-secondary .btn-pill`), side by side,
+  **[Phase 5c: Try again is now `href="/app"` and Open History
+  `href="/app?view=history"`; the tool moved to `/app`.]**
   wrapping on the narrowest phones. Both are true now: History is in IndexedDB
   and the worker serves its address offline (below). The old "A run you
   already started keeps going on the server." sentence was dropped to match
@@ -467,6 +469,45 @@ without a size jump, which in a single-face type system is otherwise expensive.
 
 ## What the service worker serves offline
 
+**Phase 5c update (2026-11-01), supersedes the route lists below.** The tool
+moved to `/app` and `/` became the landing page (`landing-page.md`).
+
+```js
+const SHELL_DOCUMENTS = ["/", "/app", "/offline", "/privacy", "/terms"];   // precached
+const OFFLINE_CAPABLE_DOCUMENTS = ["/", "/privacy", "/terms"];             // served from cache offline
+const OFFLINE_CAPABLE_VIEWS = ["history"];                                 // of APP_DOCUMENT = "/app"
+```
+
+- **`/` is now offline-capable.** It used to be off the list because it was
+  the tool, which needs the API. It is now the landing: static text, a sample
+  card, no API calls. Complete with no network, so it earns its place.
+- **`/app?view=history`** is served from the cached `/app` (Phase 5a's rule,
+  moved to the new path). Every other `/app` address gets `/offline`.
+- **Legacy `/?view=history`** is not mapped in the worker. It is served the
+  cached landing, whose pre-paint script replaces the URL with
+  `/app?view=history`, which the worker then serves from cache. One extra
+  cached hop, no network, and the address bar ends on the canonical URL. That
+  is simpler than teaching the worker the old address too, and it stays
+  correct if the redirect table changes.
+- `build-sw.mjs` maps `/app` to `app.html` for the precache digest.
+- The offline page's buttons point at `/app` and `/app?view=history`.
+
+**Measured (2026-11-01)** on `next build` + `next start -p 3016`. The worker
+was active and controlling, then the **server process was killed** (not
+`setOffline`, which this doc already records as insufficient):
+
+| requested | renders |
+| --- | --- |
+| `/app?view=history` | History (hydrated) |
+| `/?view=history` | ends on `/app?view=history`, History |
+| `/` | the landing |
+| `/app` | You're offline |
+| `/app?view=api-key` | You're offline |
+| `/privacy` | Privacy |
+| `/nope` | You're offline |
+| `/offline` → Open History | `/app?view=history`, History |
+
+
 **Phase 5a update (2026-11-01).** `/?view=history` is now served from the
 cached `/` shell offline (`OFFLINE_CAPABLE_VIEWS = ["history"]` +
 `cachedAppView()` in `sw.template.js`): History reads IndexedDB, so it is
@@ -673,3 +714,4 @@ including a cold start with the HTTP cache cleared via CDP
 - 2026-11-01 · frontend agent (app Back link) · `LegalShell` renders `<AppBackLink />` above the Privacy/Terms title, visible only in the app shell (`display:none` in web, so the boards' crumb-less web layout is unchanged); Back = history.back() when the previous entry is in-app, else `/`; /offline unchanged
 - 2026-11-01 · frontend agent (Phase 5a) · Offline page gets the board's "Your History is still here." + Open History (`<a href="/?view=history">`); service worker serves `/?view=history` from the cached shell offline (allowlisted view); cache digest now includes the template; verified with the real worker and the server stopped
 - 2026-11-01 · frontend agent (Phase 5a) · Privacy: "Information retained" now says the server keeps a run about an hour after it starts and then deletes it; new "Your History" section (IndexedDB only, never sent back, 20 most recent, cleared with site data, browser may evict e.g. Safari after 7 days unvisited). Effective date left unchanged — owner to decide
+- 2026-11-01 · frontend agent (Phase 5c) · SW: precache /app, / (now the landing) offline-capable, History offline moved to /app?view=history, legacy /?view=history via the landing's redirect; offline page links → /app; measured with the server killed

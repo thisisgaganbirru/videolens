@@ -17,7 +17,7 @@ import SiteFooter from "@/components/SiteFooter";
  * `<BottomTabBar />` (installed app) — literally the components HomeScreen
  * renders. A standalone route is still the same application, so it does not
  * get its own furniture. The tabs work here because they address the URL
- * (`/?view=history`), not HomeScreen's React state; none of them is
+ * (`/app?view=history`), not HomeScreen's React state; none of them is
  * `aria-current` on a legal route, because none of them is where you are.
  *
  * Scrolling is HomeScreen's model (Phase 4): the section is a `.view-scroll`

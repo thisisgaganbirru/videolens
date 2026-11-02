@@ -3,11 +3,11 @@
 Two entry points, one path through the app:
 
 - **Native Android share intent** — "Share → VideoLens AI" from Instagram, YouTube, a browser. `MainActivity` catches `ACTION_SEND` + `text/plain`.
-- **PWA share target** — `app/manifest.ts`'s `share_target` block, which launches `/?share-target=1&title=…&text=…&url=…`.
+- **PWA share target** — `app/manifest.ts`'s `share_target` block, which launches `/app?share-target=1&title=…&text=…&url=…` (it was `/` until Phase 5c; an older install that still sends `/?share-target=…` is redirected to `/app` with the same query before paint, see `landing-page.md`).
 
 **Files**
 - `frontend/android/app/src/main/java/ai/videolens/app/MainActivity.java` — writes the shared text into `localStorage["videolens-shared-text"]` and dispatches a `videolens-share` window event (a WebView has no other way to hand a string to the page it is showing).
-- `frontend/domain/ports.ts` — `SharedUrlSource` (`take()`, `subscribe()`).
+- `frontend/domain/ports.ts` — `SharedUrlSource` (`take()`, `subscribe()`, and since Phase 5d `pending()`: is a share waiting, without consuming it. `useFirstRun` reads it so the first-run Welcome never covers a share; see `first-run.md`).
 - `frontend/infrastructure/sharedUrlSource.ts` — `WebShareUrlSource`, the only place that touches `localStorage`, the query string, and the native event.
 - `frontend/application/useSharedUrl.ts` — `useSharedUrl()`, returns the latest `{ url, receivedAt }` or `null`.
 - `frontend/components/HomeScreen.tsx` — reacts to a share: switch to Analyze, `reset()` the run.
@@ -55,3 +55,4 @@ A share is now destructive to what is on screen, so a *replayed* one would wipe 
 ## Changelog
 
 - 2026-08-21 · main session · moved the share listener out of UploadForm into HomeScreen (via a SharedUrlSource port/adapter and useSharedUrl), made every carrier consume-once, and fixed reset() leaving its poll running
+- 2026-11-01 · frontend agent (Phase 5c/5d) · share_target now lands on /app (legacy / redirected); added SharedUrlSource.pending() for the first-run Welcome

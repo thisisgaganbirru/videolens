@@ -27,6 +27,11 @@ exception, listed so it isn't mistaken for a stray file:
 - `frontend/free-runs.md` covers the client half: the device token, the intake banner and limit state, and the 401 retry and 402 handling in `useAnalysisRun`.
 - `backend/free-runs.md` covers the per-device daily free-run allowance (`GET /api/free-runs`, the 401/402 codes on `POST /api/runs`) and how easy it is to bypass.
 
+## Landing and first run quick links
+
+- `frontend/landing-page.md`: the landing page at `/`, the tool's move to `/app`, the pre-paint redirects, and the Capacitor `.html` hop.
+- `frontend/first-run.md`: the installed app's cold-start splash and one-time Welcome.
+
 ## Current design direction
 
 - `frontend/design-direction-editorial.md` — the live visual system (tokens,
@@ -70,3 +75,4 @@ someone else's entry.
 - 2026-11-01 · frontend agent · indexed `frontend/design-direction-editorial.md` as the current design direction
 - 2026-11-01 · backend agent (Phase 5b) · indexed `backend/free-runs.md`
 - 2026-11-01 · frontend agent (Phase 5b) · indexed `frontend/free-runs.md`; renamed the quick-links heading to cover both halves
+- 2026-11-01 · frontend agent (Phase 5c/5d) · indexed `frontend/landing-page.md` and `frontend/first-run.md`

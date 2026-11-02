@@ -22,8 +22,8 @@ and `FetchRunsGateway`'s request headers).
   `StorageUnavailableError`.
 - `ports.ts` — the interfaces infrastructure adapters implement and hooks
   depend on: `RunsGateway`, `ApiKeyStore`, `VersionLogGateway`,
-  `UpdateChecker`, `SharedUrlSource`, `HistoryStore`, `FreeRunsGateway`,
-  `DeviceTokenStore` (plus their associated
+  `UpdateChecker`, `SharedUrlSource` (`take`, `subscribe`, `pending`),
+  `HistoryStore`, `FreeRunsGateway`, `DeviceTokenStore`, `FirstRunStore` (plus their associated
   `VersionLogEntry`/`UpdateInfo` types). `entities.ts` also holds
   `HistoryRecord`/`HistoryPatch`.
 
@@ -56,6 +56,11 @@ and `FetchRunsGateway`'s request headers).
   `FetchRunsGateway`, which sends it as `X-Device-Token` on `createRun` only.
   `clientId.ts` — `getClientId()`, shared by both. See
   `docs/frontend/free-runs.md`.
+- `firstRunStore.ts` — `BrowserFirstRunStore`: the installed app's
+  first-run flags (`videolens-welcome-v1` in localStorage; the Welcome and
+  splash session flags in sessionStorage), every access try/catch'd, with an
+  in-memory fallback. Implements `FirstRunStore`. See
+  `docs/frontend/first-run.md`.
 - `container.ts` — builds one instance of each adapter above and exports
   them; every hook imports from here instead of constructing an adapter
   itself.
@@ -82,24 +87,50 @@ needs. Each hook owns its `useState`/`useEffect` and calls out to
   than in `UploadForm` because a share has to be handled whatever is on
   screen, and the intake is mounted only while the run state is idle.
 - `useMainTab.ts` — which of the four shell destinations is showing, held
-  in the URL as `/?view=…` rather than in a component's `useState`. Reading
+  in the URL as `/app?view=…` (it was `/?view=…` until Phase 5c) rather than in a component's `useState`. Reading
   and writing that URL is orchestration, so it sits here; `domain/` and
   `infrastructure/` know nothing about routing. Exports `MAIN_TABS`,
-  `mainTabHref`, `goToMainTab` (a plain function, so the Suspense fallback
-  can switch tabs without calling `useSearchParams`) and `useMainTab`.
+  `APP_PATH`, `isAppPath` (also accepts `/app.html`, the Capacitor
+  spelling), `mainTabHref`, `goToMainTab` (a plain function, so the Suspense
+  fallback can switch tabs without calling `useSearchParams`) and
+  `useMainTab`.
+- `landingRedirect.ts` — `LANDING_REDIRECT_SCRIPT`, the blocking inline
+  script on `/` that sends old tab URLs, share links and the installed shell
+  to `/app` before paint, and hops Capacitor's extensionless `/app` to
+  `/app.html`. A string, not a hook. See `docs/frontend/landing-page.md`.
+- `firstRunScripts.ts` — `SPLASH_INIT_SCRIPT`, the pre-paint script that
+  stamps `<html data-splash>` on an installed cold start. Not `"use client"`,
+  because a server component inlines it.
+- `useFirstRun.ts` — the splash hand-off and the one-time Welcome, as one
+  module store (`useSyncExternalStore`): `useSplashHandOff()`, `useWelcome()`.
+  See `docs/frontend/first-run.md`.
 
 **`app/` + `components/`** — the framework-bound presentation layer
 (Next.js routing + React). `app/` holds only what Next.js requires to live
 there (route files: `page.tsx`, `layout.tsx`, `manifest.ts`, the legal
-pages, global CSS) - `app/page.tsx` is 4 lines and does nothing but render
-`<HomeScreen />`. Everything about what the page actually looks like and
+pages, global CSS).
+
+Routes (Phase 5c):
+
+| Route | File | What it is |
+|---|---|---|
+| `/` | `app/page.tsx` | The landing page (`LandingScreen`), with `LANDING_REDIRECT_SCRIPT` |
+| `/app` | `app/app/page.tsx` | The tool: `RoutedHomeScreen` in a `<Suspense>`, plus `Splash` and `Welcome` (installed app only) |
+| `/privacy`, `/terms` | `app/privacy`, `app/terms` | Legal pages (`LegalShell`) |
+| `/offline` | `app/offline/page.tsx` | The service worker's offline fallback |
+
+Everything about what the page actually looks like and
 does lives in `components/`:
 - `HomeScreen.tsx` — the real page body for one tab, taking that tab as a
   prop and composing `useAnalysisRun()` with the presentational pieces
   below. `RoutedHomeScreen` (same file) is the variant that reads the tab
-  from the URL; `app/page.tsx` renders it inside the `<Suspense>` boundary
+  from the URL; `app/app/page.tsx` renders it inside the `<Suspense>` boundary
   `useSearchParams` requires on a statically rendered route, with a real
   Analyze shell as the fallback.
+- `LandingScreen.tsx` (server) and `SampleResult.tsx` (client, the sample
+  card's ARIA tabs) — the landing page at `/`.
+- `Splash.tsx`, `Welcome.tsx` — the installed app's cold-start splash and
+  one-time Welcome dialog, driven by `useFirstRun`.
 - `AppNav.tsx` — the whole nav band (brand, the four tab links, the mobile
   drawer, the theme toggle) as one component. `HomeScreen` and `LegalShell`
   both render it, which only became possible once the tabs had addresses.
@@ -146,3 +177,4 @@ still imported the old component.
 
 - 2026-11-01 · frontend agent (Phase 5a) · added the `HistoryStore` port + `IndexedDbHistoryStore` adapter, `application/historySync.ts`, `StorageUnavailableError`, `ApiError.status`; `useRunHistory` now reads the browser store
 - 2026-11-01 · frontend agent (Phase 5b) · added `FreeRunsGateway` + `DeviceTokenStore` ports and their adapters, `clientId.ts`, `ApiKeyStore.subscribe`, `ApiError.code/limit/used`, `application/useFreeRuns.ts`, `components/FreeRunsBanner.tsx`
+- 2026-11-01 · frontend agent (Phase 5c/5d) · routes table (`/` landing, `/app` tool); landingRedirect, firstRunScripts, useFirstRun, firstRunStore, FirstRunStore port, SharedUrlSource.pending(); LandingScreen, SampleResult, Splash, Welcome

@@ -18,7 +18,7 @@ import { isPlainLeftClick } from "@/components/navClick";
  * blocked Analyze button greys out (UploadForm), it does not shout.
  *
  * "Add key" is a link, not a button: it goes somewhere (the API key view,
- * `/?view=api-key`), so it keeps a real href for middle-click and new-tab, and
+ * `/app?view=api-key`), so it keeps a real href for middle-click and new-tab, and
  * switches tabs in place on a plain click like every other tab link.
  *
  * The live region is the always-present wrapper in HomeScreen, not this

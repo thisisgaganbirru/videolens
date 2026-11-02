@@ -7,7 +7,7 @@
    `useMainTab`, rather than in the component.
 
    The rule: if the entry before this one is part of the app, go back to it, so
-   the user lands on the view they came from (a tab on `/` or a legal route).
+   the user lands on the view they came from (a tab on `/app` or a legal route).
    Otherwise (a cold start straight onto the page, a link from outside) there is
    nothing in the app to go back to, and the destination is Analyze, the tool's
    home. */

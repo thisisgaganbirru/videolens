@@ -53,10 +53,10 @@ export default function OfflinePage() {
             VideoLens needs a connection to analyze new videos. Your History is still here.
           </p>
           <div className="offline-actions">
-            <a href="/" className="btn btn-ink btn-pill offline-action">
+            <a href="/app" className="btn btn-ink btn-pill offline-action">
               Try again
             </a>
-            <a href="/?view=history" className="btn btn-secondary btn-pill offline-action">
+            <a href="/app?view=history" className="btn btn-secondary btn-pill offline-action">
               Open History
             </a>
           </div>

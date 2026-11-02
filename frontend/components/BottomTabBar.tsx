@@ -32,7 +32,7 @@ type BottomTabBarProps = {
   activeTab: MainTab | null;
   /** On a legal route, which one — marks its sheet row and lights up More. */
   currentRoute?: LegalRoute;
-  /** Supplied only on `/`, where a tab switch can update the URL in place. */
+  /** Supplied only on `/app`, where a tab switch can update the URL in place. */
   onSelectTab?: (tab: MainTab) => void;
 };
 

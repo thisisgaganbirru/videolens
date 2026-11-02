@@ -12,6 +12,7 @@ import { ApiUpdateChecker } from "./updateCheck";
 import { WebShareUrlSource } from "./sharedUrlSource";
 import { FetchVersionLogGateway } from "./versionLogGateway";
 import { CapacitorSystemBarsStyler } from "./systemBars";
+import { BrowserFirstRunStore } from "./firstRunStore";
 
 export const apiKeyStore = new LocalStorageApiKeyStore();
 /* One device-token store behind both the status read (which may replace the
@@ -26,3 +27,4 @@ export const updateChecker = new ApiUpdateChecker();
 export const sharedUrlSource = new WebShareUrlSource();
 export const systemBarsStyler = new CapacitorSystemBarsStyler();
 export const historyStore = new IndexedDbHistoryStore();
+export const firstRunStore = new BrowserFirstRunStore();
