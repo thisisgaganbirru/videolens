@@ -12,6 +12,26 @@ const MAX_FILE_SIZE_MB = 200;
 const MAX_DURATION_SECONDS = 180;
 const MEDIA_TERMS_ACCEPTANCE_KEY = "videolens-media-terms-v1";
 
+/* Storage can throw (private mode, blocked site data). Refinement 1 (#5): an
+   unreadable flag reads as "not accepted" and an unwritable one is simply not
+   remembered — the box still works for this visit. */
+function readTermsAccepted(): boolean {
+  try {
+    return window.localStorage.getItem(MEDIA_TERMS_ACCEPTANCE_KEY) === "accepted";
+  } catch {
+    return false;
+  }
+}
+
+function writeTermsAccepted(accepted: boolean): void {
+  try {
+    if (accepted) window.localStorage.setItem(MEDIA_TERMS_ACCEPTANCE_KEY, "accepted");
+    else window.localStorage.removeItem(MEDIA_TERMS_ACCEPTANCE_KEY);
+  } catch {
+    /* not remembered; nothing else to do */
+  }
+}
+
 interface UploadFormProps {
   onSubmit: (source: MediaSource) => void;
   disabled?: boolean;
@@ -108,9 +128,7 @@ export default function UploadForm({
   }, [submitting]);
 
   useEffect(() => {
-    setAcceptedTerms(
-      window.localStorage.getItem(MEDIA_TERMS_ACCEPTANCE_KEY) === "accepted"
-    );
+    setAcceptedTerms(readTermsAccepted());
   }, []);
 
   /* Runs on mount too, which is the case that matters: a share arriving over a
@@ -339,11 +357,7 @@ export default function UploadForm({
           onChange={(event) => {
             const accepted = event.target.checked;
             setAcceptedTerms(accepted);
-            if (accepted) {
-              window.localStorage.setItem(MEDIA_TERMS_ACCEPTANCE_KEY, "accepted");
-            } else {
-              window.localStorage.removeItem(MEDIA_TERMS_ACCEPTANCE_KEY);
-            }
+            writeTermsAccepted(accepted);
             setError(null);
           }}
         />

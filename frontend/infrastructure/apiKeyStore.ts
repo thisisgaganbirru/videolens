@@ -18,10 +18,17 @@ export class LocalStorageApiKeyStore implements ApiKeyStore {
 
   set(apiKey: string): void {
     const trimmed = apiKey.trim();
-    if (trimmed) {
-      window.localStorage.setItem(GEMINI_API_KEY_STORAGE_KEY, trimmed);
-    } else {
-      window.localStorage.removeItem(GEMINI_API_KEY_STORAGE_KEY);
+    /* Storage can throw (private mode, blocked site data). Refinement 1 (#5):
+       the key is then simply not saved; `get()` keeps reading "" and the
+       panel shows no saved key, which is the truth. */
+    try {
+      if (trimmed) {
+        window.localStorage.setItem(GEMINI_API_KEY_STORAGE_KEY, trimmed);
+      } else {
+        window.localStorage.removeItem(GEMINI_API_KEY_STORAGE_KEY);
+      }
+    } catch {
+      /* not saved */
     }
     this.listeners.forEach((listener) => listener());
   }

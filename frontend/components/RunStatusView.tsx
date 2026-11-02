@@ -153,6 +153,15 @@ interface RunStatusViewProps {
   onRetry?: () => void;
   /** Connection lost only: skip the rest of the countdown. */
   onRetryNow?: () => void;
+  /** Failed only: the server forgot this run before its result reached this
+   *  browser (refinement 1, #7). Not a failure of the source, so none of the
+   *  "try a different link" advice and no stage strip — we never learned
+   *  where it got to. */
+  expired?: boolean;
+  /** Expired only: whether the link can be put back in the field. */
+  canRefill?: boolean;
+  /** Expired only: back to the intake (with the link filled, when stored). */
+  onAnalyzeAgain?: () => void;
 }
 
 export default function RunStatusView({
@@ -169,7 +178,14 @@ export default function RunStatusView({
   onReset,
   onRetry,
   onRetryNow,
+  expired = false,
+  canRefill = false,
+  onAnalyzeAgain,
 }: RunStatusViewProps) {
+  if (status === "failed" && expired) {
+    return <ExpiredRunView sourceKind={sourceKind} canRefill={canRefill} onAnalyzeAgain={onAnalyzeAgain ?? onReset} />;
+  }
+
   const steps = stepsFor(sourceKind);
   const currentIndex = frameIndex(steps, stage);
   const current = currentIndex >= 0 ? steps[currentIndex] : null;
@@ -344,6 +360,49 @@ export default function RunStatusView({
         <button type="button" className="reset-link" onClick={onReset}>
           Stop watching and analyze another file
         </button>
+      ) : null}
+    </>
+  );
+}
+
+/* Refinement 1, #7. A run reopened from History that the server had already
+   dropped (it keeps runs an hour). The generic failed view told people to try
+   a different link, which was wrong twice: nothing was wrong with the link,
+   and the stages it drew were guesses. Pill, title, one honest sentence, the
+   one action. */
+function ExpiredRunView({
+  sourceKind,
+  canRefill,
+  onAnalyzeAgain,
+}: {
+  sourceKind: SourceKind;
+  canRefill: boolean;
+  onAnalyzeAgain?: () => void;
+}) {
+  const what = sourceKind === "url" ? "link" : "file";
+  const lede =
+    sourceKind === "url"
+      ? canRefill
+        ? "The server keeps a run for an hour, and this one's result never reached this device. Nothing was wrong with the link, and it is ready to analyze again."
+        : "The server keeps a run for an hour, and this one's result never reached this device. Nothing was wrong with the link; paste it again to start over."
+      : "The server keeps a run for an hour, and this one's result never reached this device. Nothing was wrong with the file; choose it again to start over.";
+  return (
+    <>
+      <span className="status" data-tone="failed">
+        <span className="pip" aria-hidden="true" />
+        Expired
+      </span>
+      <h1 className="run-title">This run expired</h1>
+      <p className="run-lede">{lede}</p>
+      <p className="sr-only" aria-live="polite" aria-atomic="true">
+        This run expired before its result reached this device.
+      </p>
+      {onAnalyzeAgain ? (
+        <div className="run-actions">
+          <button type="button" className="btn btn-ink" onClick={onAnalyzeAgain}>
+            {sourceKind === "url" || canRefill ? "Analyze it again" : `Choose the ${what} again`}
+          </button>
+        </div>
       ) : null}
     </>
   );
