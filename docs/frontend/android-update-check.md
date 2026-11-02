@@ -93,6 +93,8 @@ preserved.
 
 ## Local live-reload on the emulator
 
+> **Superseded for QA (2026-11-02):** Android QA runs on the real bundled APK only; use the next section. Kept for previewing a change by hand.
+
 For previewing a change on an emulator without a CI build. Only a **locally built** APK can load a plain-http dev URL; CI APKs never can.
 
 - **Ports**: run `adb reverse tcp:3005 tcp:3005` and `adb reverse tcp:8000 tcp:8000`. Backend CORS allows `localhost:3005` but not `10.0.2.2:3005`, and the app calls the API at `localhost:8000`. Re-run both after any adb, emulator or dev-server restart.
@@ -138,3 +140,4 @@ trustworthy, so `https://localhost` → `http://localhost:8000` is allowed;
 - 2026-08-29 · frontend agent · repointed the checker from `${NEXT_PUBLIC_WEB_BASE_URL}/version.json` onto `GET /api/releases` (`latest.version_code`/`version_name`/`url`); `GithubUpdateChecker` → `ApiUpdateChecker`, dropped the now-unreachable unset-origin guard, and flagged the CI guard that still checks `web_base_url` instead of `api_base_url`
 - 2026-11-01 · android-66 (device QA) · added the "Local live-reload on the emulator" section (adb reverse, generated-config server.url, temporary cleartext flag, screencap -d, in-memory free-runs counter)
 - 2026-11-01 · frontend agent (refinement 1) · debug-only network security config (cleartext to localhost/127.0.0.1/10.0.2.2) via src/debug manifest overlay, for bundled-APK QA against a local backend
+- 2026-11-02 · android-66 (device QA) · noted that the "Local live-reload on the emulator" section is superseded: device QA runs on the bundled APK only (see the next section)
