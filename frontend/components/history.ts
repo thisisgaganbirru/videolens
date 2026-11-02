@@ -10,6 +10,7 @@
  */
 
 import type { RunSummary } from "@/domain/entities";
+import { knownPlatformName } from "@/domain/platforms";
 
 export type HistoryFilter = "all" | "instagram" | "tiktok" | "youtube" | "files";
 export type HistorySort = "newest" | "oldest";
@@ -39,19 +40,13 @@ export function posterTint(runId: string): PosterTint {
 
 /* ---------- chips ---------- */
 
-const PLATFORM_LABELS: Record<string, string> = {
-  instagram: "Instagram",
-  tiktok: "TikTok",
-  youtube: "YouTube",
-  audio_file: "Audio file",
-  video_file: "Video file",
-};
-
-/** The top-left chip, or null for no chip. A known platform names itself; an
- *  `other` link or an unclassified run falls back to how it arrived ("Link" /
- *  "File") when that much is known, and to nothing when it is not. */
+/** The top-left chip, or null for no chip. A known platform names itself
+ *  (the shared spelling in platformNames.ts, so it matches the result's source
+ *  card); an `other` link or an unclassified run falls back to how it arrived
+ *  ("Link" / "File") when that much is known, and to nothing when it is not. */
 export function platformLabel(run: RunSummary): string | null {
-  if (run.platform && PLATFORM_LABELS[run.platform]) return PLATFORM_LABELS[run.platform];
+  const known = knownPlatformName(run.platform);
+  if (known) return known;
   if (run.source_kind === "link") return "Link";
   if (run.source_kind === "file") return "File";
   return null;
