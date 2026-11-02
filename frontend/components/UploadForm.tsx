@@ -265,6 +265,21 @@ export default function UploadForm({
     showError(TERMS_MESSAGE, "terms");
   };
 
+  /* Refinement 8: Browse files used to be disabled until the terms were
+     ticked, a dimmed control with no reason given, while Analyze link
+     explained itself on press (refinement 6). Now the two paths behave the
+     same: Browse stays live, and pressing it with the terms unticked opens
+     no picker; it shows the terms error, marks and focuses the checkbox and
+     brings it into view. Once ticked, it opens the picker, and a chosen file
+     goes straight to handleFile (there is no separate submit button). */
+  const browse = () => {
+    if (!acceptedTerms) {
+      rejectUnaccepted();
+      return;
+    }
+    inputRef.current?.click();
+  };
+
   /* URL downloads are the one capability with a consequence the user can act
      on *at this control*, so it is said here rather than only in the summary
      strip above. It warns and never blocks: the probe reads a yt-dlp build
@@ -370,12 +385,12 @@ export default function UploadForm({
              entry point that could still fire mid-submit. The hook guards
              against the double submit; this stops the drop looking accepted. */
           if (cannotStart) return;
+          /* Only a dropped file is a start; dragged text or a link does
+             nothing, and in particular does not raise the terms error. */
           const file = event.dataTransfer.files?.[0];
-          if (!acceptedTerms) {
-            rejectUnaccepted();
-          } else if (file) {
-            void handleFile(file);
-          }
+          if (!file) return;
+          if (!acceptedTerms) rejectUnaccepted();
+          else void handleFile(file);
         }}
         className="drop"
       >
@@ -398,8 +413,8 @@ export default function UploadForm({
         <button
           ref={browseRef}
           type="button"
-          onClick={() => inputRef.current?.click()}
-          disabled={cannotStart || checking || !acceptedTerms}
+          onClick={browse}
+          disabled={cannotStart || checking}
           aria-busy={checking || (pendingKind === "file" && submitting) || undefined}
           aria-describedby={errors.file ? "file-error" : undefined}
           className="btn btn-secondary"

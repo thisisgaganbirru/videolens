@@ -11,7 +11,7 @@ The "Analyze" tab's entry point: paste a public media URL, or drag/drop/browse a
 - File: extension allowlist (`.mp3`/`.mp4`/`.mov`), `MAX_FILE_SIZE_MB` (200), and a best-effort duration check (`readMediaDuration`, via a hidden `<video>`/`<audio>` element's `loadedmetadata` event) against `MAX_DURATION_SECONDS` (180) — wrapped in try/catch since this can fail on some browsers/files, in which case it's silently skipped ("Backend performs authoritative validation").
 - URL: must parse as `http:`/`https:`.
 
-**Terms acceptance**: a checkbox, persisted in `localStorage` (`videolens-media-terms-v1`) so it stays checked across sessions once accepted. Required before either submit path proceeds — Browse is disabled until it is ticked; pressing Analyze link without it shows "Accept the media-use terms before analysis." under the terms row (`#terms-error`, refinement 4; it used to be `#intake-error`).
+**Terms acceptance**: a checkbox, persisted in `localStorage` (`videolens-media-terms-v1`) so it stays checked across sessions once accepted. Required before either submit path proceeds. Both paths explain on press rather than greying out: pressing Analyze link, pressing Browse files (click, Enter or Space) or dropping a file with the terms unticked shows "Accept the media-use terms before analysis." under the terms row (`#terms-error`, refinement 4; it used to be `#intake-error`), marks the checkbox (`aria-invalid`, danger outline), focuses it and reveals it. Browse opens no picker and the drop is not taken. Until refinement 8 Browse was simply disabled while unticked, which hid the reason and disagreed with the link path.
 
 **Analyze link is enabled with an empty field (Phase 2).** It used to be
 disabled until a URL was typed; Main.png draws it as the live green primary
@@ -322,6 +322,27 @@ the section band every time (at 140: band 57-140, field 53-105, message
   frees) on the 429 and lists it in CORS `expose_headers`, so this wording is
   live; without the header it still falls back to the backend's `detail`.
 
+## Refinement 8 (2026-11-02)
+
+**Browse files no longer disabled by the terms.** `UploadForm` gains `browse()`:
+with the terms unticked it calls `rejectUnaccepted()` (the refinement 4-6
+`showErrors` path: `#terms-error`, `aria-invalid` + outline, focus on the
+checkbox, `revealField` on its group) and returns; ticked, it clicks the hidden
+file input. Browse is still disabled for the reasons that make a start
+impossible (`busy`, `blocked`, `checking`). The drop handler now ignores a drop
+with no file (dragged text or a link), so only a dropped file raises the terms
+error. There is no separate submit button for files: a chosen or dropped file
+goes to `handleFile`, which validates and submits, so the order is tick, Browse,
+pick, and the run starts.
+
+Measured on the static export (Playwright, `/api` mocked), 390x844 and
+1366x768, light and dark, web and installed (fake bridge) shells: Browse
+enabled while unticked; click, Enter and Space each open no picker, show the
+message, focus the checkbox with `aria-invalid="true"` and
+`aria-describedby="terms-error"`, both in view; a file dropped while unticked
+shows the same and sends no POST; ticking clears the message; then Browse opens
+the picker and the chosen file sends exactly one POST and leaves the intake.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported UploadForm to the unboxed .intake; returns a fragment since HomeScreen supplies the wrapper
@@ -343,3 +364,4 @@ the section band every time (at 140: band 57-140, field 53-105, message
 - 2026-11-02 · frontend agent (refinement 5) · revealField clips to the scrolling section and prefers field + error message (message bottom edge visible) over the group with Analyze in a short landscape band (INT-01b)
 - 2026-11-02 · frontend agent (refinement 6) · INT-04 all field errors at once (first invalid focused); INT-16 0-byte file rejected; A11-13 44x44 terms hit area; RUN-16 create-run failure wording
 - 2026-11-02 · frontend agent (refinement 7) · RUN-16 note updated: the backend now sends and exposes Retry-After on 429, so "Try again in about N minutes" is live
+- 2026-11-02 · frontend agent (refinement 8) · Browse files stays enabled with the terms unticked; pressing it (click/Enter/Space) or dropping a file shows the terms error, marks/focuses/reveals the checkbox, no picker; dropped non-files ignored; a chosen file still auto-submits
