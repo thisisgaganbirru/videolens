@@ -15,11 +15,23 @@ import { ApiError, NetworkError } from "@/domain/errors";
    launch, and the two hooks keep their own policies — they just stop being
    the only ones who knew.
 
-   - unreachable: a read failed with `NetworkError` (no response at all), or
-     with a 5xx `ApiError` (refinement 10: a proxy's 502/503 for a service
-     that is down). Any other `ApiError` — the server answered, badly — is not
-     a reachability problem and clears the flag, because the server evidently
-     is there.
+   - unreachable: at least one read's latest result failed with
+     `NetworkError` (no response at all), or with a 5xx `ApiError`
+     (refinement 10: a proxy's 502/503 for a service that is down). Any other
+     `ApiError` (the server answered, badly) is not a reachability problem
+     and counts as healthy for that read, because the server evidently is
+     there.
+
+     Refinement 11 (D-R10-1): this used to be ONE shared boolean that each
+     read overwrote, so when only one of the two launch reads hit a 5xx the
+     other one's success cleared it again: last read wins, and a partial
+     outage showed nothing. Each read now keeps its own last result, keyed by
+     source, and the notice is up while ANY of them is failing. It clears
+     only once every read has since come back healthy (a later launch,
+     resume or refocus round re-reads the failing ones, see
+     `onReconnectChance`). A read that is no longer made at all (free runs
+     with a saved key) forgets its result (`forgetReadResult`), so a stale
+     failure cannot hold the notice up with nothing left to retry it.
    - offline: `navigator.onLine` is false. Read live; cheap and authoritative
      in the "no network at all" direction (it can be true while the server is
      still unreachable, which is what the flag above is for).
@@ -28,27 +40,55 @@ import { ApiError, NetworkError } from "@/domain/errors";
    page becoming visible again each give the reads a chance, but only while
    the notice is up — a healthy app makes no extra requests. */
 
+/** The launch-time reads that report here. One entry each, so one read's
+ *  success can never hide another's failure. */
+export type ReadSource = "free-runs" | "capabilities";
+
+const failing = new Set<ReadSource>();
 let unreachable = false;
 const listeners = new Set<() => void>();
 const reconnectListeners = new Set<() => void>();
 
-function publish(next: boolean) {
+function recompute() {
+  const next = failing.size > 0;
   if (next === unreachable) return;
   unreachable = next;
   listeners.forEach((listener) => listener());
 }
 
-/** A launch-time read finished. `error` is what it threw, or undefined on
- *  success. A `NetworkError` means "could not reach the server", and so does
- *  a 5xx `ApiError` (refinement 10): with the service down, Railway's edge
+/** Whether `error` means "could not reach the server": a `NetworkError`, or
+ *  a 5xx `ApiError` (refinement 10). With the service down, Railway's edge
  *  answers every path with a 502/503, so "an answer came back" no longer
- *  proves the app server is there. A 4xx is the server itself refusing, and
- *  keeps clearing the flag. */
-export function noteReadResult(error?: unknown): void {
-  publish(
+ *  proves the app server is there. A 4xx is the server itself refusing. */
+function isUnreachable(error: unknown): boolean {
+  return (
     error instanceof NetworkError ||
-      (error instanceof ApiError && typeof error.status === "number" && error.status >= 500),
+    (error instanceof ApiError && typeof error.status === "number" && error.status >= 500)
   );
+}
+
+/** A launch-time read finished. `source` names which read; `error` is what
+ *  it threw, or undefined on success. Only that read's own entry changes
+ *  (refinement 11): the notice is up while any read's latest result is
+ *  unreachable, and a 4xx or a success clears only the read that made it. */
+export function noteReadResult(source: ReadSource, error?: unknown): void {
+  if (isUnreachable(error)) failing.add(source);
+  else failing.delete(source);
+  recompute();
+}
+
+/** The read is no longer being made (free runs once a key is saved), so its
+ *  last result no longer says anything about the server. Drop it, rather
+ *  than let a failure nobody will retry hold the notice up. */
+export function forgetReadResult(source: ReadSource): void {
+  failing.delete(source);
+  recompute();
+}
+
+/** Whether this read's latest result was unreachable, so a reconnect
+ *  listener can retry exactly the reads that are holding the notice up. */
+export function isReadFailing(source: ReadSource): boolean {
+  return failing.has(source);
 }
 
 /** Register a read to repeat when the connection may be back. Returns the

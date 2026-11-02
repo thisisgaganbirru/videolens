@@ -59,7 +59,7 @@ export function useCapabilities() {
       capabilitiesGateway
         .fetchReport()
         .then((next) => {
-          noteReadResult();
+          noteReadResult("capabilities");
           have = true;
           if (!cancelled) setReport(next);
         })
@@ -67,7 +67,7 @@ export function useCapabilities() {
           /* Still silent here — see (1) above. What it does report is
              whether the server could be reached at all, which Analyze says
              on its own (serverReachability, refinement 4 LCH-06). */
-          noteReadResult(err);
+          noteReadResult("capabilities", err);
         })
         .finally(() => {
           pending = false;
