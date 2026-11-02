@@ -248,6 +248,7 @@ Screenshots in `%TEMP%\qa3\` and `%TEMP%\qa4\`.
 
 ## Changelog
 
+- 2026-11-02 · android-66 (device QA) · HIS-03b re-run at 360dp (`wm size 720x1600`, density 320): PASS, no horizontal overflow (scrollWidth 360), Oldest reverses runs and groups; Analyze, History, More sheet and dock fine. LCH-06d recorded PASS-with-note (emulator WebView keeps navigator.onLine true in airplane mode)
 - 2026-11-02 · android-66 (device QA) · added the refinement 4 cases (section 15) and the Run log for runs 3 and 4 (2a13890, 03dd55e)
 - 2026-11-02 · android-66 (device QA) · added the Run log for the second bundled-APK pass (cc978f7)
 - 2026-11-01 · android-66 (device QA) · added the Run log for the first bundled-APK pass

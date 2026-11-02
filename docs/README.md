@@ -11,6 +11,9 @@ exception, listed so it isn't mistaken for a stray file:
 
 - `qa/android-app-test-cases.md` — the full manual test suite for the
   installed Android app (bundled APK, never live reload).
+- `qa/web-app-test-cases.md` — the full test suite for the web app in a
+  browser tab (production build on a spare port, `/api` mocked with Playwright,
+  real backend only for the real-run cases).
 - `container-workflows.md` — local/dev/production workflow boundaries,
   hardened container behavior, image publication, and operator requirements.
 - `error-messaging.md` — how a failure becomes a sentence on screen and where
@@ -78,3 +81,4 @@ someone else's entry.
 - 2026-11-01 · backend agent (Phase 5b) · indexed `backend/free-runs.md`
 - 2026-11-01 · frontend agent (Phase 5b) · indexed `frontend/free-runs.md`; renamed the quick-links heading to cover both halves
 - 2026-11-01 · frontend agent (Phase 5c/5d) · indexed `frontend/landing-page.md` and `frontend/first-run.md`
+- 2026-11-02 · frontend-43 · indexed `qa/web-app-test-cases.md` next to the Android suite
