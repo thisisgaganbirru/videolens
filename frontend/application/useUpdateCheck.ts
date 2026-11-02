@@ -29,5 +29,9 @@ export function useUpdateCheck() {
     setUpdate(null);
   }, [update]);
 
-  return { update, dismiss };
+  /* Refinement 10: "Get the update" closes the prompt for this launch only.
+     Nothing is stored, so an abandoned download is offered again next time. */
+  const close = useCallback(() => setUpdate(null), []);
+
+  return { update, dismiss, close };
 }

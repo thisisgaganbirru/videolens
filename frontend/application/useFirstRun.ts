@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { firstRunStore, sharedUrlSource } from "@/infrastructure/container";
-import { goToMainTab, type MainTab } from "@/application/useMainTab";
+import { goToMainTab, isAppPath, type MainTab } from "@/application/useMainTab";
 
 /* Phase 5d: the installed app's cold-start splash and first-run Welcome, as one
    small module store, because the two have to take turns — Welcome is a modal
@@ -136,4 +136,18 @@ export function useWelcome(): { open: boolean; dismiss: (next: MainTab) => void 
   }, []);
 
   return { open: welcome && !splash, dismiss };
+}
+
+/**
+ * Refinement 10: whether the cold-start splash or the first-run Welcome owns
+ * the screen right now, so another modal (the update prompt) waits its turn
+ * instead of stacking over them. Welcome only counts on the tool's own
+ * document, the one route that mounts it; elsewhere the store can still say
+ * "not seen yet" while nothing is on screen.
+ */
+export function useFirstRunBusy(): boolean {
+  const { splash, welcome } = useFirstRunState();
+  if (splash) return true;
+  if (!welcome || typeof window === "undefined") return false;
+  return isAppPath(window.location.pathname);
 }

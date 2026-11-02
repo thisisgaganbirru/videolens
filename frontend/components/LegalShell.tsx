@@ -42,7 +42,7 @@ export default function LegalShell({ title, effective, current, children }: Lega
 
       <main className="view-scroll" data-view="legal" aria-label={title}>
         <div className="legal-page">
-          <AppBackLink />
+          <AppBackLink everywhere />
           <article className="select-text">
             <header className="view-head">
               <h1 className="view-title">{title}</h1>
