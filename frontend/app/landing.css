@@ -8,13 +8,6 @@
  * styles, and an imported file cannot open `@layer components` without a
  * matching `@tailwind components` directive of its own. */
 
-/* The landing page's blocking script (application/landingRedirect.ts) sets
-   this on <html> as it navigates away, so the page is never painted on its
-   way through to /app. */
-:root[data-redirecting] body {
-  visibility: hidden;
-}
-
 /* The content column. The boards inset it from the nav's edges (96px at
    1280 against the nav's 48px), so it is narrower than the shell. */
 .landing {
@@ -214,11 +207,11 @@
 .landing-wyg-foot {
   margin: var(--space-md) 0 0;
   padding-top: var(--space-md);
-  max-width: 44rem;
   border-top: var(--rule-w) solid var(--color-border-strong);
   font-size: 0.9375rem;
   line-height: 1.55;
   color: var(--color-ink-2);
+  text-wrap: pretty;
 }
 
 /* The closing band: near-black in light mode, raised tint in dark. */
@@ -278,5 +271,24 @@
   .landing-hero {
     grid-template-columns: minmax(0, 1fr) minmax(0, 30.5rem);
     gap: 4rem;
+  }
+}
+
+/* Desktop: the hero fills the first screen, so "How it works" starts below
+   the fold instead of peeking in, cut off, above the footer. The landing
+   section is the scroller between the fixed nav and footer; as a size
+   container, 100cqb is exactly the visible band, with no nav or footer height
+   subtracted from 100dvh. The grid's one row stretches to that height and
+   align-items centres the intro and card in it. Short windows (under 40rem
+   tall) keep the natural height, so the CTAs never get pushed off-screen. */
+@media (min-width: 60rem) and (min-height: 40rem) {
+  .shell > section.view-scroll[data-view="landing"] {
+    container-type: size;
+  }
+  .landing {
+    padding-top: 0;
+  }
+  .landing-hero {
+    min-height: 100cqb;
   }
 }
