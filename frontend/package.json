@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev -p 3005",
     "build": "next build && node scripts/build-sw.mjs",
-    "build:mobile": "cross-env CAPACITOR_BUILD=true next build && node scripts/build-sw.mjs --export",
+    "build:mobile": "cross-env CAPACITOR_BUILD=true next build && node scripts/fix-export-segments.mjs && node scripts/build-sw.mjs --export",
     "android:sync": "npm run build:mobile && cap sync android",
     "android:open": "cap open android",
     "start": "next start",

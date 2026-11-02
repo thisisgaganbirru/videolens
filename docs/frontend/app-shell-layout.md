@@ -702,6 +702,41 @@ WebView below the bars on WebView < 140 (the API 35 emulator ships 124).
 The app does not read the `--safe-area-inset-*` variables (it uses
 `env(safe-area-inset-*)`), so nothing visible depends on the failed call.
 
+## Refinement 8 (2026-11-02)
+
+**"Unable to open asset URL: /app/__next.app.__PAGE__.txt?_rsc=…" in logcat.**
+This was a real miss, not just noise, and only for APKs built on Windows.
+
+- *What it is.* With `output: "export"` the App Router prefetches each route
+  segment from a flat file beside the route: the client asks for
+  `/app/__next.app.__PAGE__.txt` (segment path `/app/__PAGE__`, `/` turned into
+  `.`, in `next/dist/shared/lib/segment-cache/segment-value-encoding.js`).
+- *Why it failed.* Next 16.4's exporter (`next/dist/export/index.js`,
+  `collectSegmentPaths`) lists segment files with `path.relative`, which gives
+  `app\__PAGE__…` on Windows. Only `/` is replaced, and `path.join` then reads
+  the backslash as a separator, so a Windows build wrote
+  `out/app/__next.app/__PAGE__.txt` (a directory) instead of the flat file. The
+  asset server has nothing at the requested path; the name has a `.`, so it
+  does not fall back to `index.html` either, and answers an empty 404, logging
+  the line above. Every route's `__PAGE__` segment was affected (`/app`,
+  `/privacy`, `/terms`, `/offline`, `/_not-found`); `_tree`, `_index` and
+  `_full` are flat already. Linux builds (CI's release APK, `ubuntu-latest`)
+  write the flat name and never had this.
+- *What it cost.* Only the prefetch. Measured over an emulated asset server
+  (prefetch 404s, no bridge change): tapping History in the dock on
+  `/privacy.html` stayed a client-side navigation (same document, no document
+  request) and fetched the full `/app.txt` payload instead, so the tap waited
+  on one extra request. No full reload, no flash.
+- *Fix.* `scripts/fix-export-segments.mjs`, run by `build:mobile` between
+  `next build` and `build-sw.mjs`: every file under a directory named
+  `__next.<…>` in `out/` moves to the flat name the client builds, and the
+  directory goes. A no-op where the names are already flat (Linux, macOS, or a
+  second run). After it, the same test shows the `__PAGE__` prefetch answered
+  200 and the dock tap needs no further request. `trailingSlash`, the export
+  layout and the `.html` hop are untouched. Drop the script once Next fixes
+  the exporter (check for a `__next.*` directory in `out/` after a Windows
+  build).
+
 ## Changelog
 
 - 2026-08-15 · frontend agent (foundation) · rebuilt the shell to the Terminal direction: one-viewport flex chain, pill nav, mobile drawer, 4 tabs, theme toggle
@@ -728,3 +763,4 @@ The app does not read the `--safe-area-inset-*` variables (it uses
 - 2026-11-02 · frontend agent (refinement 5) · theme choice mirrored natively (NativeThemePlugin + infrastructure/nativeTheme.ts, AppCompat night mode at attachBaseContext and live, UiModeManager on API 31+) so launch/window/bars follow the app, not the OS (THM-01b); revealField clipped to the scrolling section (INT-01b)
 - 2026-11-02 · frontend agent (refinement 6) · A11-02 view band is <main> on every route (one landmark per page); footer link height measured at 44px
 - 2026-11-02 · frontend agent (refinement 7) · THM-01b-6: System paints from the native OS night state (NativeThemePlugin getSystemNight + systemNightChanged; theme.ts adoptDeviceTheme; head-script listener stands down) instead of the WebView's stale prefers-color-scheme; documented the harmless Capacitor "Error injecting safe area CSS" launch log
+- 2026-11-02 · frontend agent (refinement 8) · RSC segment prefetch 404s in the APK traced to a Next 16.4 Windows-only export bug (nested `__next.app/__PAGE__.txt`); `scripts/fix-export-segments.mjs` flattens them in `build:mobile`; cost was one extra `/app.txt` fetch per navigation, never a full reload
