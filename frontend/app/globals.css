@@ -1090,6 +1090,9 @@ h3 {
     gap: 1.75rem;
     flex-shrink: 0;
     overflow-x: auto;
+    /* A tab brought into view (chosen, or focused by the arrow keys) stops
+       clear of the edge chevrons' fade, not underneath it (refinement 11). */
+    scroll-padding-inline: calc(2.75rem + 4px); /* chevron width + the list's 4px padding */
     overscroll-behavior-x: contain;
     scrollbar-width: none;
     padding: 4px;
@@ -1130,6 +1133,48 @@ h3 {
     outline: 2px solid var(--color-focus);
     outline-offset: 2px;
     border-radius: 2px;
+  }
+  /* Refinement 11 (D-R10-2): when the row does not fit (a narrow phone with
+     large text) it says it scrolls. ResultsView sets data-more-start/-end
+     from the list's scroll position; the matching side gets a fade into the
+     card surface with a chevron on it. The fade stops one rule-width above
+     the bottom, so the 1px row rule stays continuous under it. Nothing shows
+     when the tabs fit, which is every width at the normal text size. */
+  .tab-scroller {
+    position: relative;
+    flex-shrink: 0;
+    min-width: 0;
+  }
+  .tab-more {
+    all: unset;
+    box-sizing: border-box;
+    position: absolute;
+    top: 0;
+    bottom: var(--rule-w);
+    z-index: 1;
+    width: 2.75rem;
+    display: none;
+    align-items: center;
+    cursor: pointer;
+    color: var(--color-ink);
+  }
+  .tab-more svg {
+    width: 1.125rem;
+    height: 1.125rem;
+  }
+  .tab-more--start {
+    left: 0;
+    justify-content: flex-start;
+    background: linear-gradient(to right, var(--color-surface) 70%, transparent);
+  }
+  .tab-more--end {
+    right: 0;
+    justify-content: flex-end;
+    background: linear-gradient(to left, var(--color-surface) 70%, transparent);
+  }
+  .tab-scroller[data-more-start="true"] .tab-more--start,
+  .tab-scroller[data-more-end="true"] .tab-more--end {
+    display: inline-flex;
   }
 
   .panel {
@@ -1452,6 +1497,8 @@ h3 {
   }
   .result-title {
     flex: 1 1 18rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
     margin: 0;
     font-family: var(--font-serif);
     font-weight: 400;
@@ -1460,14 +1507,25 @@ h3 {
     letter-spacing: -0.01em;
     color: var(--color-ink);
   }
+  /* Refinement 11 (D-R10-2): the row wraps. At 320-360 px with large text
+     the icons plus "Download .md" are wider than the card, and the pill used
+     to run out past the card edge ("Download .m"). Now Download drops to its
+     own line (and fills it on a phone) instead; at normal sizes everything
+     still fits on one line, so nothing moves there. max-width and a normal
+     white-space are the last resort for a pill wider than the card alone. */
   .result-actions {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2xs);
-    flex: 0 0 auto;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
   }
   .result-download {
     padding-inline: 1.125rem;
+    max-width: 100%;
+    white-space: normal;
   }
   /* Copy's visible confirmation (refinement 4, RES-05): "Transcript copied"
      in a small ink label under the button for the tick's two seconds.
@@ -1553,18 +1611,23 @@ h3 {
      at the end of the search row, where it costs the field ~7rem and no new
      row. From 48rem: pills left, search and sort right, one row. DOM order is
      pills, search, sort — the desktop reading order. */
+  /* Refinement 11 (device QA): on a phone this is a wrapping flex row, not
+     the two-row grid it was. With large text at 320 px the sort select took
+     so much of the search row that the placeholder clipped ("Search your").
+     The field now has a floor (8.5rem, which scales with the text), and when
+     the field and the sort cannot both meet it the sort drops under the
+     field. At normal sizes the row is unchanged: search, sort, then pills. */
   .history-controls {
     margin-top: var(--space-md);
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      "search sort"
-      "filters filters";
+    display: flex;
+    flex-wrap: wrap;
     gap: var(--space-xs);
     align-items: center;
   }
   .history-filters {
     grid-area: filters;
+    order: 1;
+    flex: 1 1 100%;
     display: flex;
     gap: 0.5rem;
     min-width: 0;
@@ -1581,6 +1644,7 @@ h3 {
   }
   .history-search {
     grid-area: search;
+    flex: 1 1 8.5rem;
     min-width: 0;
   }
   .history-search .field {
@@ -1593,6 +1657,7 @@ h3 {
   }
   .history-sort {
     grid-area: sort;
+    flex: 0 0 auto;
     position: relative;
   }
 
@@ -1881,6 +1946,7 @@ h3 {
   @media (min-width: 48rem) {
     .history-controls {
       margin-top: var(--space-lg);
+      display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(0, 16.25rem) auto;
       grid-template-areas: "filters search sort";
       gap: var(--space-2xs);
@@ -3157,10 +3223,16 @@ h3 {
     gap: var(--space-xs);
     margin-top: var(--space-md);
   }
+  /* Refinement 11 (device QA): labels stay on one line. With `min-width: 0`
+     and a wrapping label, a 9.5em basis at 130% text squeezed "Get the
+     update" onto two lines (two 72px buttons) in landscape instead of
+     stacking. Now the label cannot wrap, so a flex item's automatic minimum
+     is the whole label: when both no longer fit side by side the row wraps
+     and each button fills its own line, the same stacking as portrait. Equal
+     widths are kept whenever both fit at the 9.5em basis. */
   .update-prompt__btn {
     flex: 1 1 9.5em;
-    min-width: 0;
-    white-space: normal;
+    white-space: nowrap;
   }
   /* Sideways: less air, so the card stays well inside 360px. */
   @media (max-height: 31.25rem) {
