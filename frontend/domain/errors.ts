@@ -6,7 +6,14 @@
 /** The server answered and the answer was a problem. `message` carries the
  *  backend's own `detail` where it sent one, so it is already specific and
  *  should be shown as-is rather than replaced with a generic line. */
-export class ApiError extends Error {}
+export class ApiError extends Error {
+  /** The HTTP status, when there was one. Lets a caller tell "this run no
+   *  longer exists" (404 — the server forgot it) from every other refusal
+   *  without parsing `message`. */
+  constructor(message: string, readonly status?: number) {
+    super(message);
+  }
+}
 
 /** The request never produced a usable response at all — connection refused,
  *  DNS failure, offline, blocked CORS preflight. Nothing is known to be wrong
@@ -14,3 +21,9 @@ export class ApiError extends Error {}
  *  is why this case gets connectivity wording and a retry rather than a
  *  "could not load X" line. */
 export class NetworkError extends Error {}
+
+/** This browser will not let the app keep anything on the device — no
+ *  IndexedDB at all, or one that refuses to open (some private modes). Not a
+ *  failure of the app: History simply cannot be saved here, and everything
+ *  else still works. */
+export class StorageUnavailableError extends Error {}

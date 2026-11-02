@@ -99,6 +99,10 @@ for (const [route, file] of documentHtml) {
   digest.update(route);
   digest.update(await readFile(file));
 }
+/* The template's own bytes too: a change to the offline policy alone (Phase 5a
+ * opened `/?view=history` offline) must produce a new cache name and sweep the
+ * old cache even if, unusually, nothing else moved. */
+digest.update(await readFile(templatePath));
 const cacheName = `videolens-shell-${digest.digest("hex").slice(0, 12)}`;
 
 const template = await readFile(templatePath, "utf8");

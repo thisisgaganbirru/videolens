@@ -48,7 +48,9 @@ const NAMES: Record<string, string> = {
   media_tools: "Media processing",
   url_download: "Link downloads",
   analysis_engine: "Analysis",
-  run_store: "Run history",
+  /* Not "Run history": History lives in the browser since Phase 5a; this is
+     the server-side store that tracks a run until it is delivered. */
+  run_store: "Run tracking",
   object_storage: "File storage",
   daily_budget: "Shared daily budget",
 };

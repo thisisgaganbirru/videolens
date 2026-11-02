@@ -83,6 +83,13 @@ export interface RunStatusResponse {
    *  `full`. */
   completeness?: AnalysisCompleteness;
   error: string | null;
+  /** Phase 5a. A `data:image/jpeg;base64,...` poster (<= ~20 KB) and the
+   *  display size with rotation applied. All optional: audio runs, older runs
+   *  and older backends have none. The browser files them into its History. */
+  thumbnail?: string | null;
+  width?: number | null;
+  height?: number | null;
+  orientation?: RunOrientation | null;
 }
 
 /** Deliberately has no `completeness`: `GET /api/runs` does not return one, and
@@ -105,7 +112,46 @@ export interface RunSummary {
   summary_snippet?: string | null;
   /** Absent means portrait: most runs are short vertical clips. */
   orientation?: RunOrientation | null;
+  /** Display size, when the backend measured it. Wider than tall = landscape. */
+  width?: number | null;
+  height?: number | null;
 }
+
+/** One run as this browser's History keeps it (IndexedDB, newest 20).
+ *
+ *  Everything needed to list it AND to reopen it with no network: the summary
+ *  fields the poster grid reads, the poster itself as a Blob, and the full
+ *  delivered result. The server forgets a run about an hour after it is
+ *  created; this record is what survives that. Nullable throughout because a
+ *  run is written the moment the server accepts it, long before most of these
+ *  are known. */
+export interface HistoryRecord {
+  run_id: string;
+  /** ISO timestamp. Client clock for runs started here, the server's for
+   *  runs imported from it. The cap drops the oldest by this. */
+  created_at: string;
+  status: RunStatus;
+  title: string | null;
+  source_kind: RunSourceKind | null;
+  platform: RunPlatform | null;
+  duration_seconds: number | null;
+  width: number | null;
+  height: number | null;
+  orientation: RunOrientation | null;
+  summary_snippet: string | null;
+  /** The server's JPEG poster (longest side <= 320px, <= ~20 KB), stored as
+   *  a Blob. Null for audio, failed runs, and until the server has one. */
+  thumbnail: Blob | null;
+  result: VideoAnalysis | null;
+  source_metadata: SourceMetadata | null;
+  completeness: AnalysisCompleteness | null;
+  error: string | null;
+  updated_at: string;
+}
+
+/** A partial write: `run_id` plus whichever fields are now known. Fields left
+ *  `undefined` keep their stored value. */
+export type HistoryPatch = Partial<HistoryRecord> & { run_id: string };
 
 export interface RunListResponse {
   runs: RunSummary[];

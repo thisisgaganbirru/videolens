@@ -63,8 +63,12 @@ export function isAudio(run: RunSummary): boolean {
 }
 
 /** Landscape posters span two columns at 16:9; everything else is a 3:4
- *  portrait, which is also the reading for a run with no orientation. */
+ *  portrait. Measured size decides when there is one (wider than tall =
+ *  landscape); otherwise the server's orientation; otherwise portrait. */
 export function isLandscape(run: RunSummary): boolean {
+  if (typeof run.width === "number" && typeof run.height === "number" && run.width > 0 && run.height > 0) {
+    return run.width > run.height;
+  }
   return run.orientation === "landscape";
 }
 
@@ -184,7 +188,7 @@ function timeOf(iso: string): number | null {
 
 /** A copy, sorted by created_at. Unparseable timestamps go last in either
  *  order, so "Undated" is always one group at the end. */
-export function sortRuns(runs: RunSummary[], order: HistorySort): RunSummary[] {
+export function sortRuns<T extends RunSummary>(runs: T[], order: HistorySort): T[] {
   const sign = order === "newest" ? -1 : 1;
   return [...runs].sort((a, b) => {
     const ta = timeOf(a.created_at);
@@ -194,23 +198,23 @@ export function sortRuns(runs: RunSummary[], order: HistorySort): RunSummary[] {
   });
 }
 
-export interface HistoryGroup {
+export interface HistoryGroup<T extends RunSummary = RunSummary> {
   bucket: DayBucket;
   label: string;
-  runs: RunSummary[];
+  runs: T[];
 }
 
 /** Filter, search, sort, then bucket. Runs arrive sorted, so each bucket is
  *  one contiguous stretch and becomes exactly one group. */
-export function buildHistory(
-  runs: RunSummary[],
+export function buildHistory<T extends RunSummary>(
+  runs: T[],
   { filter, query, sort, now }: { filter: HistoryFilter; query: string; sort: HistorySort; now: Date }
-): HistoryGroup[] {
+): HistoryGroup<T>[] {
   const visible = sortRuns(
     runs.filter((run) => matchesFilter(run, filter) && matchesQuery(run, query)),
     sort
   );
-  const groups: HistoryGroup[] = [];
+  const groups: HistoryGroup<T>[] = [];
   for (const run of visible) {
     const bucket = dayBucket(run.created_at, now);
     const last = groups[groups.length - 1];

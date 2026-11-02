@@ -11,7 +11,8 @@ import type {
   VideoAnalysis,
 } from "@/domain/entities";
 import { classifyGatewayError } from "@/application/gatewayError";
-import { runsGateway } from "@/infrastructure/container";
+import { recordRunResponse, recordSubmitted } from "@/application/historySync";
+import { historyStore, runsGateway } from "@/infrastructure/container";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -127,6 +128,9 @@ export function useAnalysisRun() {
      the interval, a reconnect attempt and openRun so the three cannot disagree
      about what a response means. */
   const applyRun = useCallback((run: RunStatusResponse): boolean => {
+    /* Every response the screen applies is also filed into this browser's
+       History — that is how a run survives the server forgetting it. */
+    recordRunResponse(run);
     setStatus(run.status);
     setStage(run.stage);
     if (run.source_metadata) setSourceMetadata(run.source_metadata);
@@ -275,6 +279,9 @@ export function useAnalysisRun() {
       const generation = ++generationRef.current;
       try {
         const run = await runsGateway.createRun(source);
+        /* Filed even if the screen has moved on: the run exists server-side
+           and belongs in History either way. */
+        recordSubmitted(run.run_id, run.status, source);
         if (generationRef.current !== generation) return;
         setSourceName(describeSource(source));
         setRetrySource(source);
@@ -327,6 +334,29 @@ export function useAnalysisRun() {
       setSourceKind(sourceKindHint === "link" ? "url" : "file");
       setStatus("processing");
       const generation = ++generationRef.current;
+      /* History first: a finished run reopens from this browser with no
+         network at all. Only a record without a result (still running, or
+         one the store could not hold) falls through to the server. */
+      try {
+        const record = await historyStore.get(runId);
+        if (generationRef.current !== generation) return;
+        if (record && ((record.status === "complete" && record.result) || record.status === "failed")) {
+          setSourceKind(record.source_kind === "link" ? "url" : "file");
+          if (record.source_metadata) setSourceMetadata(record.source_metadata);
+          setStatus(record.status);
+          setStage(null);
+          if (record.status === "complete") {
+            setResult(record.result);
+            setCompleteness(record.completeness ?? "full");
+          } else {
+            setError(record.error || "Video analysis failed.");
+          }
+          return;
+        }
+      } catch {
+        /* no usable History here — ask the server as before */
+      }
+      if (generationRef.current !== generation) return;
       try {
         const run = await runsGateway.getRun(runId);
         if (generationRef.current !== generation) return;

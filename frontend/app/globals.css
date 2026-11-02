@@ -1647,6 +1647,19 @@ h3 {
   .poster-thumb[data-tint="3"] { background: var(--poster-3); }
   .poster-thumb[data-tint="4"] { background: var(--poster-4); }
   .poster-thumb[data-tint="5"] { background: var(--poster-5); }
+  /* The stored poster (Phase 5a): covers the whole thumb under the chips and
+     the hover veil; the tint behind it shows only while it decodes, and is
+     the whole poster when there is no image (audio, failed, older runs). */
+  .poster-img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    user-select: none;
+  }
   /* hover wash: an ink veil faded in by opacity, so nothing reflows */
   .poster-thumb::after {
     content: "";
@@ -2206,8 +2219,16 @@ h3 {
     color: var(--color-ink-2);
     text-wrap: balance;
   }
-  .offline-action {
+  /* Try again (ink) + Open History (outline), side by side as drawn; they
+     wrap rather than squeeze on the narrowest phones. */
+  .offline-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.75rem;
     margin-top: var(--space-md);
+  }
+  .offline-action {
     min-height: 3rem;
     padding-inline: 1.5rem;
   }

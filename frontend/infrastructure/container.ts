@@ -4,6 +4,7 @@
 
 import { LocalStorageApiKeyStore } from "./apiKeyStore";
 import { FetchCapabilitiesGateway } from "./capabilitiesGateway";
+import { IndexedDbHistoryStore } from "./historyStore";
 import { FetchRunsGateway } from "./runsGateway";
 import { ApiUpdateChecker } from "./updateCheck";
 import { WebShareUrlSource } from "./sharedUrlSource";
@@ -17,3 +18,4 @@ export const versionLogGateway = new FetchVersionLogGateway();
 export const updateChecker = new ApiUpdateChecker();
 export const sharedUrlSource = new WebShareUrlSource();
 export const systemBarsStyler = new CapacitorSystemBarsStyler();
+export const historyStore = new IndexedDbHistoryStore();

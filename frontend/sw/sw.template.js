@@ -42,7 +42,8 @@ const PRECACHE = [...SHELL_DOCUMENTS, ...STATIC_ASSETS, ...BUILD_ASSETS];
  * documents qualify — they are static text, they are already precached, and
  * hiding them behind an offline screen is a pure loss.
  *
- * `/` is deliberately NOT here, and this is the whole product call. The app is
+ * Bare `/` (Analyze) is deliberately NOT here, and this is the whole product
+ * call — `/?view=history` is, via OFFLINE_CAPABLE_VIEWS below. The app is
  * useless without the API: serving the cached shell would give an upload form
  * that cannot upload and a history panel that errors. That is a worse lie than
  * "you are offline", and it would make the offline page's own `Try again`
@@ -50,6 +51,21 @@ const PRECACHE = [...SHELL_DOCUMENTS, ...STATIC_ASSETS, ...BUILD_ASSETS];
  */
 const OFFLINE_CAPABLE_DOCUMENTS = ["/privacy", "/terms"];
 const OFFLINE_FALLBACK = "/offline";
+
+/* Phase 5a: History lives in this browser (IndexedDB), so the History view is
+ * genuinely complete with no network — its list, its posters and every
+ * finished run's result are all on the device. It is the one app address
+ * served from the cached shell (`/`, whose client code reads `?view=` after
+ * hydrating). Every other view of `/` still needs the API and still gets the
+ * offline page. Like the list above, an allowlist: a new view stays on the
+ * safe side until someone decides otherwise. */
+const OFFLINE_CAPABLE_VIEWS = ["history"];
+
+function cachedAppView(route, requestUrl) {
+  if (route !== "/") return null;
+  const view = requestUrl.searchParams.get("view");
+  return view && OFFLINE_CAPABLE_VIEWS.includes(view) ? "/" : null;
+}
 
 /* One route can arrive as `/privacy`, `/privacy/` or `/privacy.html` depending
  * on whether the caller is `next start`, the static export or a deep link. All
@@ -85,6 +101,11 @@ async function respondToNavigation(request, requestUrl) {
     const route = documentRoute(requestUrl.pathname);
     if (OFFLINE_CAPABLE_DOCUMENTS.includes(route)) {
       const cached = await caches.match(route);
+      if (cached) return cached;
+    }
+    const shell = cachedAppView(route, requestUrl);
+    if (shell) {
+      const cached = await caches.match(shell);
       if (cached) return cached;
     }
     const fallback = await caches.match(OFFLINE_FALLBACK);

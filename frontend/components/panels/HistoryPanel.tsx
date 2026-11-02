@@ -2,8 +2,8 @@
 
 import { useId, useMemo, useState } from "react";
 import { AudioLines, ChevronDown, Play } from "lucide-react";
-import { useRunHistory } from "@/application/useRunHistory";
-import type { RunSourceKind, RunSummary } from "@/domain/entities";
+import { useRunHistory, type HistoryEntry } from "@/application/useRunHistory";
+import type { RunSourceKind } from "@/domain/entities";
 import {
   HISTORY_FILTERS,
   buildHistory,
@@ -27,8 +27,8 @@ const SORT_QUERY = "(min-width: 48rem)";
 /* History — a poster grid (design/shots/HistoryA*.png, HistoryMobile.png,
    HistoryWeb.png). Everything that decides *what* shows lives in the pure
    components/history.ts; this file only renders. Filtering, search and sort
-   are client-side over the <=20 runs the backend returns — there is no paging
-   to coordinate with. */
+   are client-side over the <=20 runs this browser keeps (IndexedDB, Phase
+   5a) — there is no paging to coordinate with. */
 
 interface HistoryPanelProps {
   onOpenRun: (runId: string, sourceKind?: RunSourceKind | null) => void;
@@ -65,13 +65,29 @@ function HistoryBody({
   onOpenRun,
   onAnalyze,
 }: ReturnType<typeof useRunHistory> & HistoryPanelProps) {
+  /* The browser will not store anything (some private modes). Nothing is
+     broken and nothing can be retried, so this is the calm empty-state
+     voice, not the red failure ladder — and the way forward is the app,
+     which still works. */
+  if (error?.kind === "storage")
+    return (
+      <div className="history-empty" data-error-kind="storage" role="status">
+        <p className="history-empty-title">{error.message}</p>
+        <p className="history-empty-body">
+          This browser isn&apos;t letting VideoLens keep anything on this device, which private
+          browsing often does. You can still analyze videos; their results just won&apos;t wait
+          here afterwards.
+        </p>
+        <button type="button" className="btn btn-secondary" onClick={onAnalyze}>
+          Analyze a video
+        </button>
+      </div>
+    );
   /* .error-inline, not .error-block: one condition inside a view, not the
-     whole app having failed. The wording is the hook's — a server that
-     answered gets its own `detail`, one that never answered gets told so —
-     and is never overwritten here. */
+     whole app having failed. The wording is the hook's. */
   if (error)
     return (
-      <div role="alert" className="error-inline history-state">
+      <div role="alert" className="error-inline history-state" data-error-kind={error.kind}>
         <p>{error.message}</p>
         <button
           type="button"
@@ -89,7 +105,7 @@ function HistoryBody({
         Loading your runs…
       </p>
     );
-  /* A 200 with {"runs": []} — nothing has been analyzed in this browser yet.
+  /* Nothing has been analyzed in this browser yet (or History was cleared).
      Not an error, so no red and no retry: one way forward instead. */
   if (runs.length === 0)
     return (
@@ -111,7 +127,7 @@ function HistoryGrid({
   runs,
   onOpenRun,
 }: {
-  runs: RunSummary[];
+  runs: HistoryEntry[];
   onOpenRun: HistoryPanelProps["onOpenRun"];
 }) {
   const [filter, setFilter] = useState<HistoryFilter>("all");
@@ -233,7 +249,7 @@ function Poster({
   now,
   onOpen,
 }: {
-  run: RunSummary;
+  run: HistoryEntry;
   now: Date;
   onOpen: HistoryPanelProps["onOpenRun"];
 }) {
@@ -252,6 +268,14 @@ function Poster({
         onClick={() => onOpen(run.run_id, run.source_kind)}
       >
         <span className="poster-thumb" data-tint={posterTint(run.run_id)} aria-hidden="true">
+          {/* The stored poster, over the tint (which stays as the colour
+              behind it while it decodes). Empty alt: the button's label
+              already names the run. A plain <img>: the source is a blob:
+              URL from IndexedDB, which next/image cannot optimise. */}
+          {run.thumbnail_url && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img className="poster-img" src={run.thumbnail_url} alt="" decoding="async" draggable={false} />
+          )}
           {chip && <span className="poster-chip">{chip}</span>}
           <span className="poster-play">
             <Glyph className="poster-glyph" data-glyph={isAudio(run) ? "audio" : "play"} />

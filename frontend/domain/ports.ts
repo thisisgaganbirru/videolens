@@ -4,6 +4,8 @@
 
 import type {
   CapabilityReport,
+  HistoryPatch,
+  HistoryRecord,
   MediaSource,
   RunCreateResponse,
   RunListResponse,
@@ -14,6 +16,25 @@ export interface RunsGateway {
   createRun(source: MediaSource): Promise<RunCreateResponse>;
   getRun(runId: string): Promise<RunStatusResponse>;
   listRuns(): Promise<RunListResponse>;
+}
+
+/**
+ * This browser's run History — the only copy that outlives the server's
+ * one-hour hold on a run. Capped: once more than `HISTORY_LIMIT` runs are
+ * stored, the oldest (by `created_at`) is dropped.
+ *
+ * Every method rejects with `StorageUnavailableError` when the browser offers
+ * no usable storage; callers that only *write* history swallow that, because
+ * History must never be the reason an analysis fails.
+ */
+export interface HistoryStore {
+  /** Every stored run, newest first. */
+  list(): Promise<HistoryRecord[]>;
+  get(runId: string): Promise<HistoryRecord | null>;
+  /** Merge into the stored record (or create it), then enforce the cap. */
+  upsert(patch: HistoryPatch): Promise<void>;
+  /** Called after any write, from this tab or another. Returns unsubscribe. */
+  subscribe(listener: () => void): () => void;
 }
 
 /** Reads the deployment's own capability report. Separate from `RunsGateway`

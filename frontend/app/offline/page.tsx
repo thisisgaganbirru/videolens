@@ -13,24 +13,18 @@ import SiteFooter from "@/components/SiteFooter";
  *
  * `activeTab={null}`: none of the four is where you are.
  *
- * The tabs point at `/?view=…`, which the service worker deliberately answers
- * with this page while the network is down (`/` needs the API; serving the
- * cached shell would give an upload form that cannot upload). So tapping
- * History offline lands back here. That is the honest answer to "show me my
- * history with no network", not a dead end — and it is a far smaller problem
- * than the alternative, a route whose chrome visibly differs from every other
- * route. The links are not decorative either: they are real navigations that
- * start working the instant the network does, which is exactly why they must
- * not be rendered as disabled — the page cannot know when connectivity
- * returns, and the first thing a user does on this screen is retry.
+ * The tabs point at `/?view=…`. Since Phase 5a the service worker answers
+ * `/?view=history` offline with the cached app shell — History lives in this
+ * browser (IndexedDB) now, so it is genuinely complete with no network. Every
+ * other app address still lands here (`/` needs the API to analyze anything).
+ * The links are real navigations that start working the instant the network
+ * does, which is why they must not be rendered as disabled.
  *
  * Phase 4 (design/phase4-boards/Offline*.png): a tint disc with the
  * wifi-off glyph, a serif title, two short lines, actions — centred in a
  * `.view-scroll` section (HomeScreen's scrolling model, no `data-frame`).
- * The boards also say "Your History is still here." and offer Open History;
- * both are left out because they are not true yet — History is fetched from
- * the server, and the worker answers `/?view=history` with this very page
- * while offline. They come back when history moves client-side.
+ * "Your History is still here." and Open History are true since Phase 5a:
+ * History is read from IndexedDB and the worker serves its address offline.
  *
  * No wordmark in the body. The nav directly above already is one, and two
  * stacked wordmarks read as repetition — the same call the legal footer makes.
@@ -56,12 +50,16 @@ export default function OfflinePage() {
           </span>
           <h1 className="offline-title">You&apos;re offline</h1>
           <p className="offline-lede">
-            VideoLens needs a connection to analyze new videos. A run you already started keeps
-            going on the server.
+            VideoLens needs a connection to analyze new videos. Your History is still here.
           </p>
-          <a href="/" className="btn btn-ink btn-pill offline-action">
-            Try again
-          </a>
+          <div className="offline-actions">
+            <a href="/" className="btn btn-ink btn-pill offline-action">
+              Try again
+            </a>
+            <a href="/?view=history" className="btn btn-secondary btn-pill offline-action">
+              Open History
+            </a>
+          </div>
         </div>
       </section>
 

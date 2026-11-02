@@ -18,11 +18,13 @@ and `FetchRunsGateway`'s request headers).
 - `entities.ts` — `RunStatus`, `VideoAnalysis`, `TranscriptSegment`,
   `ScreenTextSegment`, `RunCreateResponse`, `RunStatusResponse`,
   `RunSummary`, `RunListResponse`, `MediaSource`.
-- `errors.ts` — `ApiError`.
+- `errors.ts` — `ApiError` (with an optional HTTP `status`), `NetworkError`,
+  `StorageUnavailableError`.
 - `ports.ts` — the interfaces infrastructure adapters implement and hooks
   depend on: `RunsGateway`, `ApiKeyStore`, `VersionLogGateway`,
-  `UpdateChecker`, `SharedUrlSource` (plus their associated
-  `VersionLogEntry`/`UpdateInfo` types).
+  `UpdateChecker`, `SharedUrlSource`, `HistoryStore` (plus their associated
+  `VersionLogEntry`/`UpdateInfo` types). `entities.ts` also holds
+  `HistoryRecord`/`HistoryPatch`.
 
 **`infrastructure/`** — concrete adapters, one per external system.
 - `runsGateway.ts` — `FetchRunsGateway`: talks to the backend's
@@ -41,6 +43,11 @@ and `FetchRunsGateway`'s request headers).
   the `videolens-share` event) or the manifest's `share_target` query params.
   Consuming — see `docs/frontend/share-intake.md`. Implements
   `SharedUrlSource`.
+- `historyStore.ts` — `IndexedDbHistoryStore`: this browser's run History
+  (IndexedDB `videolens`/`runs`, capped at 20, oldest dropped; asks
+  `navigator.storage.persist()` once; `BroadcastChannel` for other tabs).
+  Opens lazily, so constructing it during prerender is safe. Implements
+  `HistoryStore`. See `docs/frontend/run-history.md`.
 - `container.ts` — builds one instance of each adapter above and exports
   them; every hook imports from here instead of constructing an adapter
   itself.
@@ -52,7 +59,11 @@ needs. Each hook owns its `useState`/`useEffect` and calls out to
   open a past run from history, reset. This is what used to be inline in
   `app/page.tsx`.
 - `useGeminiApiKey.ts` — the BYOK value/saved-state and save/clear actions.
-- `useRunHistory.ts` — fetches the caller's run history.
+- `useRunHistory.ts` — reads History from `historyStore` (not the server),
+  re-reads on change, owns the poster object URLs; `useHistoryBoot()`.
+- `historySync.ts` — React-free History writes used by `useAnalysisRun` and
+  the boot: file on submit and on each status response, one-time import from
+  `GET /api/runs`, re-check of unfinished runs (404 → expired).
 - `useVersionLog.ts` — fetches the release list.
 - `useUpdateCheck.ts` — wraps the native update check for `UpdateBanner`.
 - `useSharedUrl.ts` — the latest URL shared into the app. Lives here rather
@@ -118,3 +129,7 @@ still imported the old component.
   version info is sourced) → write a new adapter in `infrastructure/`
   satisfying the existing port, point `container.ts` at it. Hooks and
   components don't change.
+
+## Changelog
+
+- 2026-11-01 · frontend agent (Phase 5a) · added the `HistoryStore` port + `IndexedDbHistoryStore` adapter, `application/historySync.ts`, `StorageUnavailableError`, `ApiError.status`; `useRunHistory` now reads the browser store
