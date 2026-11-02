@@ -204,6 +204,20 @@ couldn't verify as a question, not a fact.
 | STB-02 | Background the app for 2 minutes during idle, then reopen. | Resumes; no reload loop. |
 | STB-03 | Low memory: open several other apps, then return. | Restores to a usable state (state loss acceptable; a crash isn't). |
 
+## 15. Refinement 4 additions
+
+| ID | Steps | Expected |
+|---|---|---|
+| INT-01b | Portrait, empty link, tap Analyze. Repeat with an invalid URL (terms ticked), and in landscape. | Field focused, keyboard up, "Paste a link to analyze." (or the invalid-URL message) directly under the field and visible above the keyboard. |
+| INT-03b | Valid link, terms unticked, tap Analyze. | Checkbox has a red outline and focus, message right under the terms row and visible; ticking the box clears it. |
+| INT-05 (re-run) | Rotate to landscape with the keyboard open. | The focused field stays visible. |
+| LCH-06b | Launch with :8000 unreachable. | Calm notice "Can't reach the server right now. You can still open past runs in History."; form usable; History link works. |
+| LCH-06c | Backend back up after LCH-06b, bring the app to the front. | Notice clears. BLOCKED until the backend is restarted. |
+| LCH-06d | Airplane mode on, launch. Airplane off, bring the app to the front. | "You're offline right now. …"; clears on return. |
+| THM-01b | More > Theme: System / Light / Dark, System checked on a fresh install. Light + OS dark; System follows the OS live ("Following your device"); after the header toggle More shows Light or Dark; System hands control back. | No wrong-theme flash on relaunch. |
+| RES-05b | Past completed run from History: Copy on each tab. Share label. | "<Tab> copied"; pastes only that tab; share reads "Share all results". |
+| HIS-03b | Portrait, 360-class width, 3+ runs. | Sort select next to search; Oldest reverses runs and date groups; no sideways scroll. |
+
 ## Run log
 
 ### 2026-11-01 · android-66 (device QA) · run 1 (bundled APK)
@@ -216,8 +230,26 @@ Findings and questions are in the report sent to the lead; screenshots are in `%
 
 Open items from this run: LCH-02/03 dark launch screen hands off to a light page when the system is dark and the in-app theme is the default light; RES-07 Download .md opens a text share sheet titled "Sharing text", no file saved; INT-01 inline message not confirmed; INT-09 lede still says "drop a file"; file runs show no file name in the result; `pm clear` resets the free-run counter to 3 (new device token).
 
+### 2026-11-02 · android-66 (device QA) · run 2 (bundled APK, refinement 2)
+
+Build: cc978f7 (adds @capacitor/filesystem), versionName 2.1.1, versionCode 1, debug APK. Device: emulator API 35, WebView 124.0.6367.219. Backend: lead's local :8000 via `adb reverse`; the lead restarted it three times (counter back to 3 each time). Real runs: R1 link, R2 mp4, R3 mp3, RUN-06 link (interrupted), ORI-02 link, FRS-04 link.
+
+PASS: LCH-04/05, FRS-01..07, NAV-01..07 (NAV-07 also live and while backgrounded), BCK-01..05, INT-02/04/07/08/09, FREE-01..05, KEY-01/02, RUN-01/02/02b/03/04/07/08, RES-01..04/06/08/09, HIS-01/02/05, SHR-01..04, THM-03, ORI-01/02/04, MOR-01..03, STB-01 (no app FATAL, 0 Uncaught; the one FATAL in the crash buffer was the `uiautomator` helper), STB-02/03.
+FAIL: LCH-02/03 (about 0.4 s light frame between the dark launch screen and the dark page), RUN-06 (stuck on "Connection lost", then "Run not found." from History, row stays Processing), INT-01 (message sits under the keyboard), INT-03 (checkbox not marked), INT-05 (landscape with keyboard: the focused field is hidden), RES-07 (share sheet "Sharing 1 file", no explicit save target).
+PARTIAL / NOTES: LCH-06 (opens, error on submit, no proactive offline state), THM-01 (no way back to System once toggled), HIS-03 (search and filter work; sort is a native select that could not be driven), RES-05 (copies the active tab only).
+N/A: HIS-04 (no delete control anywhere), KEY-03 (owner-assisted). INS-03: stock Capacitor icon. NOT RUN: INT-06, HIS-06, HIS-07 (round-1 evidence only), ORI-03 (round-1 evidence only), RUN-06b..e and ORI-05 (refinement 3).
+
+### 2026-11-02 · android-66 (device QA) · runs 3 and 4 (bundled APK, 2a13890 then 03dd55e, backend DOWN)
+
+Device: emulator API 35, rebuilt headless with swiftshader after the first emulator died (LCH-02/03 timings are swiftshader). Backend stopped (memory), so every real-run case is BLOCKED: RUN-05, RUN-06, 06b..e, ORI-02 retest, FREE-*, LCH-06c. Run 3 (2a13890, partial): INT-04 PASS; INT-01, INT-03, INT-05 FAIL (fixed by 03dd55e); HIS-01/02/06/07, NAV scroller, ORI-03, ORI-05 landscape, KEY-01/02 PASS.
+Run 4 (03dd55e): PASS INT-01b (portrait empty and invalid), INT-03b, INT-05 (field stays visible), LCH-02/03 (luma 74 → 69/65 → 31, no light frame), LCH-06b, THM-01b (except relaunch flash), RES-05b and HIS-03b (PASS, seeded history; width was 411dp, not 360), BCK/NAV sanity, STB-01 (0 FATAL).
+PARTIAL / FAIL: INT-01b landscape (message clipped under the keyboard; only about 5 px visible, the field and button are visible); LCH-06d (airplane on shows "Can't reach the server right now…", not "You're offline right now…"; possibly navigator.onLine stays true on the emulator, unconfirmed); THM-01b relaunch (Light chosen under OS dark: blank dark window about 6.7 s, then the light page; likely exaggerated by swiftshader, and status/nav bars stay dark over a light page).
+Screenshots in `%TEMP%\qa3\` and `%TEMP%\qa4\`.
+
 ## Changelog
 
+- 2026-11-02 · android-66 (device QA) · added the refinement 4 cases (section 15) and the Run log for runs 3 and 4 (2a13890, 03dd55e)
+- 2026-11-02 · android-66 (device QA) · added the Run log for the second bundled-APK pass (cc978f7)
 - 2026-11-01 · android-66 (device QA) · added the Run log for the first bundled-APK pass
 - 2026-11-01 · videolens-ff (lead) · First version of the full Android app test suite, for the bundled-APK QA pass after the Phase 5 refinement fixes.
 - 2026-11-02 · frontend agent (refinement 3) · added RUN-06b..e (404 expiry on every path, airplane-mode regression) and ORI-05 (nothing under the dock at rest); LCH-02 is the retest for the dark-launch flash fix
