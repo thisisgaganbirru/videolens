@@ -54,18 +54,65 @@ function scrollParent(el: HTMLElement): HTMLElement | null {
   return (document.scrollingElement as HTMLElement | null) ?? null;
 }
 
+/* The smallest gap kept at the band's bottom edge when field + message only
+   just fit (or do not fit at all), so the message's last line is not flush
+   against the keyboard. */
+const TIGHT_MARGIN = 4;
+
+type Span = { top: number; bottom: number };
+
+function spanOf(elements: HTMLElement[]): Span {
+  let top = Infinity;
+  let bottom = -Infinity;
+  for (const el of elements) {
+    const r = el.getBoundingClientRect();
+    top = Math.min(top, r.top);
+    bottom = Math.max(bottom, r.bottom);
+  }
+  return { top, bottom };
+}
+
+/* The field's own error message(s): what its aria-describedby points at that
+   is an error (`role="alert"` / `.field-error`) and is actually rendered.
+   Informational notes it also points at (the link-capability callout) are not
+   worth pushing the message off screen for. */
+function errorMessages(field: HTMLElement): HTMLElement[] {
+  const ids = (field.getAttribute("aria-describedby") ?? "").split(/\s+/).filter(Boolean);
+  const found: HTMLElement[] = [];
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (!el || !el.matches('[role="alert"], .field-error')) continue;
+    if (el.getBoundingClientRect().height === 0) continue;
+    found.push(el);
+  }
+  return found;
+}
+
 /**
  * Bring a field — and the message that belongs to it — into the part of the
- * screen the user can actually see (refinement 4, INT-01 / INT-05).
+ * screen the user can actually see (refinement 4, INT-01 / INT-05; refinement
+ * 5, INT-01b).
  *
- * The unit is the field's `[data-reveal-group]` ancestor (the link form, the
- * terms row with its error, the drop zone with its error) when that fits in
- * the visible band, else the field alone. "Visible" is the visual viewport:
- * in the installed app the WebView itself shrinks for the keyboard, but a
- * mobile browser shrinks only the visual viewport, and `scrollIntoView` alone
- * centres in the layout viewport — under the keyboard. So it centres first,
- * then measures against the visual viewport and nudges the nearest scroller
- * by whatever is still hidden.
+ * What is revealed, in order of preference:
+ *   1. the field's `[data-reveal-group]` (the link form with its label, field,
+ *      error and Analyze button; the terms row; the drop zone), plus its error,
+ *      when all of that fits in the visible band with margins — centred;
+ *   2. otherwise the field plus its error message (its aria-describedby
+ *      `role="alert"`), centred when it fits;
+ *   3. otherwise (a landscape phone with the keyboard up leaves ~140px) the
+ *      pair is aligned so the MESSAGE's bottom edge is visible, at the cost of
+ *      the field's top edge. The Analyze button is never preferred over it:
+ *      landscape QA showed the field and button with the message 5px from
+ *      view, because step 1 failed and the old fallback centred the field
+ *      alone.
+ *
+ * "Visible" is the visual viewport, clipped to the field's scrolling section
+ * (the installed app's header sits above it): in the installed app the WebView itself
+ * shrinks for the keyboard, but a mobile browser shrinks only the visual
+ * viewport, and `scrollIntoView` alone centres in the layout viewport — under
+ * the keyboard. So it centres the field first (which moves every nested
+ * scroller roughly into place), then measures the chosen span against the
+ * visual viewport and nudges the field's nearest scroller by the difference.
  *
  * Instant, not smooth: a smooth scroll started while the keyboard is still
  * resizing the WebView can be cut short by that resize, which is one way the
@@ -74,21 +121,42 @@ function scrollParent(el: HTMLElement): HTMLElement | null {
 export function revealField(field: HTMLElement): void {
   const group = field.closest<HTMLElement>("[data-reveal-group]");
   const vv = window.visualViewport;
-  const top = Math.max(0, vv?.offsetTop ?? 0);
-  const bottom = Math.min(window.innerHeight, top + (vv?.height ?? window.innerHeight));
-  const room = bottom - top - 2 * REVEAL_MARGIN;
-  const target = group && group.getBoundingClientRect().height <= room ? group : field;
-  const inView = (r: DOMRect) => r.top >= top + REVEAL_MARGIN && r.bottom <= bottom - REVEAL_MARGIN;
+  const scroller = scrollParent(field);
+  let top = Math.max(0, vv?.offsetTop ?? 0);
+  let bottom = Math.min(window.innerHeight, top + (vv?.height ?? window.innerHeight));
+  /* The installed app scrolls a section under a fixed header: only the part
+     of the screen that section occupies is visible band. Ignoring it is how a
+     landscape field ended up half under the header with its message below
+     the keyboard (refinement 5, INT-01b) — the window had room, the section
+     did not. */
+  if (scroller && scroller !== document.scrollingElement && scroller !== document.body) {
+    const clip = scroller.getBoundingClientRect();
+    top = Math.max(top, clip.top);
+    bottom = Math.min(bottom, clip.bottom);
+  }
+  const band = bottom - top;
+  const messages = errorMessages(field);
+  const pair = [field, ...messages];
+  const height = (span: Span) => span.bottom - span.top;
+  const roomy = (span: Span) => height(span) <= band - 2 * REVEAL_MARGIN;
+  const parts = group && roomy(spanOf([group, ...messages])) ? [group, ...messages] : pair;
+  const inView = (span: Span) => span.top >= top + REVEAL_MARGIN && span.bottom <= bottom - REVEAL_MARGIN;
   /* Already fully visible: leave the page where the user put it. */
-  if (inView(target.getBoundingClientRect())) return;
-  target.scrollIntoView({ block: "center", inline: "nearest" });
+  if (inView(spanOf(parts))) return;
+  field.scrollIntoView({ block: "center", inline: "nearest" });
 
-  const rect = target.getBoundingClientRect();
-  let delta = 0;
-  if (rect.bottom > bottom - REVEAL_MARGIN) delta = rect.bottom - (bottom - REVEAL_MARGIN);
-  if (rect.top - delta < top + REVEAL_MARGIN) delta = rect.top - (top + REVEAL_MARGIN);
+  const span = spanOf(parts);
+  let delta: number;
+  if (roomy(span)) {
+    /* Centre the whole span (scrollIntoView centred the field, not the pair). */
+    delta = (span.top + span.bottom) / 2 - (top + bottom) / 2;
+  } else {
+    /* Too tall for the band: the message's bottom edge wins. */
+    const edge = Math.max(TIGHT_MARGIN, Math.min(REVEAL_MARGIN, (band - height(span)) / 2));
+    delta = span.bottom - (bottom - edge);
+  }
   if (Math.abs(delta) < 1) return;
-  scrollParent(target)?.scrollBy({ top: delta });
+  scroller?.scrollBy({ top: delta });
 }
 
 export function useSoftKeyboard(): void {
