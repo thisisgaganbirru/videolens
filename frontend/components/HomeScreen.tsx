@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import AppNav from "@/components/AppNav";
 import BottomTabBar from "@/components/BottomTabBar";
@@ -9,8 +9,9 @@ import CapabilityNotice from "@/components/CapabilityNotice";
 import FreeRunsBanner from "@/components/FreeRunsBanner";
 import ReachabilityNotice from "@/components/ReachabilityNotice";
 import { useServerReachability } from "@/application/serverReachability";
-import { useFreeRuns } from "@/application/useFreeRuns";
-import UploadForm from "@/components/UploadForm";
+import { revalidateFreeRuns, useFreeRuns } from "@/application/useFreeRuns";
+import UploadForm, { type IntakeHandoff } from "@/components/UploadForm";
+import { MEDIA_FILE_ACCEPT, readTermsAccepted } from "@/components/mediaTerms";
 import RunStatusView from "@/components/RunStatusView";
 import ResultsView, { FileSourceCard, SourceCard, creatorInitials } from "@/components/ResultsView";
 import ApiKeyPanel from "@/components/panels/ApiKeyPanel";
@@ -20,8 +21,9 @@ import { useAnalysisRun } from "@/application/useAnalysisRun";
 import { useHistoryBoot } from "@/application/useRunHistory";
 import { useCapabilities } from "@/application/useCapabilities";
 import { useSharedUrl, type SharedUrl } from "@/application/useSharedUrl";
-import { goToMainTab, useMainTab, type MainTab } from "@/application/useMainTab";
+import { canonicalizeAppPath, goToMainTab, useMainTab, type MainTab } from "@/application/useMainTab";
 import type { RunSourceKind } from "@/domain/entities";
+import { platformName } from "@/domain/platforms";
 
 /**
  * The app shell for one tab.
@@ -37,6 +39,8 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
     status,
     stage,
     sourceKind,
+    mediaKind,
+    freeRunRefunded,
     result,
     completeness,
     sourceMetadata,
@@ -68,6 +72,13 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
     resume();
   }, [resume]);
 
+  /* Refinement 9 (item 9): in the installed app, `/app` reached by a
+     client-side link becomes `/app.html`, the address every other way in
+     already lands on. A no-op on the web. */
+  useEffect(() => {
+    canonicalizeAppPath();
+  }, []);
+
   /* Called here, once, rather than in the three components that consume it.
      This component is never unmounted by a tab switch (the tabs are a
      `pushState` query param), so one call is one request per app load; three
@@ -82,6 +93,15 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      unmounted by a tab switch, so the allowance is read once per app load
      (and again after each run, on a 402, or when the key is removed). */
   const freeRuns = useFreeRuns();
+
+  /* Refinement 9 (items 6 and 8, device QA): every time the intake comes
+     back — "Analyze another file" after a refunded run, stop watching, a
+     failed open — read the allowance again, so the banner never shows the
+     count from before the last run. Launch is covered too (deduplicated with
+     useFreeRuns' own first read). A no-op on the user's own key. */
+  useEffect(() => {
+    if (status === "idle") void revalidateFreeRuns();
+  }, [status]);
 
   /* Refinement 4 (LCH-06): both reads above go quiet when they fail, which
      made an unreachable server look exactly like a healthy one. This watches
@@ -152,6 +172,28 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
     setDismissedShare(sharedUrl);
     setAgainPrefill(againUrl ? { url: againUrl, receivedAt: Date.now() } : null);
     reset();
+  };
+
+  /* Refinement 9 (item 7): "Choose the file again" on an expired file run
+     opens the file picker itself. It has to happen here, inside the tap: a
+     picker opened from a later render (once the intake has mounted) is
+     refused by browsers without a live user gesture, and by the Android
+     WebView too. So the input lives in this always-mounted shell, the tap
+     clicks it synchronously and then returns to the intake, and the chosen
+     file is handed to the form, which gives it every check Browse would.
+     The terms gate still applies, read from storage at tap time: unticked,
+     no picker, the intake shows the terms error (as Browse does since
+     refinement 8). Out of free runs, no picker either: the intake's banner
+     and blocked note say why. Cancelling the picker leaves the intake. */
+  const filePickerRef = useRef<HTMLInputElement>(null);
+  const [handoff, setHandoff] = useState<IntakeHandoff | null>(null);
+  const takeHandoff = useCallback(() => setHandoff(null), []);
+  const chooseFileAgain = () => {
+    if (!freeRuns.blocked) {
+      if (readTermsAccepted()) filePickerRef.current?.click();
+      else setHandoff({ kind: "terms" });
+    }
+    startOver();
   };
 
   /* Refinement 1, #6: each phase of a run (intake → progress → result or
@@ -244,6 +286,8 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                      recovery: a compact notice at the top of the card, not
                      the progress view's notice card with its own actions. */
                   submitError={error}
+                  handoff={handoff}
+                  onHandoffTaken={takeHandoff}
                 />
               </div>
 
@@ -315,7 +359,9 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                 onRetryNow={reconnectNow}
                 expired={expired}
                 canRefill={againUrl !== null}
-                onAnalyzeAgain={analyzeAgain}
+                onAnalyzeAgain={sourceKind === "file" && againUrl === null ? chooseFileAgain : analyzeAgain}
+                mediaKind={mediaKind}
+                freeRunRefunded={freeRunRefunded}
               />
             </div>
           )}
@@ -344,7 +390,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     <span className="source-toggle__text">
                       {sourceMetadata ? (
                         <>
-                          Source: {sourceMetadata.platform}
+                          Source: {platformName(sourceMetadata.platform)}
                           {sourceMetadata.uploader ? `, ${sourceMetadata.uploader}` : ""}
                         </>
                       ) : (
@@ -421,6 +467,22 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
           dock in a phone-width installed app). */}
       <SiteFooter />
       <BottomTabBar activeTab={activeTab} onSelectTab={goToMainTab} />
+
+      {/* The expired view's picker (item 7, above). Out of the tab order and
+          the accessibility tree: the visible control is the button. */}
+      <input
+        ref={filePickerRef}
+        type="file"
+        accept={MEDIA_FILE_ACCEPT}
+        className="hidden"
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) setHandoff({ kind: "file", file });
+          event.target.value = "";
+        }}
+      />
     </div>
   );
 }

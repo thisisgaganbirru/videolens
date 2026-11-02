@@ -1,38 +1,25 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import type { Capability, MediaSource } from "@/domain/entities";
 import type { SharedUrl } from "@/application/useSharedUrl";
 import { ArrowUpFromLine } from "lucide-react";
 import { CapabilityCallout } from "@/components/CapabilityNotice";
 import { isNoticeable } from "@/application/useCapabilities";
 import { revealField } from "@/application/useSoftKeyboard";
+import { goToMainTab, mainTabHref } from "@/application/useMainTab";
+import { isPlainLeftClick } from "@/components/navClick";
+import { MEDIA_FILE_ACCEPT, readTermsAccepted, writeTermsAccepted } from "@/components/mediaTerms";
+
+/** Something the shell hands the freshly mounted intake (refinement 9): a file
+ *  picked from the expired view's "Choose the file again", to run through the
+ *  same checks as Browse; or the terms error, when that tap found the terms
+ *  unticked. A new object per hand-off. */
+export type IntakeHandoff = { kind: "file"; file: File } | { kind: "terms" };
 
 const ACCEPTED_EXTENSIONS = [".mp3", ".mp4", ".mov"];
 const MAX_FILE_SIZE_MB = 200;
 const MAX_DURATION_SECONDS = 180;
-const MEDIA_TERMS_ACCEPTANCE_KEY = "videolens-media-terms-v1";
-
-/* Storage can throw (private mode, blocked site data). Refinement 1 (#5): an
-   unreadable flag reads as "not accepted" and an unwritable one is simply not
-   remembered — the box still works for this visit. */
-function readTermsAccepted(): boolean {
-  try {
-    return window.localStorage.getItem(MEDIA_TERMS_ACCEPTANCE_KEY) === "accepted";
-  } catch {
-    return false;
-  }
-}
-
-function writeTermsAccepted(accepted: boolean): void {
-  try {
-    if (accepted) window.localStorage.setItem(MEDIA_TERMS_ACCEPTANCE_KEY, "accepted");
-    else window.localStorage.removeItem(MEDIA_TERMS_ACCEPTANCE_KEY);
-  } catch {
-    /* not remembered; nothing else to do */
-  }
-}
-
 interface UploadFormProps {
   onSubmit: (source: MediaSource) => void;
   disabled?: boolean;
@@ -60,6 +47,10 @@ interface UploadFormProps {
    *  first thing in the card. Not tied to the field: no aria-invalid, no
    *  focus move, so a network error never pulls focus out of the input. */
   submitError?: string | null;
+  /** See IntakeHandoff. Taken once: `onHandoffTaken` tells the owner to drop
+   *  it, so a later remount of the form cannot replay it. */
+  handoff?: IntakeHandoff | null;
+  onHandoffTaken?: () => void;
 }
 
 type ErrorField = "url" | "file" | "terms";
@@ -119,6 +110,8 @@ export default function UploadForm({
   sharedUrl,
   urlCapability,
   submitError,
+  handoff,
+  onHandoffTaken,
 }: UploadFormProps) {
   const busy = disabled || submitting;
   /* Every way of starting a run. `busy` alone still governs the link field and
@@ -261,9 +254,24 @@ export default function UploadForm({
     onSubmit({ url: value });
   };
 
-  const rejectUnaccepted = () => {
+  const rejectUnaccepted = useCallback(() => {
     showError(TERMS_MESSAGE, "terms");
-  };
+  }, [showError]);
+
+  /* Refinement 9: the expired view opened the picker itself, inside the tap
+     (a picker cannot be opened from a later render), and has already applied
+     the terms gate. A chosen file still gets every check Browse gives it. */
+  useEffect(() => {
+    if (!handoff) return;
+    onHandoffTaken?.();
+    /* Both paths run after the effect, like a picker's change event would:
+       the hand-off is an event from outside this form, not state to derive. */
+    const picked = handoff;
+    queueMicrotask(() => {
+      if (picked.kind === "terms") rejectUnaccepted();
+      else void handleFile(picked.file);
+    });
+  }, [handoff, handleFile, onHandoffTaken, rejectUnaccepted]);
 
   /* Refinement 8: Browse files used to be disabled until the terms were
      ticked, a dimmed control with no reason given, while Analyze link
@@ -296,6 +304,17 @@ export default function UploadForm({
     .filter(Boolean)
     .join(" ");
 
+  /* Refinement 9 (item 3): out of free runs, Analyze link and Browse files
+     are disabled — and the only explanation used to be the banner above the
+     headline, off screen once the form is scrolled to. This line sits in the
+     card and is each disabled control's description. */
+  const blockedNote = blocked ? "intake-blocked" : null;
+  const openApiKey = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (!isPlainLeftClick(event)) return;
+    event.preventDefault();
+    goToMainTab("api-key");
+  };
+
   /* The intake card: one white surface holding both entry points and the
      terms row, drawn on design/shots/Main.png. HomeScreen owns everything
      around it (eyebrow, headline, lede, the "What you get" panel), so this
@@ -308,6 +327,15 @@ export default function UploadForm({
       {submitError ? (
         <p role="alert" className="intake-alert">
           {submitError}
+        </p>
+      ) : null}
+      {blocked ? (
+        <p id="intake-blocked" className="intake-blocked">
+          No free runs left today, so analyzing is paused.{" "}
+          <a className="text-link" href={mainTabHref("api-key")} onClick={openApiKey}>
+            Add key
+          </a>{" "}
+          to keep going.
         </p>
       ) : null}
       {/* noValidate: the field is type="url" for the keyboard and autofill,
@@ -337,6 +365,7 @@ export default function UploadForm({
           <button
             type="submit"
             disabled={cannotStart}
+            aria-describedby={blockedNote ?? undefined}
             aria-busy={pendingKind === "url" && submitting ? true : undefined}
             className="btn btn-primary"
           >
@@ -416,7 +445,7 @@ export default function UploadForm({
           onClick={browse}
           disabled={cannotStart || checking}
           aria-busy={checking || (pendingKind === "file" && submitting) || undefined}
-          aria-describedby={errors.file ? "file-error" : undefined}
+          aria-describedby={[errors.file ? "file-error" : null, blockedNote].filter(Boolean).join(" ") || undefined}
           className="btn btn-secondary"
         >
           {pendingKind === "file" && submitting
@@ -428,7 +457,7 @@ export default function UploadForm({
         <input
           ref={inputRef}
           type="file"
-          accept=".mp3,.mp4,.mov,audio/mpeg,video/mp4,video/quicktime"
+          accept={MEDIA_FILE_ACCEPT}
           className="hidden"
           onChange={(event) => {
             const file = event.target.files?.[0];

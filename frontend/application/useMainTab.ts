@@ -108,6 +108,42 @@ export function goToMainTab(tab: MainTab, options: { push?: boolean } = {}): voi
 }
 
 /**
+ * Whether this page is served by Capacitor's Android asset server (native,
+ * `localhost`, no port) — the same test the landing page's head script uses
+ * before its `.html` hop. Live reload (`localhost:3005`) and every browser
+ * answer false.
+ */
+export function isCapacitorAssetServer(): boolean {
+  if (typeof window === "undefined") return false;
+  const { hostname, port } = window.location;
+  return nativeShell.isNative() && hostname === "localhost" && !port;
+}
+
+/**
+ * Refinement 9: one spelling of the tool's address in the installed app.
+ *
+ * On the asset server the real document is `/app.html` (`/app` only works by
+ * way of `index.html` and the head script's hop), and a cold start, a reload
+ * and the legal pages' Back (a history step back) all land there. But the
+ * dock and the legal pages' links are client-side navigations to `/app`, so
+ * the same screen answered to two addresses depending on how it was reached.
+ * This rewrites `/app` to `/app.html` in place, keeping the query, the hash
+ * and the in-app marker — the same replaceState `goToMainTab` already does on
+ * that shell. No navigation, no reload. Everywhere else it does nothing: the
+ * web keeps `/app`, which is the right spelling for `next start` and static
+ * hosts.
+ */
+export function canonicalizeAppPath(): void {
+  if (!isCapacitorAssetServer()) return;
+  const { pathname, search, hash } = window.location;
+  if (pathname !== APP_PATH && pathname !== `${APP_PATH}/`) return;
+  const current: unknown = window.history.state;
+  const marked =
+    !!current && typeof current === "object" && !!(current as Record<string, unknown>)[IN_APP_ENTRY_KEY];
+  window.history.replaceState(marked ? { [IN_APP_ENTRY_KEY]: true } : {}, "", `${APP_PATH}.html${search}${hash}`);
+}
+
+/**
  * The active tab, tracked from the URL.
  *
  * Calls `useSearchParams`, so every caller must sit under a `<Suspense>`
