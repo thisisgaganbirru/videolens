@@ -322,11 +322,37 @@ horizontal overflow, no document scroll.
   installed; dialog "Save notes"), where Drive, Files, notes apps or mail take
   it. In a browser it is the same blob download as before (verified:
   `test-video.md`, full report).
-- **A real `.md` file on Android** needs `@capacitor/filesystem` (not
-  installed, not added): `Filesystem.writeFile({ path: "<name>.md", data,
-  directory: Directory.Cache, encoding: Encoding.UTF8 })` then
-  `Share.share({ files: [uri] })`; needs `npm i @capacitor/filesystem` and
-  `cap sync` (adds the native plugin to the Android project).
+- **A real `.md` file on Android (refinement 2, #1).** Supersedes the text
+  share above. `@capacitor/filesystem@^8.1.5` is installed; native save writes
+  `exports/<slug>.md` (slug capped at 80 chars) into `Directory.Cache` as
+  UTF-8, then calls `Share.share({ title, files: [uri], dialogTitle: "Save
+  notes" })`, so the sheet carries a file and offers Save to Files, Drive and
+  the like. The share plugin turns the `file://` URI into a content URI through
+  the app's FileProvider; `res/xml/file_paths.xml` already has `<cache-path
+  name="my_cache_images" path="." />`, which covers the cache root and every
+  folder under it, so **no native change was needed**. If the write fails (for
+  example an APK built before `cap sync` registered the plugin) save falls back
+  to the old text share, so the button is never dead. The web blob download is
+  unchanged. **Needs `cap sync`** before an APK has the plugin.
+
+## Source card for uploaded files (refinement 2, #6)
+
+The server keeps no file name (`backend/app/interface/api/schemas.py`: "the
+filename itself is never kept"); the run detail does return
+`duration_seconds` for uploads. So:
+
+- `HistoryRecord.file_name` (new, optional) is written by `recordSubmitted`
+  from the picked `File.name`. It stays in IndexedDB, never sent anywhere.
+- `useAnalysisRun` exposes `durationSeconds` (from each run response, or the
+  History record on reopen) and restores `sourceName` from `record.file_name`.
+- `FileSourceCard` (`components/ResultsView.tsx`): a chip ("Video file" /
+  "Audio file" by extension, else "Uploaded file"), the file name (wraps
+  anywhere, `.source-card__file-name`) and a ruled footer "Duration m:ss"
+  (`formatDuration` from `components/history.ts`). `HomeScreen` renders it when
+  a file run has a name or a duration; the phone pill reads "Source: <name>". A
+  file run with neither keeps the old "No source details" note.
+- Uploads from before this change, and runs imported from the server, have no
+  name; they show the duration alone.
 - **Share sends the whole report**, the same string as Download (verified
   byte-identical in a browser via a `navigator.share` spy), labelled "Share
   notes". It used to send only the active tab.
@@ -349,3 +375,4 @@ horizontal overflow, no document scroll.
 - 2026-11-01 · frontend agent · On-screen tab rebuilt text-only from design/newshots (OnScreenView: intro line, time | serif text rows, line breaks kept); TimelineView and .ocr-tag removed; the On-screen TODO(design) closed
 - 2026-11-01 · frontend agent (Phase 4) · audit only, no change: TL;DR / Notes / Transcript / On-screen in that order, TL;DR default, 2px accent underline over the 1px rule — verified at 1366, phone web and phone app, light and dark
 - 2026-11-01 · frontend agent (refinement 1) · Download/Share via DocumentExporter port: Android save opens the share sheet with the full report, Share sends the full report (was active tab), Copy stays per tab; filesystem plugin documented, not added
+- 2026-11-02 · frontend agent (refinement 2) · Android "Download .md" writes a real `<slug>.md` to the cache (@capacitor/filesystem 8.1.5) and shares the file ("Save notes"), text-share fallback; FileProvider already covers the cache; file runs get FileSourceCard (name from IndexedDB `file_name`, duration from the run detail)

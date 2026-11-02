@@ -199,6 +199,19 @@ couldn't verify as a question, not a fact.
 | STB-02 | Background the app for 2 minutes during idle, then reopen. | Resumes; no reload loop. |
 | STB-03 | Low memory: open several other apps, then return. | Restores to a usable state (state loss acceptable; a crash isn't). |
 
+## Run log
+
+### 2026-11-01 · android-66 (device QA) · run 1 (bundled APK)
+
+Build: 76d7f41 + landing.css WIP, versionName 2.1.1, versionCode 1, debug APK. Device: emulator API 35, WebView 124.0.6367.219, 1080x2400. Backend: local :8000 via `adb reverse`. Starting free runs: 3. Real runs used: R1 link, R2 mp4, R3 mp3. KEY-03 skipped (owner-assisted).
+
+PASS: INS-01 (same-origin `-r` keeps History and theme; first install N/A, origin changed), INS-02, LCH-01, LCH-05, FRS-01/02/03/04/07, NAV-01/02/04/06, BCK-01..05, INT-02/03/04, FREE-01..03, RUN-01/02/02b/08, RES-01/06, HIS-01/02/05, SHR-01..04, THM-01..03, ORI-04, MOR-01..03, STB-01 (0 FATAL, 0 Uncaught).
+KNOWN: NAV-07 (status bar icons unreadable when in-app theme differs from system theme, WebView 124).
+Findings and questions are in the report sent to the lead; screenshots are in `%TEMP%\qa2\`.
+
+Open items from this run: LCH-02/03 dark launch screen hands off to a light page when the system is dark and the in-app theme is the default light; RES-07 Download .md opens a text share sheet titled "Sharing text", no file saved; INT-01 inline message not confirmed; INT-09 lede still says "drop a file"; file runs show no file name in the result; `pm clear` resets the free-run counter to 3 (new device token).
+
 ## Changelog
 
+- 2026-11-01 · android-66 (device QA) · added the Run log for the first bundled-APK pass
 - 2026-11-01 · videolens-ff (lead) · First version of the full Android app test suite, for the bundled-APK QA pass after the Phase 5 refinement fixes.

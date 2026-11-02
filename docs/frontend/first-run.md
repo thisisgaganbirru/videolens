@@ -85,7 +85,10 @@ so are all 11 stock `splash.png` files (`drawable/`, `drawable-port-*`,
 
 The colours follow the **OS** night mode, the only thing known before the
 WebView exists. A user who picked dark in the app on a light-mode phone sees a
-paper launch screen, then the dark web splash.
+paper launch screen, then the dark web splash. Since refinement 2 (#3) a user
+who never picked a theme gets the device's theme in the app too, so the launch
+screen and the first page agree for them (LCH-02/03); only an explicit in-app
+choice that differs from the OS still shows the mismatch.
 
 Below API 31 the compat library draws the same background and icon through
 `Theme.SplashScreen`'s window background until `BridgeActivity` swaps the theme.
@@ -173,3 +176,4 @@ Capacitor bridge.
 
 - 2026-11-01 · frontend agent (Phase 5d) · created: installed-app splash and one-time Welcome, FirstRunStore port and adapter, SharedUrlSource.pending()
 - 2026-11-01 · frontend agent (refinement 1) · Android launch screen: BrandMark vector + paper colours (light/night), postSplashScreenTheme, stock splash.png removed; splash script moved to the root head; storage-crash known issue closed
+- 2026-11-02 · frontend agent (refinement 2) · noted that the device-following default theme makes the launch screen and first page agree when no theme is stored (LCH-02/03)

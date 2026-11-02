@@ -223,19 +223,40 @@ React state, so no hydration mismatch and the correct glyph on first paint. A
 small blocking script in `layout.tsx` stamps the attribute before first paint so
 the choice doesn't flash.
 
-**First visit with nothing stored is LIGHT**, regardless of
-`prefers-color-scheme`. A product decision, not an oversight; a stored choice
-still wins and this only covers the no-preference case. There is no
-`@media (prefers-color-scheme: dark)` block anywhere in the stylesheets — light
-is already the bare `:root` — so nothing fights the script. Measured on a fresh
-profile with `prefers-color-scheme: dark` emulated: `data-theme="light"` at
-`DOMContentLoaded` and at the first animation frame, i.e. before any paint.
+**Nothing stored follows the device (refinement 2, #3).** It used to be light
+regardless of `prefers-color-scheme`, which made the installed app's launch
+screen (OS night mode) hand off from dark to a light page. The pre-paint script
+now resolves `prefers-color-scheme` when `videolens_theme` holds neither
+"light" nor "dark", and keeps a `matchMedia` change listener for the life of the
+document that re-reads storage first, so it acts only while nothing is stored.
+A stored choice still wins. The toggle (top bar and More sheet) flips the
+painted theme and **stores** the result; nothing returns to "follow the device"
+short of clearing site data (a three-way System/Light/Dark control is the
+follow-up if wanted). The More sheet's "Dark theme" row shows "Following your
+device" under its label while nothing is stored. Still no
+`@media (prefers-color-scheme)` block in the stylesheets: the script always
+stamps `data-theme`. `components/theme.ts` has `SYSTEM_DARK_QUERY` and
+`storedTheme()`; `DEFAULT_THEME` is gone.
 
 The browser-chrome colour follows it. `viewport.themeColor` used to be a
 `prefers-color-scheme` **pair**, which was right only while the app tracked the
 OS; a dark-OS visitor would now get a dark strip above a light page. It is one
 media-less tag carrying the light value, which the pre-paint script and
 `toggleTheme` both re-point at whatever theme is actually in use.
+
+**Status-bar icon style vs WebView version (refinement 2, #2).**
+`infrastructure/systemBars.ts` reads the WebView major from the user agent
+(`Chrome/NNN`). On **140+** the page paints under the bars, so the style
+follows the app theme (Light/Dark). Below **140** the bars show the OS-themed
+window background, so it sends `SystemBarsStyle.Default`, which the native side
+resolves from the OS night mode at call time. `useSystemBarsTheme` re-sends it
+on a `prefers-color-scheme` change and on return to the foreground, because
+the activity handles `uiMode` itself and the resolved style would otherwise go
+stale. An unreadable UA counts as modern. `capacitor.config.ts`
+`SystemBars.style` is now `"DEFAULT"` (was `"LIGHT"`); it reaches the APK on
+the next `cap sync`. This targets NAV-07 (white clock on a white bar, system
+light + app dark, WebView 124). The bar background on < 140 is unchanged: it
+follows the OS, and now so do the icons.
 
 **Android status bar sync from the More sheet.** The More sheet's theme row
 calls the same `toggleTheme()` as the top-bar `ThemeToggle`. The native status
@@ -362,7 +383,16 @@ under `max-height: 31.25rem` the top bar drops its links and is 56px. Measured
 844×390 app shell: nav 56, band 57–310, dock 310–374, terms reachable. A tall
 tablet (1024×1366 app shell) keeps the top bar and footer, no dock.
 
-**Pre-paint scripts (#9).** All four (theme, shell, landing redirect, splash)
+**Landscape phone (refinement 2, #7).** Under `max-height: 31.25rem` in the
+app shell the dock goes one row (icon beside label), 52px tall with 44px
+targets, lifted 8px, with an 8px gap above it so the scroller visibly ends
+before the dock; the intake headline drops to 2.25rem (one line at 844px).
+Measured 844x390: dock 330-382, headline 215-253 (was 215-323 against a dock
+at 310). The More sheet lays its two groups side by side under the title
+(max-width 44rem) and fits in 237px with no scroll (was 381px of content
+clipped to 342). Same at 915x412; light and dark checked.
+
+**Pre-paint scripts (#9). All four (theme, shell, landing redirect, splash)
 are one inline script in the root layout `<head>`; see `landing-page.md`.
 
 **Status bar / nav strip in dark (#3), not fixed (lead decision: no native
@@ -521,3 +551,4 @@ back/forward was measured and the Capacitor mapping is read from
 - 2026-11-01 · frontend agent (app Back link) · added `AppBackLink` (`.app-back`) above the title of API key, Releases, Privacy and Terms in the app shell only (`display:none` in the web shell; every width in the app shell); `application/backNavigation.ts` decides history.back() vs Analyze (Navigation API → `goToMainTab` history-state marker → same-origin referrer); `goToMainTab` now pushes `{ videolensInApp: true }`
 - 2026-11-01 · frontend agent (Phase 5c) · tabs moved to /app (APP_PATH, isAppPath, mainTabHref); brand links to / in a browser tab and is static in the installed shell; landing at / uses the shared chrome
 - 2026-11-01 · frontend agent (refinement 1) · dock sticky in flow (containment had captured the fixed dock), keyboard hides dock, Android hardware back (NativeShell port, decideBack, native tab switches replace), phase scroll-to-top, scrollbar-gutter on the real scroller (fine pointers only), landscape keeps the dock, #3 native diff documented not applied
+- 2026-11-02 · frontend agent (refinement 2) · default theme follows the device live (stored choice wins; sheet shows "Following your device"); system-bar style from the OS on WebView < 140 (Default, re-sent on OS flip/resume), app theme on 140+; capacitor SystemBars style DEFAULT; landscape: one-row 52px dock, one-line headline, two-column More sheet
