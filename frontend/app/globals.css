@@ -173,6 +173,12 @@ h3 {
   .shell > section.view-scroll {
     margin-inline: calc((100% - 100cqi) / 2);
     padding-inline: calc((100cqi - 100%) / 2);
+    /* Refinement 3, #2: the containing block for absolutely positioned
+       descendants (Tailwind's `.sr-only` spans). Without it they resolved
+       against `.viewport`, escaped this scroller's clipping, and gave the
+       whole frame ~320px of scroll on API key (landscape, 360x640): nav and
+       dock rode up the screen. */
+    position: relative;
   }
 
   /* Full-bleed bands inside the centred shell: pull out to the viewport edge,
@@ -3697,6 +3703,35 @@ h3 {
     margin-top: 0;
   }
 
+}
+
+/* Refinement 3, #2. Below 32rem the installed app used to scroll `.viewport`
+   as a whole, with the dock sticky at its bottom edge. Sticky overlays: with a
+   view taller than the screen, whatever sat in the dock's last 64px at rest
+   was under the dock (on the run screen that was "Retry now", and a tap on it
+   landed on History). The phone app shell now uses the same measured frame as
+   32rem and up: the shell is exactly one viewport, the section between the top
+   bar and the dock is the only scroller, and the dock ends the column below
+   it, so no view can ever have content under the dock, at rest or scrolled.
+   The web shell (no dock) keeps the page-scroll model. */
+@media (width < 32rem) {
+  :root[data-shell="app"] .shell {
+    flex: 1;
+    min-height: 0;
+    height: auto;
+  }
+  :root[data-shell="app"] .shell > section[data-view] {
+    flex: 1;
+    min-height: 0;
+  }
+  :root[data-shell="app"] .shell > section.view-scroll {
+    overflow-y: auto;
+  }
+  /* The same 8px the landscape dock keeps above it, so the scroller visibly
+     ends before the dock and the last control never sits flush against it. */
+  :root[data-shell="app"] .tabbar {
+    margin-top: var(--space-2xs);
+  }
 }
 
 /* 48rem is where the four destinations fit inline beside the brand and the

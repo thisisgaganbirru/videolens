@@ -392,6 +392,30 @@ at 310). The More sheet lays its two groups side by side under the title
 (max-width 44rem) and fits in 237px with no scroll (was 381px of content
 clipped to 342). Same at 915x412; light and dark checked.
 
+## Refinement 3 (2026-11-02)
+
+**Nothing under the dock, at rest or scrolled (#2).** android-66 found
+"Retry now" under the dock on the Connection lost screen (portrait phone); a
+tap on it hit History. Cause: below 32rem the phone app shell still scrolled
+`.viewport` as a whole with the dock `position: sticky` at its bottom, and
+sticky overlays: refinement 1's "the scroller ends where the dock begins" was
+only true at the *end* of the scroll. Fix (unlayered, `@media (width < 32rem)`,
+app shell only): the same measured frame as 32rem and up. `.shell` is one
+viewport (`flex: 1; min-height: 0`), the active `section.view-scroll` is the
+only scroller (`overflow-y: auto`), and the dock ends the column below it with
+an 8px gap (`margin-top: var(--space-2xs)`, as in landscape). The web shell
+keeps page scroll. Also `position: relative` on `.shell > section.view-scroll`:
+Tailwind `.sr-only` spans (API key's "opens in a new tab") were absolutely
+positioned against `.viewport`, escaped the section's clipping and gave the
+whole frame ~320px of scroll on API key in landscape and at 360x640 (nav and
+dock rode up).
+Measured (Playwright, `next start`, light + dark, 390x844 / 360x640 / 844x390 /
+915x412): section bottom 8px above the dock top on intake, progress, Connection
+lost, failed, expired, History, API key, Releases and Privacy; zero
+interactive elements visible under the dock; `.viewport` never scrolls;
+"Retry now" is either fully above the dock or clipped below the fold and
+reachable by scrolling, where `elementFromPoint` hits the button.
+
 **Pre-paint scripts (#9). All four (theme, shell, landing redirect, splash)
 are one inline script in the root layout `<head>`; see `landing-page.md`.
 
@@ -552,3 +576,4 @@ back/forward was measured and the Capacitor mapping is read from
 - 2026-11-01 · frontend agent (Phase 5c) · tabs moved to /app (APP_PATH, isAppPath, mainTabHref); brand links to / in a browser tab and is static in the installed shell; landing at / uses the shared chrome
 - 2026-11-01 · frontend agent (refinement 1) · dock sticky in flow (containment had captured the fixed dock), keyboard hides dock, Android hardware back (NativeShell port, decideBack, native tab switches replace), phase scroll-to-top, scrollbar-gutter on the real scroller (fine pointers only), landscape keeps the dock, #3 native diff documented not applied
 - 2026-11-02 · frontend agent (refinement 2) · default theme follows the device live (stored choice wins; sheet shows "Following your device"); system-bar style from the OS on WebView < 140 (Default, re-sent on OS flip/resume), app theme on 140+; capacitor SystemBars style DEFAULT; landscape: one-row 52px dock, one-line headline, two-column More sheet
+- 2026-11-02 · frontend agent (refinement 3) · phone app shell (< 32rem) uses the measured frame (section scrolls, dock below it, 8px gap) so nothing sits under the dock at rest; scroll sections are the containing block for `.sr-only`

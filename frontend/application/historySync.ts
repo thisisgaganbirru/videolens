@@ -148,6 +148,30 @@ export function recordRunResponse(run: RunStatusResponse): void {
   historyStore.upsert(patchFromRun(run)).catch(() => lastWritten.delete(run.run_id));
 }
 
+/** True when a gateway call failed because the server no longer has the run
+ *  (HTTP 404 — past its hold, or lost to a restart of an in-memory store).
+ *  Every other failure (offline, 5xx) says nothing about the run itself. */
+export function isRunGone(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 404;
+}
+
+/** Marks a run this browser knows about as expired: failed, with
+ *  EXPIRED_MESSAGE. Used on every path that can meet the 404 — the live poll,
+ *  a reconnect, reopening from History, and the startup reconcile — so the
+ *  History row and the screen always agree. Resolves to the link the run was
+ *  made from, when this browser stored one (for "Analyze it again"); null for
+ *  an upload, or when History cannot be read. Never rejects. */
+export async function recordExpired(runId: string): Promise<string | null> {
+  lastWritten.delete(runId);
+  try {
+    await historyStore.upsert({ run_id: runId, status: "failed", error: EXPIRED_MESSAGE });
+    const record = await historyStore.get(runId);
+    return record?.source_url ?? record?.source_metadata?.source_url ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /* ---------- once per app load ---------- */
 
 let bootPromise: Promise<void> | null = null;
@@ -224,11 +248,7 @@ async function reconcileUnfinished(skip: Set<string>): Promise<void> {
       const run = await runsGateway.getRun(record.run_id);
       await historyStore.upsert(patchFromRun(run));
     } catch (err) {
-      if (err instanceof ApiError && err.status === 404) {
-        await historyStore
-          .upsert({ run_id: record.run_id, status: "failed", error: EXPIRED_MESSAGE })
-          .catch(ignore);
-      }
+      if (isRunGone(err)) await recordExpired(record.run_id);
     }
   }
 }
