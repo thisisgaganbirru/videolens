@@ -64,7 +64,7 @@ export class FetchCapabilitiesGateway implements CapabilitiesGateway {
       throw new NetworkError(UNREACHABLE);
     }
 
-    if (!res.ok) throw new ApiError(`Could not read capabilities (${res.status})`);
+    if (!res.ok) throw new ApiError(`Could not read capabilities (${res.status})`, res.status);
 
     try {
       return normaliseReport(await res.json());
