@@ -175,7 +175,7 @@ function HistoryGrid({
             id={searchId}
             type="search"
             className="field field-pill"
-            placeholder="Search your runs"
+            placeholder="Search runs"
             autoComplete="off"
             spellCheck={false}
             value={query}
