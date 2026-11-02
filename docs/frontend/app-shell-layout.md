@@ -119,7 +119,7 @@ confined to the phone-width app shell: the rule is "same chrome on every route
 *within a shell*". Both shells still render on
 `/`, `/privacy`, `/terms`, `/offline`.
 
-- **Content never sits under the dock.** In app mode `.shell` gets `padding-bottom: calc(var(--tabbar-height) + max(var(--space-sm), var(--safe-bottom)) + var(--space-sm))`, so the scroller's last line clears the bar. Measured at 390×844: dock top 764, Analyze content ends 565, legal scroller ends 748.
+- **Content never sits under the dock.** *(Refinement 1: the dock is now `position: sticky` in flow at the end of `.shell`, not `position: fixed`, so the shell's old bottom padding is 0 and the scroller simply ends where the dock begins.)* See "Refinement 1" below.
 - **Top bar is sticky, full-bleed.** `.viewport` is `container-type: inline-size`; `.nav-wrap` and `.page-end` break out of the shell's gutter with `margin-inline: calc((100% - 100cqi) / 2)` + matching padding — full width without `100vw` (which counts the scrollbar and causes horizontal scroll).
 - **More sheet** is a native modal `<dialog>` opened with `showModal()`: top layer, inert page, Escape via `cancel`, `::backdrop` click closes (dialog has no own padding, so only a backdrop click targets the element), focus returns to More on every close path. Add rows by editing `MORE_SHEET_GROUPS` — three row kinds: `tab` (in-place nav on `/`), `route` (plain `<a>`, works from `/offline`), `theme` (`role="switch"`, reuses `toggleTheme`).
 - **Cascade-layer trap.** The responsive `@media` blocks in `globals.css` are *unlayered*, so they beat anything in `@layer components` regardless of specificity. The ≥ 48rem `.nav-links { display: flex }` is therefore written `:root:not([data-shell="app"]) .nav-links` — unscoped, it would resurrect the links in app mode. Any new unlayered responsive rule touching chrome needs the same guard.
@@ -302,6 +302,98 @@ form is a single indivisible value, so an engine that cannot parse it (Safari
 below 17.4) drops the **whole** declaration and the accent mark vanishes from
 every nav in the app. Do not collapse this back into one rule.
 
+## Refinement 1 (2026-11-01)
+
+**Dock pinned (#1).** The dock was `position: fixed`, but `.viewport` is
+`container-type: inline-size`, and containment makes it the containing block
+for fixed descendants. In the installed app (where `.viewport` is the phone
+scroller) the "fixed" dock therefore scrolled away with the content, on the
+intake and on the result view. It is now `position: sticky; bottom:
+max(var(--space-sm), var(--safe-bottom))` with `margin: auto auto <same>`, the
+last flex item of `.shell`. Measured at 390×844 app shell, light and dark:
+dock 764–828 before and after scrolling the intake, the progress view and the
+result to the bottom; the terms checkbox, Retry and "Analyze another file" are
+all hit-testable (nothing over them).
+
+**Keyboard (#2).** `application/useSoftKeyboard.ts` (mounted once in
+`BottomTabBar`) stamps `<html data-keyboard="open">` while a text field has
+focus on a coarse pointer, and clears it on blur or when the viewport grows
+back after having shrunk (the back gesture dropping the keyboard with focus
+kept); a shrink with focus kept re-opens it. On open the field is scrolled to
+the centre after 300 ms. `:root[data-shell="app"][data-keyboard="open"] .tabbar
+{ display: none }`. No `@capacitor/keyboard` (not installed; no native plugins
+added). Measured: focus → flag + dock hidden; shrink → open; grow back → closed;
+shrink again over the same focused field → open; blur → closed; desktop
+(fine pointer) never flags.
+
+**Hardware back, Android only (#4).** `domain/ports.ts` `NativeShell` →
+`infrastructure/nativeShell.ts` (`@capacitor/app` `backButton` listener,
+`exitApp`) → `container.nativeShell` → `application/useHardwareBack.ts`
+(mounted in `BottomTabBar`) → pure `decideBack()` in `backNavigation.ts`:
+open dialog → close it (cancelable `cancel` first, so Welcome records its
+dismissal); WebView `canGoBack` → `history.back()`; not on Analyze → Analyze;
+on Analyze → exit. On the native shell `goToMainTab` **replaces** the entry
+(fresh state object; the `videolensInApp` marker carried over only if present);
+`handleOpenRun` passes `{ push: true }` so back from an opened run returns to
+History. Browser/PWA keep the push behaviour and their own back. `AppBackLink`
+/ `hasInAppPrevious` unchanged. Verified: `decideBack` 6/6 unit cases (node);
+emulated bridge (fake `PluginHeaders` + `nativeCallback`): three tab taps add 0
+entries; back with the More sheet open closes it; back on History → `/app`;
+back on Analyze calls `App.exitApp`; opening a run from History adds 1 entry
+and back returns to `?view=history`.
+
+**Phase scroll (#6).** `HomeScreen` resets the Analyze section and `.viewport`
+to `scrollTop = 0` in a layout effect whenever the run phase (intake →
+progress → result / failed) changes. Measured: progress, result and failed all
+start at 0 after submitting from a scrolled intake.
+
+**Scrollbar gutter (#8).** `scrollbar-gutter: stable` on the real scroller,
+only for `(hover: hover) and (pointer: fine)`: `.viewport` below 32rem, the
+`.shell > section.view-scroll` band from 32rem up (where `.viewport` is
+`auto`). Touch devices (overlay scrollbars) get no empty gutter. The
+`::-webkit-scrollbar` styling is under the same media query. Measured at 1366
+(classic scrollbars): Analyze, History and API key bands are all 1351px wide,
+brand and heading edges identical between Analyze and History; at 390 the
+gutter is `auto` and the band is the full 390.
+
+**Landscape phone (#10).** The app-shell block is now `@media (max-width:
+37.5rem), (max-height: 31.25rem)`, so a short installed window keeps the dock;
+under `max-height: 31.25rem` the top bar drops its links and is 56px. Measured
+844×390 app shell: nav 56, band 57–310, dock 310–374, terms reachable. A tall
+tablet (1024×1366 app shell) keeps the top bar and footer, no dock.
+
+**Pre-paint scripts (#9).** All four (theme, shell, landing redirect, splash)
+are one inline script in the root layout `<head>`; see `landing-page.md`.
+
+**Status bar / nav strip in dark (#3), not fixed (lead decision: no native
+plugin).** The JS side is right (`SystemBars.setStyle` Dark/Light per
+`data-theme`, guarded). The white comes from native: Capacitor's `SystemBars`
+lets the page paint under the bars only on **WebView ≥ 140** with
+`viewport-fit=cover`; on older WebViews it pads the WebView and the bars show
+the decor view's background (`windowBackground`, white), and `setStyle` resets
+that background on every call. **Old WebViews (<140) show a white bar; WebView
+140+ is fine.** Android System WebView updates through Play. The emulator here
+reports WebView 124. Native diff, **not applied**:
+
+```java
+// android/app/src/main/java/ai/videolens/app/AppWindowPlugin.java
+@CapacitorPlugin(name = "AppWindow")
+public class AppWindowPlugin extends Plugin {
+  private Integer color;
+  @PluginMethod public void setBackgroundColor(PluginCall call) {
+    color = Color.parseColor(call.getString("color", "#F6F4EE"));
+    getActivity().runOnUiThread(this::apply); call.resolve();
+  }
+  @Override protected void handleOnConfigurationChanged(Configuration c) { apply(); }
+  private void apply() { if (color != null) getActivity().getWindow().getDecorView().setBackgroundColor(color); }
+}
+// MainActivity.onCreate, before super.onCreate(savedInstanceState):
+registerPlugin(AppWindowPlugin.class);
+```
+
+…called from `CapacitorSystemBarsStyler.matchTheme` **after** `SystemBars.setStyle`
+with `THEME_COLOR[theme]`.
+
 ## Known issues
 
 **Phase 1 editorial (2026-11-01):**
@@ -428,3 +520,4 @@ back/forward was measured and the Capacitor mapping is read from
 - 2026-11-01 · frontend agent (Phase 4, boards) · offline section is now a flex column filling the band at every width so its block centres on phones too; `NEXT_PUBLIC_APP_VERSION` added to next.config.mjs `env` (read from package.json; `agentRules: false` untouched); legal crumb bar removed per the boards
 - 2026-11-01 · frontend agent (app Back link) · added `AppBackLink` (`.app-back`) above the title of API key, Releases, Privacy and Terms in the app shell only (`display:none` in the web shell; every width in the app shell); `application/backNavigation.ts` decides history.back() vs Analyze (Navigation API → `goToMainTab` history-state marker → same-origin referrer); `goToMainTab` now pushes `{ videolensInApp: true }`
 - 2026-11-01 · frontend agent (Phase 5c) · tabs moved to /app (APP_PATH, isAppPath, mainTabHref); brand links to / in a browser tab and is static in the installed shell; landing at / uses the shared chrome
+- 2026-11-01 · frontend agent (refinement 1) · dock sticky in flow (containment had captured the fixed dock), keyboard hides dock, Android hardware back (NativeShell port, decideBack, native tab switches replace), phase scroll-to-top, scrollbar-gutter on the real scroller (fine pointers only), landscape keeps the dock, #3 native diff documented not applied

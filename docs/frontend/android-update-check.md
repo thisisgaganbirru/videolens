@@ -91,6 +91,44 @@ preserved.
 
 **Tests**: none (see `run-analysis-hook.md`).
 
+## Local live-reload on the emulator
+
+For previewing a change on an emulator without a CI build. Only a **locally built** APK can load a plain-http dev URL; CI APKs never can.
+
+- **Ports**: run `adb reverse tcp:3005 tcp:3005` and `adb reverse tcp:8000 tcp:8000`. Backend CORS allows `localhost:3005` but not `10.0.2.2:3005`, and the app calls the API at `localhost:8000`. Re-run both after any adb, emulator or dev-server restart.
+- **Dev URL**: after `cap sync`, set `server = { url: 'http://localhost:3005', cleartext: true }` in the generated, gitignored `frontend/android/app/src/main/assets/capacitor.config.json`. `frontend/capacitor.config.ts` stays untouched.
+- **Cleartext flag**: Android still blocks plain http (`ERR_CLEARTEXT_NOT_PERMITTED`), so the local build needs `android:usesCleartextTraffic="true"` on `<application>` in `AndroidManifest.xml`. **Temporary, local builds only. Never commit it**, because CI publishes debug APKs.
+- **Build**: `npx cap run android` fails on Windows (`'gradlew' is not recognized`). Use `.\gradlew.bat assembleDebug --console=plain`, then `adb install --no-streaming -r <apk>` and launch with `adb shell monkey -p ai.videolens.app -c android.intent.category.LAUNCHER 1`.
+- **Screenshots**: an emulator with two displays needs `adb exec-out screencap -d <displayId> -p`, otherwise a warning is prepended to the PNG.
+- **Free runs**: the local backend keeps its free-runs counter in memory, so a backend restart resets it to 3. Runs are in-process too and are lost on restart; reopening one then shows "This run expired on the server".
+
+## Bundled debug APK against a local backend (refinement 1, #15)
+
+Device QA now runs on the real bundled APK (origin `https://localhost`), not
+live reload. That app calls the local backend at `http://localhost:8000`
+through `adb reverse tcp:8000 tcp:8000`, which Android's default cleartext
+policy blocks (`ERR_CLEARTEXT_NOT_PERMITTED`, target SDK 28+).
+
+- `frontend/android/app/src/debug/AndroidManifest.xml` sets
+  `android:networkSecurityConfig="@xml/network_security_config_debug"` on
+  `<application>`.
+- `frontend/android/app/src/debug/res/xml/network_security_config_debug.xml`:
+  `base-config cleartextTrafficPermitted="false"`, and a `domain-config` that
+  allows cleartext for `localhost`, `127.0.0.1` and `10.0.2.2` only.
+
+**Release is untouched by construction**: Gradle merges `src/debug/` only into
+the `debug` build type's variant. `src/main/AndroidManifest.xml` declares no
+`networkSecurityConfig` (so no `tools:replace` is needed) and was not edited.
+The temporary `usesCleartextTraffic` edit described above is no longer needed
+for this flow.
+
+Caveat: CI publishes **debug** APKs (see the live-reload section), so those do
+carry this config. It only opens cleartext to loopback names and the emulator's
+host alias, which reach nothing off the device. Mixed content is a separate
+WebView rule: Chromium treats `http://localhost` / `127.0.0.1` as potentially
+trustworthy, so `https://localhost` → `http://localhost:8000` is allowed;
+`10.0.2.2` is not, and would still be blocked as mixed content.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported UpdateBanner; added shrink-0 so it cannot compress the measured viewport frame
@@ -98,3 +136,5 @@ preserved.
 - 2026-08-15 · main session · updated the manifest producer path to the descriptive workflow naming convention
 - 2026-08-16 · main session · fixed the update banner never appearing on any build: the checker called GitHub's releases API, which 404s unauthenticated on this private repo, and the 404 was swallowed as "no update". Repointed it at `${NEXT_PUBLIC_WEB_BASE_URL}/version.json` on the deployed web app (absolute, because the APK's own `public/` copy is frozen at build time), had CI write and commit that file next to `releases.json`, added the `Access-Control-Allow-Origin` header the Capacitor origin needs, and made the release build fail when `web_base_url` is missing. User-reported: no update prompt, had to uninstall and reinstall to get a new build
 - 2026-08-29 · frontend agent · repointed the checker from `${NEXT_PUBLIC_WEB_BASE_URL}/version.json` onto `GET /api/releases` (`latest.version_code`/`version_name`/`url`); `GithubUpdateChecker` → `ApiUpdateChecker`, dropped the now-unreachable unset-origin guard, and flagged the CI guard that still checks `web_base_url` instead of `api_base_url`
+- 2026-11-01 · android-66 (device QA) · added the "Local live-reload on the emulator" section (adb reverse, generated-config server.url, temporary cleartext flag, screencap -d, in-memory free-runs counter)
+- 2026-11-01 · frontend agent (refinement 1) · debug-only network security config (cleartext to localhost/127.0.0.1/10.0.2.2) via src/debug manifest overlay, for bundled-APK QA against a local backend
