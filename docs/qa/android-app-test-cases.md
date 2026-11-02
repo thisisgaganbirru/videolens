@@ -549,6 +549,73 @@ Build: a full `adb install --no-streaming -r`, lastUpdateTime 17:24:48. Emulator
 
 No real runs spent. The device was restored afterwards: font 1.0, wm size reset, auto-rotate on, light theme, CDP forward removed, adb reverse 8000 kept.
 
+### 2026-11-02 · android-66 (device QA) · run 15 (refinement 13, `refine13-debug.apk` at a69c188, real backend)
+
+Build: `adb install -r`, lastUpdateTime 18:03:06. Emulator API 35. Evidence is in `%TEMP%\qa16\`.
+- **Widths.** 320 css px (`wm size 840x2400`) and 360 css px (`945x2400`).
+- **Fonts.** 1.0, 1.3, 1.5 and 2.0, changed live.
+- **Measurements.** `m13.js` measures:
+  - the header bar, the wordmark's computed font-size and text extent (Range rect), and the toggle;
+  - the content band (`main.view-scroll`) and the dock;
+  - in the More sheet, each theme segment's rect against its label's glyph extent, plus which layout is in use.
+- **Bundle check.** The R13 CSS is in the bundle: `.brand { font-size: min(1.1875rem, 22px) }`, `.nav { min-height: min(4.25rem, 68px) }`, and `@container theme-choice not (min-width: 16em)` / `not (min-width: 12.75em)`.
+
+**Root cause behind items 1 and 2: the WebView's text zoom multiplies px values, and a `min(rem, px)` cap can't hold against it.** At font 2.0, probe elements compute as follows:
+- `22px` → 44px;
+- `1.1875rem` → 38px;
+- `min(1.1875rem, 22px)` → 38px;
+- `16px` and `medium` → 32px.
+
+Android's font scale reaches the page through `setTextZoom` (R11). Blink applies that zoom after `min()` has compared the *unzoomed* values (19 vs 22). Rem resolves against an unzoomed 16px root, so the 22px cap never binds: the wordmark is 19 × zoom at every scale. The em container queries likewise never fire. The fieldset is 288 px at 320 and 328 px at 360, against 16em = 256 px and 12.75em = 204 px, whatever the zoom. A desktop browser's text-size setting changes the root/initial font size instead, which is presumably why the web pass saw both mechanisms work. **Question for the lead:** is a CSS-side fix acceptable, for example a cap that is itself expressed as a zoom-independent length? Or should the app pass the scale differently, as the root font size rather than text zoom?
+
+**Item 1, app header (wordmark + theme toggle): FAIL on the 22px cap. It fits and nothing is clipped.**
+
+| css px / font | bar | wordmark font-size | wordmark text | toggle | gap to toggle |
+|---|---|---|---|---|---|
+| 320 / 1.0 | 68 | 19px | 16–129 | 260–304, 44×44 | 131 |
+| 320 / 1.3 | 68 | 24.7px | 16–153 | 44×44 | 107 |
+| 320 / 1.5 | 68 | 28.5px | 16–170 | 44×44 | 90 |
+| 320 / 2.0 | 68 | **38px** | 16–211 | 44×44 | 49 |
+| 360 / 1.0–2.0 | 68 | 19 → 38px | 16–129 … 16–211 | 300–344, 44×44 | 171 … 89 |
+
+- No overflow ancestor clips anything. The wordmark never meets the toggle, and the document is never wider than the viewport.
+- The bar stays 68 px at every scale: the 38px wordmark's line box still fits under the 68px min-height.
+- **Landscape** (live `wm user-rotation lock 1`, 915×360 css): at font 1.0 the bar is 56 px with a 21px wordmark and the toggle at 834–878, 44×44. At font 2.0 the bar grows to **63 px** because the 42px wordmark exceeds the 56px min-height, and the content band shrinks from 235 to 228 px. I have no R12 landscape bar figure to compare against, so "landscape unchanged" is not verified either way.
+
+**Item 2, More-sheet theme control: FAIL. It does not re-lay out on the device, and labels overflow from 320/1.3.**
+- The layout is an indented single row (segments start at 74, head at 20) in every one of the 8 combinations. Neither the full-width row nor the stacked rows ever appear.
+- Segments are 71 px wide at 320 and 84 px at 360. Every target is at least 44 px tall (44, or 45 at 2.0): PASS.
+
+| css px / font | System (text vs segment) | Light | Dark |
+|---|---|---|---|
+| 320 / 1.0 | 88–137 in 77–148, pad 11/11 | pad 19/19 | pad 19/19 |
+| 320 / 1.3 | 83–147 in 77–148, pad 6/**1** | pad 14/14 | pad 14/14 |
+| 320 / 1.5 | 83–156 in 77–148, **8 px over** | pad 11/11 | pad 11/11 |
+| 320 / 2.0 | 83–181 in 77–148, **33 px over** | 158–223 in 152–222, pad 6/0 | 232–298 in 226–297, **1 px over** |
+| 360 / 1.0 | pad 18/18 | pad 26/26 | pad 26/26 |
+| 360 / 1.3 | pad 10/10 | pad 21/21 | pad 21/21 |
+| 360 / 1.5 | 83–156 in 77–161, pad 6/5 | pad 18/18 | pad 17/17 |
+| 360 / 2.0 | 83–181 in 77–161, **20 px over** | pad 9/9 | pad 9/9 |
+
+- **Visible effect** (`320-f15-sheet-crop.png`, `320-f20-sheet-crop.png`): "System" runs under the selected Light pill and reads "Syste" at 320/1.5 and 2.0. At 2.0, "Light" fills its pill edge to edge. At 320/1.5 this is **worse than R12** (2 px over then, 8 px now): the new 6px label padding moved the text right without the re-layout that was meant to make room.
+- Severity MINOR. The label is still identifiable and tappable, but it is truncated at large text on the narrowest phones.
+- **Dark still selects dark: PASS.** A real tap on Dark gives `data-theme=dark`, `dark` checked and stored, and body `rgb(14, 16, 15)`. Tapping Light restores light.
+
+**Item 3, footer and content band: N/A for the footer on Android. The band was measured.**
+- The installed app never shows the footer. `.page-end` (the footer's parent) is `display: none` under `data-shell="app"`, on `/app` and on `/terms`, at every width and scale, so its height is 0. The dock replaces it. The 146 → 100px footer change can only be checked in the web shell.
+- **Content band** (`main.view-scroll`): 69–775, 706 px tall, with the dock at 783–847 (64 px). That holds at 320 and 360 for fonts 1.0, 1.3, 1.5 and 2.0, and at 412.
+- Dock items keep their widths (320: Analyze 22–111, History 115–205, More 209–298; 360: 22–125, 129–231, 235–338), 52 px tall, with no label overflow.
+
+**Item 4, smoke test at 412 px, font 1.0, real backend: PASS.**
+- **Intake.** The link field, file input and "Analyze link" are present. "Limited: link downloads." and "3 free runs left." show.
+- **History** (dock tap). Platform filters and rows are present.
+- **Result** ("Me at the zoo", reopened from History). Tabs are TL;DR, Notes, Transcript and On-screen. Download is at 141–375, 44 px tall, its label inside the pill. Transcript shows its own panel.
+- **More sheet.** An indented row with 26–34 px label padding, the same as R12, plus API key, Releases and Privacy rows 56 px tall.
+- **Terms.** H1 "Terms", band 706 px. Back returns to `/app`, and Back closes the sheet.
+- The document is never wider than 412.
+
+No real runs spent. The device was restored afterwards: font 1.0, wm size reset, auto-rotate on, light theme, CDP forward removed, adb reverse 8000 kept.
+
 ## Changelog
 
 - 2026-11-02 · android-66 (device QA) · added section 19 (update banner, UPD-01..07) and run 9 (UPD partial on the mock: UPD-01/03 PASS, UPD-04 partial, rest PAUSED) and run 10 (real runs: terms persistence, RUN-01 retry with a YouTube link, RUN-02/02b/03/04/05/07/08, ORI-02, HIS-01, FREE-01..05, RUN-06b/06c/06d/06e, LCH-06b/06c, FREE-02b PASS; FREE-02c not exercised (YouTube 403 mid-download); stale free-runs count after a refund logged as known (R9); stage timings incl. Normalizing ~60 s for a 170 s file); added FREE-02b/02c rows to section 6
@@ -568,3 +635,4 @@ No real runs spent. The device was restored afterwards: font 1.0, wm size reset,
 - 2026-11-02 · android-66 (device QA) · run 12: refinement 10 retest on refine10-debug.apk (ad39660): A1 Back link and A2 320px/font 1.3 PASS (MINOR: "Download .md" pill overflows the result card at font ≥1.15); update popup layout (portrait/landscape-emulated, light/dark, 320/343 at font 1.3), ordering after the Splash, backdrop/Escape/Back/Later dismiss with focus to the H1, "Get the update", Tab trap, MOCK 100000/1/null and 503 with the "Can't reach the server" notice and recovery on resume all PASS; COSMETIC landscape-font-1.3 button label wrap
 - 2026-11-02 · android-66 (device QA) · run 13: refinement 11 retest on refine11-debug.apk (e1f4426): results header at 320 (Download own row at 1.15/1.3, chevrons page, chosen tab clear of fades), live font change without reload (also theme and rotation), History "Search runs" at 320 up to font 1.3, and the landscape popup labels on one line at font 1.3 all PASS; mismatch: end chevron shows at 320/font 1.0 (tabs overflow 41px); COSMETIC 4px tab text past each fade; MINOR placeholder truncates at font 1.5
 - 2026-11-02 · android-66 (device QA) · run 14: refinement 12 retest on refine12-debug.apk (5ac8522): tab-row fades cover the list edges at 320 for fonts 1.0/1.3/1.5/2.0 with no peek (2.0 also clears every chosen tab, better than the documented limit); no chevrons from 360 at font 1.0; History "Search runs" fits at 320/360 for fonts 1.0–2.0 with the sort wrapping first; smoke PASS; nav menu clip at 320/1.5 not reproduced (no menu button in the app header); COSMETIC: More-sheet "System" segment 2px over at 320/1.5
+- 2026-11-02 · android-66 (device QA) · run 15: refinement 13 retest on refine13-debug.apk (a69c188): header fits at 320/360 for fonts 1.0–2.0 with no clip and a 44×44 toggle, but the 22px wordmark cap FAILS (38px at 2.0; WebView text zoom multiplies px after min()); More-sheet theme control FAIL (em container queries never fire, so it stays an indented row and "System" overflows its segment from 320/1.5, 8–33 px); Dark selection PASS; footer N/A on Android (.page-end hidden in the app shell), band 706px steady; smoke at 412 PASS
