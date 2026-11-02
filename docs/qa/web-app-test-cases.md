@@ -710,6 +710,30 @@ PASS (one `<main>`, footer, header, no horizontal scroll, theme correct, 404 sta
 
 Totals this run: 49 PASS (plus 20 smoke), 0 FAIL, 0 new defects.
 
+### 2026-11-02 · frontend-43 · run 4 (refinement 8 retest, HEAD 04a9a9c)
+
+Production build, `next start -p 3016`, headless Chromium, `/api` mocked. Browse-files expectation in INT-03 is now: enabled while the
+terms are unticked; click, Enter or Space shows the terms error, focuses the checkbox (`aria-invalid`, in view) and opens no picker.
+
+| Case | Result | Evidence |
+|---|---|---|
+| INT-03 Browse enabled while unticked (D1280, P390) | PASS | button enabled |
+| INT-03 click (D1280, P390), Enter, Space | PASS | terms error shown, checkbox focused, `aria-invalid=true`, in view, 0 file choosers, 0 POST |
+| INT-19 file drop while unticked | PASS | same error and focus, 0 POST, address unchanged |
+| INT-19 text/link drag | PASS | ignored: no error, no POST, no navigation |
+| INT-19 file drop while ticked | PASS | exactly 1 POST |
+| INT-03 tick, then Browse | PASS | picker opens, chosen file sends exactly 1 POST; ticking clears the error |
+| LND-09/10/11/12 landing redirects | PASS | `?view=` and share/url/text redirects, utm stays, back-after-redirect |
+| Head script `node --check` | PASS | 2 scripts on each of 6 pages; no page errors on any route |
+| `/nope` on next start | PASS | status 404, address stays `/nope`, "Open VideoLens" (`/app`) and "Go to the home page" (`/`) visible, one `<main>`, chrome present |
+| OFF-03 online / offline | PASS | online: 404 with chrome; offline: `/offline` |
+| Smoke P390 and D1366, light and dark | PASS | 24/24 |
+| `build:mobile` | PASS | `fix-export-segments: flattened 5 segment file(s)`; `out/app/__next.app.__PAGE__.txt` is a file (2958 bytes), no `__next.app` folder |
+
+Harness notes (not app issues): the first drop test targeted an ancestor of `.drop` (the handler is on `.drop`), so it was fixed and rerun;
+the old "D8 online unknown path" assertion looks for the words "not found" and the page says "This page doesn't exist", so I judged
+it by hand (404, header and footer present).
+
 ## Changelog
 
 - 2026-11-02 · frontend-43 · created
@@ -718,3 +742,4 @@ Totals this run: 49 PASS (plus 20 smoke), 0 FAIL, 0 new defects.
 - 2026-11-02 · frontend-43 · visual review of THM-06 and RES-14 done; HIS-06 case text fixed (cap applied on write, D7 withdrawn)
 - 2026-11-02 · frontend-43 · run 2: retested refinement 6 (D1-D6, D8-D11, D13 all pass) and the intake/run/History regression at D1366 and P390; updated the case text
 - 2026-11-02 · frontend-43 · run 3: resolved the six harness-artifact FAILs (all PASS) and retested refinement 7 (THM, head scripts, WEB-429, smoke at P390 and D1366): clean
+- 2026-11-02 · frontend-43 · run 4: refinement 8 retest (Browse/drop terms behaviour, redirects, head scripts, 404, smoke, build:mobile segment fix) all PASS
