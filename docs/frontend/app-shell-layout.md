@@ -122,7 +122,7 @@ confined to the phone-width app shell: the rule is "same chrome on every route
 
 - **Content never sits under the dock.** *(Refinement 1: the dock is now `position: sticky` in flow at the end of `.shell`, not `position: fixed`, so the shell's old bottom padding is 0 and the scroller simply ends where the dock begins.)* See "Refinement 1" below.
 - **Top bar is sticky, full-bleed.** `.viewport` is `container-type: inline-size`; `.nav-wrap` and `.page-end` break out of the shell's gutter with `margin-inline: calc((100% - 100cqi) / 2)` + matching padding — full width without `100vw` (which counts the scrollbar and causes horizontal scroll).
-- **More sheet** is a native modal `<dialog>` opened with `showModal()`: top layer, inert page, Escape via `cancel`, `::backdrop` click closes (dialog has no own padding, so only a backdrop click targets the element), focus returns to More on every close path. Add rows by editing `MORE_SHEET_GROUPS` — three row kinds: `tab` (in-place nav on `/`), `route` (plain `<a>`, works from `/offline`), `theme` (`role="switch"`, reuses `toggleTheme`).
+- **More sheet** is a native modal `<dialog>` opened with `showModal()`: top layer, inert page, Escape via `cancel`, `::backdrop` click closes (dialog has no own padding, so only a backdrop click targets the element), focus returns to More on every close path. Add rows by editing `MORE_SHEET_GROUPS` — three row kinds: `tab` (in-place nav on `/`), `route` (plain `<a>`, works from `/offline`), `theme` (a System/Light/Dark radio group since refinement 4, THM-01; see "Refinement 13" for how it fits at large text).
 - **Cascade-layer trap.** The responsive `@media` blocks in `globals.css` are *unlayered*, so they beat anything in `@layer components` regardless of specificity. The ≥ 48rem `.nav-links { display: flex }` is therefore written `:root:not([data-shell="app"]) .nav-links` — unscoped, it would resurrect the links in app mode. Any new unlayered responsive rule touching chrome needs the same guard.
 
 ### App-shell Back link (2026-11-01)
@@ -558,6 +558,12 @@ back/forward was measured and the Capacitor mapping is read from
 `@capacitor/app`'s documented default (`history.back()` while `canGoBack`, then
 `exitApp()`).
 
+- **The web footer wraps at 320 px from ~140% text** (refinement 13). "VideoLens
+  AI", Privacy and Terms need ~287px of a 272px row at 320/150%; keeping one
+  line would mean dropping the name or shrinking text below the user's scale.
+  Its spacing is capped instead (146 → 100px tall at 150%, 195 → 119px at
+  200%), see "Refinement 13". One line at 360/150% and at every width ≤ 130%.
+
 ## Refinement 4 (2026-11-02)
 
 **Keyboard reveal (INT-01, INT-05).** `useSoftKeyboard` used to call
@@ -592,7 +598,9 @@ sublabel reads "Following your device" on System and "Set in this app"
 otherwise. Verified: dark OS gives System checked and dark; Light ignores an OS
 flip; ArrowRight goes Light to Dark; System clears storage and follows the OS
 live both ways; the header toggle stores a choice and More's System gives it
-back; meta theme-color follows.
+back; meta theme-color follows. *(Refinement 13: the segments now carry side
+padding and re-lay themselves at large text — indent dropped, then stacked —
+via container queries on the fieldset; see "Refinement 13".)*
 
 ## Refinement 5 (2026-11-02)
 
@@ -740,6 +748,72 @@ This was a real miss, not just noise, and only for APKs built on Windows.
   the exporter (check for a `__next.*` directory in `out/` after a Windows
   build).
 
+## Refinement 13 (2026-11-02)
+
+Large-text fixes in the chrome. One rule of thumb now governs the bar and the
+footer: **text may scale; chrome spacing and targets are capped** with
+`min(<old rem>, <px>)`. Each cap equals the old rem value at 100% root font,
+so normal scale is pixel-identical (measured at 390 and 1280, light and dark,
+on /app, /privacy and results, against the old rules re-injected).
+
+**Top bar (D-R12-1).** Menu was already an icon-only button (`aria-label`
+"Menu"); it was clipped because *everything* in the bar grew with rem — at
+320 px / 150% the 28.5px wordmark, two 66px buttons and 24px gaps needed 361px
+of a 272px row (Menu 41px off-screen; 161px off at 200%). Now:
+
+- `.theme-toggle` / `.menu-toggle` are a fixed 44px with 18px glyphs — a
+  target gets no easier to hit past 44px.
+- The wordmark is a logotype, so it stops growing at 22px
+  (`min(1.1875rem, 22px)`; 24px from 48rem), mark `min(1.625rem, 30px)`.
+- Gaps `min(var(--space-sm), 16px)` / `min(0.5rem, 8px)` (8px between the two
+  buttons, the touch-spacing minimum).
+- `.nav` min-height `min(4.25rem, 68px)` (and `min(4.75rem, 76px)` from 48rem,
+  `min(3.5rem, 56px)` in the landscape app bar). At 150% the bar was 103px
+  tall and at 200% 137px; it is 69px at every size now, which goes straight
+  back to the content band.
+
+No breakpoint, nothing reads the width; the theme toggle stays in the bar.
+Result at 320 / 200%: brand 32–161, theme 192–236, Menu 244–288 (32px
+gutter); at 360 / 200%: theme 232–276, Menu 284–328. The bar is the same component
+on every route, so the fix is too. The installed app's bar (wordmark + theme,
+no Menu) uses the same rules and fits at 320/360/390 × 100–200%.
+
+**Footer (the ~330px band observation).** It cannot stay on one line at
+320 / 150%: "VideoLens AI" plus Privacy and Terms need ~287px of 272 even with
+tightened gaps, and dropping the name would lose content. So it still wraps
+there (one line at 360/150% and everywhere at ≤ 130%), but its spacing no
+longer grows: `.foot` gap `0 min(var(--space-sm), 16px)` (no row gap — the
+links' own 44px height spaces the two lines), min-height `min(3.5rem, 56px)`,
+`.foot-legal` gap `min(var(--space-md), 24px)`, links a fixed 44px tall.
+Measured at 320×640 (headless Chromium, root font emulated): footer 146px →
+100px at 150%, 195px → 119px at 200%; with the 69px bar the visible band
+between bar and footer goes from ~390px to ~470px at 150% and ~308px to
+~452px at 200%. The device number (~330px at 150%) was taken from a taller
+bar/footer under Android's text scaling, so expect a similar ~80px gain there;
+not yet re-measured on the device.
+
+**More sheet theme control.** `.theme-choice` is a size container
+(`container: theme-choice / inline-size`, font-size 1rem), and the segmented
+control reads its room in **em**, so the switch points move with the text,
+not the viewport:
+
+- segments carry `padding-inline: 0.375rem` and `min-width: 0`;
+- `@container theme-choice (width < 16em)` drops the 3.375rem indent (the
+  track spans the full width under the icon + label);
+- `@container theme-choice (width < 12.75em)` stacks the three segments, one
+  full-width 44px row each, inside a 3px-padded `--radius-control` track.
+
+"System" measures 3.06em in Chromium and 3.04em on the device (73px at
+24px), so the thresholds leave ~0.3–0.45em of slack on both. Measured (headless,
+320/360/390 × 100–200%, light and dark): indented row at 320/100% (as before),
+full-width row at 320/115–130%, stacked at 320/150–200% and 360/150–200%;
+every label at least 4px inside its segment, every segment ≥ 44px, nothing
+past the sheet. Android's text zoom may scale font sizes more than rem lengths
+(R12 hypothesis); the em queries follow the text either way.
+
+Verified in `scratchpad
+efine13erify.py` (499/499, no page errors).
+
 ## Changelog
 
 - 2026-08-15 · frontend agent (foundation) · rebuilt the shell to the Terminal direction: one-viewport flex chain, pill nav, mobile drawer, 4 tabs, theme toggle
@@ -768,3 +842,4 @@ This was a real miss, not just noise, and only for APKs built on Windows.
 - 2026-11-02 · frontend agent (refinement 7) · THM-01b-6: System paints from the native OS night state (NativeThemePlugin getSystemNight + systemNightChanged; theme.ts adoptDeviceTheme; head-script listener stands down) instead of the WebView's stale prefers-color-scheme; documented the harmless Capacitor "Error injecting safe area CSS" launch log
 - 2026-11-02 · frontend agent (refinement 8) · RSC segment prefetch 404s in the APK traced to a Next 16.4 Windows-only export bug (nested `__next.app/__PAGE__.txt`); `scripts/fix-export-segments.mjs` flattens them in `build:mobile`; cost was one extra `/app.txt` fetch per navigation, never a full reload
 - 2026-11-02 · frontend agent (refinement 10) · UpdateBanner references updated (now a top-layer dialog, no `.viewport` space); Privacy/Terms Back link shows on the web too; `html, body` min-width is 320px, not 20rem
+- 2026-11-02 · frontend agent (refinement 13) · D-R12-1: top bar capped with `min(rem, px)` (44px icon buttons, 22px wordmark cap, 68px bar), fits at 320/360 × 100–200% on every route, normal scale identical; footer still wraps at 320/150% but its gaps/heights are capped (146 → 100px); More sheet theme control re-lays via em container queries (indent dropped, then stacked) with padded labels
