@@ -782,8 +782,23 @@ free runs 3 to 3). Spot checks at 1280 light and 390 dark (screenshots in `%TEMP
 
 Notes: the mocked Markdown export showed `NaN:NaN` timestamps because my fixture used the wrong transcript-segment field names, not an app defect.
 
+### 2026-11-02 · videolens-65 (web QA) · run 8 (refinement 10 retest, HEAD ad39660)
+
+:3005 dev (HMR), headless Chromium 1217, `/api` mocked by route interception (capabilities passed through to the real backend when healthy), scripts in
+`%TEMP%\qaweb\run7` (t8.py). Root font 130% was applied with an injected `html{font-size:130%!important}`.
+
+| # | Result | Evidence |
+|---|---|---|
+| 1 Back on /privacy and /terms | PASS | Visible at 390 and 1280, light and dark, above the title (e.g. 390: Back y=88, h1 y=132), `href="/app"`, a click lands on `/app`, no horizontal scroll (scrollWidth = innerWidth). |
+| 2 5xx = unreachable | PASS with a MINOR finding | Both `/api/free-runs` and `/api/capabilities` at 500, 502 and 503: "Can't reach the server right now. You can still open past runs in History." shows (also 390 dark). Both at 400: no notice. After a healthy reply on refocus the notice clears and "3 free runs left" shows. **Finding D-R10-1:** if only ONE of the two reads fails with a 5xx and the other succeeds, no notice shows (free-runs 503 alone: 0 of 3 trials; capabilities 503 alone: 0 of 3). The two hooks share one flag and the healthy read's `noteReadResult()` clears it, so the last read wins. A full outage fails both, so this only matters for a partial failure (e.g. free-runs 500 from a Redis error). |
+| 3a 320px at 130% font, no overflow | PASS (page width) | landing, /app, History, API key, Releases, Privacy, Terms, results: scrollWidth = 320 in light and dark; no nav item outside the viewport. |
+| 3b Visual at 320px at 130% | FAIL (MINOR) **D-R10-2** | Results screen: the "Download .md" pill extends past its card: button x 183-364 against card right edge 299 at 320 wide (clipped, reads "Download .m"), and 183-364 at 360 wide, past the 360 viewport. Not reproducible at 100% (141-283 in a 16-304 card) or at 390/430 wide at 130%. The tab row also truncates ("Transcr…"), which looks like a scroller. Repro: 320x640 (or 360 wide), root font 130%, complete a link run, open the result. |
+| 3c Normal scale 390 and 1280 | PASS | Same eight pages: no horizontal overflow, nothing clipped. |
+| 4 No update popup on web | PASS | No update or new-version text on /app at 390 and 1280. |
+
 ## Changelog
 
+- 2026-11-02 · videolens-65 (web QA) · run 8: refinement 10 retest, items 1, 3a, 3c, 4 PASS; item 2 PASS with D-R10-1 (a partial 5xx is masked by the other healthy read); item 3b FAIL D-R10-2 (Download .md overflows its card at 320/360 wide at 130% font)
 - 2026-11-02 · videolens-65 (web QA) · run 7: refinement 9 retest items 1-10 PASS, 11 NOT EXERCISED, no defects (item 8's Back link is hidden on the web by design)
 - 2026-11-02 · videolens-65 (web QA) · run 6: RUN-R1 and RUN-R2 REAL both PASS on :3005 (dev), FREE-02b PASS, run 5 stuck-row check N/A
 - 2026-11-02 · frontend-43 · created
