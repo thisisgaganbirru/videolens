@@ -811,8 +811,60 @@ every label at least 4px inside its segment, every segment ≥ 44px, nothing
 past the sheet. Android's text zoom may scale font sizes more than rem lengths
 (R12 hypothesis); the em queries follow the text either way.
 
-Verified in `scratchpad
-efine13erify.py` (499/499, no page errors).
+Verified in `scratchpad\refine13\verify.py` (499/499, no page errors).
+
+## Refinement 14 (2026-11-02)
+
+**The refinement 13 caps now hold in the installed Android app.** Device QA
+(run 15) showed that neither the `min(rem, px)` caps nor the em container
+queries worked on Android. The cause was the WebView's text zoom, which
+multiplies font sizes after layout has resolved them. At font 2.0 the wordmark
+rendered at 38px, the theme control stayed one indented row, and "System"
+overflowed its segment by up to 33px.
+
+The CSS is unchanged. Android now delivers the system font scale the way a
+browser's text-size setting does, as the root font-size, with text zoom pinned
+to 100. See "Refinement 14" in `android-update-check.md` for the native side:
+`FontScalePlugin`, a document-start script, and `application/nativeFontScale.ts`
+in the pre-paint head script. One model, so the web, the harness and the
+device now agree.
+
+**Measured** in `scratchpad\refine14\verify.py`. The plugin's exact script is
+emulated, both with `<html>` present at document start and without it.
+- **Text size.** Root and body are 16, 18.4, 20.8, 24 and 32px at 1.0, 1.15,
+  1.3, 1.5 and 2.0. That holds after hydration, after a client tab switch, and
+  on a fresh document (`/privacy`).
+- **Native header** at 320, 360 and 390, light and dark. The wordmark is
+  19 / 21.85 / 22 / 22 / 22px, the toggle is 44px and the bar is 68px. At
+  320 / 2.0 the brand sits at 32–161 and the toggle at 244–288.
+- **Landscape bar** at 915×360 and 844×390. It is 56px at every scale (run 15
+  measured 63px at 2.0). These widths are past 48rem, so the wordmark cap
+  there is 24px (21px at 1.0).
+- **Theme control.**
+
+  | | 1.0 | 1.15 | 1.3 | 1.5 | 2.0 |
+  |---|---|---|---|---|---|
+  | 320 | indented row | full-width row | full-width row | stacked | stacked |
+  | 360 | indented row | indented row | full-width row | stacked | stacked |
+  | 390 | indented row | indented row | indented row | full-width row | stacked |
+
+  Wherever it stays a row, "System" has at least 10px of clear space each
+  side. So the 6px label padding refinement 13 added is kept: it only made
+  things worse while the queries never fired.
+- **Live change.** 1.0 → 2.0 → 1.3 → 1.0 with the sheet open, using the same
+  script and no reload: the root follows, the control re-lays out, and the
+  inline size clears at 1.0.
+- **Web.** No inline root size. The browser's own setting stays the root
+  (16px, or 24px under an emulated 150%).
+- **Refinement 13 web regression.** `scratchpad\refine14\r13_regress.py` is
+  the refinement 13 harness re-run against this build.
+
+Still for the device:
+- run 15 re-measured on `refine14-debug.apk`;
+- no visible size jump on a cold launch;
+- a live font change with a result open.
+
+The footer is hidden in the app shell, so it has nothing to re-check there.
 
 ## Changelog
 
@@ -843,3 +895,4 @@ efine13erify.py` (499/499, no page errors).
 - 2026-11-02 · frontend agent (refinement 8) · RSC segment prefetch 404s in the APK traced to a Next 16.4 Windows-only export bug (nested `__next.app/__PAGE__.txt`); `scripts/fix-export-segments.mjs` flattens them in `build:mobile`; cost was one extra `/app.txt` fetch per navigation, never a full reload
 - 2026-11-02 · frontend agent (refinement 10) · UpdateBanner references updated (now a top-layer dialog, no `.viewport` space); Privacy/Terms Back link shows on the web too; `html, body` min-width is 320px, not 20rem
 - 2026-11-02 · frontend agent (refinement 13) · D-R12-1: top bar capped with `min(rem, px)` (44px icon buttons, 22px wordmark cap, 68px bar), fits at 320/360 × 100–200% on every route, normal scale identical; footer still wraps at 320/150% but its gaps/heights are capped (146 → 100px); More sheet theme control re-lays via em container queries (indent dropped, then stacked) with padded labels
+- 2026-11-02 · frontend agent (refinement 14) · no CSS change: Android now sets the system font scale as the root font-size (text zoom pinned to 100, see android-update-check.md), so the R13 caps and theme-control container queries work in the app; measured wordmark ≤ 22px, landscape bar 56px and the theme tiers at 320/360/390 × 1.0–2.0; repaired the mangled R13 harness path

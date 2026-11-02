@@ -236,6 +236,98 @@ plain web shows nothing.
   now sets `webView.getSettings().setTextZoom(round(fontScale x 100))` when the
   scale changed. Not yet verified on a device: needs the APK from this
   refinement (font size change with a result open: result stays, text resizes).
+  **Superseded by refinement 14 (below):** the `fontScale` entry in
+  `configChanges` stays, but the scale no longer reaches the page as text zoom.
+  `MainActivity.applyFontScale` is gone; text zoom is pinned to 100 and the
+  scale becomes the root font-size.
+
+## Refinement 14 (2026-11-02) — system font size as the root font-size
+
+**Why.** Device QA run 15 (`docs/qa/android-app-test-cases.md`) found that the
+refinement 13 chrome caps never held on Android. WebView text zoom (seeded from
+the font scale when the WebView's settings are created, and re-applied live by
+R11) multiplies font sizes *after* layout resolves them: at font 2.0,
+`min(1.1875rem, 22px)` compared 19 with 22 and then rendered at 38px, `22px`
+itself rendered at 44px, and the More sheet's em container queries (16em /
+12.75em of a 288px fieldset) never fired, so "System" ran under the selected
+pill. A desktop browser's text-size setting changes the root font size instead,
+which is the model the web, the Playwright harness and the CSS all assume.
+
+**What.** One text-size model on both platforms: on Android the system font
+scale is the page's root font-size; text zoom stays at 100.
+
+- `FontScalePlugin` (new, `frontend/android/app/src/main/java/ai/videolens/app/`)
+  is a local Capacitor plugin with no JS methods, registered in
+  `MainActivity.onCreate` next to `NativeThemePlugin`. Its `load()` runs inside
+  Capacitor's Bridge constructor, after the WebView settings are made and before
+  the app URL loads; it registers a **document-start script**
+  (`WebViewCompat.addDocumentStartJavaScript`, restricted to the app origin) and
+  sets `setTextZoom(100)`.
+- The script (`FontScaleScript.script`, unit-tested in
+  `src/test/.../FontScaleScriptTest.java`) sets `window.__videolensFontScale`
+  and, when `<html>` already exists, `document.documentElement.style.fontSize =
+  scale x 100 + "%"` (a percentage of the WebView's 16px default; scale 1
+  clears it).
+- `application/nativeFontScale.ts` adds `FONT_SCALE_INIT_SCRIPT` to the root
+  layout's blocking pre-paint script: if the global is a number other than 1,
+  it applies the same root font-size. This covers a document-start script that
+  ran before `<html>` existed, and it runs before the body parses.
+- **Live change:** `fontScale` stays in `configChanges` (R11), so the activity
+  survives; Capacitor hands `onConfigurationChanged` to every plugin, and
+  `FontScalePlugin.handleOnConfigurationChanged` swaps the document-start script
+  for one with the new value (for later reloads and document navigations) and
+  `evaluateJavascript`s the same script into the open page.
+- **Fallback:** a WebView without the `DOCUMENT_START_SCRIPT` feature (older
+  than about Chromium 87, only possible on an unupdated API 24-28 device), or
+  one that rejects the origin, keeps the R11 behaviour: text zoom = font scale.
+  Its text still follows the system setting; only the caps don't bind there.
+- `frontend/android/app/build.gradle` gained `androidx.webkit:webkit`
+  (`$androidxWebkitVersion`). Capacitor already ships that exact artifact, but as
+  an `implementation` dependency, so the app module can't compile against it
+  without declaring it. The APK contents don't change.
+
+**Why a document-start script and not the alternatives.**
+- `evaluateJavascript` on page load plus a stored value (e.g. in localStorage)
+  can't be guaranteed to run before the first paint. A stored value is also
+  missing on a first launch, and it can be stale after the setting changes
+  while the app is closed.
+- A CSS custom property would need the same delivery, plus a stylesheet rule
+  that also exists on the web.
+- A bridge or plugin method the page calls is async, so it lands after the
+  first paint: a visible jump on every cold launch.
+- A document-start script is the mechanism Capacitor itself uses to inject
+  its bridge. It runs before any page script in every document, including
+  `/privacy` and `/offline`, which load as their own documents. It reads the
+  scale from the live `Configuration` each time, so nothing is stored.
+
+**Checked.**
+- **Capacitor (8.5) never touches text zoom.** `Bridge.initWebView` sets JS,
+  DOM storage, geolocation, media, mixed content and the user agent only. Only
+  the WebView's own default ties text zoom to the font scale, and
+  `setTextZoom(100)` neutralises it.
+- **The web is untouched.** The global is never set outside the app, so
+  `<html>` gets no inline font-size and the user's browser text-size setting
+  stays the root size. The harness measured 16px, and 24px under an emulated
+  150% browser setting, with no inline style either way.
+- **Body text scales exactly as before:** 16, 18.4, 20.8, 24 and 32px at 1.0,
+  1.15, 1.3, 1.5 and 2.0. All app text is rem/em; the only px font sizes in the
+  CSS are the two wordmark caps. The px caps now hold.
+- **Pinch zoom:** WebView force-enables page zoom when text zoom is 130 or
+  more. That no longer happens, but the app's viewport never disables zoom, so
+  nothing is lost.
+- **Breakpoints:** rem/em media queries resolve against the initial 16px, not
+  the root, so on Android the `48rem` / `37.5rem` / `32rem` / `31.25rem`
+  breakpoints are now fixed px whatever the font scale. This is the same model
+  the harness used for refinement 13. Under text zoom, whether they moved was
+  never measured. See the open question in the refinement 14 mem entry.
+
+Verified in `scratchpad\refine14\verify.py` (emulates the plugin's exact
+script, both with and without `<html>` at document start), plus
+`scratchpad\refine14\r13_regress.py`, which re-runs the refinement 13 web
+checks. Gradle `assembleDebug testDebugUnitTest` pass. **Device only:** whether
+the document-start script lands before the first paint on a cold launch (no
+jump), a live font change with a result open, and the run 15 measurements
+re-taken.
 
 ## Changelog
 
@@ -252,3 +344,4 @@ plain web shows nothing.
 - 2026-11-02 · android-66 (device QA) · verified the refinement 10 popup on the bundled APK against the mock (run 12 in docs/qa/android-app-test-cases.md): layout, ordering after the Splash, all four dismissals with focus to the H1, "Get the update" storing no dismiss, the Tab trap and version_code 100000/1/null/503 all PASS; cosmetic: the label wraps in landscape at font 1.3; the emulator would not rotate the app, so landscape was emulated with `wm size 2400x1080`
 - 2026-11-02 · frontend agent (refinement 11) · update prompt labels stay on one line (nowrap; buttons stack instead of wrapping text, 915x360 at 1.3); `fontScale` added to MainActivity configChanges with a live setTextZoom so a system font-size change keeps the open result
 - 2026-11-02 · android-66 (device QA) · verified refinement 11 on the bundled APK (run 13 in docs/qa/android-app-test-cases.md): popup labels stay on one line in real landscape at font 1.3, light and dark; live fontScale change keeps the open result (no reload); emulator cold launch with rotation locked still comes up portrait, live rotation works
+- 2026-11-02 · frontend agent (refinement 14) · system font scale now reaches the page as the root font-size (FontScalePlugin: document-start script + pre-paint head script, live via onConfigurationChanged), text zoom pinned to 100; R11 setTextZoom explanation marked superseded; text-zoom fallback for WebViews without DOCUMENT_START_SCRIPT
