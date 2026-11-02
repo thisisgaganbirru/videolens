@@ -47,6 +47,44 @@ class CookieAndErrorHandlingTests(unittest.TestCase):
         self.assertEqual(message, "YouTube is blocking automated downloads from this server.")
         self.assertIn("not a bot", detail)
 
+    BLOCKED = (
+        "The site blocked this download for now - the video itself is fine. Try again "
+        "in a few minutes."
+    )
+
+    def test_mid_download_403_is_a_block_not_a_private_video(self) -> None:
+        # The exact shape seen in device QA on a public 3:33 YouTube video.
+        message, detail = _download_failure(
+            DownloadError("ERROR: unable to download video data: HTTP Error 403: Forbidden")
+        )
+
+        self.assertEqual(message, self.BLOCKED)
+        self.assertNotIn("private", message)
+        self.assertIn("HTTP Error 403", detail)
+
+    def test_rate_limit_is_a_block(self) -> None:
+        for raw in (
+            "ERROR: [youtube] abc: HTTP Error 429: Too Many Requests",
+            "ERROR: [instagram] xyz: Too Many Requests",
+        ):
+            with self.subTest(raw=raw):
+                message, _ = _download_failure(DownloadError(raw))
+                self.assertEqual(message, self.BLOCKED)
+
+    def test_genuine_private_deleted_and_region_cases_keep_their_messages(self) -> None:
+        cases = (
+            ("ERROR: [youtube] abc: Private video. This video is private", "This video is private."),
+            ("ERROR: [youtube] abc: Video unavailable", "This video is no longer available."),
+            (
+                "ERROR: [vimeo] abc: This video is not available in your country",
+                "This video isn't available in this server's region.",
+            ),
+        )
+        for raw, expected in cases:
+            with self.subTest(raw=raw):
+                message, _ = _download_failure(DownloadError(raw))
+                self.assertEqual(message, expected)
+
     def test_unrecognised_failure_keeps_its_detail_out_of_the_message(self) -> None:
         message, detail = _download_failure(
             DownloadError("\x1b[0;31mERROR:\x1b[0m merging failed")

@@ -85,6 +85,14 @@ def _source_metadata_from_info(info: dict, url: str) -> SourceMetadata:
     )
 
 
+# Cause plus timing only: the frontend's recoveryAdvice for the `downloading`
+# stage already offers "download the video and upload the file instead", so
+# repeating that here would print it twice (docs/error-messaging.md).
+_BLOCKED_DOWNLOAD = (
+    "The site blocked this download for now - the video itself is fine. Try again "
+    "in a few minutes."
+)
+
 # Matched against yt-dlp's own wording. Each entry turns one recognised failure
 # into a sentence that names the cause in the user's terms — the raw text goes
 # to the log instead, because it is written for whoever runs yt-dlp ("use
@@ -110,6 +118,14 @@ _KNOWN_DOWNLOAD_FAILURES = (
     (
         "not available in your country",
         "This video isn't available in this server's region.",
+    ),
+    # Throttling / bot-blocking, typically partway through a public video's
+    # download. Checked after the private/deleted/region markers so a genuine
+    # one of those keeps its own sentence; before this entry existed a 403 fell
+    # through to the generic "may be private, deleted" text, which was untrue.
+    *(
+        (marker, _BLOCKED_DOWNLOAD)
+        for marker in ("HTTP Error 403", "HTTP Error 429", "Too Many Requests")
     ),
 )
 
