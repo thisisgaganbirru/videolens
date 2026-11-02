@@ -683,6 +683,33 @@ INT-22 (post counter carried over; passed alone in run 1), RUN-17 (route mock st
 (attribute read right after each click), HIS-06 (direct IndexedDB seeding bypasses the write-side cap), HIS-12 (assertion; the page
 shows its "History can't be saved" message). RUN-R1 and RUN-R2 are still BLOCKED. No new defects.
 
+### 2026-11-02 · frontend-43 · run 3 (six artifacts resolved, refinement 7 retest, HEAD 6bc0ac7 incl. afb41d8)
+
+Production build, `next start -p 3016`, headless Chromium, `/api` mocked. The six run-1/2 "harness artifact" FAILs, each fixed and rerun:
+
+| Case | Verdict | What the artifact was |
+|---|---|---|
+| INT-20 | PASS | the text finder looked in the wrong element; now reads the page text ("Drop an audio or video file" on mouse, "Add an audio or video file" on touch) |
+| INT-22 | PASS | the mock's POST counter carried over from an earlier case; `reset()` first, then exactly 1 POST |
+| RUN-17 | PASS | the route mock kept answering while "offline"; now the API is aborted: "Can't reach the server. It may be offline, or your connection dropped.", no spinner |
+| HIS-04 | PASS | read `aria-pressed` only on the chip just clicked; now all chips are read after each click, exactly one is true |
+| HIS-06 | PASS | seeding 25 rows straight into IndexedDB bypasses the write-side cap; with 19 seeded + 3 runs submitted through the UI, exactly 20 remain and the oldest is dropped |
+| HIS-12 | PASS | assertion counted `<header>`s; with IndexedDB blocked the page shows "History can't be saved in this browser.", Analyze still works, 0 page errors |
+
+Refinement 7 retest: **THM** all PASS: toggle flips/stores/named and persists; System/Light/Dark in the installed-shell More sheet
+(Light and Dark store the value, System removes it and follows the OS, "Following your device" / "Set in this app"; the Welcome dialog
+had to be dismissed first via `videolens-welcome-v1`); System follows `emulateMedia` flips live with no reload and the meta
+theme-color (#0E100F / #F6F4EE) and `color-scheme` follow; a stored Light or Dark ignores OS flips; corrupt value falls back
+to System with no console error; no flash on two reloads for stored Dark, stored Light, System on a dark OS and System on a light OS,
+across all 8 routes plus the 404 (first-paint `data-theme` correct), and in the installed shell. **HEAD**: `node --check` passes on the
+2 inline scripts of each of the 6 exported pages (`_global-error.html` has none and is not a page); no page errors on any route.
+**Landing redirects** were not changed by 7 and were rerun in run 1 and 2; the head script runs clean on `/`. **WEB-429**
+`Retry-After: 1800` exposed gives "You're going a bit fast. Try again in about 30 minutes."; with the header not exposed the app falls
+back to the plain message. **Smoke** at P390 and D1366, light and dark, on `/`, `/app`, `/privacy`, `/offline` and the 404: 20 of 20
+PASS (one `<main>`, footer, header, no horizontal scroll, theme correct, 404 status on the 404, no page errors).
+
+Totals this run: 49 PASS (plus 20 smoke), 0 FAIL, 0 new defects.
+
 ## Changelog
 
 - 2026-11-02 · frontend-43 · created
@@ -690,3 +717,4 @@ shows its "History can't be saved" message). RUN-R1 and RUN-R2 are still BLOCKED
 - 2026-11-02 · frontend-43 · run 1: ran the mocked suite against the production build on :3016; logged results and 12 minor findings
 - 2026-11-02 · frontend-43 · visual review of THM-06 and RES-14 done; HIS-06 case text fixed (cap applied on write, D7 withdrawn)
 - 2026-11-02 · frontend-43 · run 2: retested refinement 6 (D1-D6, D8-D11, D13 all pass) and the intake/run/History regression at D1366 and P390; updated the case text
+- 2026-11-02 · frontend-43 · run 3: resolved the six harness-artifact FAILs (all PASS) and retested refinement 7 (THM, head scripts, WEB-429, smoke at P390 and D1366): clean
