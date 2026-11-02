@@ -94,6 +94,8 @@ def _summary(run: Run) -> RunSummary:
         duration_seconds=facts.duration_seconds,
         summary_snippet=facts.summary_snippet,
         orientation=facts.orientation,
+        width=facts.width,
+        height=facts.height,
     )
 
 
@@ -115,4 +117,8 @@ async def get_run(
         source_kind=facts.source_kind,
         platform=facts.platform,
         duration_seconds=facts.duration_seconds,
+        thumbnail=run.thumbnail,
+        width=facts.width,
+        height=facts.height,
+        orientation=facts.orientation,
     )

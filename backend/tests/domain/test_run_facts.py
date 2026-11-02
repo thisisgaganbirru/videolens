@@ -166,5 +166,29 @@ class DescribeRunTests(unittest.TestCase):
         self.assertIsNone(facts.summary_snippet)
 
 
+class OrientationFromDimensionsTests(unittest.TestCase):
+    def test_measured_dimensions_win_over_the_url_heuristic(self) -> None:
+        # A YouTube watch URL would say landscape; the file says otherwise.
+        self.assertEqual(
+            resolve_orientation("youtube", "https://www.youtube.com/watch?v=a", 1080, 1920), "portrait"
+        )
+        self.assertEqual(resolve_orientation("instagram", None, 1920, 1080), "landscape")
+
+    def test_square_is_portrait(self) -> None:
+        self.assertEqual(resolve_orientation("video_file", None, 1080, 1080), "portrait")
+
+    def test_dimensions_work_without_a_platform(self) -> None:
+        self.assertEqual(resolve_orientation(None, None, 640, 360), "landscape")
+
+    def test_partial_or_zero_dimensions_fall_back(self) -> None:
+        self.assertEqual(resolve_orientation("youtube", "https://youtu.be/a", 1080, None), "landscape")
+        self.assertEqual(resolve_orientation("youtube", "https://youtu.be/a", 0, 1920), "landscape")
+
+    def test_describe_run_carries_dimensions(self) -> None:
+        facts = describe_run(_run(source_kind="file", platform="video_file", width=1920, height=1080))
+        self.assertEqual(facts.orientation, "landscape")
+        self.assertEqual((facts.width, facts.height), (1920, 1080))
+
+
 if __name__ == "__main__":
     unittest.main()

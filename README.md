@@ -109,8 +109,12 @@ place of `up` for the other local lifecycle operations.
   the caller's own run history (newest first, capped at 20). Backs the
   in-app History panel.
 
-Run access is owner-bound. In distributed mode, Redis expires run state (and
-each caller's history entries) after `RUN_TTL_SECONDS` (default 7 days).
+Run access is owner-bound. Run state (and each caller's history entries)
+expires `RUN_TTL_SECONDS` after its last write (default 1 hour): the browser
+keeps History itself, so the server only holds a run until it is delivered.
+`GET /api/runs`, and the MCP server's `list_recent_runs`, therefore only see
+the last hour. `GET /api/runs/{run_id}` also returns `thumbnail` (a ≤20 KB
+JPEG data URL), `width`, `height` and `orientation` for that hand-off.
 
 ### Bring your own key
 

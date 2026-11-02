@@ -96,6 +96,42 @@ class RunRouteTests(unittest.TestCase):
         self.assertEqual(body["duration_seconds"], 58.0)
         self.assertNotIn("owner_id", body)
 
+    def test_status_carries_the_history_poster(self) -> None:
+        run = LINK_RUN.model_copy(
+            update={"thumbnail": "data:image/jpeg;base64,/9j/AA==", "width": 1080, "height": 1920}
+        )
+        with patch.object(container.get_run_use_case, "execute", AsyncMock(return_value=run)):
+            body = self.client.get("/api/runs/link-1", headers=HEADERS).json()
+
+        self.assertEqual(body["thumbnail"], "data:image/jpeg;base64,/9j/AA==")
+        self.assertEqual((body["width"], body["height"]), (1080, 1920))
+        self.assertEqual(body["orientation"], "portrait")
+
+    def test_status_of_a_legacy_run_has_null_poster_fields(self) -> None:
+        with patch.object(container.get_run_use_case, "execute", AsyncMock(return_value=LEGACY_RUN)):
+            body = self.client.get("/api/runs/old-1", headers=HEADERS).json()
+
+        for field in ("thumbnail", "width", "height", "orientation"):
+            with self.subTest(field=field):
+                self.assertIn(field, body)
+                self.assertIsNone(body[field])
+
+    def test_list_has_dimensions_but_never_the_thumbnail(self) -> None:
+        run = FILE_RUN.model_copy(
+            update={
+                "thumbnail": "data:image/jpeg;base64,/9j/AA==",
+                "width": 1920,
+                "height": 1080,
+                "platform": "video_file",
+            }
+        )
+        with patch.object(container.list_runs_use_case, "execute", AsyncMock(return_value=[run])):
+            (item,) = self.client.get("/api/runs", headers=HEADERS).json()["runs"]
+
+        self.assertNotIn("thumbnail", item)
+        self.assertEqual((item["width"], item["height"]), (1920, 1080))
+        self.assertEqual(item["orientation"], "landscape")
+
 
 if __name__ == "__main__":
     unittest.main()

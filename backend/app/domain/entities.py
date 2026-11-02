@@ -82,6 +82,15 @@ class Run(BaseModel):
     source_kind: Optional[str] = None
     platform: Optional[str] = None
     duration_seconds: Optional[float] = None
+    # What the browser needs to file the run in its own History (IndexedDB)
+    # once it has been delivered. Still media facts only: a <=20 KB JPEG
+    # poster as a `data:image/jpeg;base64,...` URL, and the *display*
+    # dimensions (rotation applied, so a phone-shot portrait clip is taller
+    # than wide). None for audio, for runs stored before these existed, and
+    # whenever capturing them failed - which never fails the run.
+    thumbnail: Optional[str] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
 
 
 class CapabilityState(str, Enum):
@@ -154,6 +163,23 @@ class SavedUpload:
     path: str
     run_dir: str
     metadata: Optional[SourceMetadata] = None
+    # yt-dlp's hints for the history poster: candidate poster image URLs
+    # (best first) and the reported video size. Unset for uploads and for the
+    # direct-HTTP route, which have no publisher info to offer.
+    thumbnail_urls: tuple[str, ...] = ()
+    width: Optional[int] = None
+    height: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class MediaVisuals:
+    """The poster and display size `MediaProcessor.describe_visuals` found.
+    Every field may be None - a missing poster is a cosmetic gap, not an
+    error."""
+
+    thumbnail: Optional[str] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
 
 
 @dataclass
@@ -172,3 +198,7 @@ class CaptionTrack:
     # yt-dlp's own reported length, when it gave one. The media was never
     # downloaded on this path, so there is nothing to ffprobe.
     duration_seconds: Optional[float] = None
+    # Same poster hints as `SavedUpload` - the info dict is fetched either way.
+    thumbnail_urls: tuple[str, ...] = ()
+    width: Optional[int] = None
+    height: Optional[int] = None

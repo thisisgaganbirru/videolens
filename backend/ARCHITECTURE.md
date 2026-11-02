@@ -32,6 +32,9 @@ only in `container.py`.
 - `ports.py` — `Protocol` interfaces the application layer depends on:
   `RunRepository`, `MediaProcessor`, `AnalysisEngine`, `ObjectStore`,
   `JobQueue`, `SpendCap`, `KeyVault`, `TokenVerifier`, `UploadedFile`.
+  Phase 5a added `MediaProcessor.describe_visuals` (history poster +
+  display size, never raises; returns `entities.MediaVisuals`) and
+  `RunRepository.set_visuals`.
   These are structural (duck-typed) — an adapter satisfies a port just by
   having the right methods, no inheritance required.
 
@@ -53,8 +56,8 @@ global (this is what makes them independently testable — see
 `backend/tests/`).
 - `persistence/run_repository.py` — `RunStore`: Redis-backed in distributed
   mode, an in-process dict otherwise. Implements `RunRepository`.
-- `media/{ffmpeg,ytdlp_downloader,uploads}.py` — FFmpeg probing/normalizing,
-  yt-dlp downloading, and upload/run-dir handling. `media/service.py`'s
+- `media/{ffmpeg,ytdlp_downloader,uploads,thumbnails}.py` — FFmpeg probing/normalizing,
+  yt-dlp downloading, upload/run-dir handling, and the history thumbnail. `media/service.py`'s
   `MediaService` composes all three into one `MediaProcessor` adapter,
   since `ProcessRunUseCase` always uses them together in sequence.
 - `ai/gemini_engine.py` — `GeminiEngine`, implements `AnalysisEngine`.

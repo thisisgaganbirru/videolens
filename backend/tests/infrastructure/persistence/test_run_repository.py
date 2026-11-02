@@ -1,6 +1,8 @@
 import unittest
+from datetime import timedelta
+from unittest.mock import AsyncMock
 
-from app.domain.entities import Run, RunStatus, VideoAnalysis
+from app.domain.entities import MediaVisuals, Run, RunStatus, VideoAnalysis
 from app.infrastructure.config import Settings
 from app.infrastructure.persistence.run_repository import RunStore
 
@@ -82,6 +84,112 @@ class LegacyRunPayloadTests(unittest.TestCase):
         self.assertIsNone(run.source_kind)
         self.assertIsNone(run.platform)
         self.assertIsNone(run.duration_seconds)
+
+
+class RetentionTests(unittest.IsolatedAsyncioTestCase):
+    """Phase 5a: the browser keeps History, the server keeps a run ~1 hour."""
+
+    def test_default_ttl_is_one_hour(self) -> None:
+        self.assertEqual(Settings(_env_file=None).run_ttl_seconds, 3600)
+
+    def _redis_store(self) -> tuple[RunStore, AsyncMock]:
+        store = RunStore(Settings(_env_file=None, redis_url="redis://test", run_ttl_seconds=3600))
+        data: dict[str, str] = {}
+        client = AsyncMock()
+
+        async def fake_set(key, value, ex=None):
+            data[key] = value
+
+        async def fake_get(key):
+            return data.get(key)
+
+        client.set.side_effect = fake_set
+        client.get.side_effect = fake_get
+        store._redis = client  # type: ignore[assignment]
+        return store, client
+
+    async def test_completion_rearms_the_run_ttl_and_the_owner_index(self) -> None:
+        store, client = self._redis_store()
+        await store.create("run-1", "client:o")
+        client.set.reset_mock()
+        client.expire.reset_mock()
+
+        await store.set_result(
+            "run-1",
+            VideoAnalysis(title="T", summary="S", transcript="", screen_text="", markdown=""),
+        )
+
+        self.assertEqual(client.set.await_args.args[0], "videolens:run:run-1")
+        self.assertEqual(client.set.await_args.kwargs["ex"], 3600)
+        client.expire.assert_awaited_once_with("videolens:owner:client:o:runs", 3600)
+
+    async def test_failure_rearms_the_run_ttl_and_the_owner_index(self) -> None:
+        store, client = self._redis_store()
+        await store.create("run-1", "client:o")
+        client.expire.reset_mock()
+
+        await store.set_error("run-1", "nope")
+
+        self.assertEqual(client.set.await_args.kwargs["ex"], 3600)
+        client.expire.assert_awaited_once_with("videolens:owner:client:o:runs", 3600)
+
+    async def test_in_memory_runs_expire_after_the_ttl(self) -> None:
+        store = RunStore(Settings(_env_file=None, run_ttl_seconds=3600))
+        await store.create("old", "client:o")
+        old = await store.get("old")
+        assert old is not None
+        old.updated_at = old.updated_at - timedelta(seconds=3601)
+
+        await store.create("new", "client:o")  # any write prunes
+
+        self.assertIsNone(await store.get("old"))
+        self.assertIsNotNone(await store.get("new"))
+
+    async def test_a_late_finish_gets_a_full_window_in_memory(self) -> None:
+        store = RunStore(Settings(_env_file=None, run_ttl_seconds=3600))
+        await store.create("slow", "client:o")
+        run = await store.get("slow")
+        assert run is not None
+        run.updated_at = run.updated_at - timedelta(seconds=3500)
+
+        await store.set_error("slow", "late")  # re-stamps updated_at
+        run = await store.get("slow")
+        assert run is not None
+        run.created_at = run.created_at - timedelta(seconds=3500)
+        await store.create("other", "client:o")
+
+        self.assertIsNotNone(await store.get("slow"))
+
+
+class VisualsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_set_visuals_round_trips_and_keeps_none_fields(self) -> None:
+        store = RunStore(Settings(_env_file=None))
+        await store.create("run-v", "client:o")
+
+        await store.set_visuals(
+            "run-v", MediaVisuals(thumbnail="data:image/jpeg;base64,AA", width=720, height=1280)
+        )
+        await store.set_visuals("run-v", MediaVisuals())  # nothing new: nothing lost
+
+        saved = await store.get("run-v")
+        assert saved is not None
+        self.assertEqual(saved.thumbnail, "data:image/jpeg;base64,AA")
+        self.assertEqual((saved.width, saved.height), (720, 1280))
+
+    async def test_set_visuals_on_a_missing_run_is_a_no_op(self) -> None:
+        store = RunStore(Settings(_env_file=None))
+        await store.set_visuals("nope", MediaVisuals(width=1, height=1))
+        self.assertIsNone(await store.get("nope"))
+
+    def test_a_legacy_payload_has_no_visuals(self) -> None:
+        run = Run.model_validate_json(
+            '{"run_id":"old","owner_id":"client:o","status":"complete",'
+            '"created_at":"2026-10-01T00:00:00Z","updated_at":"2026-10-01T00:01:00Z",'
+            '"completeness":"full","source_kind":"link","duration_seconds":12.0}'
+        )
+        self.assertIsNone(run.thumbnail)
+        self.assertIsNone(run.width)
+        self.assertIsNone(run.height)
 
 
 if __name__ == "__main__":

@@ -143,10 +143,17 @@ def _is_youtube_shorts(url: Optional[str]) -> bool:
 
 
 def resolve_orientation(
-    platform: Optional[str], source_url: Optional[str]
+    platform: Optional[str],
+    source_url: Optional[str],
+    width: Optional[int] = None,
+    height: Optional[int] = None,
 ) -> Optional[Orientation]:
-    """A poster-shape hint, not a measurement: YouTube watch URLs are
-    landscape, YouTube Shorts and every other known platform portrait."""
+    """The poster's shape. Measured display dimensions win when the run has
+    them (landscape iff wider than tall, so a square counts as portrait);
+    otherwise a hint: YouTube watch URLs are landscape, YouTube Shorts and
+    every other known platform portrait."""
+    if width and height and width > 0 and height > 0:
+        return "landscape" if width > height else "portrait"
     if platform is None:
         return None
     if platform == PLATFORM_YOUTUBE:
@@ -183,6 +190,8 @@ class RunFacts:
     duration_seconds: Optional[float]
     orientation: Optional[Orientation]
     summary_snippet: Optional[str]
+    width: Optional[int] = None
+    height: Optional[int] = None
 
 
 def describe_run(run: Run) -> RunFacts:
@@ -194,7 +203,9 @@ def describe_run(run: Run) -> RunFacts:
         platform=platform,
         duration_seconds=run.duration_seconds,
         orientation=resolve_orientation(
-            platform, metadata.source_url if metadata else None
+            platform, metadata.source_url if metadata else None, run.width, run.height
         ),
         summary_snippet=summary_snippet(run.result.summary if run.result else None),
+        width=run.width,
+        height=run.height,
     )

@@ -18,6 +18,7 @@ from yt_dlp import YoutubeDL
 from ...domain.entities import CaptionTrack, SourceMetadata
 from ..config import Settings
 from .net import validate_public_url
+from .thumbnails import dimensions_from_info, thumbnail_urls_from_info
 from .ytdlp_downloader import _cookie_options, _source_metadata_from_info
 
 # Ordered by how little parsing they need. json3 is YouTube's own structured
@@ -156,12 +157,16 @@ async def fetch_captions(settings: Settings, url: str) -> CaptionTrack | None:
         text = parse_caption_payload(payload, track.get("ext", ""))
         if not text.strip():
             return None
+        width, height = dimensions_from_info(info)
         return CaptionTrack(
             text=text,
             language=language,
             automatic=automatic,
             metadata=_source_metadata_from_info(info, url),
             duration_seconds=_duration(info.get("duration")),
+            thumbnail_urls=thumbnail_urls_from_info(info),
+            width=width,
+            height=height,
         )
 
     try:
