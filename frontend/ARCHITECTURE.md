@@ -89,7 +89,7 @@ needs. Each hook owns its `useState`/`useEffect` and calls out to
   the boot: file on submit and on each status response, one-time import from
   `GET /api/runs`, re-check of unfinished runs (404 → expired).
 - `useVersionLog.ts` — fetches the release list.
-- `useUpdateCheck.ts` — wraps the native update check for `UpdateBanner`.
+- `useUpdateCheck.ts` — wraps the native update check for `UpdatePrompt` (was `UpdateBanner` until refinement 10).
 - `useSharedUrl.ts` — the latest URL shared into the app. Lives here rather
   than in `UploadForm` because a share has to be handled whatever is on
   screen, and the intake is mounted only while the run state is idle.
@@ -149,7 +149,7 @@ does lives in `components/`:
 - `format.ts` — `formatDay` ("Oct 30, 2026"), used by the Releases list. (History formats its own dates in `history.ts`.)
 - `useMediaQuery.ts` — `useSyncExternalStore` over `matchMedia`; only for when React itself must know the width (History hides sort below 48rem and forces Newest).
 - `UploadForm.tsx`, `ResultsView.tsx`, `RunStatusView.tsx`,
-  `UpdateBanner.tsx`, `ServiceWorkerRegistration.tsx` — presentational
+  `UpdatePrompt.tsx` (was `UpdateBanner.tsx`), `ServiceWorkerRegistration.tsx` — presentational
   components, unchanged in behavior; only their imports moved to
   `@/domain/entities` where they used to pull from the now-deleted `lib/`.
 

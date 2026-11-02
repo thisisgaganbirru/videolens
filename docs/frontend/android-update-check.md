@@ -5,7 +5,7 @@ Since this app isn't distributed through Play Store, nothing else checks for upd
 **Files**
 - `frontend/application/useUpdateCheck.ts` — fetches on mount, exposes `{ update }`.
 - `frontend/infrastructure/updateCheck.ts` — `ApiUpdateChecker`, implements `UpdateChecker`.
-- `frontend/components/UpdateBanner.tsx` — renders nothing if `update` is null, otherwise a dismissible-by-nature banner (no explicit dismiss — it just won't reappear until a newer build exists) linking to the release.
+- `frontend/components/UpdatePrompt.tsx` — renders nothing if `update` is null (or while the splash / first-run Welcome is up), otherwise a centred modal dialog linking to the release, with a "Later" that remembers the build. Was `UpdateBanner.tsx`, a band at the top, until refinement 10; see "Update prompt (refinement 10)".
 
 **No-ops everywhere except native Android**: `checkForUpdate()` returns `null` immediately unless `Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android"` — so on web (and any future iOS build) this is silently inert.
 
@@ -56,7 +56,7 @@ tag scheme staying stable. The backend parses that tag instead — the dependenc
 moved to the server, where changing it is a deploy rather than a forced reinstall
 of every APK in the field. See `../backend/releases.md`.
 
-**Design status — extrapolated, needs review.** The Terminal mockup never drew
+**Design status — superseded by refinement 10 (popup), kept for history.** The Terminal mockup never drew
 this banner. It's now a flat `--color-paper-2` band with a hairline below,
 square, no shadow. It carries **`shrink-0`**, which matters: it sits directly
 inside `.viewport` (`app/layout.tsx`), a `flex-direction: column` container, so
@@ -131,7 +131,7 @@ WebView rule: Chromium treats `http://localhost` / `127.0.0.1` as potentially
 trustworthy, so `https://localhost` → `http://localhost:8000` is allowed;
 `10.0.2.2` is not, and would still be blocked as mixed content.
 
-## Banner design and dismissal (refinement 9)
+## Banner design and dismissal (refinement 9) — superseded by the popup below; dismissal unchanged
 
 `components/UpdateBanner.tsx` is now an editorial band (`.update-banner` in
 `app/globals.css`): a 15px ink headline "Update available." plus an ink-2
@@ -156,6 +156,65 @@ Verified with Playwright and an emulated Capacitor bridge (`App.getInfo` build
 and dismiss 44x44; dismissed code stored as 20 and hidden after reload; shown
 again when the release code became 21; no banner on the plain web.
 
+## Update prompt (refinement 10)
+
+Owner: "it should be on screen, not at the top". `components/UpdatePrompt.tsx`
+replaces `UpdateBanner.tsx` (renamed; still mounted from `app/layout.tsx`).
+
+- **What it is.** A native modal `<dialog class="update-prompt">` opened with
+  `showModal()`, like the More sheet and Welcome: a centred `--color-surface`
+  card (24rem max, `--radius-card`, `--shadow-floating`) on the shared
+  `--color-backdrop`. Contents: a tint disc with lucide `Download`, a serif
+  "Update available." (`h2`, the sheet title's 26px Newsreader), the ink-2 line
+  "Version X is ready to install.", then the near-black `btn-ink btn-pill`
+  "Get the update" (`target="_blank"`, unchanged) and an outlined `btn-secondary
+  btn-pill` "Later". Hidden icon disc and tighter padding sideways
+  (`max-height: 31.25rem`).
+- **Frame.** The top layer takes it out of `.viewport`'s flow entirely, so it
+  needs no `flex-shrink` and cannot move the fixed nav / content band / footer
+  (measured: identical `.nav`, `.tabbar`, `main` boxes with and without it).
+- **Dismissal.** Later, Escape, a backdrop tap and Android hardware back
+  (`useHardwareBack` cancels the top `dialog[open]`) all call
+  `useUpdateCheck().dismiss()`, the R9 per-version store (key
+  `videolens-update-dismissed`); a newer `version_code` shows it again.
+  "Get the update" closes it for this launch only (`close()`, nothing stored;
+  deferred a tick, because an anchor removed during its own click cannot
+  navigate), so an abandoned download is offered again next launch.
+- **Accessibility.** Implicit `role="dialog"` from `<dialog>`, `aria-modal`,
+  `aria-labelledby` (title) and `aria-describedby` (version line). Focus moves to
+  "Get the update" on open; Tab/Shift+Tab cycle the two controls (the top layer
+  already makes the page inert; a small keydown wrap stops focus leaving for the
+  browser UI). On any close focus returns to the element that had it before
+  the prompt opened; if there was none, to the visible view's `h1`/`h2` (given
+  `tabindex="-1"`), else the first focusable control in the visible `main` —
+  never `<body>` (device QA). All controls are 44px or taller.
+- **Narrow + large text (device QA).** The old band's button covered its title
+  at 320px with font scale >= 1.15. Here the actions are a wrapping flex row
+  (`flex: 1 1 9.5em`, labels may wrap), so they stack full width when two do
+  not fit; title and text use `overflow-wrap: anywhere`; the dialog is capped
+  at the viewport less a margin and scrolls inside. Verified at 320 and 343px
+  with `html { font-size: 130% }`: no overlaps, no clipped or overflowing
+  button, buttons 57px tall and stacked.
+  This also exposed a page-wide bug, fixed here: `html, body { min-width: 20rem }`
+  grew with the root font size, so at 130% the page claimed 416px on a 320px
+  screen (the nav's theme toggle and the prompt's right edge were cut off). It
+  is now `min-width: 320px`.
+- **Waits for first run.** `useFirstRunBusy()` (`application/useFirstRun.ts`)
+  is true while the cold-start splash is up, or while Welcome is on the tool's
+  own document; the prompt opens as soon as both are gone.
+- **Still native-Android-only**, and inert on the web (`ApiUpdateChecker`
+  unchanged).
+
+**Design status — extrapolated, needs owner review.** No board draws this
+dialog; it reuses the More sheet's surface, backdrop and title type and the
+existing button styles.
+
+Verified with `scratchpad\refine10\verify.py` (Playwright, emulated Capacitor
+bridge, every `/api` call answered in the browser): light and dark at 390x844,
+915x360 and 1280x800; 320/343px at font scale 1.0 and 1.3; 640x360 at 1.3;
+all five close paths; focus return and trap; Welcome and splash gating; the
+plain web shows nothing.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported UpdateBanner; added shrink-0 so it cannot compress the measured viewport frame
@@ -167,3 +226,4 @@ again when the release code became 21; no banner on the plain web.
 - 2026-11-01 · frontend agent (refinement 1) · debug-only network security config (cleartext to localhost/127.0.0.1/10.0.2.2) via src/debug manifest overlay, for bundled-APK QA against a local backend
 - 2026-11-02 · android-66 (device QA) · noted that the "Local live-reload on the emulator" section is superseded: device QA runs on the bundled APK only (see the next section)
 - 2026-11-02 · frontend agent (refinement 9) · banner restyled to the editorial system ("Get the update" pill, 44px dismiss, one-row landscape); dismissal persists the dismissed version_code via the new UpdateDismissalStore port, so a newer build shows again
+- 2026-11-02 · frontend agent (refinement 10) · the top banner became a centred modal `<dialog>` (`UpdatePrompt.tsx`, renamed from `UpdateBanner.tsx`): Later / Escape / backdrop / Android back keep the R9 per-version dismissal, Get the update closes for this launch only, focus trapped and returned (never `<body>`), waits for splash and Welcome; fixed `html, body` min-width from 20rem to 320px so font scale 1.3 no longer widens the page past a 320px screen

@@ -235,7 +235,7 @@ the installed app's `versionCode` via `@capacitor/app`'s `App.getInfo()`,
 fetches the videolens GitHub repo's release list, and compares against the
 `version.json` manifest attached to the newest release (see the "Write
 version manifest" step in the `android` CI job). If a newer build exists,
-`components/UpdateBanner.tsx` shows a banner linking to that release's page.
+`components/UpdatePrompt.tsx` shows an on-screen prompt linking to that release's page.
 This is a check-and-link flow, not silent installation — Android doesn't
 allow apps to install APKs without the user going through the system
 installer UI outside of Play Store's own privileged path.
