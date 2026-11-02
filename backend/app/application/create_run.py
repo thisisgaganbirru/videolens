@@ -1,8 +1,10 @@
 import os
 import uuid
 
-from ..domain.entities import Principal, Run
+from ..domain.entities import FreeRunClaim, Principal, Run
 from ..domain.errors import (
+    DeviceTokenInvalidError,
+    FreeRunsExhaustedError,
     InvalidSourceError,
     MediaValidationError,
     QuotaExceededError,
@@ -10,13 +12,25 @@ from ..domain.errors import (
     TermsNotAcceptedError,
 )
 from ..domain.run_facts import file_platform
-from ..domain.ports import JobQueue, MediaProcessor, ObjectStore, RunRepository, SpendCap, UploadedFile
+from ..domain.ports import (
+    DeviceTokenSigner,
+    FreeRunAllowance,
+    JobQueue,
+    MediaProcessor,
+    ObjectStore,
+    RunRepository,
+    SpendCap,
+    UploadedFile,
+)
+
+FREE_RUNS_USED_MESSAGE = "You have used your free runs. Add your own Gemini key to keep going."
+
 
 
 class CreateRunUseCase:
     """Accepts a media source (file or URL), applies the intake business
-    rules (terms accepted, exactly one source, daily spend cap), and
-    schedules the run for analysis.
+    rules (terms accepted, exactly one source, free-run allowance, daily
+    spend cap), and schedules the run for analysis.
 
     `distributed` mirrors the deployment topology (Redis queue + S3 present):
     in that mode an uploaded file is pushed to object storage and the local
@@ -32,6 +46,8 @@ class CreateRunUseCase:
         storage: ObjectStore,
         queue: JobQueue,
         spend_cap: SpendCap,
+        free_runs: FreeRunAllowance,
+        device_tokens: DeviceTokenSigner,
         distributed: bool,
     ) -> None:
         self._runs = runs
@@ -39,6 +55,8 @@ class CreateRunUseCase:
         self._storage = storage
         self._queue = queue
         self._spend_cap = spend_cap
+        self._free_runs = free_runs
+        self._device_tokens = device_tokens
         self._distributed = distributed
 
     async def execute(
@@ -49,18 +67,11 @@ class CreateRunUseCase:
         file: UploadedFile | None,
         url: str | None,
         gemini_api_key: str | None,
+        device_token: str | None = None,
+        client_ip: str = "",
     ) -> Run:
         if not accept_terms:
             raise TermsNotAcceptedError("Accept the media-use terms before analysis.")
-
-        # A caller-supplied key spends their own quota, not ours, so it's exempt
-        # from the daily budget backstop (which exists purely to bound our own
-        # Gemini spend).
-        if not gemini_api_key and not await self._spend_cap.try_consume():
-            raise QuotaExceededError(
-                "VideoLens AI has reached its limit for today. Add your own Gemini key "
-                "from the menu to keep going, or try again tomorrow."
-            )
 
         run_id = str(uuid.uuid4())
         source_url = url.strip() if url else None
@@ -68,6 +79,74 @@ class CreateRunUseCase:
             if file is not None:
                 await file.close()
             raise InvalidSourceError("Provide exactly one source: either a media file or a public URL.")
+
+        # Nothing below this line may run for a caller who isn't allowed to
+        # start one: no download, no FFmpeg, no budget spent.
+        claim = await self._admit(
+            principal=principal,
+            gemini_api_key=gemini_api_key,
+            device_token=device_token,
+            client_ip=client_ip,
+        )
+        try:
+            return await self._accept(
+                run_id=run_id,
+                principal=principal,
+                file=file,
+                source_url=source_url,
+                gemini_api_key=gemini_api_key,
+            )
+        except Exception:
+            # A rejected intake (over the daily cap, too long, unschedulable)
+            # must not cost the caller one of their free runs.
+            if claim is not None:
+                await self._free_runs.refund(claim)
+            raise
+
+    async def _admit(
+        self,
+        *,
+        principal: Principal,
+        gemini_api_key: str | None,
+        device_token: str | None,
+        client_ip: str,
+    ) -> FreeRunClaim | None:
+        """Whether this caller may start a run on the shared Gemini key.
+
+        The one seam a signed-in plan check slots into later: today the only
+        answer is "own key: always" or "anonymous: within today's free runs".
+        Returns the free run taken, so it can be handed back if the intake
+        is rejected after this point; None when nothing was taken.
+        """
+        # A caller-supplied key spends their own quota, not ours.
+        if gemini_api_key or not self._free_runs.enabled:
+            return None
+        device_id = self._device_tokens.verify(device_token or "")
+        if device_id is None:
+            raise DeviceTokenInvalidError("This device needs a fresh token. Reload and try again.")
+        claim = await self._free_runs.try_consume(device_id, client_ip)
+        if claim is None:
+            status = await self._free_runs.status(device_id)
+            # Same answer whichever counter tripped: the device's numbers.
+            raise FreeRunsExhaustedError(FREE_RUNS_USED_MESSAGE, limit=status.limit, used=status.used)
+        return claim
+
+    async def _accept(
+        self,
+        *,
+        run_id: str,
+        principal: Principal,
+        file: UploadedFile | None,
+        source_url: str | None,
+        gemini_api_key: str | None,
+    ) -> Run:
+        # BYOK runs skip the daily budget too: it exists purely to bound our
+        # own Gemini spend.
+        if not gemini_api_key and not await self._spend_cap.try_consume():
+            raise QuotaExceededError(
+                "VideoLens AI has reached its limit for today. Add your own Gemini key "
+                "from the menu to keep going, or try again tomorrow."
+            )
 
         saved = None
         source_key = None

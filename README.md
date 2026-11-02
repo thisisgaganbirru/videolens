@@ -100,6 +100,15 @@ place of `up` for the other local lifecycle operations.
   An optional `X-Gemini-Api-Key` header (see "Bring your own key" below)
   exempts that run from `DAILY_RUN_CAP`, since it doesn't spend the shared
   quota; the per-IP/token rate limit still applies.
+  Without a key, the caller also needs `X-Device-Token` (from
+  `GET /api/free-runs`) and gets `FREE_RUNS_PER_DEVICE` (default 3) runs per
+  UTC day, with `FREE_RUNS_PER_IP` (default 10) as a per-network backstop:
+  `401 {"code": "device_token_invalid"}` for a missing/forged token,
+  `402 {"code": "free_runs_used", "limit", "used"}` once spent. See
+  `docs/backend/free-runs.md`.
+- `GET /api/free-runs` — `{ device_token, enabled, limit, used, remaining,
+  resets_at }` for the device in `X-Device-Token`, issuing a new token when
+  it is missing or not genuine. Read-only: never spends a run.
 - `GET /api/runs/{run_id}` — returns
   `{ run_id, status, stage, result, error }`, where `status` is one of
   `queued`, `processing`, `complete`, `failed`, and `stage` (only set while
@@ -129,8 +138,8 @@ that run only:
   (arq logs job args/results), so it's held in a dedicated, single-use Redis
   entry (`backend/app/infrastructure/byok/key_vault.py`) keyed by `run_id`, deleted the instant the
   worker reads it, with a 15-minute safety-net TTL in case it's never read.
-- Exempt from `DAILY_RUN_CAP` (that cap protects the shared key's spend, not
-  a key someone brought themselves) but still subject to the normal per-IP
+- Exempt from `DAILY_RUN_CAP` and the per-device free-run allowance (both
+  protect the shared key's spend, not a key someone brought themselves) but still subject to the normal per-IP
   rate limit, since FFmpeg/bandwidth/worker capacity are still spent either way.
 
 ## Use from an AI agent

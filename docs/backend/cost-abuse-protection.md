@@ -13,6 +13,8 @@ Three independent layers bound how much this app can spend on Gemini calls, sinc
 
 **Layer 3 — BYOK exemption is asymmetric by design**: a bring-your-own-key run skips the daily cap (`CreateRunUseCase` never calls `try_consume()` when a key is present — that cap only protects the *shared* key's spend) but is **still** subject to the per-IP rate limit, since FFmpeg/bandwidth/worker capacity are spent either way regardless of whose Gemini key pays for the API call.
 
+**Layer 4: per-device free runs** (`FREE_RUNS_PER_DEVICE`, default 3/day, with a `FREE_RUNS_PER_IP` backstop of 10/day). This applies to non-BYOK callers only and is checked before Layer 2. It has its own doc: `free-runs.md`.
+
 **Known issue**: none — this is a deliberately layered design and the trade-offs (documented in code comments already) look sound. The one thing worth knowing operationally: none of these layers replace setting a hard budget alert directly on the Gemini API key itself in Google Cloud/AI Studio — that's the only backstop enforced completely outside this app's own code (see root `README.md`, "Cost protection").
 
 **Tests**: `backend/tests/infrastructure/quota/test_daily_budget.py` (local-mode cap logic), `backend/tests/interface/api/test_rate_limiter.py` (`client_ip` only), `backend/tests/domain/test_policies.py` (`quota_key_from_headers`).
@@ -20,3 +22,4 @@ Three independent layers bound how much this app can spend on Gemini calls, sinc
 ## Changelog
 
 - 2026-08-21 · main session · rate-limit responses now carry `detail` like every other error (slowapi's stock `error` key meant the UI showed a bare 429 fallback), and the daily-cap message points at BYOK
+- 2026-11-01 · backend agent (Phase 5b) · added Layer 4: the per-device free-run allowance (see `free-runs.md`)
