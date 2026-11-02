@@ -115,6 +115,28 @@ Verified (mocked `/api/*`): refund visible immediately → line shown; refund
 landing after the first failed poll → line shown after the recheck; no refund →
 no line; BYOK → no line and zero `/api/free-runs` reads.
 
+**Refinement 11: a partial outage shows the notice (D-R10-1).** Web QA round
+8 found that with only one of the two launch reads failing (free-runs 503,
+capabilities 200, or the other way round) no notice showed: the module held
+one shared boolean, and whichever read answered last set it, so the healthy
+read's success cleared the other's failure. `serverReachability.ts` now keeps
+a per-read set of failing sources (`ReadSource = "free-runs" |
+"capabilities"`); `noteReadResult(source, error?)` adds or removes only that
+read, and the notice is up while **any** read's latest result is a
+`NetworkError` or 5xx. It clears only when every read has since come back
+healthy: a later launch, resume or refocus round re-reads the failing ones
+(`useCapabilities` re-reads until it has a report; `useFreeRuns`' reconnect
+listener now also re-reads when `isReadFailing("free-runs")`, since after a
+402 the status is kept and "status is null" alone would miss it). A 4xx
+counts as healthy for that read, as before. When a key is saved the free-runs
+read stops, so `forgetReadResult("free-runs")` drops its entry (otherwise a
+failure from before the key could hold the notice up with nothing to retry
+it). Copy unchanged. Verified in `scratchpad\refine11\verify.py` by holding
+both launch responses and releasing them in each order, three trials each:
+free-runs 503 alone, capabilities 503 alone and both 503 all show the notice
+(18/18); a refocus with one read still failing keeps it; a fully healthy
+refocus clears it and the pill appears; 400 on either or both shows nothing.
+
 ## Changelog
 
 - 2026-11-01 · frontend agent (Phase 5b) · created: device token store, free-runs gateway/port, `useFreeRuns` store, 401 retry-once and 402 limit state in `useAnalysisRun`, `FreeRunsBanner` on all shells, `UploadForm` `blocked`, API key lede and Privacy sentence
@@ -122,3 +144,4 @@ no line; BYOK → no line and zero `/api/free-runs` reads.
 - 2026-11-02 · frontend agent (refinement 4) · free-runs read reports reachability; re-read on online/focus/visible while the unreachable notice is up (LCH-06)
 - 2026-11-02 · frontend agent (refinement 9) · re-read on visibilitychange, Capacitor resume, run settle and intake return; failed view states "This didn't use one of your free runs." only when the re-read count proves the refund (2.5s recheck for the backend's set_error-before-refund ordering)
 - 2026-11-02 · frontend agent (refinement 10) · 5xx from the free-runs (and capabilities) read now counts as unreachable, so a Railway 502/503 shows the "Can't reach the server" notice; 4xx unchanged
+- 2026-11-02 · frontend agent (refinement 11) · per-read reachability (`noteReadResult(source, err)`, `forgetReadResult`, `isReadFailing`): the notice shows when ANY launch read is unreachable and clears only once every read is healthy again, so a partial 5xx outage is no longer hidden by the other read's success; 4xx and copy unchanged (D-R10-1)
