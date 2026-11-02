@@ -218,6 +218,19 @@ couldn't verify as a question, not a fact.
 | RES-05b | Past completed run from History: Copy on each tab. Share label. | "<Tab> copied"; pastes only that tab; share reads "Share all results". |
 | HIS-03b | Portrait, 360-class width, 3+ runs. | Sort select next to search; Oldest reverses runs and date groups; no sideways scroll. |
 
+## 16. Refinement 5 additions
+
+| ID | Steps | Expected |
+|---|---|---|
+| INT-01b (landscape) | Landscape, keyboard up, empty link then an invalid URL, Analyze. | The whole message is visible above the keyboard and the field is visible; Analyze may be off screen. |
+| THM-01b-1 | OS dark, Light chosen, swipe away, relaunch. | Light launch screen (API 31+), light window, dark bar icons, no dark → light flash. |
+| THM-01b-2 | OS light, Dark chosen, relaunch. | Dark launch screen and window, light bar icons, no light flash. |
+| THM-01b-3 | Change the theme in More while it is open. | Bars flip immediately, no page reload; scroll position, the open sheet and form state are kept. |
+| THM-01b-4 | Choose System, then relaunch. | Follows the OS live; a relaunch follows the OS. |
+| THM-01b-5 | Upgrade: on the old build set Light with OS dark, install the new APK over it. | First launch may switch once; the second launch is light from frame one. |
+| THM-01b-6 | System chosen, flip the OS theme while the app is open. | Bars and page both follow. |
+| LCH-06d | Airplane on at launch, then off. | "You're offline right now. …"; airplane off clears it without a tap (it may then show the unreachable notice if the server is down). |
+
 ## Run log
 
 ### 2026-11-01 · android-66 (device QA) · run 1 (bundled APK)
@@ -246,8 +259,15 @@ Run 4 (03dd55e): PASS INT-01b (portrait empty and invalid), INT-03b, INT-05 (fie
 PARTIAL / FAIL: INT-01b landscape (message clipped under the keyboard; only about 5 px visible, the field and button are visible); LCH-06d (airplane on shows "Can't reach the server right now…", not "You're offline right now…"; possibly navigator.onLine stays true on the emulator, unconfirmed); THM-01b relaunch (Light chosen under OS dark: blank dark window about 6.7 s, then the light page; likely exaggerated by swiftshader, and status/nav bars stay dark over a light page).
 Screenshots in `%TEMP%\qa3\` and `%TEMP%\qa4\`.
 
+### 2026-11-02 · android-66 (device QA) · run 5 (bundled APK, refinement 5, 324608b, backend DOWN)
+
+Build: 324608b installed with `-r` at 02:33:47 (NativeTheme plugin, MainActivity night mode in attachBaseContext, ACCESS_NETWORK_STATE confirmed granted). Emulator API 35, swiftshader. Evidence in `%TEMP%\qa5\`.
+PASS: INT-01b landscape (empty: "Paste a link to analyze." and invalid: "Enter a valid public HTTP or HTTPS URL." fully visible above the keyboard; minor: the field's top edge and the Analyze button are partly under the header line), THM-01b-1 / THM-01b-5 (upgrade: first launch after install showed the old dark window ~7 s then light, luma 74 → 35/29 → 212; second launch light from frame one, luma 74 → 133 → 213, dark bar icons), THM-01b-2 (OS light + Dark: luma 82 → 64 → 32 → 44, no light frame), THM-01b-3 (Dark ↔ Light in More flips the bars at once; the sheet, scroll position and ticked terms stay), THM-01b-4 (System follows the OS; relaunch follows), LCH-06d ("You're offline right now. …" with airplane at launch; off → notice becomes the server-unreachable one without a tap), LCH-02/03 (System + OS dark: luma 74 → 65 → 33 → 44, no light frame), NAV/BCK sanity (back from a result goes to History, back closes the sheet, back at the Analyze root leaves the app), STB-01 (0 FATAL, 0 app crashes; only the Capacitor console error "Error injecting safe area CSS: Cannot read properties of null (reading 'style')" on launch).
+FAIL (intermittent): THM-01b-6. Repro: OS dark, Light stored, cold launch (activity forced light), More > System, then flip the OS to light while the app stays open. The status/nav bars turn light but the page stays dark: `matchMedia('(prefers-color-scheme: dark)')` stays true, even after Home and back to the app; a cold relaunch fixes it. Not reproduced with live toggles only (Dark/Light/System taps) or after a cold launch under System. Screenshots `THM6-os-flip-light-8s.png`, `THM6-repro3.png`.
+
 ## Changelog
 
+- 2026-11-02 · android-66 (device QA) · added section 16 (refinement 5 cases) and the run 5 Run log (324608b): INT-01b landscape, THM-01b-1..5, LCH-06d, LCH-02/03 PASS; THM-01b-6 FAIL (WebView prefers-color-scheme stays dark after an OS flip when the app was launched with a stored Light under OS dark)
 - 2026-11-02 · android-66 (device QA) · HIS-03b re-run at 360dp (`wm size 720x1600`, density 320): PASS, no horizontal overflow (scrollWidth 360), Oldest reverses runs and groups; Analyze, History, More sheet and dock fine. LCH-06d recorded PASS-with-note (emulator WebView keeps navigator.onLine true in airplane mode)
 - 2026-11-02 · android-66 (device QA) · added the refinement 4 cases (section 15) and the Run log for runs 3 and 4 (2a13890, 03dd55e)
 - 2026-11-02 · android-66 (device QA) · added the Run log for the second bundled-APK pass (cc978f7)
