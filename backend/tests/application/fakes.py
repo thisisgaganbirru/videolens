@@ -102,6 +102,7 @@ class FakeMediaProcessor:
         self.enforced_duration: list[tuple[str, str]] = []
         self.download_calls: list[tuple[str, str]] = []
         self.normalize_calls: list[tuple[str, str]] = []
+        self.normalize_error: Exception | None = None
         self.save_upload_error: Exception | None = None
         self.enforce_duration_error: Exception | None = None
         self.probed_duration: float = 42.5
@@ -160,6 +161,8 @@ class FakeMediaProcessor:
 
     async def normalize_media(self, src_path: str, run_dir: str) -> str:
         self.normalize_calls.append((src_path, run_dir))
+        if self.normalize_error:
+            raise self.normalize_error
         return f"{run_dir}/normalized.mp4"
 
     async def describe_visuals(self, **kwargs) -> MediaVisuals:

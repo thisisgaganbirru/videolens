@@ -142,7 +142,10 @@ class ProcessRunUseCase:
         run's own outcome, and an unreleased hold expires on its own."""
         try:
             if await self._free_runs.release(run_id, refund=refund):
-                logger.info("Run %s: the download failed, so its free run was handed back", run_id)
+                logger.info(
+                    "Run %s was rejected before analysis, so its free run was handed back",
+                    run_id,
+                )
         except Exception:
             logger.exception("Could not settle the free run for run %s", run_id)
 
@@ -165,12 +168,15 @@ class ProcessRunUseCase:
         await self._runs.set_status(run_id, RunStatus.PROCESSING)
         metadata = None
         visuals: asyncio.Task[MediaVisuals] | None = None
-        # True only when the run ends because the link could not be fetched:
-        # nothing reached Gemini, so a free run it took is handed back. A
-        # caption fallback that got as far as Gemini and failed there does
-        # not count (that is a Gemini failure), and neither does anything
-        # after a successful download (duration cap, normalize, analyze).
-        download_failed = False
+        # True only when a link run is turned away before any analysis: the
+        # link could not be fetched, or it was fetched and then failed the
+        # duration cap. Nothing reached Gemini, so a free run it took is
+        # handed back (intake already does the same for over-long uploads).
+        # A caption fallback that got as far as Gemini and failed there does
+        # not count (that is a Gemini failure), and neither does normalize or
+        # analyze. The cap is never checked on the caption path, so a run the
+        # captions handled can never set this.
+        rejected_before_analysis = False
         try:
             if source_url and not source_key:
                 await self._runs.set_stage(run_id, "downloading")
@@ -183,17 +189,24 @@ class ProcessRunUseCase:
                     # transcript beats "please try again".
                     if await self._analyze_captions(run_id, source_url, gemini_api_key):
                         return
-                    download_failed = True
+                    rejected_before_analysis = True
                     raise exc
                 except Exception:
-                    download_failed = True
+                    rejected_before_analysis = True
                     raise
                 saved_path = downloaded.path
                 run_dir = downloaded.run_dir
                 if downloaded.metadata is not None:
                     metadata = downloaded.metadata
                     await self._runs.set_source_metadata(run_id, metadata)
-                duration = await self._media.enforce_duration_cap(run_id, saved_path)
+                try:
+                    duration = await self._media.enforce_duration_cap(run_id, saved_path)
+                except Exception:
+                    # Too long (or unreadable) once fetched: still before any
+                    # Gemini call. Cancellation is a BaseException, so it is
+                    # not caught here and is not a rejection.
+                    rejected_before_analysis = True
+                    raise
                 await self._record_duration(run_id, duration)
                 visuals = self._start_visuals(
                     media_path=saved_path,
@@ -261,7 +274,7 @@ class ProcessRunUseCase:
             await self._runs.set_error(run_id, "The analysis didn't finish. Please try again.")
         finally:
             await self._discard_visuals(visuals)
-            await self._settle_free_run(run_id, refund=download_failed)
+            await self._settle_free_run(run_id, refund=rejected_before_analysis)
             if source_key:
                 try:
                     await self._storage.delete_source(source_key)
