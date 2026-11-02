@@ -35,6 +35,17 @@
       keeps live reload (`server.url` = `http://localhost:3005`, a `next dev`
       that serves `/app` itself) out of this branch, and `next start` never
       reports native at all.
+      Refinement 8 (NF-01): on that same origin, an extensionless path that is
+      none of those routes (`/nope`, `/app/zzz`) is answered with index.html
+      too, so the landing page used to appear inside the installed app, dock
+      and all, at the bad address. The landing must never show there, so it
+      goes to `/404.html`, the export's not-found page (shared chrome, "Back
+      to the app"). The test is the asset server's own rule: it substitutes
+      index.html only when the last path segment has no `.`, so a document
+      running at `/x.html` (including `/404.html` itself) is the real file and
+      is left alone; that is also what keeps this from looping. A dotted path
+      with no file (`/nope.txt`) gets an empty 404 from Capacitor, and no
+      document runs at all, so nothing here can catch it.
    2. On `/` itself:
       - installed (`data-shell="app"`, or Capacitor says it is native) → `/app`,
         query and hash kept;
@@ -59,10 +70,13 @@ export const TOOL_QUERY_PARAMS = ["view", "share-target", "url", "text", "title"
 /** Routes the static export writes as `<route>.html`. */
 const EXPORTED_ROUTES = ["/app", "/privacy", "/terms", "/offline"] as const;
 
+/** The export's not-found page (`out/404.html`, from app/not-found.tsx). */
+const NOT_FOUND_DOCUMENT = "/404.html";
+
 export const LANDING_REDIRECT_SCRIPT = `(function(){try{var l=window.location,r=document.documentElement,p=l.pathname.replace(/\\/+$/,"")||"/",t=l.search+l.hash;
 var c=window.Capacitor,n=false;try{n=!!(c&&c.isNativePlatform&&c.isNativePlatform());}catch(e){}
 function go(u){r.setAttribute("data-redirecting","");l.replace(u);}
-if(p!=="/"&&p!=="/index.html"){if(n&&l.hostname==="localhost"&&!l.port&&${JSON.stringify(EXPORTED_ROUTES)}.indexOf(p)!==-1){go(p+".html"+t);}return;}
+if(p!=="/"&&p!=="/index.html"){if(n&&l.hostname==="localhost"&&!l.port&&p.slice(p.lastIndexOf("/")+1).indexOf(".")===-1){go(${JSON.stringify(EXPORTED_ROUTES)}.indexOf(p)!==-1?p+".html"+t:"${NOT_FOUND_DOCUMENT}");}return;}
 var q=new URLSearchParams(l.search),d=${JSON.stringify(TOOL_QUERY_PARAMS)}.some(function(k){return q.has(k);});
 if(n||d||r.getAttribute("data-shell")==="app"){go("/app"+t);return;}
 document.addEventListener("DOMContentLoaded",function(){if(r.getAttribute("data-shell")==="app")go("/app"+t);});

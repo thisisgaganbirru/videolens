@@ -19,8 +19,14 @@ import SiteFooter from "@/components/SiteFooter";
  * out) because it is the same kind of page, and it shares those rules in
  * globals.css. Neutral, never red: nothing failed, the address is wrong.
  *
- * Static export: Next writes this page as `out/404.html`, which is what the
- * Capacitor build and any static host serve for an unknown path. Offline, the
+ * Static export: Next writes this page as `out/404.html`, which is what a
+ * static host serves for an unknown path. Capacitor's asset server does not:
+ * it answers an unknown extensionless path with index.html, so the head
+ * script (application/landingRedirect.ts) sends the installed app here at
+ * `/404.html` (refinement 8, NF-01). In the installed shell "Go to the home
+ * page" is hidden: the home page is the landing, which the installed app
+ * never shows, and a client-side navigation to `/` would render it without
+ * the head script's redirect. Offline, the
  * service worker still answers an unknown address with /offline (it cannot
  * tell "no such page" from "needs the network"), which carries the same
  * chrome — see sw/sw.template.js.
@@ -49,7 +55,7 @@ export default function NotFound() {
             <Link href="/app" className="btn btn-ink btn-pill not-found-action">
               Open VideoLens
             </Link>
-            <Link href="/" className="btn btn-secondary btn-pill not-found-action">
+            <Link href="/" className="btn btn-secondary btn-pill not-found-action not-found-action--web">
               Go to the home page
             </Link>
           </div>

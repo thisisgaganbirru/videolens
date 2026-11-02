@@ -2320,6 +2320,10 @@ h3 {
     min-height: 3rem;
     padding-inline: 1.5rem;
   }
+  /* The installed app never shows the landing page (refinement 8, NF-01). */
+  :root[data-shell="app"] .not-found-action--web {
+    display: none;
+  }
 
   /* ========================================================================
      FOOTER — web shell only: name left, legal links right, hairline above

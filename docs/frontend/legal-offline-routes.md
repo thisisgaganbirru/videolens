@@ -716,6 +716,22 @@ so online an unknown path gets the server's 404 page; offline it gets /offline
 same chrome. Both verified with the SW active against the export served like a
 static host, in the web and installed shells.
 
+## Refinement 8 (2026-11-02)
+
+**NF-01, the installed app showed the landing at an unknown path.** Capacitor's
+asset server is not a static host: it answers an unknown extensionless path
+with `index.html`, never `404.html`. The pre-paint head script now sends such a
+path to `/404.html` on the asset-server origin (details and the rule table in
+`landing-page.md`, "Unknown paths in the installed app"). The 404 page's "Go to
+the home page" link carries `.not-found-action--web` and is hidden under
+`:root[data-shell="app"]`, so in the installed app it shows only "Open
+VideoLens". Measured on an emulated asset server over `out/` with a fake
+bridge, light and dark: `/nope`, `/nope/deeper`, `/app/zzz`, `/404` and
+`/nope?x=1#h` all end on `/404.html` with the not-found page, dock shown, no
+landing painted; `/`, `/app`, `/privacy`, `/terms`, `/offline` unchanged; "Open
+VideoLens" reaches the tool. Web (static host, no bridge) still shows the 404
+at the typed address with both links.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported privacy/terms/offline off the Midnight Glass classes
@@ -732,3 +748,4 @@ static host, in the web and installed shells.
 - 2026-11-01 · frontend agent (Phase 5a) · Privacy: "Information retained" now says the server keeps a run about an hour after it starts and then deletes it; new "Your History" section (IndexedDB only, never sent back, 20 most recent, cleared with site data, browser may evict e.g. Safari after 7 days unvisited). Effective date left unchanged — owner to decide
 - 2026-11-01 · frontend agent (Phase 5c) · SW: precache /app, / (now the landing) offline-capable, History offline moved to /app?view=history, legacy /?view=history via the landing's redirect; offline page links → /app; measured with the server killed
 - 2026-11-02 · frontend agent (refinement 6) · OFF-03 app/not-found.tsx with shared chrome (out/404.html); SW unchanged
+- 2026-11-02 · frontend agent (refinement 8) · NF-01: installed app sent to `/404.html` for unknown extensionless paths; home-page link hidden in the installed shell
