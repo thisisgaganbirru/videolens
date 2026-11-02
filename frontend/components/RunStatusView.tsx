@@ -13,7 +13,7 @@
 
 import { Check, WifiOff, X, ServerOff } from "lucide-react";
 import type { RunStatus } from "@/domain/entities";
-import { reconnectDelayFor, type LostCause } from "@/application/useAnalysisRun";
+import { reconnectDelayFor, type LostCause, type MediaKind } from "@/application/useAnalysisRun";
 
 type SourceKind = "file" | "url";
 
@@ -73,8 +73,31 @@ function frameIndex(steps: PipelineStep[], stage: string | null | undefined): nu
    different URL would have failed in exactly the same place. Anything at or
    after the Gemini upload is ours, and saying so beats sending someone off to
    re-do work that was already good. */
-function recoveryAdvice(stage: string | null | undefined, sourceKind: SourceKind): string {
+/* Refinement 9 (item 11): a temporary block by the site (yt-dlp saw HTTP 403
+   or 429) is not a bad link, so "try a different link" was the wrong next
+   step. The run carries no reason code, only the backend's sentence, so this
+   matches a stable phrase of it. It must stay in step with `_BLOCKED_DOWNLOAD`
+   in backend/app/infrastructure/media/ytdlp_downloader.py; if that wording
+   changes, this falls back to the ordinary download advice (still true, just
+   less apt). A structured reason code on the run would retire this match. */
+const BLOCKED_DOWNLOAD_PHRASE = "site blocked this download";
+
+function isBlockedDownload(error: string | null | undefined): boolean {
+  return !!error && error.toLowerCase().includes(BLOCKED_DOWNLOAD_PHRASE);
+}
+
+function recoveryAdvice(
+  stage: string | null | undefined,
+  sourceKind: SourceKind,
+  error?: string | null
+): string {
   const key = stage ? (STAGE_ALIASES[stage] ?? stage) : stage;
+  /* Checked before the stage: the block can land before any stage was polled.
+     The backend's sentence already gives the wait ("Try again in a few
+     minutes"), so this line adds the other way through, not a second timing. */
+  if (sourceKind === "url" && isBlockedDownload(error)) {
+    return "You can try the same link again later, or download the video and upload the file instead.";
+  }
   if (key === "uploading_to_gemini" || key === "analyzing") {
     /* ProgressFailed.png's copy. The server's own message ("Your file is
        fine…") follows in the notice below, so this line only says what to do. */
@@ -86,6 +109,49 @@ function recoveryAdvice(stage: string | null | undefined, sourceKind: SourceKind
   /* `normalizing`, or no stage at all: the media itself is the suspect, and
      the only thing we know about it is which way it arrived. */
   return sourceKind === "url" ? "Try a different link." : "Try a different file.";
+}
+
+/* Refinement 9: the heading and lede of a run in progress, by stage AND by
+   what is being analyzed. It used to be "Reading your video" / "Longer files
+   take more time to normalize" from queue to finish, which was wrong twice on
+   an mp3 at Analyzing: no video, and no normalizing. The normalize hint now
+   appears only while normalizing; "video" or "audio" only when the run is
+   known to be one; otherwise the copy names neither. */
+function progressCopy(
+  stage: string | null | undefined,
+  media: MediaKind | null,
+  sourceKind: SourceKind
+): { title: string; lede: string } {
+  const noun = media ?? (sourceKind === "url" ? "link" : "file");
+  const stay = "You can leave this open.";
+  switch (stage ? (STAGE_ALIASES[stage] ?? stage) : null) {
+    case "downloading":
+      return {
+        title: media ? `Downloading the ${media}` : "Downloading from the link",
+        lede: `Fetching it from the link first. ${stay}`,
+      };
+    case "normalizing":
+      return {
+        title: `Preparing your ${noun}`,
+        lede: `Longer files take more time to normalize. ${stay}`,
+      };
+    case "uploading_to_gemini":
+      return {
+        title: `Sending your ${noun} for analysis`,
+        lede: `Uploading it to Gemini, which does the analysis. ${stay}`,
+      };
+    case "analyzing":
+      return media === "audio"
+        ? { title: "Listening to your audio", lede: `Transcribing it and writing the summary and notes. ${stay}` }
+        : media === "video"
+          ? {
+              title: "Reading your video",
+              lede: `Transcribing it, reading the text on screen, and writing the notes. ${stay}`,
+            }
+          : { title: `Analyzing your ${noun}`, lede: `Transcribing it and writing the summary and notes. ${stay}` };
+    default:
+      return { title: `Analyzing your ${noun}`, lede: `This can take a minute. ${stay}` };
+  }
 }
 
 type FrameState = "done" | "active" | "waiting" | "failed" | "lost" | "missed" | "skipped";
@@ -170,6 +236,11 @@ interface RunStatusViewProps {
   canRefill?: boolean;
   /** Expired only: back to the intake (with the link filled, when stored). */
   onAnalyzeAgain?: () => void;
+  /** Audio or video, when known (refinement 9): the progress copy names it. */
+  mediaKind?: MediaKind | null;
+  /** Failed only: the server's count proves this run did not use a free run
+   *  (refinement 9, item 8). Never set on the user's own key. */
+  freeRunRefunded?: boolean;
 }
 
 export default function RunStatusView({
@@ -190,6 +261,8 @@ export default function RunStatusView({
   expired = false,
   canRefill = false,
   onAnalyzeAgain,
+  mediaKind = null,
+  freeRunRefunded = false,
 }: RunStatusViewProps) {
   if (status === "failed" && expired) {
     return <ExpiredRunView sourceKind={sourceKind} canRefill={canRefill} onAnalyzeAgain={onAnalyzeAgain ?? onReset} />;
@@ -227,6 +300,8 @@ export default function RunStatusView({
           ? "queued"
           : "processing";
 
+  const progress = progressCopy(stage, mediaKind, sourceKind);
+
   const title =
     mode === "failed"
       ? "That didn't work"
@@ -236,11 +311,13 @@ export default function RunStatusView({
           : "Connection lost"
         : captionsRoute
           ? "Reading the captions"
-          : "Reading your video";
+          : mode === "queued"
+            ? "In line"
+            : progress.title;
 
   const lede =
     mode === "failed"
-      ? `${current ? `The run stopped while ${current.verb}. ` : ""}${recoveryAdvice(stage, sourceKind)}`
+      ? `${current ? `The run stopped while ${current.verb}. ` : ""}${recoveryAdvice(stage, sourceKind, error)}`
       : mode === "lost"
         ? serverTrouble
           ? "It answered with an error, not a result. The page tries again on its own and picks up where it left off."
@@ -249,7 +326,7 @@ export default function RunStatusView({
           ? "Your run is in line and starts in a moment. You can leave this open."
           : captionsRoute
             ? "We couldn't download the video, so we are using its captions only. Results may have less detail."
-            : "Longer files take more time to normalize. You can leave this open.";
+            : progress.lede;
 
   /* One sentence per state change. While the connection is lost it changes
      once per failed attempt (`reconnectAttempt`), quoting that attempt's full
@@ -346,6 +423,15 @@ export default function RunStatusView({
                 ? `The server is having trouble right now. ${countdown}`
                 : `We can't reach the server right now. ${countdown}`}
           </p>
+          {/* Refinement 9 (item 8). Only when the server's re-read count is
+              back to its pre-submit value. Always in the DOM on a failed run,
+              so the polite region exists before the line lands (the check
+              finishes a moment after the failure is shown). */}
+          {mode === "failed" ? (
+            <p className="run-refund" aria-live="polite">
+              {freeRunRefunded ? "This didn't use one of your free runs." : null}
+            </p>
+          ) : null}
           <div className="run-actions">
             {mode === "failed" && onRetry ? (
               <button
@@ -406,12 +492,16 @@ function ExpiredRunView({
   onAnalyzeAgain?: () => void;
 }) {
   const what = sourceKind === "url" ? "link" : "file";
+  /* Refinement 9: "the server keeps a run for an hour" was only half the
+     story — a server restart loses runs too, well inside the hour. This says
+     what is true either way, without naming a cause we cannot know. */
+  const gone = "The server no longer has this run, and its result never reached this device.";
   const lede =
     sourceKind === "url"
       ? canRefill
-        ? "The server keeps a run for an hour, and this one's result never reached this device. Nothing was wrong with the link, and it is ready to analyze again."
-        : "The server keeps a run for an hour, and this one's result never reached this device. Nothing was wrong with the link; paste it again to start over."
-      : "The server keeps a run for an hour, and this one's result never reached this device. Nothing was wrong with the file; choose it again to start over.";
+        ? `${gone} Nothing was wrong with the link, and it is ready to analyze again.`
+        : `${gone} Nothing was wrong with the link; paste it again to start over.`
+      : `${gone} Nothing was wrong with the file; choose it again to start over.`;
   return (
     <>
       <span className="status" data-tone="failed">
@@ -421,7 +511,7 @@ function ExpiredRunView({
       <h1 className="run-title">This run expired</h1>
       <p className="run-lede">{lede}</p>
       <p className="sr-only" aria-live="polite" aria-atomic="true">
-        This run expired before its result reached this device.
+        This run is no longer on the server, and its result never reached this device.
       </p>
       {onAnalyzeAgain ? (
         <div className="run-actions">

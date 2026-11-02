@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AnalysisCompleteness,
+  FreeRunsStatus,
   MediaSource,
   RunStatus,
   RunSourceKind,
@@ -18,7 +19,14 @@ import {
   recordRunResponse,
   recordSubmitted,
 } from "@/application/historySync";
-import { markFreeRunsUsed, noteRunAccepted, refreshFreeRuns } from "@/application/useFreeRuns";
+import {
+  currentFreeRuns,
+  markFreeRunsUsed,
+  noteRunAccepted,
+  refreshFreeRuns,
+  revalidateFreeRuns,
+  usingOwnKey,
+} from "@/application/useFreeRuns";
 import { ApiError } from "@/domain/errors";
 import { activeRunStore, apiKeyStore, historyStore, runsGateway, sharedUrlSource } from "@/infrastructure/container";
 
@@ -65,6 +73,59 @@ const POLL_FALLBACK = "Something went wrong.";
  *  the screen just says the true thing. A 404 is neither: it is "expired". */
 export type LostCause = "network" | "server";
 
+/** What is being analyzed, for the progress copy (refinement 9): an mp3 run
+ *  used to read "Reading your video". `null` when nothing says (a link to a
+ *  site with no dedicated label, a reopened legacy run): the copy then names
+ *  neither. */
+export type MediaKind = "audio" | "video";
+
+const AUDIO_EXTENSIONS = [".mp3", ".m4a", ".wav", ".aac", ".ogg", ".flac"];
+
+function mediaKindOfSource(source: MediaSource): MediaKind | null {
+  if (source.file) {
+    const name = source.file.name.toLowerCase();
+    if (source.file.type.startsWith("audio/") || AUDIO_EXTENSIONS.some((ext) => name.endsWith(ext))) return "audio";
+    return "video";
+  }
+  /* The three platforms the intake names are video platforms; anything else
+     waits for the server's `platform`. */
+  try {
+    const host = new URL(source.url).hostname.replace(/^www\./, "");
+    if (/(^|\.)(youtube\.com|youtu\.be|instagram\.com|tiktok\.com)$/.test(host)) return "video";
+  } catch {
+    /* not a URL; say nothing */
+  }
+  return null;
+}
+
+/** The server's word on the media, from the run's `platform`. */
+function mediaKindOfPlatform(platform: string | null | undefined): MediaKind | null {
+  if (platform === "audio_file") return "audio";
+  if (platform === "video_file" || platform === "youtube" || platform === "instagram" || platform === "tiktok") {
+    return "video";
+  }
+  return null;
+}
+
+/* Refinement 9 (item 8): the backend refunds the free run when a link fails to
+   download or fails the duration cap after downloading. The app says "this
+   didn't use a free run" ONLY when the server's own count proves it: the
+   remaining count is back to what it was just before the submit, within the
+   same UTC day (an unchanged `resetsAt`, so a midnight reset cannot pose as a
+   refund). The refund is written just after the failure is (process_run's
+   `finally`), so one late re-read covers the poll that lands between them. */
+const REFUND_RECHECK_MS = 2500;
+
+function provesRefund(before: FreeRunsStatus, after: FreeRunsStatus | null): boolean {
+  return (
+    after !== null &&
+    before.enabled &&
+    after.enabled &&
+    after.resetsAt === before.resetsAt &&
+    after.remaining === before.remaining
+  );
+}
+
 function lostCauseOf(err: unknown): LostCause {
   return classifyGatewayError(err, POLL_FALLBACK).kind === "server" ? "server" : "network";
 }
@@ -73,6 +134,10 @@ export function useAnalysisRun() {
   const [status, setStatus] = useState<RunStatus | "idle">("idle");
   const [stage, setStage] = useState<string | null>(null);
   const [sourceKind, setSourceKind] = useState<"file" | "url">("file");
+  const [mediaKind, setMediaKind] = useState<MediaKind | null>(null);
+  /* Item 8: set only when the re-read count proves the failed run was not
+     charged (see provesRefund). Never set on the user's own key. */
+  const [freeRunRefunded, setFreeRunRefunded] = useState(false);
   const [result, setResult] = useState<VideoAnalysis | null>(null);
   /* Set only alongside `result`, never on a `processing` tick. It describes
      what the finished analysis was able to look at, so it is meaningless
@@ -131,6 +196,11 @@ export function useAnalysisRun() {
      it, a link shared mid-submit is undone a moment later by the 202 for the
      run the user just abandoned. The reconnect timers check it too. */
   const generationRef = useRef(0);
+  /* The free-run allowance just before the live run was submitted, or null
+     (own key, unknown, or a run reopened from History). Consumed by the
+     failure check, so it is used at most once per submit. */
+  const freeRunsBeforeRef = useRef<FreeRunsStatus | null>(null);
+  const refundTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /* Every timer this hook owns, stopped in one place: unmount, reset, openRun,
      a fresh submit and a successful reconnect all need exactly this. */
@@ -138,9 +208,11 @@ export function useAnalysisRun() {
     if (pollRef.current) clearInterval(pollRef.current);
     if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
     if (tickRef.current) clearInterval(tickRef.current);
+    if (refundTimerRef.current) clearTimeout(refundTimerRef.current);
     pollRef.current = null;
     reconnectTimerRef.current = null;
     tickRef.current = null;
+    refundTimerRef.current = null;
   }, []);
 
   /* Unmount also retires the generation, so a request still in flight (a
@@ -166,6 +238,28 @@ export function useAnalysisRun() {
     setError(classifyGatewayError(err, fallback).message);
   }, []);
 
+  /* A run settled. Re-read the allowance either way (refinement 9, item 6),
+     and for a failed live run, check whether it was refunded (item 8). */
+  const settleFreeRuns = useCallback((failed: boolean) => {
+    const before = freeRunsBeforeRef.current;
+    freeRunsBeforeRef.current = null;
+    const generation = generationRef.current;
+    const check = (after: FreeRunsStatus | null) => {
+      if (generationRef.current !== generation || !before || usingOwnKey()) return false;
+      if (!provesRefund(before, after)) return false;
+      setFreeRunRefunded(true);
+      return true;
+    };
+    void revalidateFreeRuns().then((after) => {
+      if (!failed || !before || check(after)) return;
+      if (generationRef.current !== generation) return;
+      refundTimerRef.current = setTimeout(() => {
+        refundTimerRef.current = null;
+        void revalidateFreeRuns().then(check);
+      }, REFUND_RECHECK_MS);
+    });
+  }, []);
+
   /* One observed run response, applied to the screen. Returns true when the
      run has settled (complete or failed) — nothing left to poll for. Shared by
      the interval, a reconnect attempt and openRun so the three cannot disagree
@@ -176,6 +270,8 @@ export function useAnalysisRun() {
     recordRunResponse(run);
     setStatus(run.status);
     setStage(run.stage);
+    const kind = mediaKindOfPlatform(run.platform);
+    if (kind) setMediaKind(kind);
     if (run.source_metadata) setSourceMetadata(run.source_metadata);
     if (typeof run.duration_seconds === "number") setDurationSeconds(run.duration_seconds);
     /* `source_kind` is the server's record of how the run arrived, so when
@@ -195,15 +291,17 @@ export function useAnalysisRun() {
       activeRunStore.clear();
       setResult(run.result);
       setCompleteness(run.completeness ?? "full");
+      settleFreeRuns(false);
       return true;
     }
     if (run.status === "failed") {
       activeRunStore.clear();
-      setError(run.error || "Video analysis failed.");
+      setError(run.error || "The analysis failed.");
+      settleFreeRuns(true);
       return true;
     }
     return false;
-  }, []);
+  }, [settleFreeRuns]);
 
   /* Refinement 3, #1: the server answered 404 for a run this browser knows
      about — it forgot the run (past its hold, or a restart of an in-memory
@@ -360,6 +458,11 @@ export function useAnalysisRun() {
       setDurationSeconds(null);
       setStage(null);
       setSourceKind(source.url ? "url" : "file");
+      setMediaKind(mediaKindOfSource(source));
+      setFreeRunRefunded(false);
+      /* Taken before the request, so it is the count this run would spend
+         from. Unknown (null) means no refund line can ever be claimed. */
+      freeRunsBeforeRef.current = usingOwnKey() ? null : currentFreeRuns();
       const generation = ++generationRef.current;
       try {
         let run;
@@ -420,9 +523,12 @@ export function useAnalysisRun() {
     runIdRef.current = null;
     liveUrlRef.current = null;
     generationRef.current += 1;
+    freeRunsBeforeRef.current = null;
     setStatus("idle");
     setStage(null);
     setSourceKind("file");
+    setMediaKind(null);
+    setFreeRunRefunded(false);
     setResult(null);
     setCompleteness("full");
     setSourceMetadata(null);
@@ -457,6 +563,9 @@ export function useAnalysisRun() {
       setRetrySource(null);
       setExpired(null);
       liveUrlRef.current = null;
+      freeRunsBeforeRef.current = null;
+      setFreeRunRefunded(false);
+      setMediaKind(null);
       setSourceKind(sourceKindHint === "link" ? "url" : "file");
       setStatus("processing");
       const generation = ++generationRef.current;
@@ -475,6 +584,8 @@ export function useAnalysisRun() {
           known = true;
           knownUrl = record.source_url ?? record.source_metadata?.source_url ?? null;
           if (record.source_kind) setSourceKind(record.source_kind === "link" ? "url" : "file");
+          const recordKind = mediaKindOfPlatform(record.platform);
+          if (recordKind) setMediaKind(recordKind);
         }
         /* A resumed link run gets back what the live run had: its link on
            the source chip, "Analyze it again" if it expires, and "Try again"
@@ -499,7 +610,7 @@ export function useAnalysisRun() {
             setResult(record.result);
             setCompleteness(record.completeness ?? "full");
           } else {
-            setError(record.error || "Video analysis failed.");
+            setError(record.error || "The analysis failed.");
             if (record.error === EXPIRED_MESSAGE) {
               setExpired({
                 againUrl: record.source_url ?? record.source_metadata?.source_url ?? null,
@@ -565,6 +676,8 @@ export function useAnalysisRun() {
     status,
     stage,
     sourceKind,
+    mediaKind,
+    freeRunRefunded,
     result,
     completeness,
     sourceMetadata,
