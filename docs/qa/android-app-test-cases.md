@@ -231,6 +231,22 @@ couldn't verify as a question, not a fact.
 | THM-01b-6 | System chosen, flip the OS theme while the app is open. | Bars and page both follow. |
 | LCH-06d | Airplane on at launch, then off. | "You're offline right now. …"; airplane off clears it without a tap (it may then show the unreachable notice if the server is down). |
 
+## 17. Refinement 6 and 7 additions
+
+| ID | Steps | Expected |
+|---|---|---|
+| THM-01b-6a | OS dark, Light stored, cold launch, More > System, flip the OS to light. | `data-theme` and the bars turn light within about 1 s, no relaunch. |
+| THM-01b-6b | System chosen, flip the OS dark → light → dark → light, about 2 s apart. | `data-theme` follows every flip. |
+| THM-01b-6c | System chosen, press Home, flip the OS, return. | The page matches the OS on resume. |
+| THM-01b-6d | Light, then Dark stored, flip the OS both ways. | The page does not change. |
+| THM-01b-6e | System, Battery Saver on, OS light. | Page stays light unless the OS forces dark (emulator cannot force it). |
+| INT-04b | Empty link, terms unticked, Analyze link. | "Paste a link to analyze." and "Accept the media-use terms before analysis." at once; focus on the link field. |
+| INT-16 | Terms ticked, Browse files, pick a 0-byte `.mp4`. | "This file is empty. Choose another one." |
+| INT-17 | Tap 45 px beside, above and below the terms checkbox, and its centre. | Each tap toggles it (44 px target). |
+| HIS-08 | History holds a failed run whose error is the expired message. | Its card shows an "Expired" badge. |
+| NF-01 | Open an unknown in-app path (`/nope`, `/app/zzz`) via CDP `location.href`. | Not-found page with the top bar and dock. |
+| RTL-01 | Open a History run with an Arabic title and summary. | Title, summary and body render right-to-left, right-aligned. |
+
 ## Run log
 
 ### 2026-11-01 · android-66 (device QA) · run 1 (bundled APK)
@@ -265,8 +281,18 @@ Build: 324608b installed with `-r` at 02:33:47 (NativeTheme plugin, MainActivity
 PASS: INT-01b landscape (empty: "Paste a link to analyze." and invalid: "Enter a valid public HTTP or HTTPS URL." fully visible above the keyboard; minor: the field's top edge and the Analyze button are partly under the header line), THM-01b-1 / THM-01b-5 (upgrade: first launch after install showed the old dark window ~7 s then light, luma 74 → 35/29 → 212; second launch light from frame one, luma 74 → 133 → 213, dark bar icons), THM-01b-2 (OS light + Dark: luma 82 → 64 → 32 → 44, no light frame), THM-01b-3 (Dark ↔ Light in More flips the bars at once; the sheet, scroll position and ticked terms stay), THM-01b-4 (System follows the OS; relaunch follows), LCH-06d ("You're offline right now. …" with airplane at launch; off → notice becomes the server-unreachable one without a tap), LCH-02/03 (System + OS dark: luma 74 → 65 → 33 → 44, no light frame), NAV/BCK sanity (back from a result goes to History, back closes the sheet, back at the Analyze root leaves the app), STB-01 (0 FATAL, 0 app crashes; only the Capacitor console error "Error injecting safe area CSS: Cannot read properties of null (reading 'style')" on launch).
 FAIL (intermittent): THM-01b-6. Repro: OS dark, Light stored, cold launch (activity forced light), More > System, then flip the OS to light while the app stays open. The status/nav bars turn light but the page stays dark: `matchMedia('(prefers-color-scheme: dark)')` stays true, even after Home and back to the app; a cold relaunch fixes it. Not reproduced with live toggles only (Dark/Light/System taps) or after a cold launch under System. Screenshots `THM6-os-flip-light-8s.png`, `THM6-repro3.png`.
 
+### 2026-11-02 · android-66 (device QA) · run 6 (bundled APK, refinements 6 and 7, afb41d8 (worktree build), backend DOWN)
+
+Build: `refine7-debug.apk` built from the afb41d8 worktree, installed with `-r` (lastUpdateTime 03:15:54); `android:sync` was not run in the main tree. Emulator API 35, swiftshader. OS theme driven with `cmd uimode night`. Evidence in `%TEMP%\qa6\`.
+PASS: THM-01b-6a (page light within 1.5 s; `matchMedia` still reports dark, which the web side now ignores), 6b (4 flips followed), 6c (correct on resume, both directions), 6d (Light and Dark stay put), THM-01b-1..4 regression (luma: System + OS dark 74 → 65 → 32 → 44; System + OS light 82 → 172 → 222; Light + OS dark light from frame one; Dark + OS light dark from frame one), INT-04b (both errors at once, focus on the link), INT-16 ("This file is empty. Choose another one."), INT-17 (taps 45 px beside, 50 px below and 62 px above the 20 px box all toggle; the whole label row is the target), HIS-08 (Expired badge on a seeded failed run), RTL-01 (Arabic title, key takeaway right-aligned, RTL), STB-01 (0 FATAL, 0 Uncaught since install).
+INCONCLUSIVE: THM-01b-6e (`settings put global low_power 1` does not change the emulator's night mode, so Battery Saver forcing dark cannot be reproduced here).
+FAIL (MINOR, question for the lead): NF-01. On the bundled app every unknown path (`/nope`, `/nope/deeper`, `/app/zzz`) renders the landing page (title "VideoLens AI", "Turn any short video into clean notes.") with the dock, not the not-found page. Capacitor logs "Handling local request: https://localhost/nope" and serves `index.html`, so the exported 404 never loads; the address stays on the bad path.
+NOTES: the safe-area console error still shows once per cold launch (2 lines since install across launches). With the terms unticked "Browse files" looks dimmed and a tap opened no picker (CDP: `disabled` true when unticked, false when ticked); question whether that is intended, since INT-04b expects the form to be submittable to show errors. `Unable to open asset URL: /app/__next.app.__PAGE__.txt?_rsc=…` appears repeatedly in logcat, also on earlier builds (RSC prefetch, no visible effect).
+BLOCKED (backend stopped, memory, awaiting owner restart): RUN-*, FREE-*, ORI-02 retest, LCH-06c.
+
 ## Changelog
 
+- 2026-11-02 · android-66 (device QA) · added section 17 (refinement 6 and 7 cases) and the run 6 Run log (afb41d8 worktree build): THM-01b-6a..d, INT-04b, INT-16, INT-17, HIS-08, RTL-01, STB-01 PASS; THM-01b-6e inconclusive on the emulator; NF-01 FAIL (MINOR, unknown paths render the landing page on the bundled app)
 - 2026-11-02 · android-66 (device QA) · added section 16 (refinement 5 cases) and the run 5 Run log (324608b): INT-01b landscape, THM-01b-1..5, LCH-06d, LCH-02/03 PASS; THM-01b-6 FAIL (WebView prefers-color-scheme stays dark after an OS flip when the app was launched with a stored Light under OS dark)
 - 2026-11-02 · android-66 (device QA) · HIS-03b re-run at 360dp (`wm size 720x1600`, density 320): PASS, no horizontal overflow (scrollWidth 360), Oldest reverses runs and groups; Analyze, History, More sheet and dock fine. LCH-06d recorded PASS-with-note (emulator WebView keeps navigator.onLine true in airplane mode)
 - 2026-11-02 · android-66 (device QA) · added the refinement 4 cases (section 15) and the Run log for runs 3 and 4 (2a13890, 03dd55e)
