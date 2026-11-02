@@ -810,8 +810,26 @@ injected style, scripts in `%TEMP%\qaweb\run7` (t10-t12). Items 1-4 all PASS, no
 | 3 History at large text | PASS | 320 and 360 at 130% (light and dark): placeholder "Search runs", fits (text 111px in 234-274px), the sort control sits below the search (sort top 349, search top 276), no page scroll, label text and accessible name "Search your runs". At 390 and 1280 at 100% the sort stays beside the search (same row) and the placeholder fits. |
 | 4 Regression, normal scale | PASS | Landing, /app, History, API key, Releases, Privacy, Terms at 390 and 1280, light and dark: no horizontal overflow, nothing outside the viewport. |
 
+### 2026-11-02 · videolens-65 (web QA) · run 10 (refinement 12 retest, HEAD 5ac8522)
+
+:3005 dev (HMR), headless Chromium 1217, mobile context, `/api` mocked, root font set by an injected style, scripts in `%TEMP%\qaweb\run7` (t13-t15). The tab-fade
+check is pixel-based: a screenshot of the solid 70% of each visible fade (chevron box masked) must equal the surface colour, at every scroll state.
+
+| # | Result | Evidence |
+|---|---|---|
+| 1a Tab fades hide all tab text | PASS | 320 at 100/130/150% and 360 at 130/150%, light and dark: at the initial state, after every chevron page to the end and back, no ink in the solid part of either fade (max colour difference 0). |
+| 1b Chevrons page the row | PASS | Paging reaches both ends (320@100%: 1 page, scroll 41; 320@130%: 1 page, 149; 320@150%: 2 pages, 221; 360@130%: 1 page, 109; 360@150%: 1 page, 181) and returns to 0. |
+| 1c Selected tab clear of fades | PASS | Click on Transcript, On-screen, Notes, TL;DR and arrow keys/Home/End: the tab never overlaps a visible fade and stays inside the scroller (measured after the scroll animation settles, about 1 s). |
+| 1d Threshold | PASS | At 100% font the end chevron shows at 340, 358 and 359 px wide and is gone (`display:none`, `data-more-end=false`) at 360, 361 and 400. |
+| 2 History search | PASS | 320 and 360 at 100/115/130/150/200%: "Search runs" fits (e.g. 320@200%: 170 of 190 px), label "Search your runs", no page scroll. The sort wraps below the field when needed (320: from 115% up; 360: from 130% up) and stays beside it otherwise. 390 and 1280 at 100%: sort beside the search, unchanged. |
+| 3 Menu button at 320/150% | **FAIL (MINOR) D-R12-1: yes, clipped** | Header at 320 wide, 150% font: logo 24-193, theme toggle 217-283, **Menu 295-361**, so 41 px of the 66 px button is past the 320 px edge (25 px visible). The same on /, /app, History, API key, Privacy and results, light and dark. No page scroll (the overflow is hidden). It starts at about 140% (17 px off), is 161 px off at 200%, 1 px off at 360/150% and 121 px off at 360/200%; fine at 320/130% and 390/150%. Repro: 320x640, root font 150%, open any page. Screenshots `r12-nav-320-150-*.png`. |
+| 4 Normal-scale regression | PASS | 390 and 1280, light and dark: /app, results (Download inside the card, no chevrons) and History (sort beside search, placeholder fits) show no overflow. |
+
+Observation: at 320x640 and 150% font the footer wraps and takes about 170 px, leaving a content band of about 330 px, so a forced click on the tab row can land on the footer. This is the short-viewport extreme, not reported as a defect.
+
 ## Changelog
 
+- 2026-11-02 · videolens-65 (web QA) · run 10: refinement 12 retest, items 1, 2, 4 PASS (tab fades clean, threshold 359/360 correct); item 3 FAIL D-R12-1 (the menu button is 41 px off-screen at 320 wide, 150% font)
 - 2026-11-02 · videolens-65 (web QA) · run 9: refinement 11 retest items 1-4 all PASS (D-R10-1 and D-R10-2 verified fixed), no defects
 - 2026-11-02 · videolens-65 (web QA) · run 8: refinement 10 retest, items 1, 3a, 3c, 4 PASS; item 2 PASS with D-R10-1 (a partial 5xx is masked by the other healthy read); item 3b FAIL D-R10-2 (Download .md overflows its card at 320/360 wide at 130% font)
 - 2026-11-02 · videolens-65 (web QA) · run 7: refinement 9 retest items 1-10 PASS, 11 NOT EXERCISED, no defects (item 8's Back link is hidden on the web by design)
