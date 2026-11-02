@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from app.domain.entities import (
     AnalysisCompleteness,
     CaptionTrack,
+    MediaVisuals,
     Run,
     RunStatus,
     SavedUpload,
@@ -18,6 +19,8 @@ class FakeRunRepository:
     def __init__(self) -> None:
         self.runs: dict[str, Run] = {}
         self.created_ids: list[str] = []
+        self.set_visuals_error: Exception | None = None
+        self.visuals_written_while: list[RunStatus] = []
 
     async def create(
         self,
@@ -69,6 +72,16 @@ class FakeRunRepository:
     async def set_duration(self, run_id: str, duration_seconds: float) -> None:
         self.runs[run_id].duration_seconds = duration_seconds
 
+    async def set_visuals(self, run_id: str, visuals: MediaVisuals) -> None:
+        if self.set_visuals_error:
+            raise self.set_visuals_error
+        run = self.runs[run_id]
+        # Visuals land before the status flips: record what the run looked like.
+        self.visuals_written_while.append(run.status)
+        run.thumbnail = visuals.thumbnail
+        run.width = visuals.width
+        run.height = visuals.height
+
     async def set_error(self, run_id: str, error: str) -> None:
         self.runs[run_id].status = RunStatus.FAILED
         self.runs[run_id].error = error
@@ -96,6 +109,11 @@ class FakeMediaProcessor:
         self.captions: CaptionTrack | None = None
         self.caption_calls: list[str] = []
         self.captions_error: Exception | None = None
+        self.download_thumbnail_urls: tuple[str, ...] = ()
+        self.download_dims: tuple[int | None, int | None] = (None, None)
+        self.visuals = MediaVisuals(thumbnail="data:image/jpeg;base64,AAAA", width=1280, height=720)
+        self.visuals_error: BaseException | None = None
+        self.visuals_calls: list[dict] = []
 
     def validate_tools(self) -> None:
         self.validated = True
@@ -124,7 +142,12 @@ class FakeMediaProcessor:
         if self.download_error:
             raise self.download_error
         return SavedUpload(
-            path=f"/tmp/{run_id}/download.mp4", run_dir=f"/tmp/{run_id}", metadata=self.download_metadata
+            path=f"/tmp/{run_id}/download.mp4",
+            run_dir=f"/tmp/{run_id}",
+            metadata=self.download_metadata,
+            thumbnail_urls=self.download_thumbnail_urls,
+            width=self.download_dims[0],
+            height=self.download_dims[1],
         )
 
     async def fetch_captions(self, url: str) -> CaptionTrack | None:
@@ -136,6 +159,12 @@ class FakeMediaProcessor:
     async def normalize_media(self, src_path: str, run_dir: str) -> str:
         self.normalize_calls.append((src_path, run_dir))
         return f"{run_dir}/normalized.mp4"
+
+    async def describe_visuals(self, **kwargs) -> MediaVisuals:
+        self.visuals_calls.append(kwargs)
+        if self.visuals_error:
+            raise self.visuals_error
+        return self.visuals
 
 
 class FakeObjectStore:

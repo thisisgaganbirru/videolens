@@ -36,7 +36,11 @@ class Settings(BaseSettings):
     max_duration_seconds: int = 180
     rate_limit_per_hour: int = 20
     daily_run_cap: int = 200
-    run_ttl_seconds: int = 604800  # 7 days - drives both run TTL and history retention
+    # 1 hour. The browser keeps History (IndexedDB) now; the server only holds
+    # a run until it has been delivered. Re-armed on every write, so the hour
+    # counts from completion. Also bounds what GET /api/runs (and the MCP
+    # server's list_recent_runs) can still see.
+    run_ttl_seconds: int = 3600
     worker_max_jobs: int = 2
     worker_job_timeout_seconds: int = 600
 

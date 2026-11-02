@@ -10,6 +10,7 @@ from ...domain.errors import MediaValidationError
 from ..config import Settings
 from .ffmpeg import _media_binary
 from .net import validate_public_url
+from .thumbnails import dimensions_from_info, thumbnail_urls_from_info
 from .uploads import _cleanup_dir, create_run_dir
 
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -149,7 +150,15 @@ async def download_url(settings: Settings, run_id: str, url: str) -> SavedUpload
                 f"Download exceeds the {settings.max_file_size_mb}MB size limit."
             )
         metadata = _source_metadata_from_info(info, url)
-        return SavedUpload(path=path, run_dir=run_dir, metadata=metadata)
+        width, height = dimensions_from_info(info)
+        return SavedUpload(
+            path=path,
+            run_dir=run_dir,
+            metadata=metadata,
+            thumbnail_urls=thumbnail_urls_from_info(info),
+            width=width,
+            height=height,
+        )
     except MediaValidationError:
         _cleanup_dir(run_dir)
         raise

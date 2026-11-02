@@ -8,6 +8,7 @@ from .entities import (
     AnalysisCompleteness,
     Capability,
     CaptionTrack,
+    MediaVisuals,
     ReleaseIndex,
     Run,
     RunStatus,
@@ -60,6 +61,11 @@ class RunRepository(Protocol):
 
     async def set_duration(self, run_id: str, duration_seconds: float) -> None: ...
 
+    async def set_visuals(self, run_id: str, visuals: MediaVisuals) -> None:
+        """Record the poster thumbnail and display size. Fields left None are
+        left as they were."""
+        ...
+
     async def set_error(self, run_id: str, error: str) -> None: ...
 
     async def ping(self) -> bool: ...
@@ -86,6 +92,21 @@ class MediaProcessor(Protocol):
     async def fetch_captions(self, url: str) -> Optional[CaptionTrack]: ...
 
     async def normalize_media(self, src_path: str, run_dir: str) -> str: ...
+
+    async def describe_visuals(
+        self,
+        *,
+        media_path: str | None = None,
+        thumbnail_urls: tuple[str, ...] = (),
+        width: int | None = None,
+        height: int | None = None,
+        duration_seconds: float | None = None,
+    ) -> MediaVisuals:
+        """Poster thumbnail (a small JPEG data URL) and display size for the
+        history card. `thumbnail_urls`/`width`/`height` are the source's own
+        hints (yt-dlp); `media_path` is the local file, when there is one.
+        Never raises: anything that goes wrong yields None fields."""
+        ...
 
 
 class SourceResolver(Protocol):

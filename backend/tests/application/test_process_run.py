@@ -6,6 +6,7 @@ from app.application.process_run import RUN_INTERRUPTED_MESSAGE, ProcessRunUseCa
 from app.domain.entities import (
     AnalysisCompleteness,
     CaptionTrack,
+    MediaVisuals,
     RunStatus,
     SourceMetadata,
     VideoAnalysis,
@@ -327,6 +328,116 @@ class ProcessRunUseCaseTests(unittest.IsolatedAsyncioTestCase):
         run = self.runs.runs["run-1"]
         self.assertEqual(run.status, RunStatus.COMPLETE)
         self.assertIsNone(run.duration_seconds)
+
+    # --- Phase 5a: history poster (thumbnail + display size) ---
+
+    async def test_link_run_records_visuals_before_it_is_marked_complete(self) -> None:
+        self.media.download_thumbnail_urls = ("https://i.test/t.jpg",)
+        self.media.download_dims = (1920, 1080)
+        self.media.probed_duration = 30.0
+
+        await self.use_case.execute("run-1", source_url="https://x.test/v")
+
+        run = self.runs.runs["run-1"]
+        self.assertEqual(run.status, RunStatus.COMPLETE)
+        self.assertEqual(run.thumbnail, "data:image/jpeg;base64,AAAA")
+        self.assertEqual((run.width, run.height), (1280, 720))
+        self.assertEqual(self.runs.visuals_written_while, [RunStatus.PROCESSING])
+        self.assertEqual(
+            self.media.visuals_calls,
+            [
+                dict(
+                    media_path="/tmp/run-1/download.mp4",
+                    thumbnail_urls=("https://i.test/t.jpg",),
+                    width=1920,
+                    height=1080,
+                    duration_seconds=30.0,
+                )
+            ],
+        )
+
+    async def test_object_store_upload_gets_a_frame_grab(self) -> None:
+        await self.use_case.execute("run-1", source_key="runs/run-1/source.mp4")
+
+        self.assertEqual(
+            self.media.visuals_calls,
+            [dict(media_path=os.path.join("/tmp/run-1", "source.mp4"), duration_seconds=42.5)],
+        )
+        self.assertEqual(self.runs.runs["run-1"].width, 1280)
+
+    async def test_local_upload_gets_a_frame_grab(self) -> None:
+        await self.use_case.execute("run-1", saved_path="/tmp/run-1/upload.mp4", run_dir="/tmp/run-1")
+
+        self.assertEqual(self.media.visuals_calls, [dict(media_path="/tmp/run-1/upload.mp4")])
+        self.assertIsNotNone(self.runs.runs["run-1"].thumbnail)
+
+    async def test_caption_recovery_uses_only_yt_dlp_hints(self) -> None:
+        self.media.download_error = MediaValidationError("HTTP Error 403: Forbidden")
+        self.media.captions = CaptionTrack(
+            text="hi",
+            language="en",
+            automatic=False,
+            thumbnail_urls=("https://i.test/t.jpg",),
+            width=1080,
+            height=1920,
+        )
+
+        await self.use_case.execute("run-1", source_url="https://x.test/v")
+
+        self.assertEqual(
+            self.media.visuals_calls,
+            [dict(thumbnail_urls=("https://i.test/t.jpg",), width=1080, height=1920)],
+        )
+        run = self.runs.runs["run-1"]
+        self.assertEqual(run.status, RunStatus.COMPLETE)
+        self.assertEqual(run.completeness, AnalysisCompleteness.CAPTIONS_ONLY)
+        self.assertEqual(self.runs.visuals_written_while, [RunStatus.PROCESSING])
+
+    async def test_audio_with_no_visuals_writes_nothing(self) -> None:
+        self.media.visuals = MediaVisuals()
+        await self.use_case.execute("run-1", source_url="https://x.test/a")
+
+        run = self.runs.runs["run-1"]
+        self.assertEqual(run.status, RunStatus.COMPLETE)
+        self.assertEqual(self.runs.visuals_written_while, [])
+        self.assertIsNone(run.thumbnail)
+
+    async def test_a_raising_visuals_capture_does_not_fail_the_run(self) -> None:
+        self.media.visuals_error = RuntimeError("ffmpeg exploded")
+        await self.use_case.execute("run-1", source_url="https://x.test/v")
+
+        run = self.runs.runs["run-1"]
+        self.assertEqual(run.status, RunStatus.COMPLETE)
+        self.assertIsNone(run.thumbnail)
+
+    async def test_a_failed_visuals_write_does_not_fail_the_run(self) -> None:
+        self.runs.set_visuals_error = RuntimeError("redis blip")
+        await self.use_case.execute("run-1", source_url="https://x.test/v")
+
+        self.assertEqual(self.runs.runs["run-1"].status, RunStatus.COMPLETE)
+
+    async def test_a_failed_analysis_cancels_an_unfinished_capture(self) -> None:
+        cancelled = asyncio.Event()
+
+        async def slow(**kwargs):
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        async def failing_analysis(*args, **kwargs):
+            await asyncio.sleep(0)  # let the capture task start
+            raise MediaValidationError("bad file")
+
+        self.media.describe_visuals = slow  # type: ignore[method-assign]
+        self.analysis.analyze_with_retry = failing_analysis  # type: ignore[method-assign]
+
+        await self.use_case.execute("run-1", source_url="https://x.test/v")
+
+        self.assertTrue(cancelled.is_set())
+        self.assertEqual(self.runs.runs["run-1"].status, RunStatus.FAILED)
+        self.assertEqual(self.media.cleaned_up, ["run-1"])
 
 
 if __name__ == "__main__":

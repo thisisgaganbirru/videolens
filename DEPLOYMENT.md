@@ -210,10 +210,11 @@ MAX_FILE_SIZE_MB=200
 MAX_DURATION_SECONDS=180
 # Global daily backstop across ALL callers, UTC day. 0 disables it.
 DAILY_RUN_CAP=200
-# How long a completed run (and its entry in a caller's history list) stays
-# in Redis. Default is 7 days now, not 1 hour — this is a real retention
-# policy, not just a cache TTL. Bump to 2592000 for 30 days.
-RUN_TTL_SECONDS=604800
+# How long a run (and its entry in a caller's history list) stays in Redis
+# after its last write. 1 hour: the browser keeps History (IndexedDB) now, so
+# the server only holds a run until it is delivered. Also bounds what the MCP
+# server's list_recent_runs can see.
+RUN_TTL_SECONDS=3600
 # Worker-only in effect, but harmless to set on both:
 WORKER_MAX_JOBS=2
 WORKER_JOB_TIMEOUT_SECONDS=600

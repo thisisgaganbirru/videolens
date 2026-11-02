@@ -1,8 +1,17 @@
-from ...domain.entities import CaptionTrack, SavedUpload
+import asyncio
+import logging
+
+from ...domain.entities import CaptionTrack, MediaVisuals, SavedUpload
 from ...domain.ports import UploadedFile
 from ..config import Settings
-from . import captions, ffmpeg, uploads
+from . import captions, ffmpeg, thumbnails, uploads
 from .resolvers import DirectHttpResolver, ResolverChain, YtDlpResolver
+
+logger = logging.getLogger("videolens")
+
+# Upper bound on the whole poster step, on top of each fetch/ffmpeg call's own
+# timeout: it runs alongside the analysis and must never be what a run waits on.
+VISUALS_TIMEOUT_SECONDS = 45
 
 
 class MediaService:
@@ -45,3 +54,55 @@ class MediaService:
 
     async def normalize_media(self, src_path: str, run_dir: str) -> str:
         return await ffmpeg.normalize_media(self._settings, src_path, run_dir)
+
+    async def describe_visuals(
+        self,
+        *,
+        media_path: str | None = None,
+        thumbnail_urls: tuple[str, ...] = (),
+        width: int | None = None,
+        height: int | None = None,
+        duration_seconds: float | None = None,
+    ) -> MediaVisuals:
+        try:
+            return await asyncio.wait_for(
+                self._describe_visuals(
+                    media_path=media_path,
+                    thumbnail_urls=thumbnail_urls,
+                    width=width,
+                    height=height,
+                    duration_seconds=duration_seconds,
+                ),
+                VISUALS_TIMEOUT_SECONDS,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - cosmetic; never fail a run over it
+            logger.warning("Could not describe media visuals", exc_info=True)
+            return MediaVisuals()
+
+    async def _describe_visuals(
+        self,
+        *,
+        media_path: str | None,
+        thumbnail_urls: tuple[str, ...],
+        width: int | None,
+        height: int | None,
+        duration_seconds: float | None,
+    ) -> MediaVisuals:
+        # The file is the measurement and wins; yt-dlp's reported size is the
+        # fallback (and the only source on the captions path, where nothing
+        # was downloaded). No video stream and no hint means audio: None.
+        probed = await thumbnails.probe_dimensions(self._settings, media_path) if media_path else None
+        if probed is not None:
+            width, height = probed
+        elif width is None or height is None:
+            width = height = None
+        thumbnail = await thumbnails.build_thumbnail(
+            self._settings,
+            thumbnail_urls=thumbnail_urls,
+            media_path=media_path,
+            has_video=probed is not None,
+            duration_seconds=duration_seconds,
+        )
+        return MediaVisuals(thumbnail=thumbnail, width=width, height=height)
