@@ -247,6 +247,17 @@ couldn't verify as a question, not a fact.
 | NF-01 | Open an unknown in-app path (`/nope`, `/app/zzz`) via CDP `location.href`. | Not-found page with the top bar and dock. |
 | RTL-01 | Open a History run with an Arabic title and summary. | Title, summary and body render right-to-left, right-aligned. |
 
+## 18. Refinement 8 additions
+
+| ID | Steps | Expected |
+|---|---|---|
+| NF-01b | CDP `location.href` to `/nope`, `/nope/deeper`, `/app/zzz`, `/404`. | Each ends on `/404.html`, "This page doesn't exist.", top bar and dock, only "Open VideoLens"; the landing never shows, not even for a frame (screen recording). |
+| NF-02 | On the not-found page tap "Open VideoLens"; then press Back. | Opens the tool (`/app`); Back returns to the previous in-app entry. |
+| HOP-01 | Cold start, History/More tabs, More > Privacy, dock History from Privacy, Back, More > Terms, dock Analyze, Terms in-page Back link. | Each hop lands on the right page; Back walks the in-app history; no blank or stale frame. |
+| LOG-01 | Logcat across the HOP-01 hops. | No "Unable to open asset URL … __PAGE__.txt" lines. |
+| INT-18 | Terms unticked, tap Browse files (dark portrait, light portrait, dark landscape). | No picker; "Accept the media-use terms before analysis." shows; the checkbox is focused, outlined and in view. |
+| INT-19 | Tick terms, Browse files, pick `test-12s.mp3`. | Submit is attempted; backend down gives "Can't reach the server. It may be offline, or your connection dropped." |
+
 ## Run log
 
 ### 2026-11-01 · android-66 (device QA) · run 1 (bundled APK)
@@ -290,8 +301,16 @@ FAIL (MINOR, question for the lead): NF-01. On the bundled app every unknown pat
 NOTES: the safe-area console error still shows once per cold launch (2 lines since install across launches). With the terms unticked "Browse files" looks dimmed and a tap opened no picker (CDP: `disabled` true when unticked, false when ticked); question whether that is intended, since INT-04b expects the form to be submittable to show errors. `Unable to open asset URL: /app/__next.app.__PAGE__.txt?_rsc=…` appears repeatedly in logcat, also on earlier builds (RSC prefetch, no visible effect).
 BLOCKED (backend stopped, memory, awaiting owner restart): RUN-*, FREE-*, ORI-02 retest, LCH-06c.
 
+### 2026-11-02 · android-66 (device QA) · run 7 (bundled APK, refinement 8, 04a9a9c (worktree build), backend DOWN)
+
+Build: `refine8-debug.apk` installed with `-r` (lastUpdateTime 03:45:20); `android:sync` not run in the main tree. Emulator API 35, swiftshader. Evidence in `%TEMP%\qa8\`.
+PASS: NF-01b (all four paths end on `/404.html` with title "Page not found · VideoLens AI"; a 34 s screen recording of the four hops, sampled at 3 fps, shows no landing frame after any navigation; `NF_nope.png`, `sheet.png`), NF-02 ("Open VideoLens" opens `/app`; Back returns to `/404.html`), HOP-01 (`/privacy.html`, `/terms.html`, dock History/Analyze to `/app`, Back through `/privacy.html` then `/terms.html`), LOG-01 (0 "Unable to open asset URL" lines; 3 debug "Handling local request … __PAGE__.txt" lines remain, served normally), INT-18 (dark portrait, light portrait and dark landscape: no picker, terms error, checkbox focused, outlined and in view; `BRW-unticked-dark.png`, `BRW-landscape-after.png`, `BRW-light.png`), INT-19 ("Can't reach the server. It may be offline, or your connection dropped."; `BRW-submit-6s.png`), STB-01 (0 FATAL, 0 Uncaught, 0 ANR), NAV/BCK sanity (More sheet Back closes it; a fresh cold start with Back at the root leaves to the launcher).
+NOTES: the Terms in-page "Back" link lands on `/app.html` rather than `/app` (same page content; two URLs for the tool, so History/Back entries may differ); the safe-area console error did not appear in this session's logcat.
+BLOCKED (backend stopped, memory, awaiting owner restart): RUN-*, FREE-*, ORI-02 retest, LCH-06c. THM-01b-6e stays BLOCKED (needs physical device).
+
 ## Changelog
 
+- 2026-11-02 · android-66 (device QA) · added section 18 (refinement 8 cases) and the run 7 Run log (04a9a9c worktree build): NF-01b, NF-02, HOP-01, LOG-01, INT-18, INT-19, STB-01 and NAV/BCK PASS; note on the Terms Back link landing on /app.html
 - 2026-11-02 · android-66 (device QA) · THM-01b-6e re-marked BLOCKED (needs physical device) per lead triage; NF-01 and the disabled "Browse files" are being fixed in refinement 8 and will be retested
 - 2026-11-02 · android-66 (device QA) · added section 17 (refinement 6 and 7 cases) and the run 6 Run log (afb41d8 worktree build): THM-01b-6a..d, INT-04b, INT-16, INT-17, HIS-08, RTL-01, STB-01 PASS; THM-01b-6e inconclusive on the emulator; NF-01 FAIL (MINOR, unknown paths render the landing page on the bundled app)
 - 2026-11-02 · android-66 (device QA) · added section 16 (refinement 5 cases) and the run 5 Run log (324608b): INT-01b landscape, THM-01b-1..5, LCH-06d, LCH-02/03 PASS; THM-01b-6 FAIL (WebView prefers-color-scheme stays dark after an OS flip when the app was launched with a stored Light under OS dark)
