@@ -429,7 +429,9 @@ whose scrollbar is hidden, cut "Transcript" off mid-word so it looked broken.
   tab calls `scrollIntoView({ inline: "nearest" })`, and
   `scroll-padding-inline: calc(2.75rem + 4px)` on the list makes the chosen or
   focused tab stop clear of the fades rather than under them. When the tabs
-  fit (every width at the normal text size), nothing shows.
+  fit, nothing shows. (This originally said "every width at the normal text
+  size"; that was only checked at 390 and 1280 and is wrong, see refinement 12
+  below: at 100% the row overflows below 360 px.)
 
 Verified in `scratchpad\refine11\verify.py` at 320x640 and 360x640 (130%, light
 and dark), 390 and 430 at 130%, and 390 / 1280 at 100% light and dark, with
@@ -437,6 +439,44 @@ and dark), 390 and 430 at 130%, and 390 / 1280 at 100% light and dark, with
 past its edges, no page scroll, Download text unclipped and on its own row at
 320/360, end chevron shown and paging both ways, Transcript and (via End)
 On-screen fully clear of the fades, chevrons out of the a11y tree.
+
+## Tab-row fades cover the whole edge (refinement 12)
+
+Device QA at 320 CSS px: the fades and chevrons sat at x 37–81 and 239–283
+while the tab list spans x 33–287, so about 4px of tab text (")" and "e")
+showed past the outer edge of each chevron. Cause: `.tab-list` carries 4px of
+padding cancelled by a -4px margin (room for the focus ring), so its
+scrollport is 4px wider than `.tab-scroller` on each side, and the fades were
+pinned to the wrapper's edges.
+
+- `.tab-scroller` defines `--tab-bleed: 4px` (= the list's padding). The
+  fades start at `-var(--tab-bleed)` and are `44px + var(--tab-bleed)` wide,
+  so they cover the list's full edge and still end 48px in from the
+  scrollport, where `scroll-padding-inline: 48px` stops a chosen tab.
+- **Fade and chevron are fixed px now** (44px band, 18px icon; were 2.75rem
+  and 1.125rem). They only appear with large text, and in rem they grew with
+  it: 61px a side at 130%, 92px at 200%, which at 320 px left too little room
+  between the two fades for any tab to stand clear.
+- **Threshold, measured** (Chromium, Hanken Grotesk, 100% text): the row
+  overflows and the end chevron shows at every width up to **359 CSS px** and
+  never from **360 px** up (at 360 the list is 1px over, which is its own end
+  padding, so no tab text is hidden and no chevron shows). At 320 px it is
+  41px too wide. With larger text the threshold rises.
+- Unchanged from refinement 11: chevrons page the row by 70%, are
+  `aria-hidden` with `tabIndex=-1`, nothing shows when the tabs fit, and a
+  chosen or focused tab scrolls clear of the fades.
+- **Geometric limit, 320 px at 200% text:** the list is ~182px wide. A middle
+  tab (Transcript, 138px) cannot fit between two 48px fades (86px band), and
+  On-screen (140px) is 10px wider than the room beside one fade. Choosing
+  them aligns the label's start clear of the start fade; the tail stays under
+  the end fade with its chevron. At 150% and below every tab fits clear.
+
+Verified in `scratchpad\refine12\verify.py`: 320 at 100/115/130/150/200% and
+360 at 130/150%, light and dark — the 4px strip between wrapper and list edge
+is pixel-identical to the card surface on both sides (no glyph), at scroll 0,
+mid-scroll and the end; chevrons page both ways; Transcript, On-screen (End)
+and TL;DR (Home) clear of the fades where geometry allows; no chevrons at
+360/390/1280 at 100%; 1px threshold sweep 320–400.
 
 ## Changelog
 
@@ -456,3 +496,4 @@ On-screen fully clear of the fades, chevrons out of the a11y tree.
 - 2026-11-02 · frontend agent (refinement 6) · RES-14 dir="auto" on every result text block incl. Markdown; logical padding/alignment
 - 2026-11-02 · frontend agent (refinement 9) · source card, source toggle and Markdown export spell platforms through domain/platforms.ts ("YouTube", not yt-dlp's "Youtube")
 - 2026-11-02 · frontend agent (refinement 11) · results header wraps at 320/360 with 130% text (Download drops to its own full row instead of overflowing the card); tab row keeps scrolling but shows an edge fade + chevron on the side with more, chevrons page the row, chosen tab scrolls clear of the fade (D-R10-2)
+- 2026-11-02 · frontend agent (refinement 12) · tab-row fades/chevrons now start at the list's outer edge (`--tab-bleed`), so no tab text peeks past them; fade and chevron fixed px (44px/18px) instead of rem; corrected "nothing shows at normal size" to the measured threshold (chevron below 360 CSS px at 100%)
