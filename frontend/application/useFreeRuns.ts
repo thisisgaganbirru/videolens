@@ -2,7 +2,7 @@
 
 import { useEffect, useSyncExternalStore } from "react";
 import type { FreeRunsStatus } from "@/domain/entities";
-import { apiKeyStore, freeRunsGateway } from "@/infrastructure/container";
+import { apiKeyStore, freeRunsGateway, nativeShell } from "@/infrastructure/container";
 import { noteReadResult, onReconnectChance } from "@/application/serverReachability";
 
 /* Free runs (Phase 5b): an anonymous device gets a few runs per UTC day
@@ -106,6 +106,32 @@ export function noteRunAccepted(): void {
   if (apiKeyStore.get() === "") void refreshFreeRuns();
 }
 
+/** The allowance as last read, or null when unknown. `useAnalysisRun` takes
+ *  this just before a submit, so a failed run can later be compared against
+ *  it (refinement 9, the refund line). */
+export function currentFreeRuns(): FreeRunsStatus | null {
+  return snapshot.status;
+}
+
+/** Whether runs are on the user's own key right now (no free-run accounting
+ *  applies, and nothing about free runs is ever said). */
+export function usingOwnKey(): boolean {
+  return apiKeyStore.get() !== "";
+}
+
+/**
+ * Refinement 9: read the allowance again because something may have changed
+ * it behind the cached count — a run settled (a failed link download is
+ * refunded server-side), the intake came back on screen, or the app returned
+ * from the background (the counter resets at UTC midnight while the app can
+ * stay open). A no-op on the user's own key. Resolves with the fresh status
+ * (or null), never rejects.
+ */
+export function revalidateFreeRuns(): Promise<FreeRunsStatus | null> {
+  if (usingOwnKey()) return Promise.resolve(null);
+  return refreshFreeRuns();
+}
+
 const subscribeKey =(listener: () => void) => apiKeyStore.subscribe(listener);
 const hasKeySnapshot = () => apiKeyStore.get() !== "";
 /* The prerendered HTML is built with no key; the first client render agrees,
@@ -140,6 +166,32 @@ export function useFreeRuns(): { banner: FreeRunsBanner | null; blocked: boolean
     return onReconnectChance(() => {
       if (snapshot.status === null) void refreshFreeRuns();
     });
+  }, [hasKey]);
+
+  /* Refinement 9: the count only used to refresh on a cold launch, so a
+     phone that kept the app open past the UTC reset (or got a refund) showed
+     a stale number. Read again whenever the app comes back: the page becoming
+     visible (browsers, and the Android WebView), and Capacitor's own `resume`
+     event on the native shell. The two often fire together; one read, not
+     two (refreshFreeRuns also shares an in-flight request). */
+  useEffect(() => {
+    if (hasKey) return;
+    let last = 0;
+    const again = () => {
+      const now = Date.now();
+      if (now - last < 1500) return;
+      last = now;
+      void refreshFreeRuns();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") again();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    const offResume = nativeShell.onResume(again);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      offResume();
+    };
   }, [hasKey]);
 
   /* Spent for today: read again just after the UTC reset the server named, so
