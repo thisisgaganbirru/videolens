@@ -389,6 +389,53 @@ NOTES:
 - MINOR: the used-up reason appears only in the top banner; once the form is scrolled into view, the disabled button gives no inline reason.
 - After a backend restart the banner keeps the stale "used your free runs" until a cold relaunch.
 
+### 2026-11-02 · android-66 (device QA) · run 11 (refinement 9, `refine9-debug.apk` at 79d69fc, real backend)
+
+Build: `adb install --no-streaming -r refine9-debug.apk` (lastUpdateTime 14:15:30), then `adb reverse tcp:8000 tcp:8000`. Emulator API 35. The backend was restarted on the R9 code at 14:14, which reset the free runs to 3. Evidence in `%TEMP%\qa12\`. Stage copy was logged by a CDP poller (every 0.5 s) together with the in-page fetch hook.
+PASS:
+- **R9-1, stage copy by stage and media.**
+  - mp3: "Sending your audio for analysis", then "Listening to your audio". No audio state says "video".
+  - 15 s mp4: "Preparing your video" (Normalizing, about 6 s), then "Sending your video for analysis", then "Reading your video". Complete at +23 s.
+  - YouTube link: "Sending your video…", then "Reading your video".
+  - Not observed, because the stage passed before the first poll: "Preparing your audio" and "Downloading the video". Both strings are in `RunStatusView.tsx` `progressCopy`.
+- **R9-2.** At 0 free runs, the intake note reads "No free runs left today, so analyzing is paused. Add key to keep going." Its "Add key" opens `/app.html?view=api-key`.
+- **R9-3.** "YouTube" is spelled correctly in the History filter, the row label, the source card ("Source: YouTube, jawed") and the `.md` export ("**Platform:** YouTube"). The lowercase form appears only in URLs. The export is written to `cache/exports/` and shared through the chooser.
+- **R9-4.** The expired view no longer mentions "an hour". It reads "The server no longer has this run, and its result never reached this device. Nothing was wrong with the link…" (for a file: "…the file; choose it again to start over.").
+- **R9-5.** The free-runs count is re-fetched when a run completes (mp3 → 2, mp4 → 0), when it fails (refunded link failures, back to 2), and when the app resumes (Home for 8 s, then brought back; returning from the file picker as well). The intake count was correct every time.
+- **R9-6** (on the expired file view). With terms ticked, "Choose the file again" opens DocumentsUI `PickActivity` directly. With terms unticked, it lands on the intake with the checkbox outlined in red and "Accept the media-use terms before analysis."
+- **R9-7, refund line** (the download-failure half). Both the Instagram link and the YouTube-blocked link show "This didn't use one of your free runs." The count was 2, went to 1 during the run, and went back to 2.
+- **R9-8.** The Back links on Terms and Privacy (`href=/app`) and the dock's Analyze tab on both pages all land on `/app.html`.
+- **R9-9.** Failed link rows created on R9 are titled "Instagram link" and "YouTube link".
+- **R9-10.** `dQw4w9WgXcQ` was blocked and failed in 3 s with "You can try the same link again later, or download the video and upload the file instead." The detail line reads "The site blocked this download for now - the video itself is fine. Try again in a few minutes."
+- **INT-07 regression.** Re-ticked the terms, force-stopped and cold launched: still `accepted`.
+
+NOT EXERCISED: the other half of R9-7, that a run which reaches analysis and then fails shows no refund line. I couldn't trigger such a failure without spending a run, and the count was at 0.
+NOTES:
+- Tester artifact, not a defect: the "Privacy Policy" link wraps onto two lines, so a tap at the centre of its bounding box lands on the label text and toggles the terms checkbox. Each line of the link is about 46×18 css px, which is small as a tap target.
+- COSMETIC: the expired view states the same thing twice: the lede, then "This run is no longer on the server, and its result never reached this device."
+- COSMETIC: the `.md` export shows "**Published:** 20050424", the raw yt-dlp date.
+- MINOR: the inline "Add key" in the paused note is a single text line, about 19 css px tall. The top banner's Add key button is the larger target.
+- Budget: 3 free runs used (mp3, YouTube link, 15 s mp4). Both link failures were refunded.
+
+**Update banner, R9 (mock on :8000).** The lead stopped the real backend and ran the mock, changing `latest` between steps; the dismiss state is kept in localStorage `videolens-update-dismissed`.
+PASS:
+- **UPD-01 (behaviour).** With version_code 99999 the banner shows on cold launch: "Update available. Version 9.9.9 is ready to install." plus "Get the update" and an X.
+- **UPD-03.** "Get the update" opens Chrome (`FirstRunActivity`) outside the app, and Back returns to the app unchanged.
+- **UPD-06.** No banner for version_code 1 (same as installed), for `latest: null`, or for a 503 on `/api/releases`. The dismiss key was cleared first, and the fetch itself was confirmed through `performance` entries.
+- **Dismiss.** The 44×44 X hides the banner and writes `videolens-update-dismissed=99999`. It stays hidden after a cold launch and after a resume. Moving to version_code 100000 brings it back.
+- **UPD-07** (checked in the DOM; TalkBack was not run). The banner is `<aside aria-label="App update">`, the X has `aria-label="Dismiss the update notice"`, the icons are `aria-hidden`, and the banner comes first in focus order.
+
+SUPERSEDED (the top banner becomes a centred popup in R10, owner decision): UPD-01 layout and position, UPD-02, UPD-04 and UPD-05. What was seen before the decision:
+- Height: 80 px in portrait and a single 45 px row in landscape, in both themes. No overlap with the header and no horizontal scroll.
+- Present on History, More (under the scrim), Terms, Privacy and 404.
+- **Overlap defect, passed to the R10 popup.** At 320 css px with font ≥1.15, and at 343 px with font 1.3, the "Get the update" pill covers the "Update available." title. 360 px is fine.
+- At font 1.3 on the 412 px width, the banner is 153 px tall.
+
+Not re-checked: Welcome and Splash, since showing Welcome again needs `pm clear`.
+NOTES:
+- a11y: after a dismiss, focus falls back to `<body>`.
+- Question: with every path returning 503, the intake shows no server notice at all — no free-runs banner and no "Can't reach the server". LCH-06b only covers an unreachable server.
+
 ## Changelog
 
 - 2026-11-02 · android-66 (device QA) · added section 19 (update banner, UPD-01..07) and run 9 (UPD partial on the mock: UPD-01/03 PASS, UPD-04 partial, rest PAUSED) and run 10 (real runs: terms persistence, RUN-01 retry with a YouTube link, RUN-02/02b/03/04/05/07/08, ORI-02, HIS-01, FREE-01..05, RUN-06b/06c/06d/06e, LCH-06b/06c, FREE-02b PASS; FREE-02c not exercised (YouTube 403 mid-download); stale free-runs count after a refund logged as known (R9); stage timings incl. Normalizing ~60 s for a 170 s file); added FREE-02b/02c rows to section 6
@@ -404,3 +451,4 @@ NOTES:
 - 2026-11-01 · android-66 (device QA) · added the Run log for the first bundled-APK pass
 - 2026-11-01 · videolens-ff (lead) · First version of the full Android app test suite, for the bundled-APK QA pass after the Phase 5 refinement fixes.
 - 2026-11-02 · frontend agent (refinement 3) · added RUN-06b..e (404 expiry on every path, airplane-mode regression) and ORI-05 (nothing under the dock at rest); LCH-02 is the retest for the dark-launch flash fix
+- 2026-11-02 · android-66 (device QA) · run 11: refinement 9 retest on refine9-debug.apk (79d69fc): R9-1..10 PASS except R9-7 partial (the reaches-analysis-then-fails half not exercised); update banner on the mock: dismiss, newer version_code, external link and the no-update states PASS; layout cases SUPERSEDED by the R10 popup; banner overlap at 320/343 css px with large fonts
