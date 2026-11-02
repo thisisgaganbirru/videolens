@@ -322,6 +322,19 @@ arrives. The Failed badge is kept. Verified: an instagram.com reel shows
 "Instagram" / "Instagram link" / Failed, and example.org shows
 "Link" / "example.org" / Failed.
 
+## Refinement 11 (2026-11-02) — search row at large text
+
+Device QA: at 320 px with font scale 1.3 the search placeholder clipped to
+"Search your". The placeholder is now "Search runs" (the field's label stays
+"Search your runs" for screen readers), and the phone toolbar is a wrapping
+flex row instead of the two-row grid: search (`flex: 1 1 8.5rem`, a floor that
+scales with the text), sort (`flex: 0 0 auto`), then the pills
+(`order: 1; flex-basis: 100%`). When the field and the sort cannot both fit,
+the sort drops under the field; at normal sizes the row is unchanged. From
+48rem the toolbar is the same one-row grid as before (`display: grid` is now
+set there explicitly). Verified at 320/360/390 at 130% and 390/1280 at 100%:
+placeholder fits, no overlap, no page scroll.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported HistoryPanel to day-grouped rows with status dots; fixed duplicate React keys on non-adjacent "Undated" groups
@@ -335,3 +348,4 @@ arrives. The Failed badge is kept. Verified: an instagram.com reel shows
 - 2026-11-02 · frontend agent (refinement 4) · sort select shown on phones too, sharing the search row; removed the 48rem Newest-only gate (HIS-03)
 - 2026-11-02 · frontend agent (refinement 6) · RUN-13 expired runs badge "Expired" (neutral), data-run-status="expired"
 - 2026-11-02 · frontend agent (refinement 9) · platform chip uses the shared domain/platforms.ts names; link runs that failed before metadata show a platform from the URL host and a title like "Instagram link" or the host
+- 2026-11-02 · frontend agent (refinement 11) · History placeholder "Search runs"; phone toolbar wraps the sort under the search when large text leaves no room (device QA)

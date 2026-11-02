@@ -401,6 +401,43 @@ extractor key used to print raw ("Source: Youtube"). The icon lookup uses
 `platformKey`, which folds variants such as `YoutubeTab` onto their platform.
 History's chip uses the same module, so one run is spelled one way everywhere.
 
+## Narrow screens with large text (refinement 11, D-R10-2)
+
+Web QA round 8 and device QA: at 320 and 360 px with the root font at 130%
+the "Download .md" pill ran past the result card ("Download .m"; on a device
+at 320/1.3 its right edge sat 7px past the card border), and the tab row,
+whose scrollbar is hidden, cut "Transcript" off mid-word so it looked broken.
+
+- **The action row wraps.** `.result-actions` is `flex-wrap: wrap` (with
+  `min-width: 0; max-width: 100%`), so when copy, share and Download do not
+  fit on one line Download drops to its own line and, on a phone, fills it.
+  `.result-download` also gets `max-width: 100%; white-space: normal` as the
+  last resort for a pill wider than the card on its own. `.result-title` got
+  `min-width: 0; overflow-wrap: anywhere` so a long unbroken title cannot
+  widen the band. At normal text sizes (390 and 1280, light and dark) the row
+  is unchanged: Download beside the icons.
+- **The tab row says it scrolls.** It still scrolls sideways rather than
+  wrapping (an underlined tab row on two lines has no single rule to sit on).
+  `.tab-list` is wrapped in `.tab-scroller`, and ResultsView tracks the list's
+  scroll position (scroll listener + `ResizeObserver`, written straight into
+  `data-more-start` / `data-more-end` on the wrapper, no React state). On
+  whichever side has more, `.tab-more` shows a fade into `--color-surface`
+  (solid for 70%) with a lucide chevron; tapping it pages the row by 70% of its
+  width. The fade stops one rule-width above the bottom so the row's 1px rule
+  is not covered. The chevrons are pointer helpers only (`aria-hidden`,
+  `tabIndex=-1`); keyboard users move with the arrow keys as before. Choosing a
+  tab calls `scrollIntoView({ inline: "nearest" })`, and
+  `scroll-padding-inline: calc(2.75rem + 4px)` on the list makes the chosen or
+  focused tab stop clear of the fades rather than under them. When the tabs
+  fit (every width at the normal text size), nothing shows.
+
+Verified in `scratchpad\refine11\verify.py` at 320x640 and 360x640 (130%, light
+and dark), 390 and 430 at 130%, and 390 / 1280 at 100% light and dark, with
+`navigator.share` stubbed so all three actions render: no element of the card
+past its edges, no page scroll, Download text unclipped and on its own row at
+320/360, end chevron shown and paging both ways, Transcript and (via End)
+On-screen fully clear of the fades, chevrons out of the a11y tree.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported ResultsView + SourceCard; de-boxed the source card, wired .disclosure and role=tabpanel, rebuilt SourceCard.preview with six states
@@ -418,3 +455,4 @@ History's chip uses the same module, so one run is spelled one way everywhere.
 - 2026-11-02 · frontend agent (refinement 4) · Copy's accessible name, tooltip and a new visible confirmation name the active tab ("Copy transcript" / "Transcript copied"); Share relabelled "Share all results" (RES-05)
 - 2026-11-02 · frontend agent (refinement 6) · RES-14 dir="auto" on every result text block incl. Markdown; logical padding/alignment
 - 2026-11-02 · frontend agent (refinement 9) · source card, source toggle and Markdown export spell platforms through domain/platforms.ts ("YouTube", not yt-dlp's "Youtube")
+- 2026-11-02 · frontend agent (refinement 11) · results header wraps at 320/360 with 130% text (Download drops to its own full row instead of overflowing the card); tab row keeps scrolling but shows an edge fade + chevron on the side with more, chevrons page the row, chosen tab scrolls clear of the fade (D-R10-2)

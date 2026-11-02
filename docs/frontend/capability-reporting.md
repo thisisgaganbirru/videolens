@@ -239,9 +239,16 @@ Known gap: coming back online after an offline spell during which every read
 had *succeeded* does not probe again, so a server that went down meanwhile is
 only discovered on submit (the offline flag knows nothing about the server).
 
+**Refinement 11 (D-R10-1).** The flag is no longer shared and overwritten:
+each read reports under its own name (`noteReadResult("capabilities", err)`),
+and the notice is up while either read's latest result is unreachable. A
+healthy capabilities reply no longer clears a free-runs 503, and the other way
+round. Details in `free-runs.md`.
+
 ## Changelog
 
 - 2026-08-29 · frontend agent · added the capability surface: `CapabilitiesGateway` port + `FetchCapabilitiesGateway` adapter (normalising, not casting), `useCapabilities` hook fetched once in `HomeScreen`, the `CapabilityNotice` intake strip with a `probed`-aware disclosure, and `CapabilityCallout` wired to the URL field and the API-key panel; extracted `infrastructure/apiBase.ts` so two adapters share one origin
 - 2026-11-01 · frontend agent · editorial restyle: compact collapsed card (dot, sentence-case label-first line, Details toggle), red only for `unavailable`, sentence-case states with inline "not checked", plain names map with fallback; callout de-ruled; notice moved to its own intake grid cell (top of the panel column / first on phone) so the intake card no longer moves
 - 2026-11-02 · frontend agent (refinement 4) · added the shared reachability flag, retry on reconnect, and the ReachabilityNotice in the capability slot (LCH-06)
 - 2026-11-02 · frontend agent (refinement 5) · LCH-06d: offline branch unreachable in the app because WebView needs ACCESS_NETWORK_STATE for navigator.onLine; permission added to the manifest (device check pending)
+- 2026-11-02 · frontend agent (refinement 11) · capabilities reports reachability under its own source name; the notice holds while any launch read is unreachable (D-R10-1)

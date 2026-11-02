@@ -215,6 +215,28 @@ bridge, every `/api` call answered in the browser): light and dark at 390x844,
 all five close paths; focus return and trap; Welcome and splash gating; the
 plain web shows nothing.
 
+## Refinement 11 (2026-11-02) — prompt buttons and system font size
+
+- **Labels on one line.** At 915x360 with font scale 1.3, "Get the update"
+  wrapped onto two lines and both buttons grew to 72px. `.update-prompt__btn`
+  is now `white-space: nowrap` and no longer `min-width: 0`, so a flex item's
+  automatic minimum is the whole label: the buttons sit side by side when they
+  fit (landscape at 130%: one line each, 57px) and the row wraps to stack them
+  when they do not (portrait 320/343 at 130%, and a 390 phone at 100%, as in
+  refinement 10). Verified in `scratchpad\refine11\verify.py`.
+- **Changing the system font size no longer reloads the app.** Device QA: with
+  a result open, changing Android's font size recreated the activity, so the
+  WebView reloaded to the intake. `MainActivity`'s `android:configChanges` had
+  the Capacitor template's list (`orientation|keyboardHidden|keyboard|
+  screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density`,
+  so `density` was already there) but not `fontScale`; it now ends
+  `|density|fontScale`. Because the activity is no longer rebuilt, the WebView
+  would keep its old text size (it reads the font scale into its text zoom
+  only when its settings are created), so `MainActivity.onConfigurationChanged`
+  now sets `webView.getSettings().setTextZoom(round(fontScale x 100))` when the
+  scale changed. Not yet verified on a device: needs the APK from this
+  refinement (font size change with a result open: result stays, text resizes).
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported UpdateBanner; added shrink-0 so it cannot compress the measured viewport frame
@@ -228,3 +250,4 @@ plain web shows nothing.
 - 2026-11-02 · frontend agent (refinement 9) · banner restyled to the editorial system ("Get the update" pill, 44px dismiss, one-row landscape); dismissal persists the dismissed version_code via the new UpdateDismissalStore port, so a newer build shows again
 - 2026-11-02 · frontend agent (refinement 10) · the top banner became a centred modal `<dialog>` (`UpdatePrompt.tsx`, renamed from `UpdateBanner.tsx`): Later / Escape / backdrop / Android back keep the R9 per-version dismissal, Get the update closes for this launch only, focus trapped and returned (never `<body>`), waits for splash and Welcome; fixed `html, body` min-width from 20rem to 320px so font scale 1.3 no longer widens the page past a 320px screen
 - 2026-11-02 · android-66 (device QA) · verified the refinement 10 popup on the bundled APK against the mock (run 12 in docs/qa/android-app-test-cases.md): layout, ordering after the Splash, all four dismissals with focus to the H1, "Get the update" storing no dismiss, the Tab trap and version_code 100000/1/null/503 all PASS; cosmetic: the label wraps in landscape at font 1.3; the emulator would not rotate the app, so landscape was emulated with `wm size 2400x1080`
+- 2026-11-02 · frontend agent (refinement 11) · update prompt labels stay on one line (nowrap; buttons stack instead of wrapping text, 915x360 at 1.3); `fontScale` added to MainActivity configChanges with a live setTextZoom so a system font-size change keeps the open result
