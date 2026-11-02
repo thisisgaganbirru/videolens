@@ -734,6 +734,17 @@ Harness notes (not app issues): the first drop test targeted an ancestor of `.dr
 the old "D8 online unknown path" assertion looks for the words "not found" and the page says "This page doesn't exist", so I judged
 it by hand (404, header and footer present).
 
+### 2026-11-02 · frontend-43 · run 5 (RUN-R1/R2 attempt)
+
+Backend :8000 (health 200) and dev server :3005 were up at the start. Banner before: "3 free runs left. Add your own key for more."
+
+| Case | Result | Evidence |
+|---|---|---|
+| RUN-R1 REAL | BLOCKED (backend killed for memory) | One POST sent; Downloading reached Done, then the page showed "Connection lost" with Normalizing at "Waiting for connection" after 306 s. The backend and :3005 were then killed for low memory (lead's report), so this is the outage, not an app defect. Not a pass: no result, no thumbnail, History row left at Processing. One free run may have been spent. |
+| RUN-R2 REAL | BLOCKED (backend killed for memory) | Not attempted. |
+
+Incidental, from the outage: the stage list showed "Waiting for connection" with a retry countdown, "Retry now" and "Stop watching", as designed.
+
 ## Changelog
 
 - 2026-11-02 · frontend-43 · created
@@ -743,3 +754,4 @@ it by hand (404, header and footer present).
 - 2026-11-02 · frontend-43 · run 2: retested refinement 6 (D1-D6, D8-D11, D13 all pass) and the intake/run/History regression at D1366 and P390; updated the case text
 - 2026-11-02 · frontend-43 · run 3: resolved the six harness-artifact FAILs (all PASS) and retested refinement 7 (THM, head scripts, WEB-429, smoke at P390 and D1366): clean
 - 2026-11-02 · frontend-43 · run 4: refinement 8 retest (Browse/drop terms behaviour, redirects, head scripts, 404, smoke, build:mobile segment fix) all PASS
+- 2026-11-02 · frontend-43 · run 5: RUN-R1 started, interrupted by backend killed for memory (BLOCKED); RUN-R2 not attempted
