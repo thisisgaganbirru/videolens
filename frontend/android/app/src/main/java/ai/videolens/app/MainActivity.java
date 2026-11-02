@@ -25,9 +25,10 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         // Local plugins must be registered before the bridge is built.
         registerPlugin(NativeThemePlugin.class);
+        // Refinement 14: the system font scale reaches the page as its root
+        // font-size, not as WebView text zoom. See FontScalePlugin.
+        registerPlugin(FontScalePlugin.class);
         super.onCreate(savedInstanceState);
-        // The WebView was just built at this scale; only a later change needs applying.
-        lastFontScale = getResources().getConfiguration().fontScale;
         applyNightBackground();
         handleSharedText(getIntent());
     }
@@ -41,26 +42,11 @@ public class MainActivity extends BridgeActivity {
         // in-app theme change: AppCompat.setDefaultNightMode lands here too
         // (refinement 5), instead of recreating. super (BridgeActivity) also
         // hands the change to every plugin: NativeThemePlugin reports the OS
-        // night state to the page from there (refinement 7, THM-01b-6).
+        // night state to the page from there (refinement 7, THM-01b-6), and
+        // FontScalePlugin applies a live system font-size change (refinement 14;
+        // fontScale is in configChanges since refinement 11, so the activity and
+        // the open result survive the change).
         applyNightBackground();
-        applyFontScale(newConfig);
-    }
-
-    // Refinement 11: fontScale is now in the manifest's configChanges, so
-    // changing the system font size while the app is open no longer recreates
-    // the activity (which reloaded the WebView to the intake and lost an open
-    // result). The trade is that the WebView no longer picks the new size up
-    // by being rebuilt: it reads the font scale into its text zoom only when
-    // its settings are created (default textZoom = 100 x fontScale). Apply it
-    // here instead, so the change shows live, with the page's state intact.
-    private float lastFontScale = -1f;
-
-    private void applyFontScale(Configuration config) {
-        if (config.fontScale == lastFontScale) return;
-        lastFontScale = config.fontScale;
-        if (getBridge() == null) return;
-        WebView webView = getBridge().getWebView();
-        if (webView != null) webView.getSettings().setTextZoom(Math.round(config.fontScale * 100f));
     }
 
     // Refinement 3, #3. capacitor.config.ts `backgroundColor` takes one value,

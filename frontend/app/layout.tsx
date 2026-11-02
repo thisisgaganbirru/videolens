@@ -6,6 +6,7 @@ import { NATIVE_SCHEME_FLAG, SYSTEM_DARK_QUERY, THEME_COLOR, THEME_STORAGE_KEY }
 import { SHELL_STORAGE_KEY } from "@/components/shell";
 import { LANDING_REDIRECT_SCRIPT } from "@/application/landingRedirect";
 import { SPLASH_INIT_SCRIPT } from "@/application/firstRunScripts";
+import { FONT_SCALE_INIT_SCRIPT } from "@/application/nativeFontScale";
 import "./globals.css";
 
 /* Self-hosted at build time by next/font — no request to Google at runtime,
@@ -123,8 +124,12 @@ if(r.getAttribute("data-shell")==="web"){document.addEventListener("DOMContentLo
    document). The route-specific two used to be rendered by their pages; they
    moved here in refinement 1 because a page's <script> is re-created by React
    on client navigation, which never runs it and logs an error. The root
-   layout's head is hydrated, never re-created. See their own files. */
-const PRE_PAINT_SCRIPT = THEME_INIT_SCRIPT + SHELL_INIT_SCRIPT + LANDING_REDIRECT_SCRIPT + SPLASH_INIT_SCRIPT;
+   layout's head is hydrated, never re-created. See their own files.
+
+   The Android font-scale script (refinement 14) goes first; it depends on
+   nothing and only acts in the native app. See application/nativeFontScale.ts. */
+const PRE_PAINT_SCRIPT =
+  FONT_SCALE_INIT_SCRIPT + THEME_INIT_SCRIPT + SHELL_INIT_SCRIPT + LANDING_REDIRECT_SCRIPT + SPLASH_INIT_SCRIPT;
 
 export default function RootLayout({
   children,
