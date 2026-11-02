@@ -226,6 +226,22 @@ link is 52px tall (`.link-row .btn` min-height 3.25rem), Browse files 44px.
   `/app?share-target=1&url=…` fills the field; after the run, "Analyze another
   file" shows an empty field with terms still ticked.
 
+## Refinement 2 (2026-11-02)
+
+- **`noValidate` on the link form (#4).** The field stays `type="url"` (phone
+  keyboard, autofill), but the browser's "Please enter a URL." bubble no longer
+  pre-empts `submitUrl`, so "Paste a link to analyze." and the `validateUrl`
+  message show in `#intake-error`.
+- **Which control is invalid (#4).** Errors carry a field (`url` | `terms` |
+  `file`). Only `url` sets `aria-invalid` (the red `.field` state) and points
+  the link input's `aria-describedby` at `intake-error`; a `terms` error marks
+  the checkbox instead; a file error marks neither.
+- **Touch copy (#5).** The pointer/touch swap is two generic classes,
+  `.only-pointer` / `.only-touch` (`(hover: none)` in globals.css), used by the
+  drop title and HomeScreen's lede: "Paste a link or drop a file." with a
+  pointer, "Paste a link or add a file." on touch. They replace
+  `.drop-title--pointer` / `--touch`.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported UploadForm to the unboxed .intake; returns a fragment since HomeScreen supplies the wrapper
@@ -242,3 +258,4 @@ link is 52px tall (`.link-row .btn` min-height 3.25rem), Browse files 44px.
 - 2026-11-01 · main session · owner spec: desktop intake header fixed at a 40px top, eyebrow 13/600/0.08em with a 16px margin under it, H1 Newsreader 50/500 at line-height 1.05 and -0.02em with 20px under it, intro 18px at 1.55 in ink-2 with a 480px max-width and 24px to the card, in a 620px column; replaces the height-scaled padding and headline from the previous entry. Measured exactly in Chrome at 1536×730 with no page scroll; Newsreader is the variable 200–800 face, so 500 is a real weight, not synthesised
 - 2026-11-01 · frontend agent (Phase 5b) · `blocked` prop (out of free runs, no key): Analyze link and Browse files disabled, drop refused with `dropEffect: none`, submit guarded; the link field and terms box stay usable. Note: the 1536×674 no-overflow measurement above no longer holds (587 vs 540 px without the banner); see `free-runs.md`
 - 2026-11-01 · frontend agent (refinement 1) · terms storage guarded; prefill comes from HomeScreen (share or expired "analyze again"), used shares dismissed on start-over so the field clears
+- 2026-11-02 · frontend agent (refinement 2) · link form `noValidate`; aria-invalid/red state only for link errors (a terms error marks the checkbox); `.only-pointer`/`.only-touch` replace the drop-title classes and fix the touch lede
