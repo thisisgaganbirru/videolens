@@ -1,0 +1,57 @@
+# Free runs (per-device daily allowance)
+
+Callers without their own Gemini key get `FREE_RUNS_PER_DEVICE` runs per UTC day (default 3), counted against a signed, anonymous device token, with `FREE_RUNS_PER_IP` (default 10) per client IP as a backstop. Callers who send `X-Gemini-Api-Key` are exempt, the same way they are exempt from `DAILY_RUN_CAP`. This sits on top of the other limits in `cost-abuse-protection.md` and does not replace any of them.
+
+**Files**
+- `backend/app/domain/ports.py`: `DeviceTokenSigner`, `FreeRunAllowance`.
+- `backend/app/domain/entities.py`: `FreeRunStatus`, `FreeRunClaim`.
+- `backend/app/domain/errors.py`: `DeviceTokenInvalidError` (401), `FreeRunsExhaustedError` (402, carries `limit`/`used`).
+- `backend/app/infrastructure/quota/device_tokens.py`: `HmacDeviceTokens`, the token signer plus the startup check `validate_configuration()`.
+- `backend/app/infrastructure/quota/free_run_allowance.py`: `FreeRunAllowanceStore`, the counters (Redis Lua or an in-process dict).
+- `backend/app/application/create_run.py`: `CreateRunUseCase._admit`, the check itself.
+- `backend/app/application/get_free_runs.py`: `GetFreeRunsUseCase`.
+- `backend/app/interface/api/routes.py`: `GET /api/free-runs`; `POST /api/runs` passes `X-Device-Token` and `client_ip(request)` (the rate limiter's IP extraction).
+- `backend/app/interface/api/error_handlers.py`: the 401 and 402 bodies.
+- `backend/app/interface/api/app.py`: CORS allows `X-Device-Token`; lifespan runs `validate_configuration()`.
+
+## API contract
+
+`GET /api/free-runs` reads an optional `X-Device-Token`. If the token is missing or its signature does not verify, the endpoint issues a new one. It is read-only and never spends a run. It needs no `X-Client-ID` and is not rate limited, because issuing a token is free and stateless.
+
+```json
+{"device_token": "<id>.<sig>", "enabled": true, "limit": 3, "used": 1, "remaining": 2, "resets_at": "2026-11-02T00:00:00Z"}
+```
+
+`enabled: false` means the allowance is off (`FREE_RUNS_PER_DEVICE <= 0`), so there is no limit and the client hides the banner. `limit`, `used` and `remaining` are then all 0. `used` is the device's own count only; the IP backstop is not reflected.
+
+`POST /api/runs` applies the check only when no Gemini key is sent and the allowance is enabled:
+- missing or invalid `X-Device-Token`: `401 {"detail": "...", "code": "device_token_invalid"}`. The client refetches a token and retries once.
+- device or IP counter at its limit: `402 {"detail": "You have used your free runs. Add your own Gemini key to keep going.", "code": "free_runs_used", "limit": <device limit>, "used": <device used>}`. The body is the same whichever counter tripped.
+
+Other errors keep the plain `{"detail"}` shape.
+
+## Rules
+
+- **Order in `CreateRunUseCase`:** terms, then exactly one source, then `_admit` (free run), then `DAILY_RUN_CAP`, then save/probe/upload/enqueue. Invalid requests never spend a free run, and nobody without a free run reaches the daily budget or FFmpeg. Before this change the daily cap ran *before* the source check; it now runs after it.
+- **Refunds:** any exception after `_admit` hands the run back (`FreeRunAllowance.refund(claim)`). That covers the daily cap rejecting, `MediaValidationError` (for example over the duration cap) and scheduling failures. The claim records its UTC day, so a refund after midnight goes to the right day, and a counter never drops below 0. Failures *during processing* (download, Gemini) are not refunded, because the run was accepted and spent our resources.
+- **Atomicity (Redis):** one Lua script checks both counters and only then increments both (with a 2-day TTL), so a rejected request takes nothing and two racing requests cannot both take the last run. Keys: `videolens:free:device:{YYYY-MM-DD}:{device_id}` and `videolens:free:ip:{YYYY-MM-DD}:{sha256(ip)[:32]}`. The raw IP is never written.
+- **No IP** (no forwarded header and no socket peer) means no IP backstop, rather than one shared bucket.
+- **Token:** `<token_urlsafe(16)>.<base64url(HMAC-SHA256(secret, id))>`, checked with `hmac.compare_digest`. It is stateless, and any replica with the same secret verifies it.
+- **Secret:** if `DEVICE_TOKEN_SECRET` is blank in local mode, a random key is generated per process and a warning is logged. If it is blank in distributed mode (`REDIS_URL` set) while the allowance is on, the API refuses to start, because replicas would reject each other's tokens. `docker-compose.yml` sets a local-only placeholder for this reason. Rotating the secret re-issues every device a token, so anonymous counts effectively reset.
+- **MCP is unaffected:** BYOK is mandatory there, so every MCP call carries a key and skips this check entirely.
+- **Seam for paid plans:** `_admit` is the single place that decides whether a caller may start a run on the shared key. A signed-in plan check belongs there.
+
+## How easy is it to bypass
+
+- **Clearing storage or a private window** gives a new device token and a fresh device count. This is bounded by the per-IP counter (10/day by default).
+- **New IP** (VPN, toggling mobile data, another network) gives a fresh IP counter. Combined with clearing storage, that resets both counters. Nothing here stops a determined user with many IPs.
+- **Forged or edited tokens** are rejected by the HMAC check. A client cannot invent device ids.
+- **The global `DAILY_RUN_CAP`** still bounds total spend regardless of devices or IPs, and the per-IP `RATE_LIMIT_PER_HOUR` still applies.
+- **False positives:** on shared networks (offices, campuses, carrier NAT) many people share one IP and can hit `FREE_RUNS_PER_IP` together. They see the same 402 and can add their own key.
+
+The purpose is to stop casual overuse of the shared key, not to authenticate anyone.
+
+**Tests**: `backend/tests/infrastructure/quota/test_device_tokens.py` (sign/verify/tamper, startup check), `backend/tests/infrastructure/quota/test_free_run_allowance.py` (per device, per IP, day keys, refund, read-only status), `backend/tests/application/test_create_run.py` (`FreeRunAdmissionTests`), `backend/tests/interface/api/test_free_run_routes.py` (GET endpoint, 401/402 bodies, CORS). The Redis Lua path has no automated test (there is no Redis in CI).
+
+## Changelog
+- 2026-11-01 · backend agent (Phase 5b) · created: per-device free-run allowance, `GET /api/free-runs`, 401/402 codes on `POST /api/runs`

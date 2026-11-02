@@ -99,6 +99,10 @@ Complete these items before making the application publicly available.
 - [x] Daily global spend backstop (`DAILY_RUN_CAP`) independent of per-caller
       rate limiting; BYOK runs are exempt from this cap since they don't
       spend the shared key, but remain subject to the normal rate limit.
+- [ ] Per-device free runs (`FREE_RUNS_PER_DEVICE`, `FREE_RUNS_PER_IP`):
+      **set `DEVICE_TOKEN_SECRET` on the Railway backend (and worker) before
+      deploying this change** - the API refuses to start in distributed mode
+      without it. See `docs/backend/free-runs.md`.
 
 ### Operational Constraints
 
@@ -210,6 +214,13 @@ MAX_FILE_SIZE_MB=200
 MAX_DURATION_SECONDS=180
 # Global daily backstop across ALL callers, UTC day. 0 disables it.
 DAILY_RUN_CAP=200
+# Anonymous free runs per device / per IP, per UTC day (BYOK runs exempt).
+FREE_RUNS_PER_DEVICE=3
+FREE_RUNS_PER_IP=10
+# REQUIRED before the free-run release ships (API fails to start without it
+# while REDIS_URL is set). Same value on backend and worker. Generate with
+# python -c "import secrets; print(secrets.token_urlsafe(32))"
+DEVICE_TOKEN_SECRET=<secret>
 # How long a run (and its entry in a caller's history list) stays in Redis
 # after its last write. 1 hour: the browser keeps History (IndexedDB) now, so
 # the server only holds a run until it is delivered. Also bounds what the MCP

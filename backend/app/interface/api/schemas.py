@@ -53,5 +53,18 @@ class RunSummary(BaseModel):
     height: Optional[int] = None
 
 
+class FreeRunsResponse(BaseModel):
+    """`device_token` is always present: the one sent, if it was genuine,
+    else a newly issued one the client should store and send back as
+    `X-Device-Token`. `enabled=False` means no free-run limit applies."""
+
+    device_token: str
+    enabled: bool
+    limit: int
+    used: int
+    remaining: int
+    resets_at: datetime
+
+
 class RunListResponse(BaseModel):
     runs: list[RunSummary]

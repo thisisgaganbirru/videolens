@@ -3,6 +3,8 @@ import unittest
 from app.application.create_run import CreateRunUseCase
 from app.domain.entities import Principal
 from app.domain.errors import (
+    DeviceTokenInvalidError,
+    FreeRunsExhaustedError,
     InvalidSourceError,
     MediaValidationError,
     QuotaExceededError,
@@ -11,6 +13,8 @@ from app.domain.errors import (
 )
 
 from .fakes import (
+    FakeDeviceTokens,
+    FakeFreeRunAllowance,
     FakeJobQueue,
     FakeMediaProcessor,
     FakeObjectStore,
@@ -24,6 +28,9 @@ PRINCIPAL = Principal(subject="client:test-owner", authenticated=False)
 
 class CreateRunUseCaseTests(unittest.IsolatedAsyncioTestCase):
     def _make_use_case(self, *, distributed: bool = False, spend_allowed: bool = True):
+        # Free runs off here so these tests keep asserting only what they
+        # always did; FreeRunAdmissionTests below turns them on.
+        self.free_runs = FakeFreeRunAllowance(enabled=False)
         self.runs = FakeRunRepository()
         self.media = FakeMediaProcessor()
         self.storage = FakeObjectStore()
@@ -35,6 +42,8 @@ class CreateRunUseCaseTests(unittest.IsolatedAsyncioTestCase):
             storage=self.storage,
             queue=self.queue,
             spend_cap=self.spend_cap,
+            free_runs=self.free_runs,
+            device_tokens=FakeDeviceTokens(),
             distributed=distributed,
         )
 
@@ -181,6 +190,106 @@ class CreateRunUseCaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored.platform, "audio_file")
         # The submitted filename is never written anywhere on the run.
         self.assertNotIn("Jane", stored.model_dump_json())
+
+
+URL = "https://x.test/v.mp4"
+
+
+class FreeRunAdmissionTests(unittest.IsolatedAsyncioTestCase):
+    def _make(self, *, spend_allowed: bool = True, per_device: int = 3, per_ip: int = 10):
+        self.free_runs = FakeFreeRunAllowance(per_device=per_device, per_ip=per_ip)
+        self.media = FakeMediaProcessor()
+        self.queue = FakeJobQueue()
+        self.spend_cap = FakeSpendCap(allow=spend_allowed)
+        return CreateRunUseCase(
+            runs=FakeRunRepository(),
+            media=self.media,
+            storage=FakeObjectStore(),
+            queue=self.queue,
+            spend_cap=self.spend_cap,
+            free_runs=self.free_runs,
+            device_tokens=FakeDeviceTokens(),
+            distributed=False,
+        )
+
+    async def _run(self, use_case, *, token="good:dev-a", ip="1.1.1.1", key=None, file=None, url=URL):
+        return await use_case.execute(
+            principal=PRINCIPAL, accept_terms=True, file=file, url=url,
+            gemini_api_key=key, device_token=token, client_ip=ip,
+        )
+
+    async def test_own_key_is_exempt_and_needs_no_token(self) -> None:
+        use_case = self._make()
+        await self._run(use_case, token=None, key="user-key")
+        self.assertEqual(self.free_runs.consume_calls, 0)
+        self.assertEqual(len(self.queue.enqueued), 1)
+
+    async def test_missing_token_is_rejected_before_any_work(self) -> None:
+        use_case = self._make()
+        with self.assertRaises(DeviceTokenInvalidError):
+            await self._run(use_case, token=None)
+        self.assertEqual(self.spend_cap.consume_calls, 0)
+        self.assertEqual(self.queue.enqueued, [])
+
+    async def test_forged_token_is_rejected(self) -> None:
+        use_case = self._make()
+        with self.assertRaises(DeviceTokenInvalidError):
+            await self._run(use_case, token="bad:dev-a")
+
+    async def test_device_limit_returns_the_device_numbers(self) -> None:
+        use_case = self._make(per_device=2)
+        await self._run(use_case)
+        await self._run(use_case)
+        with self.assertRaises(FreeRunsExhaustedError) as caught:
+            await self._run(use_case)
+        self.assertEqual((caught.exception.limit, caught.exception.used), (2, 2))
+        self.assertEqual(len(self.queue.enqueued), 2)
+        self.assertEqual(self.spend_cap.consume_calls, 2)
+
+    async def test_ip_backstop_trips_with_the_device_numbers(self) -> None:
+        use_case = self._make(per_device=3, per_ip=2)
+        await self._run(use_case, token="good:dev-a")
+        await self._run(use_case, token="good:dev-b")
+        with self.assertRaises(FreeRunsExhaustedError) as caught:
+            await self._run(use_case, token="good:dev-c")
+        # A fresh device on the same IP: its own numbers, not the IP's.
+        self.assertEqual((caught.exception.limit, caught.exception.used), (3, 0))
+
+    async def test_disabled_feature_ignores_the_token(self) -> None:
+        use_case = self._make()
+        self.free_runs._enabled = False
+        await self._run(use_case, token=None)
+        self.assertEqual(self.free_runs.consume_calls, 0)
+
+    async def test_free_run_is_taken_before_the_daily_cap_and_refunded_when_it_rejects(self) -> None:
+        use_case = self._make(spend_allowed=False)
+        with self.assertRaises(QuotaExceededError):
+            await self._run(use_case)
+        self.assertEqual(self.free_runs.consume_calls, 1)
+        self.assertEqual(self.spend_cap.consume_calls, 1)
+        self.assertEqual(len(self.free_runs.refunds), 1)
+        self.assertEqual(self.free_runs.device_counts["dev-a"], 0)
+
+    async def test_media_validation_failure_refunds_the_free_run(self) -> None:
+        use_case = self._make()
+        self.media.enforce_duration_error = MediaValidationError("too long")
+        with self.assertRaises(MediaValidationError):
+            await self._run(use_case, file=FakeUploadedFile(), url=None)
+        self.assertEqual(self.free_runs.device_counts["dev-a"], 0)
+        self.assertEqual(self.free_runs.ip_counts["1.1.1.1"], 0)
+
+    async def test_scheduling_failure_refunds_the_free_run(self) -> None:
+        use_case = self._make()
+        self.queue.enqueue_error = ConnectionError("redis down")
+        with self.assertRaises(RunSchedulingError):
+            await self._run(use_case)
+        self.assertEqual(len(self.free_runs.refunds), 1)
+
+    async def test_invalid_source_is_rejected_before_spending_a_free_run(self) -> None:
+        use_case = self._make()
+        with self.assertRaises(InvalidSourceError):
+            await self._run(use_case, url=None)
+        self.assertEqual(self.free_runs.consume_calls, 0)
 
 
 if __name__ == "__main__":

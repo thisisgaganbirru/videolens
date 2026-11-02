@@ -36,6 +36,19 @@ class Settings(BaseSettings):
     max_duration_seconds: int = 180
     rate_limit_per_hour: int = 20
     daily_run_cap: int = 200
+    # Free runs per device per UTC day for callers without their own Gemini
+    # key. <= 0 turns the free-run allowance off entirely (no device token
+    # needed, no limit beyond DAILY_RUN_CAP).
+    free_runs_per_device: int = 3
+    # Backstop for the above, per client IP per UTC day: clearing browser
+    # storage mints a new device, not a new IP. Set above the device limit
+    # because shared networks (offices, campuses, carrier NAT) put many
+    # people behind one IP. <= 0 disables the IP backstop only.
+    free_runs_per_ip: int = 10
+    # HMAC key for device tokens. Required in distributed mode (REDIS_URL
+    # set) while free runs are on, or replicas would reject each other's
+    # tokens; generated per process (with a warning) in local mode.
+    device_token_secret: str = ""
     # 1 hour. The browser keeps History (IndexedDB) now; the server only holds
     # a run until it has been delivered. Re-armed on every write, so the hour
     # counts from completion. Also bounds what GET /api/runs (and the MCP

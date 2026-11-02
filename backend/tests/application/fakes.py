@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from app.domain.entities import (
     AnalysisCompleteness,
     CaptionTrack,
+    FreeRunClaim,
+    FreeRunStatus,
     MediaVisuals,
     Run,
     RunStatus,
@@ -293,3 +295,62 @@ class FakeUploadedFile:
 
     async def close(self) -> None:
         self.closed = True
+
+
+class FakeDeviceTokens:
+    """Accepts "good:<device id>" tokens and nothing else."""
+
+    def __init__(self) -> None:
+        self.issued = 0
+
+    def issue(self) -> str:
+        self.issued += 1
+        return f"good:device-{self.issued}"
+
+    def verify(self, token: str) -> str | None:
+        return token.removeprefix("good:") if token.startswith("good:") else None
+
+
+class FakeFreeRunAllowance:
+    """Counts per device and per IP like the real adapter, minus the days."""
+
+    def __init__(self, *, enabled: bool = True, per_device: int = 3, per_ip: int = 10) -> None:
+        self._enabled = enabled
+        self.per_device = per_device
+        self.per_ip = per_ip
+        self.device_counts: dict[str, int] = {}
+        self.ip_counts: dict[str, int] = {}
+        self.consume_calls = 0
+        self.refunds: list[FreeRunClaim] = []
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    async def status(self, device_id: str) -> FreeRunStatus:
+        used = self.device_counts.get(device_id, 0)
+        return FreeRunStatus(
+            enabled=self._enabled,
+            limit=self.per_device,
+            used=used,
+            remaining=max(0, self.per_device - used),
+            resets_at=datetime(2026, 11, 2, tzinfo=timezone.utc),
+        )
+
+    async def try_consume(self, device_id: str, client_ip: str) -> FreeRunClaim | None:
+        self.consume_calls += 1
+        if self.device_counts.get(device_id, 0) >= self.per_device:
+            return None
+        if self.ip_counts.get(client_ip, 0) >= self.per_ip:
+            return None
+        self.device_counts[device_id] = self.device_counts.get(device_id, 0) + 1
+        self.ip_counts[client_ip] = self.ip_counts.get(client_ip, 0) + 1
+        return FreeRunClaim(device_id=device_id, client_ip=client_ip, day="2026-11-01")
+
+    async def refund(self, claim: FreeRunClaim) -> None:
+        self.refunds.append(claim)
+        self.device_counts[claim.device_id] -= 1
+        self.ip_counts[claim.client_ip] -= 1
+
+    async def close(self) -> None:
+        pass

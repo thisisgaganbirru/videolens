@@ -32,6 +32,8 @@ only in `container.py`.
 - `ports.py` — `Protocol` interfaces the application layer depends on:
   `RunRepository`, `MediaProcessor`, `AnalysisEngine`, `ObjectStore`,
   `JobQueue`, `SpendCap`, `KeyVault`, `TokenVerifier`, `UploadedFile`.
+  Phase 5b added `DeviceTokenSigner` and `FreeRunAllowance` (the anonymous
+  per-device free-run allowance; entities `FreeRunStatus`/`FreeRunClaim`).
   Phase 5a added `MediaProcessor.describe_visuals` (history poster +
   display size, never raises; returns `entities.MediaVisuals`) and
   `RunRepository.set_visuals`.
@@ -42,8 +44,12 @@ only in `container.py`.
 orchestrating ports to do the work. This is where the business rules that
 used to live inline in `main.py`/`pipeline.py` now live.
 - `create_run.py` — `CreateRunUseCase`: validates terms accepted and
-  exactly-one-source, spends the daily budget, saves/enqueues the run, and
-  owns its own cleanup if something fails partway through.
+  exactly-one-source, admits the caller (`_admit`: BYOK, or a free run
+  against a signed device token; the seam for future plan checks), spends
+  the daily budget, saves/enqueues the run, and owns its own cleanup,
+  including refunding the free run, if something fails partway through.
+- `get_free_runs.py`: `GetFreeRunsUseCase`, a device's standing for today,
+  issuing a token when needed. Read-only.
 - `get_run.py` — `GetRunUseCase`: fetch + ownership check.
 - `list_runs.py` — `ListRunsUseCase`.
 - `process_run.py` — `ProcessRunUseCase`: download/validate → normalize →
@@ -65,6 +71,9 @@ global (this is what makes them independently testable — see
 - `queue/job_queue.py` — `RunQueue`: dispatches to arq/Redis in distributed
   mode, or an in-process `asyncio` task otherwise. Implements `JobQueue`.
 - `quota/daily_budget.py` — `DailyBudget`, implements `SpendCap`.
+- `quota/device_tokens.py`: `HmacDeviceTokens`, implements `DeviceTokenSigner`.
+- `quota/free_run_allowance.py`: `FreeRunAllowanceStore`, implements
+  `FreeRunAllowance` (Redis Lua or an in-process dict).
 - `byok/key_vault.py` — `ByokKeyStore`, implements `KeyVault`.
 - `auth/jwt_verifier.py` — `JwtVerifier`, implements `TokenVerifier`.
 - `config.py`, `logging_config.py` — settings and log formatting, unchanged

@@ -202,3 +202,30 @@ class CaptionTrack:
     thumbnail_urls: tuple[str, ...] = ()
     width: Optional[int] = None
     height: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class FreeRunStatus:
+    """Where one device stands against today's free-run allowance.
+
+    `used` is the device's own count; the per-IP backstop is deliberately
+    not reflected here (it is not something a device can see or act on).
+    `enabled=False` means there is no free-run limit at all.
+    """
+
+    enabled: bool
+    limit: int
+    used: int
+    remaining: int
+    resets_at: datetime
+
+
+@dataclass(frozen=True)
+class FreeRunClaim:
+    """One free run taken from the allowance, held so it can be handed back
+    if the run is rejected before it is scheduled. `day` pins the refund to
+    the UTC day the run was taken from, even if midnight passes in between."""
+
+    device_id: str
+    client_ip: str
+    day: str

@@ -8,6 +8,8 @@ from .entities import (
     AnalysisCompleteness,
     Capability,
     CaptionTrack,
+    FreeRunClaim,
+    FreeRunStatus,
     MediaVisuals,
     ReleaseIndex,
     Run,
@@ -166,6 +168,39 @@ class JobQueue(Protocol):
 
 class SpendCap(Protocol):
     async def try_consume(self) -> bool: ...
+
+    async def close(self) -> None: ...
+
+
+class DeviceTokenSigner(Protocol):
+    """Issues and checks the signed, anonymous device token the free-run
+    allowance is counted against. The token carries no personal data: it is
+    a random id plus a signature, so a client cannot mint ids of its own."""
+
+    def issue(self) -> str: ...
+
+    def verify(self, token: str) -> str | None:
+        """The device id inside a genuine token, or None for anything else."""
+        ...
+
+
+class FreeRunAllowance(Protocol):
+    """How many runs a caller without their own Gemini key may start per
+    UTC day, counted per device and, as a backstop, per IP."""
+
+    @property
+    def enabled(self) -> bool: ...
+
+    async def status(self, device_id: str) -> FreeRunStatus:
+        """Read-only: never consumes."""
+        ...
+
+    async def try_consume(self, device_id: str, client_ip: str) -> FreeRunClaim | None:
+        """Atomically take one run from both counters, or None (taking
+        nothing) if either is already at its limit."""
+        ...
+
+    async def refund(self, claim: FreeRunClaim) -> None: ...
 
     async def close(self) -> None: ...
 

@@ -59,3 +59,18 @@ class RunSchedulingError(Exception):
 
 class RunNotFoundError(Exception):
     """No run exists for the given id and owner."""
+
+
+class DeviceTokenInvalidError(Exception):
+    """A free run was requested without a valid signed device token. The
+    client fetches a fresh one from `GET /api/free-runs` and retries."""
+
+
+class FreeRunsExhaustedError(Exception):
+    """This device (or its network) has used today's free runs. `limit` and
+    `used` are always the device's own numbers, whichever counter tripped."""
+
+    def __init__(self, message: str, *, limit: int, used: int) -> None:
+        super().__init__(message)
+        self.limit = limit
+        self.used = used
