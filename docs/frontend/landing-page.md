@@ -60,6 +60,30 @@ on `http://localhost:3005` and `next start` never take this branch), it replaces
 `/app.html` there. This also covers `/privacy` and `/terms` in Capacitor, which
 had the same problem before.
 
+**Unknown paths in the installed app (refinement 8, NF-01).** The asset server
+answers *every* extensionless path it has no file for with `index.html`, so
+`/nope`, `/nope/deeper` or `/app/zzz` used to show the landing page, dock and
+all, at the bad address (android-66, API 35; `out/404.html` never loaded). The
+same branch now sends any such path to `/404.html` (the export's not-found
+page, from `app/not-found.tsx`; constant `NOT_FOUND_DOCUMENT`). The test is the
+asset server's own rule: it substitutes `index.html` only when the last path
+segment has no `.`, so on the asset-server origin with native reported:
+
+| Path (trailing `/` ignored) | Result |
+|---|---|
+| `/`, `/index.html` | rule 2 below (to `/app`) |
+| `/app`, `/privacy`, `/terms`, `/offline` | `<path>.html` + query + hash |
+| any other path whose last segment has no `.` | `/404.html` (query and hash dropped) |
+| last segment has a `.` (`/app.html`, `/404.html`, …) | nothing: the real file is running |
+
+The last row is also what keeps `/404.html` from looping. A dotted path with no
+file (`/nope.txt`) gets an empty 404 from Capacitor and no document runs, so it
+cannot be caught here. Web is unchanged (no native report, or a port): a browser
+tab, `next start`, a static host and live reload all keep their own 404
+handling. On the 404 page itself "Go to the home page" is hidden in the
+installed shell (`.not-found-action--web`): the home page is the landing, and a
+client-side navigation to `/` would render it without this script.
+
 **Not verified on a device.** Agents do not run the native build. See Known issues.
 
 ## Content and honesty
@@ -151,6 +175,9 @@ of being cut off by the footer.
   `UploadForm`, `clientId` and `apiKeyStore.set` now catch storage errors.
   Verified with both storages throwing (browser and emulated native): the tool
   loads, Welcome opens once and dismisses, the terms box works, no page errors.
+- **Unknown paths are only caught when they are extensionless** (refinement 8).
+  `/whatever.xyz` with no file is an empty 404 from Capacitor's asset server,
+  before any document runs.
 - **The template-literal escape trap.** The redirect script is a template
   literal, so its regex backslashes are doubled (`/\/+$/` in source). A single
   `\/` once collapsed to `//` mid-refinement-1, commented out the rest of the
@@ -166,3 +193,4 @@ of being cut off by the footer.
 - 2026-11-01 · videolens-ff (lead) · "What you get" footnote (`.landing-wyg-foot`) runs the full card width (dropped `max-width: 44rem`) with `text-wrap: pretty`
 - 2026-11-01 · videolens-ff (lead) · `#how` fills the band and centres its content on desktop, so "See how it works" no longer leaves "What you get" cut off above the footer
 - 2026-11-01 · frontend agent (refinement 1) · redirect script moved into the root layout head (no React script warning), Capacitor hop limited to the asset-server origin, storage-crash known issue closed, escape-trap note; verified in `next start`, a separate `next dev`, and an emulated asset server over `out/`
+- 2026-11-02 · frontend agent (refinement 8) · NF-01: on the asset-server origin, an unknown extensionless path goes to `/404.html` instead of showing the landing; 404's home-page link hidden in the installed shell; verified on an emulated asset server over `out/`, `node --check` on all 7 exported head scripts
