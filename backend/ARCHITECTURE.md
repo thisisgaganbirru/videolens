@@ -54,7 +54,8 @@ used to live inline in `main.py`/`pipeline.py` now live.
 - `list_runs.py` — `ListRunsUseCase`.
 - `process_run.py` — `ProcessRunUseCase`: download/validate → normalize →
   analyze → persist, then releases the run's held free run (refunding it
-  only when the link failed to download). Run by both the in-process local
+  only when a link run was rejected before analysis: the download failed,
+  or the downloaded file failed the duration cap). Run by both the in-process local
   runner and the arq worker — it doesn't know or care which.
 
 **`infrastructure/`** — concrete adapters implementing the ports above.

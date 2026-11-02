@@ -572,9 +572,55 @@ class FreeRunDownloadRefundTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runs.runs[run_id].status, RunStatus.FAILED)
         self.assertEqual(self.free_runs.refunds, [])
 
-    async def test_too_long_after_downloading_is_not_refunded(self) -> None:
+    async def test_too_long_after_downloading_is_refunded(self) -> None:
         run_id = await self._intake()
         self.media.enforce_duration_error = MediaValidationError("This video is too long.")
+
+        await self.use_case.execute(run_id, source_url=self.URL)
+
+        self.assertEqual(self.runs.runs[run_id].status, RunStatus.FAILED)
+        self.assertEqual(self.runs.runs[run_id].error, "This video is too long.")
+        self.assertEqual(len(self.free_runs.refunds), 1)
+        self.assertEqual(self.free_runs.device_counts["dev-a"], 0)
+        self.assertEqual(self.free_runs.ip_counts["1.1.1.1"], 0)
+        self.assertEqual(self.free_runs.held, {})
+        # Rejected before analysis: Gemini was never called.
+        self.assertEqual(self.analysis.calls, [])
+
+    async def test_too_long_after_downloading_never_refunds_twice(self) -> None:
+        run_id = await self._intake()
+        self.media.enforce_duration_error = MediaValidationError("This video is too long.")
+
+        # A retried job (arq max_tries) hits the cap a second time.
+        await self.use_case.execute(run_id, source_url=self.URL)
+        await self.use_case.execute(run_id, source_url=self.URL)
+
+        self.assertEqual(len(self.free_runs.refunds), 1)
+        self.assertEqual(self.free_runs.device_counts["dev-a"], 0)
+
+    async def test_a_byok_run_that_is_too_long_refunds_nothing(self) -> None:
+        run_id = await self._intake(key="user-key")
+        self.media.enforce_duration_error = MediaValidationError("This video is too long.")
+
+        await self.use_case.execute(run_id, source_url=self.URL, gemini_api_key="user-key")
+
+        self.assertEqual(self.free_runs.consume_calls, 0)
+        self.assertEqual(self.free_runs.refunds, [])
+
+    async def test_an_upload_too_long_in_the_worker_is_not_refunded(self) -> None:
+        # Uploads are checked for length at intake, which refunds there; the
+        # worker's re-check of an S3 upload is not a second refund path.
+        run_id = await self._intake(url=None, file=FakeUploadedFile())
+        self.media.enforce_duration_error = MediaValidationError("This video is too long.")
+
+        await self.use_case.execute(run_id, source_key=f"uploads/{run_id}.mp4")
+
+        self.assertEqual(self.runs.runs[run_id].status, RunStatus.FAILED)
+        self.assertEqual(self.free_runs.refunds, [])
+
+    async def test_a_failure_at_normalize_after_downloading_is_not_refunded(self) -> None:
+        run_id = await self._intake()
+        self.media.normalize_error = MediaValidationError("Could not read this file.")
 
         await self.use_case.execute(run_id, source_url=self.URL)
 
