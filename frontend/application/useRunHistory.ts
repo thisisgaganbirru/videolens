@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { HistoryRecord, RunSummary } from "@/domain/entities";
+import type { HistoryRecord, RunPlatform, RunSummary } from "@/domain/entities";
+import { knownPlatformName, linkHost, platformFromUrl } from "@/domain/platforms";
 import { StorageUnavailableError } from "@/domain/errors";
 import { EXPIRED_MESSAGE, bootHistory } from "@/application/historySync";
 import { historyStore } from "@/infrastructure/container";
@@ -33,14 +34,38 @@ export interface HistoryEntry extends RunSummary {
 const STORAGE_MESSAGE = "History can't be saved in this browser.";
 const UNKNOWN_MESSAGE = "History could not be read from this browser.";
 
+/* Refinement 9 (item 10): a link run that failed before the server sent any
+   metadata (an Instagram download refusal, say) was filed as "Untitled run"
+   under a bare "Link" chip — although this browser stored the link it
+   submitted. The row now uses what is known, in order: the server's platform
+   and title; else the platform judged from the link's host and a title made
+   from it ("Instagram link", or the host itself). An upload with no title
+   shows its file name. Display only — the record keeps the server's values,
+   and real metadata replaces these the moment it arrives. */
+function fallbackPlatform(record: HistoryRecord): RunPlatform | null {
+  if (record.platform) return record.platform;
+  if (record.source_kind === "file") return null;
+  return platformFromUrl(record.source_url ?? record.source_metadata?.source_url);
+}
+
+function fallbackTitle(record: HistoryRecord, platform: RunPlatform | null): string | null {
+  if (record.title?.trim()) return record.title;
+  if (record.file_name) return record.file_name;
+  const url = record.source_url ?? record.source_metadata?.source_url;
+  if (!url) return null;
+  const name = knownPlatformName(platform);
+  return name ? `${name} link` : linkHost(url);
+}
+
 function toEntry(record: HistoryRecord, thumbnailUrl: string | null): HistoryEntry {
+  const platform = fallbackPlatform(record);
   return {
     run_id: record.run_id,
     status: record.status,
-    title: record.title,
+    title: fallbackTitle(record, platform),
     created_at: record.created_at,
     source_kind: record.source_kind,
-    platform: record.platform,
+    platform,
     duration_seconds: record.duration_seconds,
     summary_snippet: record.summary_snippet,
     orientation: record.orientation,

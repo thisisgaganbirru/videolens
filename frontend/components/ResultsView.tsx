@@ -8,6 +8,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { splitTakeaway } from "./takeaway";
 import { formatDuration } from "./history";
+import { platformKey, platformName } from "@/domain/platforms";
 import type {
   AnalysisCompleteness,
   ScreenTextSegment,
@@ -305,7 +306,7 @@ function buildMarkdownReport(
 
   if (sourceMetadata) {
     const sourceDetails = [
-      `- **Platform:** ${singleLine(sourceMetadata.platform)}`,
+      `- **Platform:** ${singleLine(platformName(sourceMetadata.platform))}`,
       sourceMetadata.title && `- **Source title:** ${singleLine(sourceMetadata.title)}`,
       sourceMetadata.uploader &&
         `- **Creator:** ${
@@ -420,7 +421,7 @@ export function SourceCard({ metadata }: { metadata: SourceMetadata }) {
     { label: "likes", value: metadata.like_count },
     { label: "comments", value: metadata.comment_count },
   ].flatMap((stat) => (stat.value == null ? [] : [{ ...stat, value: stat.value }]));
-  const icon = PLATFORM_ICONS[metadata.platform.toLowerCase()];
+  const icon = PLATFORM_ICONS[platformKey(metadata.platform) ?? ""];
 
   return (
     <article className="source-card">
@@ -435,7 +436,7 @@ export function SourceCard({ metadata }: { metadata: SourceMetadata }) {
               className="source-card__platform-icon"
             />
           )}
-          {metadata.platform}
+          {platformName(metadata.platform)}
         </span>
         <a href={metadata.source_url} target="_blank" rel="noreferrer" className="source-card__action">
           Original post
