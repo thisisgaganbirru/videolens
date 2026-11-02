@@ -1,9 +1,9 @@
 "use client";
 
-import { useId, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useId, useRef, useState, type KeyboardEvent } from "react";
 import { useResultExport } from "@/application/useResultExport";
 import type { MarkdownDocument } from "@/domain/ports";
-import { ArrowUpRight, Check, ChevronDown, Copy, Share2 } from "lucide-react";
+import { ArrowUpRight, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Share2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { splitTakeaway } from "./takeaway";
@@ -580,6 +580,41 @@ export default function ResultsView({
   const selectTab = (key: TabKey) => {
     setActive(key);
     setCopied(false);
+    /* A tab half under the edge fade comes fully into view once chosen. */
+    tabRefs.current[key]?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  };
+
+  /* Refinement 11 (D-R10-2): with large text on a narrow phone the four tabs
+     do not fit, and a scroller with a hidden scrollbar just cut "Transcript"
+     off mid-word, which read as broken. The row still scrolls, but now says
+     so: an edge fade with a chevron appears on whichever side has more, and
+     tapping it pages the row. The state is written straight onto the
+     wrapper's data attributes (no React state, so no re-render per scroll
+     event); CSS shows the chevrons from those. */
+  const scrollerCleanup = useRef<(() => void) | null>(null);
+  const tabScroller = useCallback((wrap: HTMLDivElement | null) => {
+    scrollerCleanup.current?.();
+    scrollerCleanup.current = null;
+    const list = wrap?.querySelector<HTMLElement>(".tab-list");
+    if (!wrap || !list) return;
+    const update = () => {
+      const max = list.scrollWidth - list.clientWidth;
+      /* scrollLeft is negative in an RTL row; the row here is always LTR. */
+      wrap.dataset.moreStart = String(list.scrollLeft > 1);
+      wrap.dataset.moreEnd = String(max - list.scrollLeft > 1);
+    };
+    update();
+    list.addEventListener("scroll", update, { passive: true });
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+    observer?.observe(list);
+    scrollerCleanup.current = () => {
+      list.removeEventListener("scroll", update);
+      observer?.disconnect();
+    };
+  }, []);
+  const pageTabs = (direction: 1 | -1) => (event: { currentTarget: HTMLElement }) => {
+    const list = event.currentTarget.parentElement?.querySelector<HTMLElement>(".tab-list");
+    list?.scrollBy({ left: direction * list.clientWidth * 0.7, behavior: "smooth" });
   };
 
   /* WAI-ARIA tabs, automatic activation: arrows move and select, Home/End jump
@@ -691,25 +726,48 @@ export default function ResultsView({
         </p>
       )}
 
-      <div className="tab-list" role="tablist" aria-label="Analysis results" onKeyDown={onTabKeyDown}>
-        {TABS.map((tab) => (
-          <button
-            key={tab.key}
-            ref={(node) => {
-              tabRefs.current[tab.key] = node;
-            }}
-            type="button"
-            onClick={() => selectTab(tab.key)}
-            role="tab"
-            id={`result-tab-${tab.key}`}
-            aria-selected={active === tab.key}
-            aria-controls={`result-panel-${tab.key}`}
-            tabIndex={active === tab.key ? 0 : -1}
-            className="tab"
-          >
-            {tab.label}
-          </button>
-        ))}
+      <div className="tab-scroller" ref={tabScroller} data-more-start="false" data-more-end="false">
+        {/* The chevrons are pointer-only helpers (aria-hidden, out of the Tab
+            order): keyboard users already move through the row with the arrow
+            keys, and focusing a tab scrolls it into view. */}
+        <button
+          type="button"
+          className="tab-more tab-more--start"
+          aria-hidden="true"
+          tabIndex={-1}
+          onClick={pageTabs(-1)}
+        >
+          <ChevronLeft aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className="tab-more tab-more--end"
+          aria-hidden="true"
+          tabIndex={-1}
+          onClick={pageTabs(1)}
+        >
+          <ChevronRight aria-hidden="true" />
+        </button>
+        <div className="tab-list" role="tablist" aria-label="Analysis results" onKeyDown={onTabKeyDown}>
+          {TABS.map((tab) => (
+            <button
+              key={tab.key}
+              ref={(node) => {
+                tabRefs.current[tab.key] = node;
+              }}
+              type="button"
+              onClick={() => selectTab(tab.key)}
+              role="tab"
+              id={`result-tab-${tab.key}`}
+              aria-selected={active === tab.key}
+              aria-controls={`result-panel-${tab.key}`}
+              tabIndex={active === tab.key ? 0 : -1}
+              className="tab"
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* All four panels stay mounted; `.panel` hides the inactive ones with
