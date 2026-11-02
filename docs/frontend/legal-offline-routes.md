@@ -732,6 +732,23 @@ landing painted; `/`, `/app`, `/privacy`, `/terms`, `/offline` unchanged; "Open
 VideoLens" reaches the tool. Web (static host, no bridge) still shows the 404
 at the typed address with both links.
 
+## Refinement 9 (2026-11-02) — one address for the tool in the installed app
+
+On the Capacitor asset server (native, `localhost`, no port), a cold start, a
+reload and the legal pages' Back (a history step) landed on `/app.html`. The
+dock and Back's fresh-entry link are client-side navigations to `/app`, so the
+same screen answered to two addresses. `canonicalizeAppPath()`
+(`application/useMainTab.ts`, run once by HomeScreen on mount) rewrites `/app`
+or `/app/` to `/app.html` with `history.replaceState`. It keeps the query, the
+hash and the in-app entry marker, and passes a fresh state object to Next's
+patched history. `/app.html` is the spelling that resolves on the asset server
+without the `index.html` hop. On the web (`isCapacitorAssetServer()` false) it
+does nothing, and `/app` stays `/app`.
+
+Verified on an emulated asset server serving `out/`: start, terms Back (fresh
+entry), privacy Back (after the app) and the dock from privacy all end on
+`/app.html`. On `next start` the web stays on `/app`.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported privacy/terms/offline off the Midnight Glass classes
@@ -749,3 +766,4 @@ at the typed address with both links.
 - 2026-11-01 · frontend agent (Phase 5c) · SW: precache /app, / (now the landing) offline-capable, History offline moved to /app?view=history, legacy /?view=history via the landing's redirect; offline page links → /app; measured with the server killed
 - 2026-11-02 · frontend agent (refinement 6) · OFF-03 app/not-found.tsx with shared chrome (out/404.html); SW unchanged
 - 2026-11-02 · frontend agent (refinement 8) · NF-01: installed app sent to `/404.html` for unknown extensionless paths; home-page link hidden in the installed shell
+- 2026-11-02 · frontend agent (refinement 9) · installed app canonicalizes /app to /app.html (asset server only) so Back and the dock agree; web unchanged

@@ -79,8 +79,33 @@ now. You can still open past runs in History.", or "You're offline right now.
 the pill appears on its own. Nothing is blocked. See
 `capability-reporting.md` for the other half.
 
+## Refinement 9 (2026-11-02) — staying current, and proving a refund
+
+**Re-reads.** `revalidateFreeRuns()` (a no-op on the user's own key) runs:
+- on `visibilitychange` to visible, and on Capacitor `resume` (via the new
+  `NativeShell.onResume`, throttled to 1.5s), from `useFreeRuns`;
+- whenever a run completes or fails (`useAnalysisRun.settleFreeRuns`);
+- whenever the intake comes back (`status === "idle"` in HomeScreen), so
+  "Analyze another file" after a refunded run shows the refunded count.
+`refreshFreeRuns` already dedupes in-flight reads.
+
+**Refund line, only with proof.** On submit, `useAnalysisRun` keeps the
+allowance it saw (`currentFreeRuns()`, null on an own key). When a run fails it
+reads again. If `remaining` is back to the pre-submit value with the same
+`resetsAt` (`provesRefund`), the failed view says "This didn't use one of your
+free runs." Otherwise it says nothing. The backend stores `failed`
+(`set_error`) before `_settle_free_run` refunds, so a poll can see the failure
+before the refund lands. The client therefore re-reads once more after 2.5s
+(`REFUND_RECHECK_MS`). Settling before `set_error` in `process_run` would remove
+the race at its source. That is a backend decision, left to the owner.
+
+Verified (mocked `/api/*`): refund visible immediately → line shown; refund
+landing after the first failed poll → line shown after the recheck; no refund →
+no line; BYOK → no line and zero `/api/free-runs` reads.
+
 ## Changelog
 
 - 2026-11-01 · frontend agent (Phase 5b) · created: device token store, free-runs gateway/port, `useFreeRuns` store, 401 retry-once and 402 limit state in `useAnalysisRun`, `FreeRunsBanner` on all shells, `UploadForm` `blocked`, API key lede and Privacy sentence
 - 2026-11-01 · frontend agent (Phase 5c) · Add key now links to /app?view=api-key (via mainTabHref)
 - 2026-11-02 · frontend agent (refinement 4) · free-runs read reports reachability; re-read on online/focus/visible while the unreachable notice is up (LCH-06)
+- 2026-11-02 · frontend agent (refinement 9) · re-read on visibilitychange, Capacitor resume, run settle and intake return; failed view states "This didn't use one of your free runs." only when the re-read count proves the refund (2.5s recheck for the backend's set_error-before-refund ordering)

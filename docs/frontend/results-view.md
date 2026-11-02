@@ -393,6 +393,14 @@ an English one in the same run stays left. Note: `dir="auto"` on a `ul` skips
 children that carry their own `dir`, so the list element itself computes LTR;
 each `li` is what flips, which is what places the marker.
 
+## Platform names (refinement 9)
+
+Source card, source toggle and the Markdown export's `Platform:` line print
+`platformName(source_metadata.platform)` from `domain/platforms.ts`. yt-dlp's
+extractor key used to print raw ("Source: Youtube"). The icon lookup uses
+`platformKey`, which folds variants such as `YoutubeTab` onto their platform.
+History's chip uses the same module, so one run is spelled one way everywhere.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported ResultsView + SourceCard; de-boxed the source card, wired .disclosure and role=tabpanel, rebuilt SourceCard.preview with six states
@@ -409,3 +417,4 @@ each `li` is what flips, which is what places the marker.
 - 2026-11-02 · frontend agent (refinement 2) · Android "Download .md" writes a real `<slug>.md` to the cache (@capacitor/filesystem 8.1.5) and shares the file ("Save notes"), text-share fallback; FileProvider already covers the cache; file runs get FileSourceCard (name from IndexedDB `file_name`, duration from the run detail)
 - 2026-11-02 · frontend agent (refinement 4) · Copy's accessible name, tooltip and a new visible confirmation name the active tab ("Copy transcript" / "Transcript copied"); Share relabelled "Share all results" (RES-05)
 - 2026-11-02 · frontend agent (refinement 6) · RES-14 dir="auto" on every result text block incl. Markdown; logical padding/alignment
+- 2026-11-02 · frontend agent (refinement 9) · source card, source toggle and Markdown export spell platforms through domain/platforms.ts ("YouTube", not yt-dlp's "Youtube")
