@@ -11,7 +11,13 @@ import type {
   VideoAnalysis,
 } from "@/domain/entities";
 import { classifyGatewayError } from "@/application/gatewayError";
-import { EXPIRED_MESSAGE, recordRunResponse, recordSubmitted } from "@/application/historySync";
+import {
+  EXPIRED_MESSAGE,
+  isRunGone,
+  recordExpired,
+  recordRunResponse,
+  recordSubmitted,
+} from "@/application/historySync";
 import { markFreeRunsUsed, noteRunAccepted, refreshFreeRuns } from "@/application/useFreeRuns";
 import { ApiError } from "@/domain/errors";
 import { apiKeyStore, historyStore, runsGateway } from "@/infrastructure/container";
@@ -102,6 +108,11 @@ export function useAnalysisRun() {
      closure inside the same tick a second submit could arrive in; a ref is
      read at call time, which is what a re-entrancy guard needs. */
   const submittingRef = useRef(false);
+  /* The link of the run being watched live, when it was submitted from a link
+     in this session — what "Analyze it again" puts back if the server forgets
+     the run mid-flight (refinement 3, #1). A ref because the poll's closure
+     reads it; History holds the same value, but may be unavailable. */
+  const liveUrlRef = useRef<string | null>(null);
   /* Bumped by every intent that replaces what is on screen — `submit`,
      `openRun`, `reset`. A request that was already in flight when the next
      intent arrived resolves into a screen that has moved on, so each one drops
@@ -171,6 +182,27 @@ export function useAnalysisRun() {
     return false;
   }, []);
 
+  /* Refinement 3, #1: the server answered 404 for a run this browser knows
+     about — it forgot the run (past its hold, or a restart of an in-memory
+     store). That is final, not a lost connection: stop every timer, file the
+     History row as expired, and show the expired view with its normal
+     actions. `knownUrl` is the link when the caller already has it; otherwise
+     the one History stored is used once the write lands. */
+  const expireRun = useCallback(
+    async (runId: string, generation: number, knownUrl: string | null) => {
+      stopTimers();
+      clearReconnect();
+      setStatus("failed");
+      setStage(null);
+      setError(EXPIRED_MESSAGE);
+      setExpired({ againUrl: knownUrl });
+      const storedUrl = await recordExpired(runId);
+      if (generationRef.current !== generation) return;
+      if (!knownUrl && storedUrl) setExpired({ againUrl: storedUrl });
+    },
+    [clearReconnect, stopTimers]
+  );
+
   /* `startPolling` and `scheduleReconnect` reach each other (a dead poll
      schedules a reconnect; a good reconnect resumes polling), so the second is
      called through a ref rather than a dependency cycle. */
@@ -190,6 +222,10 @@ export function useAnalysisRun() {
           }
         } catch (err) {
           if (generationRef.current !== generation) return;
+          if (isRunGone(err)) {
+            void expireRun(runId, generation, liveUrlRef.current);
+            return;
+          }
           /* The interval stops, and the screen stops claiming progress:
              `HomeScreen` reads (error && status is queued or processing) as
              "connection lost". What changed is that this is no longer the end —
@@ -202,7 +238,7 @@ export function useAnalysisRun() {
         }
       }, POLL_INTERVAL_MS);
     },
-    [applyRun, fail]
+    [applyRun, expireRun, fail]
   );
 
   const attemptReconnect = useCallback(
@@ -223,12 +259,16 @@ export function useAnalysisRun() {
         if (!applyRun(run)) startPolling(runId, generation);
       } catch (err) {
         if (generationRef.current !== generation) return;
+        if (isRunGone(err)) {
+          void expireRun(runId, generation, liveUrlRef.current);
+          return;
+        }
         fail(err, POLL_FALLBACK);
         attemptRef.current += 1;
         scheduleReconnectRef.current(generation);
       }
     },
-    [applyRun, clearReconnect, fail, startPolling]
+    [applyRun, clearReconnect, expireRun, fail, startPolling]
   );
 
   const scheduleReconnect = useCallback(
@@ -312,6 +352,7 @@ export function useAnalysisRun() {
         if (generationRef.current !== generation) return;
         setSourceName(describeSource(source));
         setRetrySource(source);
+        liveUrlRef.current = source.url || null;
         setStatus(run.status);
         startPolling(run.run_id, generation);
       } catch (err) {
@@ -346,6 +387,7 @@ export function useAnalysisRun() {
     stopTimers();
     clearReconnect();
     runIdRef.current = null;
+    liveUrlRef.current = null;
     generationRef.current += 1;
     setStatus("idle");
     setStage(null);
@@ -376,15 +418,25 @@ export function useAnalysisRun() {
       setDurationSeconds(null);
       setRetrySource(null);
       setExpired(null);
+      liveUrlRef.current = null;
       setSourceKind(sourceKindHint === "link" ? "url" : "file");
       setStatus("processing");
       const generation = ++generationRef.current;
+      /* Whether this browser has its own record of the run. A 404 for one it
+         knows means "expired"; for an id it has never seen it just means
+         "not found" (refinement 3, #1). */
+      let known = false;
+      let knownUrl: string | null = null;
       /* History first: a finished run reopens from this browser with no
          network at all. Only a record without a result (still running, or
          one the store could not hold) falls through to the server. */
       try {
         const record = await historyStore.get(runId);
         if (generationRef.current !== generation) return;
+        if (record) {
+          known = true;
+          knownUrl = record.source_url ?? record.source_metadata?.source_url ?? null;
+        }
         /* What this browser remembers about an upload: its name (never sent
            to or kept by the server) and its length. */
         if (record?.file_name) setSourceName(record.file_name);
@@ -417,11 +469,16 @@ export function useAnalysisRun() {
         if (!applyRun(run)) startPolling(runId, generation);
       } catch (err) {
         if (generationRef.current !== generation) return;
+        if (known && isRunGone(err)) {
+          runIdRef.current = runId;
+          void expireRun(runId, generation, knownUrl);
+          return;
+        }
         setStatus("idle");
         fail(err, OPEN_FALLBACK);
       }
     },
-    [applyRun, clearReconnect, fail, startPolling, stopTimers]
+    [applyRun, clearReconnect, expireRun, fail, startPolling, stopTimers]
   );
 
   /* Resubmit the run that just failed, same link or same file. Only offered

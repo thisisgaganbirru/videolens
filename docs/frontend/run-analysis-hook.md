@@ -85,6 +85,33 @@ only, nothing new is sent to the server), else `source_metadata.source_url`.
 expired view and an "Analyze it again" that returns to the intake with the
 link filled (see `run-status-pipeline.md`).
 
+### A 404 on any path means expired (refinement 3, #1)
+
+Before this, only `bootHistory`'s startup reconcile turned a 404 into
+"expired". A server restart mid-run (in-memory store) left the live screen on
+"Connection lost" forever (the poll and every reconnect treated the 404 as a
+network blip) and a reopen from History showed the intake with a bare
+"Run not found." while the row stayed "Processing".
+
+Now `historySync.isRunGone(err)` (`ApiError` with `status === 404`) is checked
+on all three paths in the hook, and each calls `expireRun(runId, generation,
+knownUrl)`:
+
+| Path | Condition | `knownUrl` |
+|---|---|---|
+| `startPolling` catch | any 404 | `liveUrlRef` (the link submitted in this session, else null) |
+| `attemptReconnect` catch (also "Retry now") | any 404 | same |
+| `openRun` server fallback | 404 **and** this browser has a History record for the id | `record.source_url ?? source_metadata.source_url` |
+
+`expireRun` stops every timer, clears the reconnect state, sets `status:
+"failed"`, `error: EXPIRED_MESSAGE` and `expired`, then awaits
+`historySync.recordExpired(runId)` (upserts `failed` + `EXPIRED_MESSAGE`, the
+same write the startup reconcile now uses, and resolves to the stored link).
+If the caller had no link but History has one, `againUrl` is filled in when
+the write lands. File runs get the expired view's "Choose the file again".
+A 404 for an id this browser has never seen keeps the old idle + "Run not
+found." behaviour. Network errors and 5xx keep the reconnect countdown.
+
 ## Changelog
 
 - 2026-08-21 · main session · made reset() clear the poll interval, and added the generation counter that drops a superseded submit/openRun response
@@ -97,3 +124,4 @@ link filled (see `run-status-pipeline.md`).
 - 2026-11-01 · frontend agent (Phase 5a) · `submit`/`applyRun` file runs into the browser History (`historySync.ts`); `openRun` reopens complete/failed runs from IndexedDB with no network, falling back to the server only when the record lacks a result
 - 2026-11-01 · frontend agent (Phase 5b) · `submit` retries once on 401 `device_token_invalid`, marks the limit on 402 `free_runs_used` (no error line; back to idle from a failed-view retry), and refreshes the free-run count after a 202
 - 2026-11-01 · frontend agent (refinement 1) · `expired` / `againUrl` for runs the server forgot; `source_url` stored on submit (IndexedDB only)
+- 2026-11-02 · frontend agent (refinement 3) · a 404 on the live poll, a reconnect or openRun's server fallback now expires the run (History row failed + EXPIRED_MESSAGE, expired view) instead of "Connection lost" / "Run not found."; `liveUrlRef` for the link

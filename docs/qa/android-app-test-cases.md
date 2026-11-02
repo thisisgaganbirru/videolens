@@ -128,6 +128,10 @@ couldn't verify as a question, not a fact.
 | RUN-04 | During a run, Home, wait 20 s, then reopen. | Polling resumes and it reaches the result. |
 | RUN-05 | When a run starts or finishes. | The page scrolls to the top on each state change. |
 | RUN-06 | Expired run: open a run whose server copy is gone (e.g. restart the backend during RUN-02 **only if** R2 already finished; otherwise use any History row older than 1 h that has no stored result). | Its own title/copy, no stage list, and an "Analyze it again" button that pre-fills the link (link runs). |
+| RUN-06b | *(refinement 3)* Live run, server forgets it: start a **link** run, then restart the backend (in-memory store) while it is processing. Stay on the run screen. | Within one poll (~3 s) or at the next reconnect: "This run expired" with "Analyze it again" (pre-fills the link). Never stuck on "Connection lost". The History row shows expired, not Processing. |
+| RUN-06c | *(refinement 3)* Same as RUN-06b with a **file** run. | Expired view with "Choose the file again"; the History row shows expired. |
+| RUN-06d | *(refinement 3)* Reopen from History a row the server has forgotten that is still marked Processing (e.g. start a run, restart the backend and then force-stop the app before the screen updates; relaunch with the backend still down so the startup check cannot reach it, then bring the backend up and tap the row). | Expired view with its actions, never the intake with a bare "Run not found."; the row turns expired. |
+| RUN-06e | *(refinement 3, regression)* During a run, turn on airplane mode, wait, then turn it off. | "Connection lost" with the countdown and "Retry now" as before (not expired); with the network back the run resumes. |
 | RUN-07 | Double-tap Analyze fast. | Exactly one run is created (check the banner only decrements by 1). |
 | RUN-08 | "Analyze another file" after a result. | Form with an **empty** link field; terms stay ticked. |
 
@@ -182,6 +186,7 @@ couldn't verify as a question, not a fact.
 | ORI-02 | Rotate during a run. | The run keeps going and the state is kept. |
 | ORI-03 | Font size Largest (Settings → Display). | Text wraps; there's no overlapping and buttons stay tappable. |
 | ORI-04 | No horizontal scroll on any screen. | Pass. |
+| ORI-05 | *(refinement 3)* Portrait and landscape, at rest (no scrolling): Connection lost (airplane mode mid-run), a failed run, an expired run, History, API key, More pages. | No button, link or field sits under the dock; a tap just above the dock never hits a tab. Content scrolls inside the band between the top bar and the dock; the top bar and the dock never move. API key in landscape: the whole screen does not scroll. |
 
 ## 13. More sheet pages
 
@@ -215,3 +220,4 @@ Open items from this run: LCH-02/03 dark launch screen hands off to a light page
 
 - 2026-11-01 · android-66 (device QA) · added the Run log for the first bundled-APK pass
 - 2026-11-01 · videolens-ff (lead) · First version of the full Android app test suite, for the bundled-APK QA pass after the Phase 5 refinement fixes.
+- 2026-11-02 · frontend agent (refinement 3) · added RUN-06b..e (404 expiry on every path, airplane-mode regression) and ORI-05 (nothing under the dock at rest); LCH-02 is the retest for the dark-launch flash fix
