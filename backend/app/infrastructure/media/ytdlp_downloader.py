@@ -40,6 +40,30 @@ def _cookie_options(settings: Settings) -> dict:
     return {}
 
 
+# Separate video+audio first (how YouTube serves anything above 360p), then a
+# single progressive file (Instagram/TikTok mp4), then audio alone (podcast and
+# SoundCloud-style sources). The selector only says *which kind* of format; the
+# size cap lives in format_sort so it can never reject a source outright.
+_FORMAT_SELECTOR = "bestvideo*+bestaudio/best/bestaudio"
+
+
+def _format_options(settings: Settings) -> dict:
+    """yt-dlp format options, capped at YTDLP_MAX_HEIGHT.
+
+    `format_sort: ["res:N"]` rather than a `[height<=N]` filter in the
+    selector: the sort prefers the largest variant at or under N and, when a
+    source has none, the *smallest* one above it - whereas a filter with a
+    `/bv*+ba/b` fallback would jump straight to the source's best (4K) in that
+    case, and `[height<=N]` silently drops formats whose height yt-dlp doesn't
+    know (common on progressive social-media mp4s). Every other sort key keeps
+    yt-dlp's default order, so audio-only sources are untouched.
+    """
+    options: dict = {"format": _FORMAT_SELECTOR}
+    if settings.ytdlp_max_height > 0:
+        options["format_sort"] = [f"res:{settings.ytdlp_max_height}"]
+    return options
+
+
 def _source_metadata_from_info(info: dict, url: str) -> SourceMetadata:
     """Map yt-dlp's info dict onto the domain model.
 
@@ -117,7 +141,7 @@ async def download_url(settings: Settings, run_id: str, url: str) -> SavedUpload
 
     def run_download() -> tuple[str, dict]:
         options = {
-            "format": "bestvideo*+bestaudio/best/bestaudio",
+            **_format_options(settings),
             "outtmpl": os.path.join(run_dir, "download.%(ext)s"),
             "noplaylist": True,
             "max_filesize": max_bytes,
