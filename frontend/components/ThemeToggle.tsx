@@ -2,7 +2,7 @@
 
 import { Moon, Sun } from "lucide-react";
 import { useSystemBarsTheme } from "@/application/useSystemBarsTheme";
-import { setThemePreference, type Theme } from "@/components/theme";
+import { setThemePreference, themePreferenceSource, type Theme } from "@/components/theme";
 
 /* Reads and writes the same attribute + key the blocking script in
    app/layout.tsx sets before first paint. No React state is involved: the
@@ -25,9 +25,10 @@ export function toggleTheme() {
 
    Also the one mount point for the native system-bar sync: every route renders
    exactly one ThemeToggle, and the hook follows <html data-theme>, so the
-   status/gesture bar icons flip with the toggle without toggleTheme knowing. */
+   status/gesture bar icons flip with the toggle without toggleTheme knowing.
+   It also mirrors the choice natively (refinement 5), via the source object. */
 export default function ThemeToggle() {
-  useSystemBarsTheme();
+  useSystemBarsTheme(themePreferenceSource);
   return (
     <button type="button" className="theme-toggle" onClick={toggleTheme} aria-label="Toggle theme">
       <Sun className="icon-sun" aria-hidden="true" />

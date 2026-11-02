@@ -7,9 +7,10 @@
  * blocking script in `app/layout.tsx`, the toggle button, and the browser-chrome
  * colour — cannot drift apart.
  *
- * The native status/gesture bar icon colour is the one theme-driven side effect
- * that does need a port (it crosses into Capacitor): see
- * `application/useSystemBarsTheme.ts`, which follows `data-theme` on its own.
+ * The native status/gesture bar icon colour, and since refinement 5 the native
+ * night mode itself, are the theme-driven side effects that do need a port
+ * (they cross into Capacitor): see `application/useSystemBarsTheme.ts`, which
+ * follows `data-theme` on its own and the choice via `themePreferenceSource`.
  */
 
 export const THEME_STORAGE_KEY = "videolens_theme";
@@ -79,8 +80,37 @@ export function setThemePreference(preference: ThemePreference): void {
   } catch {
     /* private mode: applied for this visit, not remembered */
   }
+  /* Before painting, on purpose: the native mirror's bridge call must reach
+     the native side ahead of the system-bar restyle that the paint triggers
+     (useSystemBarsTheme observes data-theme), so a DEFAULT bar style resolves
+     against the new night mode, not the old one. */
+  preferenceListeners.forEach((listener) => listener(preference));
   paintTheme(preference === "system" ? deviceTheme() : preference);
 }
+
+/* Refinement 5, THM-01b: the installed app mirrors the choice natively so the
+   next launch (launch screen, window, system bars) starts on it. This module
+   stays free of Capacitor: it only announces changes; the hook that owns the
+   native side (application/useSystemBarsTheme.ts) listens. */
+const preferenceListeners = new Set<(preference: ThemePreference) => void>();
+
+/** What the native theme sync needs from here: read, follow, and re-resolve. */
+export const themePreferenceSource = {
+  read: themePreference,
+  subscribe(listener: (preference: ThemePreference) => void): () => void {
+    preferenceListeners.add(listener);
+    return () => {
+      preferenceListeners.delete(listener);
+    };
+  },
+  /** Repaint from the device when nothing is stored. After the native night
+   *  mode changes, the WebView's prefers-color-scheme can be the last to know;
+   *  the head script's listener catches its change event, this is the same
+   *  rule applied once more in case no event comes. */
+  followDevice(): void {
+    if (storedTheme() === null) paintTheme(deviceTheme());
+  },
+};
 
 /** `--color-paper` in each theme (see `app/tokens.css`) — keep them equal. */
 export const THEME_COLOR: Record<Theme, string> = {

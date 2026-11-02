@@ -591,6 +591,35 @@ flip; ArrowRight goes Light to Dark; System clears storage and follows the OS
 live both ways; the header toggle stores a choice and More's System gives it
 back; meta theme-color follows.
 
+## Refinement 5 (2026-11-02)
+
+**Keyboard reveal clipped to the section (INT-01b).** `revealField` now
+treats the field's scrolling section (below the fixed header) as the visible
+band, and prefers field + error message over the group with Analyze when the
+band is short; see `upload-form.md`.
+
+**Native theme follows the app's choice (THM-01b).** The choice made in More
+(or the header toggle) is mirrored natively: `components/theme.ts`
+`setThemePreference` notifies `themePreferenceSource` listeners *before*
+painting; `application/useSystemBarsTheme.ts` (now takes that source, mounted
+by `ThemeToggle`) calls `nativeThemeMirror.setPreference`
+(`infrastructure/nativeTheme.ts`, port `NativeThemeMirror` in `domain/ports.ts`)
+once on mount and on every change. The adapter is Android-only and calls the
+app module's own Capacitor plugin `NativeThemePlugin` (registered in
+`MainActivity`), which stores the choice in SharedPreferences
+(`videolens_native_theme`/`preference`) and applies
+`AppCompatDelegate.setDefaultNightMode` live, plus
+`UiModeManager.setApplicationNightMode` on API 31+ (system-persisted; the
+launch screen uses it). `MainActivity.attachBaseContext` applies the stored mode
+before AppCompat resolves the configuration, so window background, the
+night-qualified colours and SystemBars' `DEFAULT` all start on the app's
+choice. A live change does not recreate the activity: `uiMode` is in
+`configChanges`, and AppCompat 1.7.1 (`updateAppConfiguration`, checked by
+disassembly) then calls `onConfigurationChanged` instead. When the native mode
+changed, the hook re-resolves DEFAULT bars (WebView < 140) and, for System,
+repaints from the device. The bridge call is sent before the bar restyle on
+purpose. Device behaviour is android-66's to verify.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent (foundation) · rebuilt the shell to the Terminal direction: one-viewport flex chain, pill nav, mobile drawer, 4 tabs, theme toggle
@@ -614,3 +643,4 @@ back; meta theme-color follows.
 - 2026-11-02 · frontend agent (refinement 2) · default theme follows the device live (stored choice wins; sheet shows "Following your device"); system-bar style from the OS on WebView < 140 (Default, re-sent on OS flip/resume), app theme on 140+; capacitor SystemBars style DEFAULT; landscape: one-row 52px dock, one-line headline, two-column More sheet
 - 2026-11-02 · frontend agent (refinement 3) · phone app shell (< 32rem) uses the measured frame (section scrolls, dock below it, 8px gap) so nothing sits under the dock at rest; scroll sections are the containing block for `.sr-only`
 - 2026-11-02 · frontend agent (refinement 4) · keyboard reveal now group-aware, instant, visual-viewport aware and repeated on the measured shrink (INT-05); More sheet theme switch replaced by System/Light/Dark radios backed by theme.ts setThemePreference (THM-01)
+- 2026-11-02 · frontend agent (refinement 5) · theme choice mirrored natively (NativeThemePlugin + infrastructure/nativeTheme.ts, AppCompat night mode at attachBaseContext and live, UiModeManager on API 31+) so launch/window/bars follow the app, not the OS (THM-01b); revealField clipped to the scrolling section (INT-01b)

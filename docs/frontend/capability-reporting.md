@@ -223,6 +223,18 @@ connections; after the server returns, a focus event removes it and the
 free-runs pill appears; offline (`navigator.onLine` false) shows the offline
 wording, and a visibilitychange after coming back clears it.
 
+Installed app (refinement 5, LCH-06d): android-66 saw "Can't reach the
+server" in airplane mode, not the offline wording. The logic is right
+(`offline` is `navigator.onLine === false`, checked first), but Android WebView
+only feeds connectivity into `navigator.onLine` and the `online`/`offline`
+events when the app holds `ACCESS_NETWORK_STATE`; the manifest had only
+`INTERNET`, so `onLine` stayed true and the offline branch was unreachable in
+the app (the quiet retry on `online` never fired either; focus/visibility
+still did). Added the permission (normal, install-time, no prompt) to
+`AndroidManifest.xml`. Whether this WebView version honours it is unverified
+here (Chromium has gated it on that permission; not confirmed for current
+builds); both wordings remain true if it does not.
+
 Known gap: coming back online after an offline spell during which every read
 had *succeeded* does not probe again, so a server that went down meanwhile is
 only discovered on submit (the offline flag knows nothing about the server).
@@ -232,3 +244,4 @@ only discovered on submit (the offline flag knows nothing about the server).
 - 2026-08-29 · frontend agent · added the capability surface: `CapabilitiesGateway` port + `FetchCapabilitiesGateway` adapter (normalising, not casting), `useCapabilities` hook fetched once in `HomeScreen`, the `CapabilityNotice` intake strip with a `probed`-aware disclosure, and `CapabilityCallout` wired to the URL field and the API-key panel; extracted `infrastructure/apiBase.ts` so two adapters share one origin
 - 2026-11-01 · frontend agent · editorial restyle: compact collapsed card (dot, sentence-case label-first line, Details toggle), red only for `unavailable`, sentence-case states with inline "not checked", plain names map with fallback; callout de-ruled; notice moved to its own intake grid cell (top of the panel column / first on phone) so the intake card no longer moves
 - 2026-11-02 · frontend agent (refinement 4) · added the shared reachability flag, retry on reconnect, and the ReachabilityNotice in the capability slot (LCH-06)
+- 2026-11-02 · frontend agent (refinement 5) · LCH-06d: offline branch unreachable in the app because WebView needs ACCESS_NETWORK_STATE for navigator.onLine; permission added to the manifest (device check pending)

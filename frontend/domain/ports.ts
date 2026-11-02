@@ -128,6 +128,21 @@ export interface SystemBarsStyler {
   followsSystemTheme(): boolean;
 }
 
+/** The theme the user chose, as the More sheet shows it: "system" follows the
+ *  device. Mirrors `ThemePreference` in `components/theme.ts`. */
+export type ThemeChoice = PaintedTheme | "system";
+
+/**
+ * Tells the native shell which theme the user chose, so the next launch can
+ * apply it before the first frame (launch screen, window background, system
+ * bars) instead of following the OS night mode — refinement 5, THM-01b.
+ * A no-op (resolves false) wherever there is no native shell.
+ */
+export interface NativeThemeMirror {
+  /** Resolves true when the native night mode actually changed. */
+  setPreference(choice: ThemeChoice): Promise<boolean>;
+}
+
 /**
  * What the installed app's first-run screens remember (Phase 5d): whether the
  * Welcome screen has been dismissed for good, and whether this session has
