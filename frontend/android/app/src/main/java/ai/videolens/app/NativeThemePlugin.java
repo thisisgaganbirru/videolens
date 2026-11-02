@@ -3,7 +3,10 @@ package ai.videolens.app;
 import android.app.UiModeManager;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
+import android.content.res.Resources;
 import android.os.Build;
+import android.os.PowerManager;
 import androidx.appcompat.app.AppCompatDelegate;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -35,6 +38,18 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  * configChanges, and AppCompat then updates the resources and calls
  * onConfigurationChanged instead of recreating (AppCompatDelegateImpl
  * .updateAppConfiguration). The WebView and its state stay as they are.
+ *
+ * Refinement 7, THM-01b-6: it also reports the OS's own night state
+ * (getSystemNight(), and a "systemNightChanged" { dark } event), because the
+ * WebView's prefers-color-scheme cannot be trusted for it once the app has
+ * forced a mode. Reproduced on API 35 / WebView 124: cold launch with Light
+ * stored (activity starts forced NIGHT_NO), switch to System, then flip the
+ * OS to light: the bars follow, but matchMedia('(prefers-color-scheme: dark)')
+ * stays true until a cold relaunch. Chromium derives that media feature from
+ * the WebView's (activity) context, whose configuration and theme were built
+ * under the forced override; once the override is lifted it no longer tracks
+ * the real system uiMode reliably. With System chosen, the web side now paints
+ * from this value and keeps matchMedia only as the browser fallback.
  */
 @CapacitorPlugin(name = "NativeTheme")
 public class NativeThemePlugin extends Plugin {
@@ -85,6 +100,86 @@ public class NativeThemePlugin extends Plugin {
         }
     }
 
+    /** Last value sent with "systemNightChanged", so repeats are not re-sent. */
+    private Boolean lastSystemNight = null;
+
+    /**
+     * Whether the OS (not this app) is in night mode right now.
+     *
+     * UiModeManager.getNightMode() first: it is the user-wide setting
+     * (Settings > Dark theme, `cmd uimode night`), held by the system service,
+     * and never reflects this app's own override: AppCompat's default night
+     * mode only overrides the activity's configuration, and
+     * setApplicationNightMode (API 31+) is stored per package, separately
+     * from the global mode getNightMode() returns. YES and NO are therefore
+     * the answer as long as Battery Saver is off: on Android 10+ Battery Saver
+     * also forces the dark theme without touching that setting.
+     *
+     * AUTO / CUSTOM (a schedule, sunset to sunrise) and Battery Saver only say
+     * what decides, not what was decided. There the night bit of
+     * Resources.getSystem()'s configuration is the current state. That object
+     * is the process configuration, which on API 31+ includes the per-package
+     * override from setApplicationNightMode, but the web side only asks while
+     * System is chosen, and choosing System clears that override
+     * (MODE_NIGHT_AUTO maps to "undefined" in UiModeManagerService), so there
+     * it is the OS's own value. It is never the activity's configuration,
+     * which is the one AppCompat overrides.
+     */
+    static boolean systemNight(Context context) {
+        try {
+            UiModeManager manager = (UiModeManager) context.getSystemService(Context.UI_MODE_SERVICE);
+            PowerManager power = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            boolean saver = power != null && power.isPowerSaveMode();
+            if (manager != null && !saver) {
+                int mode = manager.getNightMode();
+                if (mode == UiModeManager.MODE_NIGHT_YES) return true;
+                if (mode == UiModeManager.MODE_NIGHT_NO) return false;
+            }
+        } catch (RuntimeException ignored) {
+            // Fall through to the configuration.
+        }
+        int night = Resources.getSystem().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
+        return night == Configuration.UI_MODE_NIGHT_YES;
+    }
+
+    /** getSystemNight() resolves { dark }: the OS night state, see systemNight(). */
+    @PluginMethod
+    public void getSystemNight(final PluginCall call) {
+        boolean dark = systemNight(getContext().getApplicationContext());
+        lastSystemNight = dark;
+        JSObject result = new JSObject();
+        result.put("dark", dark);
+        call.resolve(result);
+    }
+
+    /**
+     * Fires "systemNightChanged" { dark } when the OS night state differs from
+     * the last value reported. Called on every configuration change (uiMode is
+     * in configChanges, so an OS flip lands here rather than recreating) and on
+     * resume (a flip while backgrounded, or one whose configuration change the
+     * forced app mode swallowed).
+     */
+    void reportSystemNight() {
+        boolean dark = systemNight(getContext().getApplicationContext());
+        if (lastSystemNight != null && lastSystemNight == dark) return;
+        lastSystemNight = dark;
+        JSObject data = new JSObject();
+        data.put("dark", dark);
+        notifyListeners("systemNightChanged", data);
+    }
+
+    @Override
+    protected void handleOnConfigurationChanged(Configuration newConfig) {
+        super.handleOnConfigurationChanged(newConfig);
+        reportSystemNight();
+    }
+
+    @Override
+    protected void handleOnResume() {
+        super.handleOnResume();
+        reportSystemNight();
+    }
+
     /**
      * setPreference({ value: "system" | "light" | "dark" }) resolves
      * { changed }: whether the native mode had to change. Unchanged is a no-op
@@ -109,6 +204,9 @@ public class NativeThemePlugin extends Plugin {
                     // Leave the current mode; the stored value still applies next launch.
                 }
                 applySystemNightMode(context, preference);
+                // Lifting or setting the per-package override can move the
+                // configuration fallback in systemNight(); re-check now.
+                reportSystemNight();
             }
             JSObject result = new JSObject();
             result.put("changed", changed);

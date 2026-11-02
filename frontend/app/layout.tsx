@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Hanken_Grotesk, Newsreader } from "next/font/google";
 import ServiceWorkerRegistration from "@/components/ServiceWorkerRegistration";
 import UpdateBanner from "@/components/UpdateBanner";
-import { SYSTEM_DARK_QUERY, THEME_COLOR, THEME_STORAGE_KEY } from "@/components/theme";
+import { NATIVE_SCHEME_FLAG, SYSTEM_DARK_QUERY, THEME_COLOR, THEME_STORAGE_KEY } from "@/components/theme";
 import { SHELL_STORAGE_KEY } from "@/components/shell";
 import { LANDING_REDIRECT_SCRIPT } from "@/application/landingRedirect";
 import { SPLASH_INIT_SCRIPT } from "@/application/firstRunScripts";
@@ -76,6 +76,13 @@ export const viewport: Viewport = {
    on every change, so the moment the user picks a theme it stops acting.
    Refinement 2, #3; it used to be light regardless of the OS.
 
+   In the installed Android app the listener stands down once the native shell
+   has reported the OS night state (window[NATIVE_SCHEME_FLAG], set by
+   components/theme.ts): the WebView's media query can go stale after a forced
+   night mode is lifted, and the native value is then what is painted
+   (refinement 7, THM-01b-6). The first paint still uses the media query: on a
+   cold launch it is correct, and the native value lands a moment later.
+
    The meta tag is looked up defensively rather than assumed present: this script
    runs while <head> is still parsing, so Next's own tag may or may not exist
    yet. Appending ours first is harmless — the browser honours the first
@@ -87,7 +94,9 @@ const THEME_INIT_SCRIPT = `(function(){var r=document.documentElement,q=null;try
 )});}catch(e){}return t==="dark"||t==="light"?t:null;}function a(t){r.setAttribute("data-theme",t);try{var m=document.querySelector('meta[name="theme-color"]');if(!m){m=document.createElement("meta");m.setAttribute("name","theme-color");document.head.appendChild(m);}m.setAttribute("content",t==="dark"?${JSON.stringify(
   THEME_COLOR.dark
 )}:${JSON.stringify(THEME_COLOR.light)});}catch(e){}}
-a(s()||(q&&q.matches?"dark":"light"));try{q&&q.addEventListener("change",function(e){if(!s())a(e.matches?"dark":"light");});}catch(e){}})();`;
+a(s()||(q&&q.matches?"dark":"light"));try{q&&q.addEventListener("change",function(e){if(!s()&&!window[${JSON.stringify(
+  NATIVE_SCHEME_FLAG
+)}])a(e.matches?"dark":"light");});}catch(e){}})();`;
 
 /* Blocking, pre-paint, same reason as the theme script: stamps
    `<html data-shell="app"|"web">` so the right chrome (bottom tab bar vs top
