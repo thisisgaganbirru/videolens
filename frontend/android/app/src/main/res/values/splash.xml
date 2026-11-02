@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launch screen colours (refinement 1, #11). Mirrors the web tokens
+     (frontend/app/tokens.css): paper, ink, accent. Dark values in
+     values-night/splash.xml follow the OS night mode, which is all the
+     system splash can know before the WebView exists. -->
+<resources>
+    <color name="splash_background">#F6F4EE</color>
+    <color name="splash_ring">#15161A</color>
+    <color name="splash_dot">#1A7F37</color>
+</resources>
