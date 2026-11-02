@@ -308,8 +308,16 @@ PASS: NF-01b (all four paths end on `/404.html` with title "Page not found · Vi
 NOTES: the Terms in-page "Back" link lands on `/app.html` rather than `/app` (same page content; two URLs for the tool, so History/Back entries may differ); the safe-area console error did not appear in this session's logcat.
 BLOCKED (backend stopped, memory, awaiting owner restart): RUN-*, FREE-*, ORI-02 retest, LCH-06c. THM-01b-6e stays BLOCKED (needs physical device).
 
+### 2026-11-02 · android-66 (device QA) · run 8 (bundled APK, 04a9a9c (worktree build), backend killed mid-attempt)
+
+Build: unchanged from run 7 (lastUpdateTime 03:45:20). Evidence in `%TEMP%\qa9\`.
+Lead GO'd the real-run cases (backend health 200 at 11:36), then reported the backend and :3005 killed for low memory. At the GO the banner read "3 free runs left" (so R3 applies) and the capability banner "Limited: link downloads."
+RUN-01 attempt: link typed (`RUN01-filled.png`); no run was observed (no stage, no result) before the stop, and health was down at 11:40. The terms checkbox was unticked in the later screenshot (`after-stop.png`); I did not record whether it was ticked when I tapped Analyze, so I can't say whether the submit was blocked by the terms or by the outage. Question: is the terms tick meant to reset on a force-stop and cold launch? (Earlier runs kept it ticked.)
+BLOCKED (backend killed for memory): RUN-*, FREE-*, RUN-06b..e, ORI-02 retest, LCH-06c. No result to log for any of them; no defect logged.
+
 ## Changelog
 
+- 2026-11-02 · android-66 (device QA) · run 8 Run log: real-run GO stopped by the backend being killed for memory; RUN/FREE/ORI-02/LCH-06c stay BLOCKED, nothing counted against the app
 - 2026-11-02 · android-66 (device QA) · added section 18 (refinement 8 cases) and the run 7 Run log (04a9a9c worktree build): NF-01b, NF-02, HOP-01, LOG-01, INT-18, INT-19, STB-01 and NAV/BCK PASS; note on the Terms Back link landing on /app.html
 - 2026-11-02 · android-66 (device QA) · THM-01b-6e re-marked BLOCKED (needs physical device) per lead triage; NF-01 and the disabled "Browse files" are being fixed in refinement 8 and will be retested
 - 2026-11-02 · android-66 (device QA) · added section 17 (refinement 6 and 7 cases) and the run 6 Run log (afb41d8 worktree build): THM-01b-6a..d, INT-04b, INT-16, INT-17, HIS-08, RTL-01, STB-01 PASS; THM-01b-6e inconclusive on the emulator; NF-01 FAIL (MINOR, unknown paths render the landing page on the bundled app)
