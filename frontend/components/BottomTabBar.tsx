@@ -8,6 +8,8 @@ import { TAB_LABEL } from "@/components/AppNav";
 import { isPlainLeftClick } from "@/components/navClick";
 import { toggleTheme } from "@/components/ThemeToggle";
 import { mainTabHref, type MainTab } from "@/application/useMainTab";
+import { useHardwareBack } from "@/application/useHardwareBack";
+import { useSoftKeyboard } from "@/application/useSoftKeyboard";
 
 /* Hallmark · theme: editorial · component: bottom tab bar (installed-app shell)
  * states: default · hover · focus · active · current · expanded (More)
@@ -49,6 +51,12 @@ export default function BottomTabBar({ activeTab, currentRoute, onSelectTab }: B
      theme.ts), and while the sheet is open nothing but its own switch can
      change it — the rest of the page is inert. */
   const [dark, setDark] = useState(false);
+
+  /* Both mounted here because every route renders exactly one tab bar
+     (refinement 1): the hardware back button (Android shell only) and the
+     keyboard flag that hides this bar while typing. */
+  useHardwareBack(activeTab, onSelectTab);
+  useSoftKeyboard();
 
   const openSheet = () => {
     setDark(paintedThemeIsDark());

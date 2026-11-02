@@ -56,6 +56,14 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* The blocking redirect script (application/landingRedirect.ts, in the root
+   layout's head) sets this on <html> as it navigates away, so the page is
+   never painted on its way through. Here rather than in landing.css because
+   the Capacitor `.html` hop can fire on whichever document answered. */
+:root[data-redirecting] body {
+  visibility: hidden;
+}
+
 /* No serif here on purpose. Most h2/h3 in the app are UI labels; headlines
    and reading text opt in by class (`.view-title`, `.intake-title`,
    `.run-title`, `.result-title`, `.prose-serif`). */
@@ -71,21 +79,28 @@ h3 {
   color: var(--color-on-accent);
 }
 
-/* themed scrollbars — WebKit/Blink */
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-::-webkit-scrollbar-track {
-  background: var(--color-paper);
-}
-::-webkit-scrollbar-thumb {
-  background: var(--color-border-strong);
-  border: 2px solid var(--color-paper);
-  border-radius: 6px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-accent);
+/* themed scrollbars — WebKit/Blink. Mouse-and-trackpad devices only. Styling
+   `::-webkit-scrollbar` at all turns an overlay scrollbar into a classic one
+   that takes 10px of layout width, and on a touch device (the Android WebView,
+   phones) that made the whole page jump ~10px sideways between a view that
+   scrolls and one that does not. Left unstyled there, the platform's overlay
+   scrollbar takes no width (refinement 1, item 8). */
+@media (hover: hover) and (pointer: fine) {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-paper);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-border-strong);
+    border: 2px solid var(--color-paper);
+    border-radius: 6px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-accent);
+  }
 }
 
 @layer components {
@@ -2298,14 +2313,25 @@ h3 {
      the last line of content can always scroll clear of it.
      ======================================================================== */
 
+  /* Sticky, in the shell's flow, last thing in it — NOT position: fixed.
+     `.viewport` is a size container (`container-type: inline-size`), and size
+     containment includes layout containment, which makes it the containing
+     block for fixed-position descendants. A "fixed" dock inside it was really
+     pinned to the scroller's content, so it rode up the page with the scroll
+     and came to rest over the terms row and Retry (refinement 1, item 1).
+     Sticky needs nothing from its ancestors: below 32rem it sticks to the
+     bottom of `.viewport` while the stacked page scrolls under it, and from
+     32rem up (one measured viewport) it simply ends the column under the
+     scrolling section. Its own box is the clearance — at the end of the
+     scroll the last control sits above it, never underneath. */
   .tabbar {
     display: none;
-    position: fixed;
+    position: sticky;
     z-index: 20;
-    left: max(var(--page-gutter), var(--safe-left));
-    right: max(var(--page-gutter), var(--safe-right));
     bottom: max(var(--space-sm), var(--safe-bottom));
-    margin-inline: auto;
+    flex-shrink: 0;
+    width: 100%;
+    margin: auto auto max(var(--space-sm), var(--safe-bottom));
     max-width: 30rem;
     height: var(--tabbar-height);
     align-items: stretch;
@@ -2538,7 +2564,13 @@ h3 {
      landscape) gets the web shell's chrome whole: the top bar (links inline
      from 48rem, the menu button between) AND the footer, which is its only
      way to Privacy and Terms (owner decision 2026-11-01). */
-  @media (max-width: 37.5rem) {
+  /* `max-height: 31.25rem` (500px) is a phone held sideways (refinement 1,
+     item 10): wide, but still a phone, so it keeps the dock rather than
+     switching to the desktop chrome. A tablet or a wide installed window is
+     also tall and keeps the top bar and footer. The matching unlayered
+     overrides (inline nav links at 48rem+, compact nav) are in the RESPONSIVE
+     block at the end of the file. */
+  @media (max-width: 37.5rem), (max-height: 31.25rem) {
     :root[data-shell="app"] .page-end {
       display: none;
     }
@@ -2550,12 +2582,20 @@ h3 {
     :root[data-shell="app"] .menu-panel {
       display: none;
     }
-    /* Reserve the dock's footprint — its own height, the gap it floats on,
-       and the gesture bar — so content can never come to rest underneath it.
-       On a one-viewport frame this shortens the measured band; on a flowing
-       one it is the scroll runway past the last line. */
+    /* The dock is in the flow now (sticky, see BOTTOM TAB BAR) and carries
+       the gesture-bar gap as its own bottom margin, so the shell reserves
+       nothing: the dock's box IS the footprint. On a one-viewport frame it
+       shortens the measured band; on a flowing one it is the runway past the
+       last line. */
     :root[data-shell="app"] .shell {
-      padding-bottom: calc(var(--tabbar-height) + max(var(--space-sm), var(--safe-bottom)) + var(--space-sm));
+      padding-bottom: 0;
+    }
+    /* While the soft keyboard is up (application/useSoftKeyboard.ts) the dock
+       steps out of the way, so it can never sit over the field being typed
+       into. display:none, not a transform: the band it frees is exactly the
+       room the keyboard took. */
+    :root[data-shell="app"][data-keyboard="open"] .tabbar {
+      display: none;
     }
   }
 
@@ -3657,6 +3697,39 @@ h3 {
   .menu-panel,
   .nav-wrap[data-menu-open="true"] + .menu-panel {
     display: none;
+  }
+}
+
+/* A phone held sideways in the installed app keeps the app chrome (the dock
+   rule above, item 10). From 48rem the unlayered `.nav-links` rule just above
+   would bring the inline tabs back beside the dock, so it is undone here, and
+   the bar is made compact: a 390px-tall screen cannot spare 76px of nav. */
+@media (max-height: 31.25rem) {
+  :root[data-shell="app"] .nav-links {
+    display: none;
+  }
+  :root[data-shell="app"] .nav {
+    min-height: 3.5rem;
+  }
+}
+
+/* The scroller keeps its scrollbar's room whether or not it is scrolling, so
+   a view that overflows and one that does not lay out at the same width
+   (item 8). Mouse/trackpad only: touch scrollbars are overlays and take no
+   room (see the scrollbar block at the top), so a gutter there would only be
+   empty space. Below 32rem `.viewport` is the scroller; from 32rem it is the
+   full-bleed section, and `.viewport` never overflows. */
+@media (hover: hover) and (pointer: fine) {
+  .viewport {
+    scrollbar-gutter: stable;
+  }
+  @media (min-width: 32rem) {
+    .viewport {
+      scrollbar-gutter: auto;
+    }
+    .shell > section.view-scroll {
+      scrollbar-gutter: stable;
+    }
   }
 }
 
