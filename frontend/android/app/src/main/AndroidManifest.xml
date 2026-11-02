@@ -38,4 +38,10 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Refinement 5 (LCH-06d): Android WebView only feeds connectivity changes
+         to navigator.onLine / the online and offline events when the app holds
+         this (a normal, install-time permission; no prompt). Without it
+         navigator.onLine is always true in the installed app, so
+         application/serverReachability.ts could never say "You're offline". -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 </manifest>

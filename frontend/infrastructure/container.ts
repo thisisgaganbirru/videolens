@@ -15,6 +15,7 @@ import { CapacitorSystemBarsStyler } from "./systemBars";
 import { BrowserFirstRunStore } from "./firstRunStore";
 import { CapacitorNativeShell } from "./nativeShell";
 import { CapacitorDocumentExporter } from "./documentExporter";
+import { CapacitorNativeThemeMirror } from "./nativeTheme";
 
 export const apiKeyStore = new LocalStorageApiKeyStore();
 /* One device-token store behind both the status read (which may replace the
@@ -32,3 +33,4 @@ export const historyStore = new IndexedDbHistoryStore();
 export const firstRunStore = new BrowserFirstRunStore();
 export const nativeShell = new CapacitorNativeShell();
 export const documentExporter = new CapacitorDocumentExporter();
+export const nativeThemeMirror = new CapacitorNativeThemeMirror();

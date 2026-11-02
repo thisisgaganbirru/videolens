@@ -29,6 +29,12 @@ import type { PaintedTheme, SystemBarsStyler } from "@/domain/ports";
    `prefers-color-scheme` change and on return to the foreground when
    `followsSystemTheme()` is true.
 
+   Refinement 5 (THM-01b): "the OS night mode" above now means the ACTIVITY's
+   night mode, which follows the app's own theme choice (AppCompat default
+   night mode, set by NativeThemePlugin and applied in MainActivity before the
+   first frame). So DEFAULT and the page agree whatever the OS says; with
+   "system" chosen it is the OS, as before.
+
    Version 140 mirrors WEBVIEW_VERSION_WITH_SAFE_AREA_FIX in SystemBars.java.
    An unreadable user agent counts as modern: that is Capacitor's own default
    path, and the one every current WebView takes. */

@@ -190,9 +190,23 @@ Capacitor bridge.
   #9) and gates itself on the path (`/app`, `/app/`, `/app.html`). Verified in
   the emulated asset server over `out/`: `/` → `/app.html`, theme kept.
 
+### Launch follows the in-app theme (refinement 5, THM-01b)
+
+The "documented mismatch" above is closed. `MainActivity.attachBaseContext`
+reads the choice `NativeThemePlugin` mirrored from the web side and sets
+AppCompat's default night mode before the activity's configuration is
+resolved, so `@color/app_background`, the window background and the DEFAULT
+system-bar style follow the app's choice from the first frame. The system
+launch screen is drawn before any app code runs; on Android 12+ the plugin also
+calls `UiModeManager.setApplicationNightMode`, which the system persists per
+package and applies to it. Below 12 the launch screen still follows the OS.
+A choice made before this build is mirrored on the first launch of it (one live
+switch, then correct from the next launch). See `app-shell-layout.md`.
+
 ## Changelog
 
 - 2026-11-01 · frontend agent (Phase 5d) · created: installed-app splash and one-time Welcome, FirstRunStore port and adapter, SharedUrlSource.pending()
 - 2026-11-01 · frontend agent (refinement 1) · Android launch screen: BrandMark vector + paper colours (light/night), postSplashScreenTheme, stock splash.png removed; splash script moved to the root head; storage-crash known issue closed
 - 2026-11-02 · frontend agent (refinement 2) · noted that the device-following default theme makes the launch screen and first page agree when no theme is stored (LCH-02/03)
 - 2026-11-02 · frontend agent (refinement 3) · window + WebView background follow the OS night mode (`@color/app_background`, `MainActivity.applyNightBackground`), closing the dark-launch light flash (LCH-02)
+- 2026-11-02 · frontend agent (refinement 5) · launch screen, window and bars follow the in-app theme choice via NativeThemePlugin (AppCompat night mode at attachBaseContext; UiModeManager on API 31+) (THM-01b)
