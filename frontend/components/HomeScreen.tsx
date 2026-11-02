@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import AppNav from "@/components/AppNav";
 import BottomTabBar from "@/components/BottomTabBar";
@@ -17,7 +17,7 @@ import VersionLogPanel from "@/components/panels/VersionLogPanel";
 import { useAnalysisRun } from "@/application/useAnalysisRun";
 import { useHistoryBoot } from "@/application/useRunHistory";
 import { useCapabilities } from "@/application/useCapabilities";
-import { useSharedUrl } from "@/application/useSharedUrl";
+import { useSharedUrl, type SharedUrl } from "@/application/useSharedUrl";
 import { goToMainTab, useMainTab, type MainTab } from "@/application/useMainTab";
 import type { RunSourceKind } from "@/domain/entities";
 
@@ -42,6 +42,8 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
     submitting,
     sourceName,
     canRetry,
+    expired,
+    againUrl,
     reconnectIn,
     reconnecting,
     reconnectAttempt,
@@ -98,12 +100,60 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      drops this flag on its own). */
   const connectionLost = Boolean(error) && (status === "queued" || status === "processing");
 
+  /* What the intake's link field starts with (refinement 1, #7 and #14). Two
+     sources: a link shared into the app, and "Analyze it again" on an expired
+     run. The newer one wins. A share that has already been used is dismissed
+     when the user starts over, so "Analyze another file" after a shared-link
+     run comes back to an empty field instead of the old link (the form
+     remounts on reset and would otherwise take the same share again). Derived
+     during render, no effect: the form itself applies whatever it is handed. */
+  const [againPrefill, setAgainPrefill] = useState<SharedUrl | null>(null);
+  const [dismissedShare, setDismissedShare] = useState<SharedUrl | null>(null);
+  const liveShare = sharedUrl && sharedUrl !== dismissedShare ? sharedUrl : null;
+  const formPrefill =
+    againPrefill && (!liveShare || againPrefill.receivedAt > liveShare.receivedAt) ? againPrefill : liveShare;
+
+  /** Every "analyze another" / "stop watching": a fresh, empty intake. Terms
+   *  stay accepted (they are remembered by the form, not cleared here). */
+  const startOver = () => {
+    setDismissedShare(sharedUrl);
+    setAgainPrefill(null);
+    reset();
+  };
+
+  /** Expired run: back to the intake with its link in the field, if stored. */
+  const analyzeAgain = () => {
+    setDismissedShare(sharedUrl);
+    setAgainPrefill(againUrl ? { url: againUrl, receivedAt: Date.now() } : null);
+    reset();
+  };
+
+  /* Refinement 1, #6: each phase of a run (intake → progress → result or
+     failed) starts at the top. The view swaps inside the same scroller, so
+     without this a result opened from a long intake scroll, or a failure
+     shown under a scrolled progress view, began part-way down. Layout effect:
+     before paint, so the old offset is never drawn. Both scrollers — the
+     section from 32rem up, `.viewport` below it. */
+  const runPhase =
+    status === "idle" ? "intake" : status === "complete" ? "result" : status === "failed" ? "failed" : "progress";
+  const analyzeRef = useRef<HTMLElement>(null);
+  const lastPhase = useRef(runPhase);
+  useLayoutEffect(() => {
+    if (lastPhase.current === runPhase) return;
+    lastPhase.current = runPhase;
+    const section = analyzeRef.current;
+    if (!section) return;
+    section.scrollTop = 0;
+    const viewport = section.closest(".viewport");
+    if (viewport) viewport.scrollTop = 0;
+  }, [runPhase]);
+
   const handleOpenRun = (runId: string, sourceKind?: RunSourceKind | null) => {
     /* Pushes a history entry, so back from a run lands on the list it was
        opened from rather than dropping out of the app. The summary's
        `source_kind`, when it has one, seeds the run's frames before the
        first status response arrives. */
-    goToMainTab("analyze");
+    goToMainTab("analyze", { push: true });
     void openRun(runId, sourceKind);
   };
 
@@ -117,7 +167,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
       <AppNav activeTab={activeTab} onSelectTab={goToMainTab} />
 
       {activeTab === "analyze" && (
-        <section className="view-scroll" data-view="analyze" aria-label="Analyze">
+        <section ref={analyzeRef} className="view-scroll" data-view="analyze" aria-label="Analyze">
           {status === "idle" && (
             <div className="intake-layout">
               {/* Always in the DOM, empty and zero-height when the deployment
@@ -152,7 +202,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                   onSubmit={submit}
                   submitting={submitting}
                   blocked={freeRuns.blocked}
-                  sharedUrl={sharedUrl}
+                  sharedUrl={formPrefill}
                   urlCapability={urlDownload}
                   /* Back at idle with an error means the submit was rejected,
                      the server could not be reached, or a history row would
@@ -226,9 +276,12 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                 retrying={reconnecting}
                 reconnectAttempt={reconnectAttempt}
                 retryBusy={submitting}
-                onReset={reset}
+                onReset={startOver}
                 onRetry={canRetry ? retry : undefined}
                 onRetryNow={reconnectNow}
+                expired={expired}
+                canRefill={againUrl !== null}
+                onAnalyzeAgain={analyzeAgain}
               />
             </div>
           )}
@@ -270,7 +323,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     </p>
                   )}
                 </div>
-                <button type="button" className="btn btn-secondary btn-block reset-wide" onClick={reset}>
+                <button type="button" className="btn btn-secondary btn-block reset-wide" onClick={startOver}>
                   Analyze another file
                 </button>
               </div>
@@ -287,7 +340,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                 {/* The same action, placed under the card on a phone where
                     the source column is a pill above it. CSS shows exactly
                     one of the two. */}
-                <button type="button" className="btn btn-secondary btn-block reset-narrow" onClick={reset}>
+                <button type="button" className="btn btn-secondary btn-block reset-narrow" onClick={startOver}>
                   Analyze another file
                 </button>
               </div>

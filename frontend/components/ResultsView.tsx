@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
-import { Capacitor } from "@capacitor/core";
-import { Share } from "@capacitor/share";
+import { useId, useRef, useState, type KeyboardEvent } from "react";
+import { useResultExport } from "@/application/useResultExport";
+import type { MarkdownDocument } from "@/domain/ports";
 import { ArrowUpRight, Check, ChevronDown, Copy, Share2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -321,25 +321,22 @@ function buildMarkdownReport(
   return `${sections.join("\n\n")}\n`;
 }
 
-function downloadMarkdown(
+/* The whole report as one document. Download and Share both send this
+   (refinement 1, #13: Share used to send only the tab on screen). */
+function markdownDocument(
   result: VideoAnalysis,
   sourceMetadata?: SourceMetadata | null,
   completeness: AnalysisCompleteness = "full",
-) {
+): MarkdownDocument {
   const filename = `${result.title || "videolens-notes"}`
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
-
-  const blob = new Blob([buildMarkdownReport(result, sourceMetadata, completeness)], {
-    type: "text/markdown;charset=utf-8",
-  });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `${filename || "videolens-notes"}.md`;
-  link.click();
-  URL.revokeObjectURL(url);
+  return {
+    filename: filename || "videolens-notes",
+    title: result.title || "VideoLens notes",
+    text: buildMarkdownReport(result, sourceMetadata, completeness),
+  };
 }
 
 function formatCount(value: number) {
@@ -515,14 +512,10 @@ export default function ResultsView({
   const [active, setActive] = useState<TabKey>(DEFAULT_TAB);
   const summary = splitTakeaway(result.summary);
   const [copied, setCopied] = useState(false);
-  const [canShare, setCanShare] = useState(false);
+  const { canShare, share, save } = useResultExport();
   const tabRefs = useRef<Partial<Record<TabKey, HTMLButtonElement | null>>>({});
 
   const content = result[active];
-
-  useEffect(() => {
-    setCanShare(Capacitor.isNativePlatform() || typeof navigator.share === "function");
-  }, []);
 
   /* The copied tick belongs to the tab it copied. Reset where the tab changes
      rather than in an effect watching `active` — same behaviour, one render
@@ -549,24 +542,24 @@ export default function ResultsView({
     tabRefs.current[key]?.focus();
   };
 
+  /* Copy stays per tab: it is the quick "grab this transcript" action, and
+     its label says so. Share and Download are the whole report. */
   const copyContent = async () => {
-    await navigator.clipboard.writeText(content);
+    try {
+      await navigator.clipboard.writeText(content);
+    } catch {
+      return; /* no clipboard permission: no tick, nothing claimed */
+    }
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2000);
   };
 
-  const shareContent = async () => {
-    if (Capacitor.isNativePlatform()) {
-      await Share.share({ title: result.title, text: content, dialogTitle: "Share analysis" });
-    } else if (navigator.share) {
-      await navigator.share({ title: result.title, text: content });
-    }
-  };
+  const shareContent = () => share(markdownDocument(result, sourceMetadata, completeness));
 
   return (
     <>
-      {/* Copy and share act on whichever tab is showing; Download is the whole
-          report regardless of tab. All three sit in the title band, as drawn —
+      {/* Copy acts on whichever tab is showing; Share and Download are the
+          whole report regardless of tab (refinement 1). All three sit in the title band, as drawn —
           the download used to live under the last panel, where it read as part
           of that panel and was a long scroll away on a full transcript. */}
       <div className="result-head">
@@ -587,15 +580,15 @@ export default function ResultsView({
               type="button"
               onClick={() => void shareContent()}
               className="icon-action"
-              aria-label="Share this tab"
-              title="Share this tab"
+              aria-label="Share notes"
+              title="Share notes"
             >
               <Share2 aria-hidden="true" />
             </button>
           )}
           <button
             type="button"
-            onClick={() => downloadMarkdown(result, sourceMetadata, completeness)}
+            onClick={() => void save(markdownDocument(result, sourceMetadata, completeness))}
             className="btn btn-primary btn-pill result-download"
           >
             Download .md

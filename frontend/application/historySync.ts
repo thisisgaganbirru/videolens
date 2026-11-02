@@ -121,6 +121,7 @@ export function recordSubmitted(runId: string, status: HistoryRecord["status"], 
     created_at: new Date().toISOString(),
     source_kind: source.file ? "file" : "link",
   };
+  if (source.url) patch.source_url = source.url;
   if (source.file) {
     const audio = source.file.type.startsWith("audio/") || /\.mp3$/i.test(source.file.name);
     patch.platform = audio ? "audio_file" : "video_file";

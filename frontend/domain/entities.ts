@@ -146,6 +146,11 @@ export interface HistoryRecord {
   source_metadata: SourceMetadata | null;
   completeness: AnalysisCompleteness | null;
   error: string | null;
+  /** The link as submitted from this browser (refinement 1, #7), so a run the
+   *  server forgot can be offered again with the field filled. Null for
+   *  uploads and imported runs; absent on records written before it existed.
+   *  Stays in IndexedDB — never sent anywhere new. */
+  source_url?: string | null;
   updated_at: string;
 }
 

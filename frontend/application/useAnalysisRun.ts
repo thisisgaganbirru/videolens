@@ -11,7 +11,7 @@ import type {
   VideoAnalysis,
 } from "@/domain/entities";
 import { classifyGatewayError } from "@/application/gatewayError";
-import { recordRunResponse, recordSubmitted } from "@/application/historySync";
+import { EXPIRED_MESSAGE, recordRunResponse, recordSubmitted } from "@/application/historySync";
 import { markFreeRunsUsed, noteRunAccepted, refreshFreeRuns } from "@/application/useFreeRuns";
 import { ApiError } from "@/domain/errors";
 import { apiKeyStore, historyStore, runsGateway } from "@/infrastructure/container";
@@ -84,6 +84,12 @@ export function useAnalysisRun() {
   const [reconnectIn, setReconnectIn] = useState<number | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
+  /* Refinement 1, #7: the run on screen is one the server forgot before its
+     result reached this browser (History's EXPIRED_MESSAGE). Nothing about the
+     source was wrong, so the failed view drops its "try a different link"
+     advice and offers to analyze it again. `againUrl` is the link to put back
+     in the field, when this browser stored one. */
+  const [expired, setExpired] = useState<{ againUrl: string | null } | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const runIdRef = useRef<string | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -273,6 +279,7 @@ export function useAnalysisRun() {
       stopTimers();
       clearReconnect();
       setError(null);
+      setExpired(null);
       setResult(null);
       setCompleteness("full");
       setSourceMetadata(null);
@@ -344,6 +351,7 @@ export function useAnalysisRun() {
     setSourceName(null);
     setRetrySource(null);
     setError(null);
+    setExpired(null);
   }, [clearReconnect, stopTimers]);
 
   /* `sourceKindHint` is the History summary's `source_kind`, when it has one,
@@ -360,6 +368,7 @@ export function useAnalysisRun() {
       setSourceMetadata(null);
       setSourceName(null);
       setRetrySource(null);
+      setExpired(null);
       setSourceKind(sourceKindHint === "link" ? "url" : "file");
       setStatus("processing");
       const generation = ++generationRef.current;
@@ -379,6 +388,11 @@ export function useAnalysisRun() {
             setCompleteness(record.completeness ?? "full");
           } else {
             setError(record.error || "Video analysis failed.");
+            if (record.error === EXPIRED_MESSAGE) {
+              setExpired({
+                againUrl: record.source_url ?? record.source_metadata?.source_url ?? null,
+              });
+            }
           }
           return;
         }
@@ -416,6 +430,8 @@ export function useAnalysisRun() {
     submitting,
     sourceName,
     canRetry: retrySource !== null,
+    expired: expired !== null,
+    againUrl: expired?.againUrl ?? null,
     reconnectIn,
     reconnecting,
     reconnectAttempt,

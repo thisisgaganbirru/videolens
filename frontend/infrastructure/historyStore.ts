@@ -53,6 +53,7 @@ const EMPTY: Omit<HistoryRecord, "run_id" | "created_at" | "updated_at"> = {
   source_metadata: null,
   completeness: null,
   error: null,
+  source_url: null,
 };
 
 export class IndexedDbHistoryStore implements HistoryStore {
