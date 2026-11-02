@@ -1,4 +1,5 @@
 import hashlib
+import json
 from datetime import datetime, time, timedelta, timezone
 
 from redis.asyncio import Redis
@@ -61,6 +62,8 @@ class FreeRunAllowanceStore:
         self._redis: Redis | None = None
         self._memory: dict[str, int] = {}
         self._memory_day = ""
+        # run_id -> the counter keys its free run incremented (local mode).
+        self._held: dict[str, list[str]] = {}
 
     @property
     def enabled(self) -> bool:
@@ -70,6 +73,10 @@ class FreeRunAllowanceStore:
         if self._redis is None:
             self._redis = Redis.from_url(self._settings.redis_url, decode_responses=True)
         return self._redis
+
+    @staticmethod
+    def _held_key(run_id: str) -> str:
+        return f"videolens:free:held:{run_id}"
 
     @staticmethod
     def _device_key(day: str, device_id: str) -> str:
@@ -126,15 +133,43 @@ class FreeRunAllowanceStore:
         return FreeRunClaim(device_id=device_id, client_ip=client_ip, day=day)
 
     async def refund(self, claim: FreeRunClaim) -> None:
-        keys = self._keys(claim.day, claim.device_id, claim.client_ip)
+        await self._refund_keys(self._keys(claim.day, claim.device_id, claim.client_ip))
+
+    async def _refund_keys(self, keys: list[str]) -> None:
         if self._settings.queue_enabled:
             await self._client().eval(_REFUND, len(keys), *keys)
             return
-        if claim.day != self._memory_day:
-            return
+        # Keys carry their UTC day, so a refund after midnight lands on the
+        # day the run was taken from. Locally yesterday's counters are gone
+        # (`_local` dropped them), and the >0 guard makes that a no-op.
         for key in keys:
             if self._memory.get(key, 0) > 0:
                 self._memory[key] -= 1
+
+    async def hold(self, run_id: str, claim: FreeRunClaim) -> None:
+        # The resolved counter keys (day-scoped, IP already hashed) rather
+        # than the claim itself: the raw IP is never written anywhere.
+        keys = self._keys(claim.day, claim.device_id, claim.client_ip)
+        if self._settings.queue_enabled:
+            await self._client().set(self._held_key(run_id), json.dumps(keys), ex=_KEY_TTL_SECONDS)
+            return
+        self._held[run_id] = keys
+
+    async def release(self, run_id: str, *, refund: bool) -> bool:
+        if self._settings.queue_enabled:
+            # GET + DEL in one MULTI: of two racing releases only one sees
+            # the value, so a run is handed back at most once.
+            async with self._client().pipeline(transaction=True) as pipe:
+                pipe.get(self._held_key(run_id))
+                pipe.delete(self._held_key(run_id))
+                raw, _ = await pipe.execute()
+            keys = json.loads(raw) if raw else None
+        else:
+            keys = self._held.pop(run_id, None)
+        if not keys or not refund:
+            return False
+        await self._refund_keys(keys)
+        return True
 
     async def close(self) -> None:
         if self._redis is not None:

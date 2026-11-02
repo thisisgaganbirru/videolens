@@ -53,8 +53,9 @@ used to live inline in `main.py`/`pipeline.py` now live.
 - `get_run.py` — `GetRunUseCase`: fetch + ownership check.
 - `list_runs.py` — `ListRunsUseCase`.
 - `process_run.py` — `ProcessRunUseCase`: download/validate → normalize →
-  analyze → persist. Run by both the in-process local runner and the arq
-  worker — it doesn't know or care which.
+  analyze → persist, then releases the run's held free run (refunding it
+  only when the link failed to download). Run by both the in-process local
+  runner and the arq worker — it doesn't know or care which.
 
 **`infrastructure/`** — concrete adapters implementing the ports above.
 Every adapter takes `Settings` in its constructor instead of importing a

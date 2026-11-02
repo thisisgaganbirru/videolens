@@ -91,6 +91,11 @@ class CreateRunUseCase:
             client_ip=client_ip,
         )
         try:
+            if claim is not None:
+                # Held before the job is enqueued, so the pipeline can find it
+                # however quickly the download fails: a link that cannot be
+                # fetched hands the free run back (ProcessRunUseCase).
+                await self._free_runs.hold(run_id, claim)
             return await self._accept(
                 run_id=run_id,
                 principal=principal,
@@ -100,8 +105,10 @@ class CreateRunUseCase:
             )
         except Exception:
             # A rejected intake (over the daily cap, too long, unschedulable)
-            # must not cost the caller one of their free runs.
+            # must not cost the caller one of their free runs. Drop the hold
+            # first so nothing later can hand the same run back a second time.
             if claim is not None:
+                await self._free_runs.release(run_id, refund=False)
                 await self._free_runs.refund(claim)
             raise
 
