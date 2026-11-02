@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useSyncExternalStore } from "react";
-import { NetworkError } from "@/domain/errors";
+import { ApiError, NetworkError } from "@/domain/errors";
 
 /* Refinement 4 (LCH-06): launching with the server unreachable used to give
    Analyze no hint at all. The free-runs pill and the capability notice both go
@@ -15,9 +15,11 @@ import { NetworkError } from "@/domain/errors";
    launch, and the two hooks keep their own policies — they just stop being
    the only ones who knew.
 
-   - unreachable: a read failed with `NetworkError` (no response at all). An
-     `ApiError` — the server answered, badly — is not a reachability problem
-     and clears the flag, because the server evidently is there.
+   - unreachable: a read failed with `NetworkError` (no response at all), or
+     with a 5xx `ApiError` (refinement 10: a proxy's 502/503 for a service
+     that is down). Any other `ApiError` — the server answered, badly — is not
+     a reachability problem and clears the flag, because the server evidently
+     is there.
    - offline: `navigator.onLine` is false. Read live; cheap and authoritative
      in the "no network at all" direction (it can be true while the server is
      still unreachable, which is what the flag above is for).
@@ -37,9 +39,16 @@ function publish(next: boolean) {
 }
 
 /** A launch-time read finished. `error` is what it threw, or undefined on
- *  success. Only a `NetworkError` means "could not reach the server". */
+ *  success. A `NetworkError` means "could not reach the server", and so does
+ *  a 5xx `ApiError` (refinement 10): with the service down, Railway's edge
+ *  answers every path with a 502/503, so "an answer came back" no longer
+ *  proves the app server is there. A 4xx is the server itself refusing, and
+ *  keeps clearing the flag. */
 export function noteReadResult(error?: unknown): void {
-  publish(error instanceof NetworkError);
+  publish(
+    error instanceof NetworkError ||
+      (error instanceof ApiError && typeof error.status === "number" && error.status >= 500),
+  );
 }
 
 /** Register a read to repeat when the connection may be back. Returns the
