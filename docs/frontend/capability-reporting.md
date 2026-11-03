@@ -132,6 +132,24 @@ covers this state, so it follows `design-direction-editorial.md`:
   card, so the card does not move: measured card top 462px at 1086×900 with and
   without the notice, collapsed or expanded.
 
+## Large text (refinement 15)
+
+The toggle scales with the text and does not shrink, so at large text it used
+to take the line and leave the sentence a sliver: 84px at 412/200% and 32px at
+360/200% on the device (round 16), split mid-word ("Limite/d", "downl/oads")
+by `overflow-wrap: anywhere`.
+
+Now `.cap-notice` is a size container (`cap-notice`, font-size pinned to 1rem;
+everything inside was already rem). Below **15em** of content width the head
+wraps: the sentence keeps the full line beside the dot and the toggle drops to
+its own line, its label lined up under the sentence. 15em is where the
+sentence would get under ~9em of its own text beside the widest toggle
+("Details" + chevron, 5.21rem; dot + gaps 1.75rem). 320px at 100% has 16.6em,
+so normal scale keeps its one line, pixel-identical to before. The sentence's
+`overflow-wrap` is now `break-word`, which only splits a word longer than the
+whole line. The reachability notice ("You're offline right now…" + History)
+shares `.cap-head` and stacks the same way.
+
 ## Accessibility
 
 - `.cap-slot` is **always** in the DOM with `aria-live="polite"`, empty and
@@ -252,3 +270,4 @@ round. Details in `free-runs.md`.
 - 2026-11-02 · frontend agent (refinement 4) · added the shared reachability flag, retry on reconnect, and the ReachabilityNotice in the capability slot (LCH-06)
 - 2026-11-02 · frontend agent (refinement 5) · LCH-06d: offline branch unreachable in the app because WebView needs ACCESS_NETWORK_STATE for navigator.onLine; permission added to the manifest (device check pending)
 - 2026-11-02 · frontend agent (refinement 11) · capabilities reports reachability under its own source name; the notice holds while any launch read is unreachable (D-R10-1)
+- 2026-11-02 · frontend (refinement 15) · `.cap-notice` is an em size container; below 15em the toggle drops under the sentence (no more 84px column split mid-word at 412/200%); sentence `overflow-wrap` anywhere → break-word; also covers the reachability notice

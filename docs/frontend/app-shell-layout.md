@@ -866,6 +866,67 @@ Still for the device:
 
 The footer is hidden in the app shell, so it has nothing to re-check there.
 
+## Refinement 15 (2026-11-02)
+
+Device round 16 (after refinement 14 made the Android font scale the root
+font-size) found three large-text problems. All three are fixed in
+`app/globals.css` only, and every change equals the old value at 100%, so
+normal scale is pixel-identical (measured).
+
+**Dock.** It was the one piece of chrome refinement 13 did not cap: 64 → 128px
+portrait and 52 → 104px sideways at 200%, leaving a 167px content band on a
+740×360 screen. It now follows the refinement 13 rule. Height, padding, gaps,
+margins and icons are `min(<old rem>, <px at 100%>)`, items have a fixed 44px
+floor, and labels may grow from 12 to 14px (portrait) or 13 to 15px
+(sideways) and stop there. The dock is now **64px portrait and 52px sideways
+at every text size**. Stopping the labels is a deliberate trade, the same one
+refinement 13 made for the wordmark. Four labels do not fit a 320px dock past
+~14px, and a dock that doubles in height takes the room the text needs.
+
+**More sheet rows.** At 320/200% the icon tile, the gap and the chevron grew
+with the text and squeezed the label below its one word: "Releases" ran 39px
+into its chevron, "Privacy" 17px. The tile is now capped at 40px (icon 18px),
+the gap at 14px and the chevron at 18px (`flex: none`). The label keeps
+`min-width: 0` and takes the rest, so it may wrap between words but no longer
+reaches the chevron. The theme row's head uses the same tile and gap, so the
+icon and label columns stay straight. Its segmented-control indent is now
+`calc(min(2.5rem, 40px) + min(0.875rem, 14px))`, which is 3.375rem at 100%.
+The sheet padding and the rows' inline padding stay in rem. That keeps
+`.theme-choice`'s content box, which the refinement 13 container queries
+measure, unchanged, so **every theme tier is unchanged**. Where the indented
+row survives above 100% (390 and 412 at 130%), the indent is 63px instead of
+79px, so the three segments are 16px wider. In the stacked tiers the segments
+sit up to 48px higher, because the head's tile is 40px rather than 80px.
+
+**Intake cards.** See `capability-reporting.md` ("Large text") and
+`free-runs.md` (UI). Both cards stack when the sentence would otherwise get
+under ~9em, using em container queries (`cap-notice` < 15em, `free-runs` <
+17em).
+
+**Measured** with `scratchpad\refine15\verify.py`: 640/640 checks, with no
+page errors. It runs on the static `out/` export of this build, side by side
+with the 04b5946 export, at 320/360/390/412 × 100/130/150/200%, light and
+dark. `verify_reach.py` covers the reachability notice (32/32).
+
+| | 100% | 130% | 150% | 200% |
+|---|---|---|---|---|
+| Dock portrait (all widths), old → new | 64 → 64 | 83 → 64 | 96 → 64 | 128 → 64 |
+| Dock 740×360, old → new (band) | 52 → 52 (235) | 68 → 52 (215 → 235) | 78 → 52 (201 → 235) | 104 → 52 (167 → 235) |
+| Capabilities notice stacks at | — | 320, 360 | all four | all four |
+| Free-runs strip stacks at | — | 320, 360, 390 | all four | all four |
+| Sheet: smallest label→chevron gap at 320, old → new | 140 → 140 | 87 → 108 | 51 → 87 | **−39 → 33** |
+
+- **Header.** Native and web header boxes are identical to the baseline at
+  every width, scale and scheme.
+- **Words.** No word in any card is split across lines in either shell, with
+  the "Limited: link downloads." sentence, a three-capability sentence, the
+  spent free-runs sentence and the unreachable notice.
+- **Layout.** Nothing is clipped and there is no horizontal page scroll. Every
+  target is at least 44px. Dock labels sit inside their items.
+- **Not done:** `.cap-toggle` and `.btn` still reach 88px tall at 200%, from
+  the coarse-pointer `2.75rem` floor. Sheet rows still keep their `3.5rem`
+  min-height. Both are outside this pass.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent (foundation) · rebuilt the shell to the Terminal direction: one-viewport flex chain, pill nav, mobile drawer, 4 tabs, theme toggle
@@ -896,3 +957,4 @@ The footer is hidden in the app shell, so it has nothing to re-check there.
 - 2026-11-02 · frontend agent (refinement 10) · UpdateBanner references updated (now a top-layer dialog, no `.viewport` space); Privacy/Terms Back link shows on the web too; `html, body` min-width is 320px, not 20rem
 - 2026-11-02 · frontend agent (refinement 13) · D-R12-1: top bar capped with `min(rem, px)` (44px icon buttons, 22px wordmark cap, 68px bar), fits at 320/360 × 100–200% on every route, normal scale identical; footer still wraps at 320/150% but its gaps/heights are capped (146 → 100px); More sheet theme control re-lays via em container queries (indent dropped, then stacked) with padded labels
 - 2026-11-02 · frontend agent (refinement 14) · no CSS change: Android now sets the system font scale as the root font-size (text zoom pinned to 100, see android-update-check.md), so the R13 caps and theme-control container queries work in the app; measured wordmark ≤ 22px, landscape bar 56px and the theme tiers at 320/360/390 × 1.0–2.0; repaired the mangled R13 harness path
+- 2026-11-02 · frontend (refinement 15) · dock capped with min(rem, px) (64px portrait / 52px sideways at every scale, labels ≤ 14/15px, 44px items); More-sheet icon tile, gap and chevron capped so labels never reach their chevrons (320/200% "Releases" −39 → +33px), theme indent follows; theme tiers and header unchanged; intake cards stack (see capability-reporting.md, free-runs.md)
