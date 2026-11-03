@@ -617,6 +617,12 @@ h3 {
     border: var(--rule-w) solid var(--color-rule);
     border-radius: var(--radius-control);
     background: var(--color-surface);
+    /* Refinement 15: the head stacks when the sentence would get too narrow
+       beside the toggle (see the @container rule after .cap-toggle). The
+       query is in em of this box, so font-size is pinned to the root; every
+       size inside is rem already, so nothing else moves. */
+    container: cap-notice / inline-size;
+    font-size: 1rem;
   }
   .cap-notice[data-tone="bad"] {
     border-color: var(--color-danger-border);
@@ -659,7 +665,11 @@ h3 {
     font-size: 0.875rem;
     line-height: 1.45;
     color: var(--color-ink);
-    overflow-wrap: anywhere;
+    /* Not `anywhere`: that let the 84px column at 412/200% split "Limite/d"
+       and "downl/oads". The stacking below keeps the column wide enough for
+       whole words; `break-word` only splits a single word longer than the
+       full line, which no real sentence here has. */
+    overflow-wrap: break-word;
   }
 
   /* Text button, 44px tall so it is a real target on any pointer. */
@@ -693,6 +703,28 @@ h3 {
   }
   .cap-toggle[aria-expanded="true"] .cap-chevron {
     transform: rotate(180deg);
+  }
+  /* Refinement 15 (device round 16): the toggle scales with the text, so at
+     large text it took the line and left the sentence a sliver (84px at
+     412/200%, 32px at 360/200%). Measured in rem: dot + two gaps are 1.75,
+     the widest toggle ("Details" + chevron) 5.21, so the sentence gets the
+     box less ~6.96rem. Below 15em it would get under ~9em of its own 0.875rem
+     text (two or three words a line), so the toggle drops to its own line,
+     its label lined up under the sentence (dot 0.5 + gap 0.625 − the
+     toggle's own 0.625 padding). 320px at 100% has 16.6em and keeps the one
+     line it always had. */
+  @container cap-notice (width < 15em) {
+    .cap-head {
+      flex-wrap: wrap;
+      /* the toggle's own 44px box is the air above its label */
+      row-gap: 0;
+    }
+    .cap-summary-text {
+      flex-basis: calc(100% - 1.125rem);
+    }
+    .cap-toggle {
+      margin-inline-start: 0.5rem;
+    }
   }
 
   .cap-detail {
@@ -2493,19 +2525,26 @@ h3 {
      32rem up (one measured viewport) it simply ends the column under the
      scrolling section. Its own box is the clearance — at the end of the
      scroll the last control sits above it, never underneath. */
+  /* Refinement 15: the dock is chrome, so it follows the refinement 13 rule —
+     text may scale, chrome does not grow. Every length is min(<old rem>,
+     <its px at 100%>), so normal scale is pixel-identical, and from 100% up
+     the dock holds still instead of growing 64 -> 128px (portrait) and
+     52 -> 104px (sideways) at 200%, which took that height off the content
+     band. Items keep a 44px floor; icons stop at 20px; labels may grow to
+     14px (from 12), which is what four labels fit in at 320px. */
   .tabbar {
     display: none;
     position: sticky;
     z-index: 20;
-    bottom: max(var(--space-sm), var(--safe-bottom));
+    bottom: max(min(var(--space-sm), 16px), var(--safe-bottom));
     flex-shrink: 0;
     width: 100%;
-    margin: auto auto max(var(--space-sm), var(--safe-bottom));
+    margin: auto auto max(min(var(--space-sm), 16px), var(--safe-bottom));
     max-width: 30rem;
-    height: var(--tabbar-height);
+    height: min(var(--tabbar-height), 64px);
     align-items: stretch;
-    gap: 0.25rem;
-    padding: 0.375rem;
+    gap: min(0.25rem, 4px);
+    padding: min(0.375rem, 6px);
     background: var(--color-dock);
     border-radius: var(--radius-pill);
     box-shadow: var(--shadow-floating);
@@ -2524,18 +2563,20 @@ h3 {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 0.2rem;
-    min-height: 2.75rem;
+    gap: min(0.2rem, 3.2px);
+    min-height: 44px;
+    min-width: 0;
     border-radius: var(--radius-pill);
-    font-size: 0.75rem;
+    font-size: min(0.75rem, 14px);
     font-weight: 600;
     color: var(--color-dock-muted);
     -webkit-tap-highlight-color: transparent;
     transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out);
   }
   .tabbar-item svg {
-    width: 1.25rem;
-    height: 1.25rem;
+    flex-shrink: 0;
+    width: min(1.25rem, 20px);
+    height: min(1.25rem, 20px);
   }
   /* `data-active` is More's version of aria-current: a button opens the sheet
      rather than being a page, but while you are on API key, Releases or a
@@ -2613,15 +2654,24 @@ h3 {
     padding-top: 0.375rem;
     border-top: var(--rule-w) solid var(--color-rule);
   }
+  /* Refinement 15 (device round 16): at 320/200% the label's box was squeezed
+     below its one word by the icon tile, the gaps and the chevron, all
+     growing with the text, and "Releases" ran 39px into its chevron. The
+     icon tile, gap and chevron are now capped like the top bar's
+     (min(<old rem>, <px at 100%>), identical at normal scale), so the label
+     takes what the text needs; the chevron keeps its own fixed box, and the
+     label may wrap between words but never into it. */
   .sheet-row {
     all: unset;
     box-sizing: border-box;
     cursor: pointer;
     display: flex;
     align-items: center;
-    gap: 0.875rem;
+    gap: min(0.875rem, 14px);
     width: 100%;
     min-height: 3.5rem;
+    /* inline padding left as rem: it matches .theme-choice's, whose content
+       box the refinement 13 container queries measure */
     padding: 0.375rem 0.25rem;
     border-radius: var(--radius-control);
     font-size: 1.0625rem;
@@ -2640,19 +2690,21 @@ h3 {
   .sheet-row[aria-current="page"] .sheet-label {
     color: var(--color-accent);
   }
+  /* Shared by the rows and the theme row's head, so the icon column and the
+     label column stay one straight line down the sheet at any text size. */
   .sheet-icon {
     display: grid;
     place-items: center;
-    width: 2.5rem;
-    height: 2.5rem;
+    width: min(2.5rem, 40px);
+    height: min(2.5rem, 40px);
     flex-shrink: 0;
-    border-radius: 0.625rem;
+    border-radius: min(0.625rem, 10px);
     background: var(--color-tint);
     color: var(--color-ink);
   }
   .sheet-icon svg {
-    width: 1.125rem;
-    height: 1.125rem;
+    width: min(1.125rem, 18px);
+    height: min(1.125rem, 18px);
   }
   .sheet-label {
     flex: 1;
@@ -2667,10 +2719,10 @@ h3 {
     color: var(--color-muted);
   }
   .sheet-chevron {
-    width: 1.125rem;
-    height: 1.125rem;
+    width: min(1.125rem, 18px);
+    height: min(1.125rem, 18px);
     color: var(--color-muted);
-    flex-shrink: 0;
+    flex: none;
   }
   /* ---- the More sheet's theme choice (refinement 4, THM-01) ----
      System / Light / Dark as one segmented radio group under the row's
@@ -2698,7 +2750,7 @@ h3 {
   .theme-choice__head {
     display: flex;
     align-items: center;
-    gap: 0.875rem;
+    gap: min(0.875rem, 14px);
     font-size: 1.0625rem;
     font-weight: 600;
     color: var(--color-ink);
@@ -2707,7 +2759,9 @@ h3 {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.25rem;
-    margin: 0.5rem 0 0 3.375rem;
+    /* the indent is the icon tile + head gap (3.375rem at 100%), capped with
+       them in refinement 15 so the track stays under the label */
+    margin: 0.5rem 0 0 calc(min(2.5rem, 40px) + min(0.875rem, 14px));
     padding: 0.1875rem;
     border-radius: var(--radius-pill);
     background: var(--color-tint);
@@ -3188,6 +3242,12 @@ h3 {
   }
   .free-runs-slot {
     margin-bottom: var(--space-md);
+    /* Refinement 15: the strip stacks when the sentence would get too narrow
+       beside the pill (the @container rule after .free-runs__action). The
+       query is in em of this slot, so its font-size is pinned to the root;
+       everything inside is rem. */
+    container: free-runs / inline-size;
+    font-size: 1rem;
   }
   .free-runs {
     display: flex;
@@ -3222,6 +3282,22 @@ h3 {
     min-height: 2.5rem;
     padding: 0.5rem 1.125rem;
     font-size: 0.9375rem;
+  }
+  /* Refinement 15 (device round 16): the "Add key" pill scales with the text,
+     so at 200% it left the sentence one word a line. Measured in rem: the
+     strip's padding, border and gap take ~2.85, the pill 5.68, so the
+     sentence gets the slot less ~8.5rem. Below 17em that is under ~9em of
+     its own 0.9375rem text, so the pill goes under the sentence, left-aligned
+     with it. 320px at 100% has 18em and keeps the row it always had. */
+  @container free-runs (width < 17em) {
+    .free-runs {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: var(--space-xs);
+    }
+    .free-runs__text {
+      align-self: stretch;
+    }
   }
 
   /* ---- update prompt (native Android only; refinement 10) ----
@@ -4176,7 +4252,7 @@ h3 {
   /* The same 8px the landscape dock keeps above it, so the scroller visibly
      ends before the dock and the last control never sits flush against it. */
   :root[data-shell="app"] .tabbar {
-    margin-top: var(--space-2xs);
+    margin-top: min(var(--space-2xs), 8px);
   }
 }
 
@@ -4222,17 +4298,20 @@ h3 {
      the scroller visibly ends before the dock starts; the headline drops to
      the bottom of its clamp so it fits on one line and the intake card starts
      in the first screen. */
+  /* Refinement 15: capped like the portrait dock, at exactly its 100% size,
+     so sideways it is 52px at every text size (it was 104px at 200%, leaving
+     a 167px band on a 360px-tall screen). */
   :root[data-shell="app"] .tabbar {
-    height: 3.25rem;
-    padding: 0.25rem;
-    margin-top: var(--space-2xs);
-    margin-bottom: max(var(--space-2xs), var(--safe-bottom));
-    bottom: max(var(--space-2xs), var(--safe-bottom));
+    height: min(3.25rem, 52px);
+    padding: min(0.25rem, 4px);
+    margin-top: min(var(--space-2xs), 8px);
+    margin-bottom: max(min(var(--space-2xs), 8px), var(--safe-bottom));
+    bottom: max(min(var(--space-2xs), 8px), var(--safe-bottom));
   }
   :root[data-shell="app"] .tabbar-item {
     flex-direction: row;
-    gap: 0.5rem;
-    font-size: 0.8125rem;
+    gap: min(0.5rem, 8px);
+    font-size: min(0.8125rem, 15px);
   }
   :root[data-shell="app"] .intake-title {
     font-size: 2.25rem;
