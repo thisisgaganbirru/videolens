@@ -730,6 +730,75 @@ No real runs spent. The device was restored afterwards: font 1.0, wm size reset,
 
 No real runs spent. I made one R13 control install for item 7 and then reinstalled R14. The device was restored afterwards: font 1.0, wm size reset, auto-rotate on, light theme, CDP forward removed, adb reverse 8000 kept, and the temporary files on the device deleted.
 
+### 2026-11-02 · android-66 (device QA) · run 17 (refinement 15, `refine15-debug.apk` at 9605e43, real backend)
+
+**Setup**
+- **Build.** `adb install -r`, lastUpdateTime 19:48:47.
+- **Device.** Emulator API 35, WebView 124.
+- **Evidence.** In `%TEMP%\qa18\`.
+- **Widths.** 320, 360 and 412 css px.
+- **Fonts.** 1.0, 1.3, 1.5 and 2.0, changed live.
+- **Scripts.**
+  - `cards15.js`: each intake card's text and button rects, row versus stacked, line and word counts, and any word split across lines (Range rects per word).
+  - `dock15.js`: the dock's height, the content band, item sizes and label clipping.
+  - `align15.js`: the More-sheet row icons and label left edges.
+  - Run 16's `probe14.js`, `m13.js` and `rows14.js`.
+
+**1. Intake cards: PASS.**
+
+| css px | 1.0 | 1.3 | 1.5 | 2.0 |
+|---|---|---|---|---|
+| 320 | row | stacked | stacked | stacked |
+| 360 | row | stacked | stacked | stacked |
+| 412 | row | row | stacked | stacked |
+
+- No word breaks mid-word in any of the 12 combinations ("Limited:" and "downloads." stay whole).
+- "Limited: link downloads." takes at most 2 lines. The free-runs text (10 words) takes at most 4 lines (320/2.0), never one word per line.
+- At 320/2.0 the summary text is 178px wide (R14: squeezed to a few px); at 412/2.0 it is 271px (R14: 84px).
+- Buttons sit under the text when stacked: "Details" 167×88 and "Add key" 182×88 at 2.0.
+- Screenshot: `320-f20-intake-s.png`.
+
+**2. More sheet: PASS.**
+- At 320/2.0 the gaps between label and chevron are: Releases **+33px** (R14: 39px overlap), Privacy +55, API key +55, Terms +74. "API key" is back on one line.
+- Every gap at every other combination is at least +73px.
+- Chevrons are now a fixed 18px.
+- **Theme row alignment.** Every row's icon is a fixed 40×40 (R14 scaled it up to about 80px at 2.0), and all five labels share one left edge: 74 at 320/1.0, 80 at 412/1.3, 94 at 320/2.0, the Theme row included.
+- Screenshot: `sheet-320-f20-s.png`.
+
+**3. Dock: PASS.**
+- **Portrait.** 64px tall (783–847) and the band 706px, at all 12 combinations. R14 grew it to 128px.
+- **Items.** 52px tall, 79–120px wide, no label clipped.
+- **Landscape** (live rotation, 915×360). The dock is 52px and the band **235px** at 1.0, 1.3, 1.5 and 2.0 (R14: 167px at 2.0). Items are 44px tall, 155 → 275px wide, none clipped.
+
+**4. Regression: PASS.**
+- **Probe, header and wordmark:** identical to run 16 at 320 and 360:
+  - root 16 / 20.8 / 24 / 32px;
+  - `22px` stays 22px;
+  - wordmark 19 / 22 / 22 / 22px;
+  - bar 68 portrait and 56 landscape;
+  - toggle 44×44, nothing clipped.
+- **Theme control layouts:**
+
+  | css px | 1.0 | 1.3 | 1.5 | 2.0 |
+  |---|---|---|---|---|
+  | 320 | indented | full | stacked | stacked |
+  | 360 | indented | full | stacked | stacked |
+  | 412 | indented | indented | full | stacked |
+
+  - Segment numbers are unchanged from run 16 except the stacked control at 2.0, which is **48px higher** (segments start at 563, not 611): within the allowed shift.
+  - At 412/1.3 the indented row starts at 80 (head 26). This width wasn't measured in run 16.
+- **Live change 1.0 → 2.0 → 1.0 with "Me at the zoo" open on Transcript.** Same pid (21473), the marker kept, and the tab kept. Root 16 → 32 → 16, H1 28 → 56 → 28, and the dock stays 64.
+- **Smoke at 412/1.0.**
+  - Intake: link, file, the notice and the free-runs card in one row.
+  - History: 19 rows.
+  - Result: 4 tabs with their own panels (765 / 31 / 284 characters), Download 141–375, 44px tall.
+  - Terms: H1, band 706. Back returns to /app.
+  - The document is never wider than the viewport, and light theme is kept.
+
+**Pinch zoom:** still NOT VERIFIED (owner question, see run 16).
+
+No real runs spent. The device was restored afterwards: font 1.0, wm size reset, auto-rotate on, light theme, CDP forward removed, adb reverse 8000 kept.
+
 ## Changelog
 
 - 2026-11-02 · android-66 (device QA) · added section 19 (update banner, UPD-01..07) and run 9 (UPD partial on the mock: UPD-01/03 PASS, UPD-04 partial, rest PAUSED) and run 10 (real runs: terms persistence, RUN-01 retry with a YouTube link, RUN-02/02b/03/04/05/07/08, ORI-02, HIS-01, FREE-01..05, RUN-06b/06c/06d/06e, LCH-06b/06c, FREE-02b PASS; FREE-02c not exercised (YouTube 403 mid-download); stale free-runs count after a refund logged as known (R9); stage timings incl. Normalizing ~60 s for a 170 s file); added FREE-02b/02c rows to section 6
@@ -751,3 +820,4 @@ No real runs spent. I made one R13 control install for item 7 and then reinstall
 - 2026-11-02 · android-66 (device QA) · run 14: refinement 12 retest on refine12-debug.apk (5ac8522): tab-row fades cover the list edges at 320 for fonts 1.0/1.3/1.5/2.0 with no peek (2.0 also clears every chosen tab, better than the documented limit); no chevrons from 360 at font 1.0; History "Search runs" fits at 320/360 for fonts 1.0–2.0 with the sort wrapping first; smoke PASS; nav menu clip at 320/1.5 not reproduced (no menu button in the app header); COSMETIC: More-sheet "System" segment 2px over at 320/1.5
 - 2026-11-02 · android-66 (device QA) · run 15: refinement 13 retest on refine13-debug.apk (a69c188): header fits at 320/360 for fonts 1.0–2.0 with no clip and a 44×44 toggle, but the 22px wordmark cap FAILS (38px at 2.0; WebView text zoom multiplies px after min()); More-sheet theme control FAIL (em container queries never fire, so it stays an indented row and "System" overflows its segment from 320/1.5, 8–33 px); Dark selection PASS; footer N/A on Android (.page-end hidden in the app shell), band 706px steady; smoke at 412 PASS
 - 2026-11-02 · android-66 (device QA) · run 16: refinement 14 retest on refine14-debug.apk (7318f53): root font-size follows the system scale (16–32px, 22px probe stays 22), wordmark caps at 22px, bar 68 portrait and 56 landscape at every scale, theme control layouts match all 15 expected cells with padded labels and ≥44 targets, Dark works, live change keeps the result, no cold-launch jump at 1.5/2.0, /privacy and /terms get the scale, fallback unused, smoke PASS; pinch zoom NOT VERIFIED (Capacitor zoomEnabled defaults false); MINOR intake cards break words at 2.0 (and 320/1.5); COSMETIC More-sheet Releases/Privacy labels hit their chevrons at 320/2.0; question on the uncapped dock (landscape band 167px at 2.0)
+- 2026-11-02 · android-66 (device QA) · run 17: refinement 15 retest on refine15-debug.apk (9605e43): intake cards stack (320/360 from 1.3, 412 from 1.5) with no mid-word breaks; More-sheet labels clear their chevrons (Releases +33px at 320/2.0) with icons fixed at 40px and labels aligned; dock 64px portrait at every scale, 52px landscape with a 235px band at 2.0; header, wordmark and theme-control numbers unchanged apart from the expected 48px rise of the stacked control; live change and smoke PASS; pinch still NOT VERIFIED
