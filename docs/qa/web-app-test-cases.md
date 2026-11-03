@@ -850,8 +850,23 @@ Android-native change plus one head script (`application/nativeFontScale.ts`) th
 | 2 | Reduced R13 header and theme-control sweep, 320/390 x 100/150%, light+dark | PASS | Identical to run 11. Header: Menu and theme 44x44, on screen, 8px apart, nav 68 (320@100% theme 208-252 / menu 260-304; 320@150% 200-244 / 252-296; 390@100% 278-322 / 330-374; 390@150% 270-314 / 322-366), no clipping, no hscroll, on the same six pages. Sheet theme control: targets at least 44px, no label wider than its segment; 320 indented row at 100% and stacked at 150%; 390 indented row at 100% and full-width row at 150%. |
 | 3 | Console and hydration, 390 px, light+dark | PASS | `/`, `/app`, `/privacy`, `/terms`, `/offline`: 0 console errors or warnings, 0 page errors, 0 hydration warnings. |
 
+### 2026-11-02 · videolens-65 (web QA) · run 13 (refinement 15 large-text check, HEAD 9605e43)
+
+CSS only. Playwright, Chromium, `:3005` dev server (HMR, not restarted), `:8000` backend (capabilities real, degraded) with mocked free-runs, 320/390 x 100/150/200%, light and dark; free-runs checked in both the "left" (3) and "spent" (0) states.
+
+| # | Item | Result | Notes |
+|---|---|---|---|
+| a | Capabilities notice and free-runs strip: no mid-word breaks, button below text when stacked | PASS | No word split across lines, collapsed or expanded. Both cards stay on one line at 100% (320 and 390) and stack from 150%, with the toggle / action on its own line below the text, at 320 and 390. Sentence width stacked: cap 213/178 px at 320@150/200%, free-runs text 228/198 px. |
+| b | More sheet: labels never overlap chevrons | PASS | Smallest label-to-chevron gap 141 px (320@100%), 87 (320@150%), 33 (320@200%), 211/157/103 at 390. Tile 40 px and chevron at most 18 px everywhere; rows at least 44 px tall. |
+| c | Dock height capped | PASS | 64 px portrait at 320 and 390 at 100/150/200%; 52 px sideways (740x360) at 100/150/200%; items at least 44 px. |
+| d | Header and theme control match run 12 | PASS | Identical positions (e.g. 320@100% theme 208-252 / menu 260-304, 320@200% 192-236 / 244-288, 390@200% 262-306 / 314-358), nav 68, 44x44, 8 px apart, on six pages. Theme tiers unchanged: 320 indented row at 100% then stacked from 150%; 390 indented row at 100%, full-width row at 150%, stacked at 200%. 390@130%: indented row, segment margin 54 px; the first segment's label sits 59 px (box) / 63 px (inner) from the fieldset edge, which is the expected 63 px. Segments 89 px wide. |
+| e | Console, hydration, hscroll, targets | PASS | `/`, `/app`, `/privacy`, `/terms`, `/offline` at 320/390 x 100/150/200%, light and dark: 0 console errors or warnings, 0 page errors, no horizontal scroll. Targets (toggle, action, sheet rows, theme segments, dock items) at least 44 px. |
+
+Note: the 63 px figure is the label's inner offset; the box offset I measure is 59.2 px (54 px margin + 5.2 px fieldset padding).
+
 ## Changelog
 
+- 2026-11-02 · videolens-65 (web QA) · run 13: refinement 15 large-text check, items a-e PASS (intake cards stack without mid-word breaks, sheet labels clear of chevrons, dock 64/52 px, header identical to run 12)
 - 2026-11-02 · videolens-65 (web QA) · run 12: refinement 14 web no-regression, items 1-3 PASS (no inline root font-size or global on the web, header and theme control identical to run 11, no console or hydration errors)
 - 2026-11-02 · videolens-65 (web QA) · run 11: refinement 13 retest, items 1-4 PASS (header 44px and on screen up to 200% font, theme control fits and stacks from 150%, footer links 44px, normal-scale unchanged); D-R12-1 fixed
 - 2026-11-02 · videolens-65 (web QA) · run 10: refinement 12 retest, items 1, 2, 4 PASS (tab fades clean, threshold 359/360 correct); item 3 FAIL D-R12-1 (the menu button is 41 px off-screen at 320 wide, 150% font)
