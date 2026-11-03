@@ -616,6 +616,120 @@ Android's font scale reaches the page through `setTextZoom` (R11). Blink applies
 
 No real runs spent. The device was restored afterwards: font 1.0, wm size reset, auto-rotate on, light theme, CDP forward removed, adb reverse 8000 kept.
 
+### 2026-11-02 · android-66 (device QA) · run 16 (refinement 14, `refine14-debug.apk` at 7318f53, real backend)
+
+**Setup**
+- **Build.** `adb install -r`, lastUpdateTime 18:44:11.
+- **Reinstall.** I reinstalled at 19:05:36 after a short R13 control for item 7. That reinstall was confirmed: the probe gives scale=1 and `22px` stays 22px.
+- **Device.** Emulator API 35, WebView Chrome 124.0.6367.219.
+- **Evidence.** In `%TEMP%\qa17\`.
+- **Widths.** 320, 360 and 390 css px (`wm size 840x2400` / `945x2400` / `1024x2400`) and 412.
+- **Fonts.** 1.0, 1.15, 1.3, 1.5 and 2.0, changed live.
+- **Measurements.** `probe14.js` reads:
+  - `window.__videolensFontScale`;
+  - the `<html>` inline style;
+  - the root and body font sizes;
+  - a `22px` probe and a `1rem` probe;
+  - the wordmark's font size.
+
+  `m13.js` covers the header, band, dock and the More-sheet theme control (as in run 15). `rows14.js` measures the More-sheet row labels against their chevrons, and `cards14.js` measures the intake cards and any word split across lines.
+
+**1. Probe: PASS.**
+- Root and body are 16 / 18.4 / 20.8 / 24 / 32px at 1.0 / 1.15 / 1.3 / 1.5 / 2.0, with `<html style="font-size: 115% | 130% | 150% | 200%">`. Scale 1 sets no inline size.
+- `22px` computes to 22px at every scale, so text zoom is pinned to 100.
+
+**2. Header: PASS.**
+
+| css px | wordmark at 1.0 / 1.15 / 1.3 / 1.5 / 2.0 | bar | toggle |
+|---|---|---|---|
+| 320 | 19 / 21.85 / 22 / 22 / 22px | 68 | 44×44 |
+| 360 | 19 / 21.85 / 22 / 22 / 22px | 68 | 44×44 |
+| 390 | 19 / 21.85 / 22 / 22 / 22px | 68 | 44×44 |
+
+- Nothing is clipped, there is no overlap, and the document is never wider than the viewport.
+- The smallest gap to the toggle is 83px, at 320/2.0.
+- The brand mark goes from 26 to 30px from 1.15 up.
+- **Landscape** (live rotation, 915×360): the bar is 56px at all five scales (R13 grew to 63 at 2.0), the wordmark 21 → 24px (the ≥48rem cap), the toggle 44×44.
+
+**3. Theme control layout: PASS, every cell as expected.**
+
+| css px | 1.0 | 1.15 | 1.3 | 1.5 | 2.0 |
+|---|---|---|---|---|---|
+| 320 | indented | full | full | stacked | stacked |
+| 360 | indented | indented | full | stacked | stacked |
+| 390 | indented | indented | indented | full | stacked |
+
+- Every label sits inside its segment, with at least 10px side padding (System at 320/1.3 and 390/1.3 is the tightest).
+- Targets are at least 44px: 44 / 51 / 57 / 66 / 88px tall.
+- **Dark:** a real tap on Dark in the stacked layout at 320/2.0 gives `data-theme=dark`, `dark` checked and stored, and body `rgb(14, 16, 15)`. Light restores light.
+
+**4. Live font change with a result open: PASS.**
+- With "Me at the zoo" open on Transcript, I changed the font 1.0 → 2.0 → 1.0.
+- The pid stays 18652 and the `__qamark` marker survives, so there was no reload. The result and tab are kept, and MainActivity stays top-resumed.
+- Root goes 16 → 32 → 16px and the H1 28 → 56 → 28px.
+
+**5. Cold launch at 1.5 and 2.0: PASS, with no text-size jump.**
+- **Method.** `screenrecord` from before the launch, sampled at 5 fps and tiled (`cold-f15-tile.png`, `cold-f20b-tile.png`).
+- **Sequence.** Native splash, then the web Splash ("videolens / Notes from short video"), then the intake.
+- **Result.** The first intake frame is already at the scaled size, and later frames don't change size. screenrecord only writes frames on change, and at 2.0 the first intake frame is the last frame. At 1.5 the only later change is the capability notice and the free-runs card arriving and pushing content down; that is data loading, not a size change.
+- **Late attach.** CDP attached late (page time about 6.6s), so it reports only the settled values: scale 2, root inline `200%`, root 32px, wordmark 22px. First paint was 1.79s (2.0) and 1.29s (1.5).
+
+**6. /privacy and /terms: PASS.**
+- At 2.0, both a document navigation and a `location.reload()` give `__videolensFontScale=2`, root `font-size: 200%`, root 32px and wordmark 22px.
+- Changing the font to 1.3 while on /terms applies live (root 20.8px) and survives a reload, so the swapped document-start script holds the new value.
+- A true cold launch straight into /terms isn't possible (no deep link), so this used a navigation plus a reload.
+
+**7. Pinch zoom: NOT VERIFIED, and there's evidence it is off at every scale.**
+- I couldn't do a real two-finger pinch: `sendevent` on `/dev/input/event2` is permission denied (no root), and `adb input` has no multi-touch.
+- CDP `Input.synthesizePinchGesture` leaves `visualViewport.scale` at 1.00 on R14 at 1.3. It does the same on a **control install of R13** at 1.3, where text zoom was 130, so the method doesn't detect zoom either way.
+- **Static evidence:** Capacitor 8 `Bridge.java:612` calls `setBuiltInZoomControls(config.isZoomableWebView())`. `CapConfig.java:287` defaults `zoomEnabled` to false, and the app's capacitor config doesn't set it.
+- **Doc conflict.** `docs/frontend/android-update-check.md` says "the app's viewport never disables zoom, so nothing is lost". The viewport is `width=device-width, initial-scale=1, viewport-fit=cover`, and touch-action is `auto` throughout, but the WebView-level switch is off.
+- **Question for the lead:** was pinch ever available on Android (through Chromium's force-zoom at text zoom ≥130), and is it wanted? A manual check with Ctrl+drag in the emulator window, or on a phone, would settle it.
+
+**8. Smoke test at 412/1.0: PASS.**
+- **Intake:** link, file input, the capability notice, and "3 free runs left. Add your own key for more."
+- **History:** 19 rows.
+- **Result:** tabs TL;DR, Notes, Transcript and On-screen, each with its own panel (765 / 284 / 31 characters). Download is 141–375, 44px tall.
+- **More sheet:** pixel-identical numbers to R13 at 412 (indented row, pad 26–34).
+- **Terms:** H1 "Terms", band 706. Back returns to /app.
+- The document is never wider than 412.
+
+**9. Fallback not in use: PASS.**
+- Chrome 124 is well past the ~87 needed for `DOCUMENT_START_SCRIPT`.
+- `__videolensFontScale` is set on every document. Text zoom is 100, while the fallback would make `22px` compute to 2× it.
+- Logcat shows `Registering plugin instance: FontScale` on each launch.
+
+**New defects found on the way**
+- **MINOR: intake cards break words at large text.** The noShrink controls now scale with the root:
+  - "Details" (`.cap-toggle`, 167px at 2.0, min-width 2.75rem);
+  - "Add key" (`.free-runs .btn`, 182px).
+
+  So the text beside them is squeezed:
+
+  | css px / font | `.cap-summary-text` width | broken words |
+  |---|---|---|
+  | 412 / 2.0 | 84px | "Limite/d", "downl/oads." |
+  | 390 / 2.0 | 63px | "Limited:", "downloads." |
+  | 360 / 2.0 | 32px | "Limited:", "link", "downloads." |
+  | 320 / 2.0 | — | "Limited:", "link", "downloads." (`intake-320-f20-s.png`) |
+  | 320 / 1.5 | 73px | "downloads." |
+
+  - The free-runs text is one word per line at 2.0, with no mid-word breaks.
+  - There are no breaks at 1.3 for 320/360/412, at 1.5 for 360/412, or at 1.15 for 320.
+  - Screenshot: `intake-412-f20-s.png`.
+  - R13 was never measured here, so it's unknown whether this is new.
+- **COSMETIC: More-sheet row labels run into their chevrons at 320/2.0.**
+  - At 320/2.0, "Releases" (text right edge 283) overlaps its chevron (244–280) by 39px, and "Privacy" by 17px. "Terms" has a 2px gap, and "API key" wraps to two lines.
+  - At 360/2.0, Releases has a 1px gap.
+  - Every row is fine at 1.5 and below.
+  - Screenshot: `320-f20-sheet-s.png`.
+- **Observation (question): the dock scales with the root and eats the content band.**
+  - Portrait: the dock is 64 / 74 / 83 / 96 / 128px tall and the band 706 / 693 / 680 / 662 / 618px across the five scales.
+  - Landscape: the dock is 52 → 104px and the band 235 → **167px** at 2.0, which is 46% of a 360px-tall screen.
+  - Is an uncapped dock intended, like the top bar's cap?
+
+No real runs spent. I made one R13 control install for item 7 and then reinstalled R14. The device was restored afterwards: font 1.0, wm size reset, auto-rotate on, light theme, CDP forward removed, adb reverse 8000 kept, and the temporary files on the device deleted.
+
 ## Changelog
 
 - 2026-11-02 · android-66 (device QA) · added section 19 (update banner, UPD-01..07) and run 9 (UPD partial on the mock: UPD-01/03 PASS, UPD-04 partial, rest PAUSED) and run 10 (real runs: terms persistence, RUN-01 retry with a YouTube link, RUN-02/02b/03/04/05/07/08, ORI-02, HIS-01, FREE-01..05, RUN-06b/06c/06d/06e, LCH-06b/06c, FREE-02b PASS; FREE-02c not exercised (YouTube 403 mid-download); stale free-runs count after a refund logged as known (R9); stage timings incl. Normalizing ~60 s for a 170 s file); added FREE-02b/02c rows to section 6
@@ -636,3 +750,4 @@ No real runs spent. The device was restored afterwards: font 1.0, wm size reset,
 - 2026-11-02 · android-66 (device QA) · run 13: refinement 11 retest on refine11-debug.apk (e1f4426): results header at 320 (Download own row at 1.15/1.3, chevrons page, chosen tab clear of fades), live font change without reload (also theme and rotation), History "Search runs" at 320 up to font 1.3, and the landscape popup labels on one line at font 1.3 all PASS; mismatch: end chevron shows at 320/font 1.0 (tabs overflow 41px); COSMETIC 4px tab text past each fade; MINOR placeholder truncates at font 1.5
 - 2026-11-02 · android-66 (device QA) · run 14: refinement 12 retest on refine12-debug.apk (5ac8522): tab-row fades cover the list edges at 320 for fonts 1.0/1.3/1.5/2.0 with no peek (2.0 also clears every chosen tab, better than the documented limit); no chevrons from 360 at font 1.0; History "Search runs" fits at 320/360 for fonts 1.0–2.0 with the sort wrapping first; smoke PASS; nav menu clip at 320/1.5 not reproduced (no menu button in the app header); COSMETIC: More-sheet "System" segment 2px over at 320/1.5
 - 2026-11-02 · android-66 (device QA) · run 15: refinement 13 retest on refine13-debug.apk (a69c188): header fits at 320/360 for fonts 1.0–2.0 with no clip and a 44×44 toggle, but the 22px wordmark cap FAILS (38px at 2.0; WebView text zoom multiplies px after min()); More-sheet theme control FAIL (em container queries never fire, so it stays an indented row and "System" overflows its segment from 320/1.5, 8–33 px); Dark selection PASS; footer N/A on Android (.page-end hidden in the app shell), band 706px steady; smoke at 412 PASS
+- 2026-11-02 · android-66 (device QA) · run 16: refinement 14 retest on refine14-debug.apk (7318f53): root font-size follows the system scale (16–32px, 22px probe stays 22), wordmark caps at 22px, bar 68 portrait and 56 landscape at every scale, theme control layouts match all 15 expected cells with padded labels and ≥44 targets, Dark works, live change keeps the result, no cold-launch jump at 1.5/2.0, /privacy and /terms get the scale, fallback unused, smoke PASS; pinch zoom NOT VERIFIED (Capacitor zoomEnabled defaults false); MINOR intake cards break words at 2.0 (and 320/1.5); COSMETIC More-sheet Releases/Privacy labels hit their chevrons at 320/2.0; question on the uncapped dock (landscape band 167px at 2.0)
