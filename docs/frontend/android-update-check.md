@@ -312,9 +312,17 @@ scale is the page's root font-size; text zoom stays at 100.
 - **Body text scales exactly as before:** 16, 18.4, 20.8, 24 and 32px at 1.0,
   1.15, 1.3, 1.5 and 2.0. All app text is rem/em; the only px font sizes in the
   CSS are the two wordmark caps. The px caps now hold.
-- **Pinch zoom:** WebView force-enables page zoom when text zoom is 130 or
-  more. That no longer happens, but the app's viewport never disables zoom, so
-  nothing is lost.
+- **Pinch zoom** (corrected in refinement 15): pinch-zoom has never been
+  available in the Android app, before or after this change. Capacitor's
+  `Bridge.initWebView` calls `setBuiltInZoomControls(config.isZoomableWebView())`
+  (and `setDisplayZoomControls(false)`), and `isZoomableWebView()` reads
+  `android.zoomEnabled` / `zoomEnabled`, which defaults to `false` and is not
+  set in `capacitor.config`. With built-in zoom controls off, the WebView
+  ignores pinch gestures whatever the viewport meta says. So refinement 14 took
+  nothing away. (An earlier version of this note said the viewport "never
+  disables zoom, so nothing is lost"; the viewport is irrelevant here.)
+  Turning zoom on (`zoomEnabled: true`) is an open owner question and has
+  deliberately not been done.
 - **Breakpoints:** rem/em media queries resolve against the initial 16px, not
   the root, so on Android the `48rem` / `37.5rem` / `32rem` / `31.25rem`
   breakpoints are now fixed px whatever the font scale. This is the same model
@@ -346,3 +354,4 @@ re-taken.
 - 2026-11-02 · android-66 (device QA) · verified refinement 11 on the bundled APK (run 13 in docs/qa/android-app-test-cases.md): popup labels stay on one line in real landscape at font 1.3, light and dark; live fontScale change keeps the open result (no reload); emulator cold launch with rotation locked still comes up portrait, live rotation works
 - 2026-11-02 · frontend agent (refinement 14) · system font scale now reaches the page as the root font-size (FontScalePlugin: document-start script + pre-paint head script, live via onConfigurationChanged), text zoom pinned to 100; R11 setTextZoom explanation marked superseded; text-zoom fallback for WebViews without DOCUMENT_START_SCRIPT
 - 2026-11-02 · android-66 (device QA) · verified refinement 14 on the bundled APK (run 16 in docs/qa/android-app-test-cases.md): document-start script active on WebView 124 (no fallback), root font-size 16–32px with text zoom at 100, no cold-launch size jump at 1.5/2.0, live change and reload on /terms keep the new scale; the "Pinch zoom … nothing is lost" claim is not borne out statically: Capacitor's setBuiltInZoomControls follows zoomEnabled (default false), and a real pinch couldn't be run on the emulator
+- 2026-11-02 · frontend (refinement 15) · corrected the pinch-zoom note: Capacitor's Bridge sets setBuiltInZoomControls(zoomEnabled), default false and unset here, so pinch zoom never existed in the app and R14 lost nothing; zoom left off (open owner question); no behaviour change
