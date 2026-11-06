@@ -9,6 +9,11 @@ Every new feature or component should get (or update) a doc here. Scope is stric
 Everything else here is filed per feature under `backend/` or `frontend/`. The
 exception, listed so it isn't mistaken for a stray file:
 
+- `qa/android-app-test-cases.md` — the full manual test suite for the
+  installed Android app (bundled APK, never live reload).
+- `qa/web-app-test-cases.md` — the full test suite for the web app in a
+  browser tab (production build on a spare port, `/api` mocked with Playwright,
+  real backend only for the real-run cases).
 - `container-workflows.md` — local/dev/production workflow boundaries,
   hardened container behavior, image publication, and operator requirements.
 - `error-messaging.md` — how a failure becomes a sentence on screen and where
@@ -21,6 +26,22 @@ exception, listed so it isn't mistaken for a stray file:
   repo-wide engineering-hygiene register audited 2026-08-15. Dependency
   reproducibility and container vulnerability gates are now implemented;
   remaining findings stay deferred.
+
+## Free runs quick links
+
+- `frontend/free-runs.md` covers the client half: the device token, the intake banner and limit state, and the 401 retry and 402 handling in `useAnalysisRun`.
+- `backend/free-runs.md` covers the per-device daily free-run allowance (`GET /api/free-runs`, the 401/402 codes on `POST /api/runs`) and how easy it is to bypass.
+
+## Landing and first run quick links
+
+- `frontend/landing-page.md`: the landing page at `/`, the tool's move to `/app`, the pre-paint redirects, and the Capacitor `.html` hop.
+- `frontend/first-run.md`: the installed app's cold-start splash and one-time Welcome.
+
+## Current design direction
+
+- `frontend/design-direction-editorial.md` — the live visual system (tokens,
+  type, shell modes, dark-value contrast table). Read before any UI work.
+  `frontend/design-direction-terminal.md` is superseded history.
 
 ## Applies to subagents too — no exceptions
 
@@ -56,3 +77,8 @@ someone else's entry.
 - 2026-08-21 · main session · indexed the cross-cutting error-messaging reference
 - 2026-08-29 · main session · indexed `railway-environments.md`
 - 2026-08-29 · main session · added `backend/releases.md` for the new `GET /api/releases` endpoint
+- 2026-11-01 · frontend agent · indexed `frontend/design-direction-editorial.md` as the current design direction
+- 2026-11-01 · backend agent (Phase 5b) · indexed `backend/free-runs.md`
+- 2026-11-01 · frontend agent (Phase 5b) · indexed `frontend/free-runs.md`; renamed the quick-links heading to cover both halves
+- 2026-11-01 · frontend agent (Phase 5c/5d) · indexed `frontend/landing-page.md` and `frontend/first-run.md`
+- 2026-11-02 · frontend-43 · indexed `qa/web-app-test-cases.md` next to the Android suite

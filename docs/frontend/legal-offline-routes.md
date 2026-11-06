@@ -4,7 +4,8 @@ The three standalone pages that render *outside* the app shell: `/privacy`,
 `/terms`, and the service worker's `/offline` fallback.
 
 **Files**
-- `frontend/components/LegalShell.tsx` — the shared frame for the two *documents*: `AppNav`, crumb bar, scrolling document, footer, plus the `LegalSection` clause wrapper.
+- `frontend/components/LegalShell.tsx` — the shared frame for the two *documents*: `AppNav`, a `.view-scroll` section holding the `.legal-page` column (crumb bar, title, effective date, clauses), footer, plus the `LegalSection` clause wrapper.
+- `frontend/components/AppBackLink.tsx` — the Back link `LegalShell` renders above the title; on Privacy and Terms it shows in every shell since refinement 10 (see Phase 4 layout).
 - `frontend/components/AppNav.tsx` — the nav band. All three routes render it; see `app-shell-layout.md`.
 - `frontend/components/ThemeToggle.tsx` — the theme button, rendered inside `AppNav`, so it is literally the same control on every route rather than a lookalike. Exports `toggleTheme()` too.
 - `frontend/app/privacy/page.tsx` — privacy copy only.
@@ -93,6 +94,73 @@ looking live while they cannot act. Since the shell's JS is now precached
 (below), React genuinely hydrates offline — the drawer opens, the toggle
 toggles, the tabs navigate. Verified offline at 390x844: drawer `0/0/272/844`,
 theme toggle flips and persists, tapping History reaches `/?view=history`.
+
+## Phase 4 layout (2026-11-01, `design/phase4-boards/{Privacy,Terms,Offline}*.png`) — supersedes "The measure", "Fixed frame" and "Layout" below
+
+Built to the owner's boards in `design/phase4-boards/` (the first pass that
+day had extrapolated without them). **The crumb bar is gone**: the boards draw
+none, and the shared nav/footer/More sheet are the way back. That reverses the
+earlier record of the crumb bar as "the user's call" — the boards are the
+owner's later word; flag it if that was not intended. Any section below that
+describes the crumb bar is history; all `.crumb-*` CSS is deleted.
+The three sections below describe the Terminal-era `.legal-doc`/`.page-title`/
+`.home-center` implementation and are kept for history only — those classes
+are deleted from `globals.css`.
+
+- **Scroll model.** `data-frame="fixed"` is dropped from all three routes.
+  Each renders `<section class="view-scroll">`, the same scroller Analyze,
+  History, API key and Releases use (`.shell > main.view-scroll` in
+  `globals.css`): from 32rem it is the full-bleed region between the fixed nav
+  and footer, `overflow-y: auto` so a short page shows no scrollbar; below
+  32rem `.viewport` scrolls. Measured at 1366×900, 390×844 web and app, both
+  themes: no document scroll, no horizontal scroll.
+- **Legal** (`LegalShell`): `.legal-page` (the centred 43.5rem column shared
+  with `.key-page`/`.releases`) → `<article>` with `.view-head`
+  (`h1.view-title` "Privacy" / "Terms" — retitled from "Privacy Policy" /
+  "Terms of Use" per the boards) and `.legal-meta` directly under it →
+  `.legal-copy` (capped at `--measure`, 30px between sections, **no rules**).
+  `LegalSection` renders `section.legal-section > h2.legal-heading`
+  (Newsreader 24→28px) `+ p.legal-text` (17/1.65, ink-2, 4px under its
+  heading). Deviations: the meta line keeps "Effective August 1, 2026" (the
+  boards' "Last updated:" would change what the date means legally), and the
+  boards' tint "Sample text — replace before launch" notice is not rendered:
+  the copy is the real policy text, not sample text (its Contact clause still
+  carries its own pre-launch placeholder).
+- **App-shell Back link (2026-11-01, owner decision).** The crumb bar stays
+  gone in the web shell. In the installed app (`html[data-shell="app"]`)
+  `LegalShell` renders `<AppBackLink />` above the `<article>`: a quiet
+  `‹ Back` (Hanken 15px, muted, 44px target, green focus ring) that goes
+  `history.back()` when the previous entry is in-app (e.g. the History tab the
+  More sheet was opened from) and to `/` otherwise (cold open). Hidden with
+  `display:none` in the web shell. **[Refinement 10, owner: "it should be
+  visible on every other, not only app": Privacy and Terms now render
+  `<AppBackLink everywhere />` (`.app-back--everywhere`), so it shows in the
+  web shell too, at every width. Web target `/app`; in the installed app a
+  cold-open Back still lands on `/app.html` (R9 `canonicalizeAppPath`).
+  API key and Releases are unchanged (app shell only: on the web they are nav
+  tabs). Measured on the web at 390x844 and 1280x800, light and dark: link
+  69x44 directly above the title, no horizontal scroll; cold Back → `/app`;
+  from `/app?view=history` → back to History.]** `/offline` does **not** get it (still true after refinement 10; its links stay plain `<a>`) — it is not
+  opened from the More sheet, and its Try again already goes home. Full
+  behaviour and measurements: `app-shell-layout.md` § "App-shell Back link".
+- **Offline**: `.offline` (28rem), centred in the band at every width — the
+  offline section is a flex column filling the band, so the block centres on
+  phones too. A 76px round tint disc with lucide `WifiOff` (ink, never red),
+  serif `h1` "You're offline" at the shared title size, the lede "VideoLens
+  needs a connection to analyze new videos. A run you already started keeps
+  going on the server.", and **`<a href="/">` Try again** (`.btn-ink`) —
+  still a plain anchor (the eslint override for `app/offline/**` stays),
+  because an RSC navigation cannot resolve with the network down.
+  **Phase 5a (supersedes the Phase 4 deviation):** the lede is now the board's
+  "VideoLens needs a connection to analyze new videos. Your History is still
+  here." and `.offline-actions` holds Try again (`.btn-ink`) + **Open History**
+  (`<a href="/?view=history">`, `.btn-secondary .btn-pill`), side by side,
+  **[Phase 5c: Try again is now `href="/app"` and Open History
+  `href="/app?view=history"`; the tool moved to `/app`.]**
+  wrapping on the narrowest phones. Both are true now: History is in IndexedDB
+  and the worker serves its address offline (below). The old "A run you
+  already started keeps going on the server." sentence was dropped to match
+  the board.
 
 ## The measure
 
@@ -409,6 +477,65 @@ without a size jump, which in a single-face type system is otherwise expensive.
 
 ## What the service worker serves offline
 
+**Phase 5c update (2026-11-01), supersedes the route lists below.** The tool
+moved to `/app` and `/` became the landing page (`landing-page.md`).
+
+```js
+const SHELL_DOCUMENTS = ["/", "/app", "/offline", "/privacy", "/terms"];   // precached
+const OFFLINE_CAPABLE_DOCUMENTS = ["/", "/privacy", "/terms"];             // served from cache offline
+const OFFLINE_CAPABLE_VIEWS = ["history"];                                 // of APP_DOCUMENT = "/app"
+```
+
+- **`/` is now offline-capable.** It used to be off the list because it was
+  the tool, which needs the API. It is now the landing: static text, a sample
+  card, no API calls. Complete with no network, so it earns its place.
+- **`/app?view=history`** is served from the cached `/app` (Phase 5a's rule,
+  moved to the new path). Every other `/app` address gets `/offline`.
+- **Legacy `/?view=history`** is not mapped in the worker. It is served the
+  cached landing, whose pre-paint script replaces the URL with
+  `/app?view=history`, which the worker then serves from cache. One extra
+  cached hop, no network, and the address bar ends on the canonical URL. That
+  is simpler than teaching the worker the old address too, and it stays
+  correct if the redirect table changes.
+- `build-sw.mjs` maps `/app` to `app.html` for the precache digest.
+- The offline page's buttons point at `/app` and `/app?view=history`.
+
+**Measured (2026-11-01)** on `next build` + `next start -p 3016`. The worker
+was active and controlling, then the **server process was killed** (not
+`setOffline`, which this doc already records as insufficient):
+
+| requested | renders |
+| --- | --- |
+| `/app?view=history` | History (hydrated) |
+| `/?view=history` | ends on `/app?view=history`, History |
+| `/` | the landing |
+| `/app` | You're offline |
+| `/app?view=api-key` | You're offline |
+| `/privacy` | Privacy |
+| `/nope` | You're offline |
+| `/offline` → Open History | `/app?view=history`, History |
+
+
+**Phase 5a update (2026-11-01).** `/?view=history` is now served from the
+cached `/` shell offline (`OFFLINE_CAPABLE_VIEWS = ["history"]` +
+`cachedAppView()` in `sw.template.js`): History reads IndexedDB, so it is
+complete with no network. Every other view of `/` (bare `/`, `?view=api-key`,
+`?view=releases`) and unknown paths still get `/offline` — it is still an
+allowlist. Inside that shell, opening a stored run switches to Analyze by
+`pushState` (no request) and renders from IndexedDB. Pressing Analyze there
+gives an intake whose submit fails with the honest "Can't reach the server"
+sentence — acceptable, since the user chose to go there.
+`build-sw.mjs` now also digests the template's own bytes, so a policy-only
+change renames the cache and sweeps the old one (it changes every build
+anyway). **Measured** on `next build` + `next start -p 3007` with the real
+worker controlling, History seeded, then the **server process stopped**
+(Playwright's `setOffline` alone did not stop the worker's own `fetch` from
+reaching the live server in this setup, so it is not a sufficient offline test
+here): `/?view=history` → History with 6 posters; `/offline` → Open History →
+History; reopening a run → its result; `/`, `/?view=api-key`,
+`/?view=releases`, `/nope` → offline page; `/privacy` → Privacy; React
+hydrated. The table below is the pre-5a measurement.
+
 The navigate branch used to be `fetch(req).catch(() => caches.match("/offline"))`
 — it never consulted the cache for the **requested** URL, so `/privacy` and
 `/terms` rendered the offline page even though both documents were sitting in
@@ -581,6 +708,55 @@ real-service-worker offline pass (production build, `setOffline(true)`,
 including a cold start with the HTTP cache cleared via CDP
 `Network.clearBrowserCache` so the SW cache was the only source).
 
+## Refinement 6 (2026-11-02)
+
+**OFF-03, a real 404.** `app/not-found.tsx` replaces Next's bare 404 with the
+app's chrome: `.shell` + `AppNav activeTab={null}` + `main.view-scroll
+data-view="not-found"` + `SiteFooter` + `BottomTabBar activeTab={null}`.
+Content mirrors /offline (shares its CSS): a tint disc with a compass, h1
+"This page doesn't exist.", one line ("The address may be mistyped, or the
+page has moved."), and two links, "Open VideoLens" (/app) and "Go to the home
+page" (/). Title "Page not found · VideoLens AI". The static export writes it
+as `out/404.html` (head script passes `node --check`). The service worker is
+unchanged and deliberately does not precache it: navigation is network-first,
+so online an unknown path gets the server's 404 page; offline it gets /offline
+(the SW cannot tell "no such page" from "needs the network"), which has the
+same chrome. Both verified with the SW active against the export served like a
+static host, in the web and installed shells.
+
+## Refinement 8 (2026-11-02)
+
+**NF-01, the installed app showed the landing at an unknown path.** Capacitor's
+asset server is not a static host: it answers an unknown extensionless path
+with `index.html`, never `404.html`. The pre-paint head script now sends such a
+path to `/404.html` on the asset-server origin (details and the rule table in
+`landing-page.md`, "Unknown paths in the installed app"). The 404 page's "Go to
+the home page" link carries `.not-found-action--web` and is hidden under
+`:root[data-shell="app"]`, so in the installed app it shows only "Open
+VideoLens". Measured on an emulated asset server over `out/` with a fake
+bridge, light and dark: `/nope`, `/nope/deeper`, `/app/zzz`, `/404` and
+`/nope?x=1#h` all end on `/404.html` with the not-found page, dock shown, no
+landing painted; `/`, `/app`, `/privacy`, `/terms`, `/offline` unchanged; "Open
+VideoLens" reaches the tool. Web (static host, no bridge) still shows the 404
+at the typed address with both links.
+
+## Refinement 9 (2026-11-02) — one address for the tool in the installed app
+
+On the Capacitor asset server (native, `localhost`, no port), a cold start, a
+reload and the legal pages' Back (a history step) landed on `/app.html`. The
+dock and Back's fresh-entry link are client-side navigations to `/app`, so the
+same screen answered to two addresses. `canonicalizeAppPath()`
+(`application/useMainTab.ts`, run once by HomeScreen on mount) rewrites `/app`
+or `/app/` to `/app.html` with `history.replaceState`. It keeps the query, the
+hash and the in-app entry marker, and passes a fresh state object to Next's
+patched history. `/app.html` is the spelling that resolves on the asset server
+without the `index.html` hop. On the web (`isCapacitorAssetServer()` false) it
+does nothing, and `/app` stays `/app`.
+
+Verified on an emulated asset server serving `out/`: start, terms Back (fresh
+entry), privacy Back (after the app) and the dock from privacy all end on
+`/app.html`. On `next start` the web stays on `/app`.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported privacy/terms/offline off the Midnight Glass classes
@@ -589,3 +765,14 @@ including a cold start with the HTTP cache cleared via CDP
 - 2026-08-15 · frontend agent (offline chrome) · put /offline on the shared app chrome (.shell[data-frame=fixed] + .nav pill with ThemeToggle + .page-end/.foot), measured identical to /privacy at 1440x900 and 390x844 in both themes; dropped the duplicate body wordmark; renamed .legal-title → .page-title now that it serves both route types; deleted .page-shell and --content-width with their last caller; documented (by running a real SW offline) that the footer's Privacy/Terms links dead-end to /offline and that the theme toggle is inert offline
 - 2026-08-15 · frontend agent (sw offline policy) · sw.js now serves /privacy and /terms from cache offline and keeps / on the offline page (explicit allowlist; / deliberately excluded); precache list generated at build time from the real build output (sw/sw.template.js + scripts/build-sw.mjs → gitignored public/sw.js), so React hydrates offline and the theme toggle works; cache name is now a content digest, verified to sweep a stale cache across a real rebuild; /offline ported to `<AppNav activeTab={null} />` so all four routes carry identical chrome; fixed the 16px footer offset between flow and fixed frames at 390px; corrected the "One honest exception", the rejected-extraction rationale and the crumb bar's justification — all three void since the tabs moved into the URL
 - 2026-08-15 · frontend agent (crumb bar revision) · crumb is now a 28px bordered rounded-square back button (chevron, outside the `<ol>`, new `--radius-control: 8px` token) then the trail `⌂ / PRIVACY`; dropped the word BACK; DELETED the hairline from the nav→crumb→heading chain entirely (`.crumb-bar` border-bottom, `.legal-doc` padding-top and a short-lived `.legal-body` border-top all gone); nav→h1 77.0→60.0 desktop, 89→76.0 mobile; back button's 44x44 touch target now carried by an asymmetric `::before` (a flat `inset: -0.5rem` measured 42, not 44 — border-box). Three things here are the USER'S explicit calls and were each argued the other way by a previous pass: two glyphs not one, no `BACK` word, no hairline. Do not revert them
+- 2026-11-01 · frontend agent · footers on /privacy, /terms and /offline replaced by the shared `SiteFooter` (web shell) + `BottomTabBar` (app shell, Privacy/Terms in the More sheet as plain `<a>` so they still work offline); routing contract and plain-anchor rule unchanged — see app-shell-layout.md "Two shells"
+- 2026-11-01 · frontend agent (Phase 4) · editorial restyle of Privacy, Terms and Offline (no board): `.view-scroll` section replaces `data-frame="fixed"`, serif `.view-title` + `.legal-meta`, `.legal-section`/`.legal-heading`/`.legal-text` clauses at `--measure`, Offline as a dashed WifiOff tile + serif title + plain `<a>` Try again; deleted `.legal-doc`/`.legal-body`/`.page-title`/`.home-center`
+- 2026-11-01 · frontend agent (Phase 4, boards) · rebuilt Privacy/Terms/Offline to design/phase4-boards: crumb bar removed (boards draw none; all .crumb-* CSS deleted), titles Privacy/Terms, meta directly under title, no section rules, tighter section rhythm; Offline as a round tint disc + "You're offline" + new lede, centred on phones; "Your History is still here"/Open History omitted (not true offline yet); "Effective" kept over "Last updated"; sample-text notice not rendered
+- 2026-11-01 · frontend agent (app Back link) · `LegalShell` renders `<AppBackLink />` above the Privacy/Terms title, visible only in the app shell (`display:none` in web, so the boards' crumb-less web layout is unchanged); Back = history.back() when the previous entry is in-app, else `/`; /offline unchanged
+- 2026-11-01 · frontend agent (Phase 5a) · Offline page gets the board's "Your History is still here." + Open History (`<a href="/?view=history">`); service worker serves `/?view=history` from the cached shell offline (allowlisted view); cache digest now includes the template; verified with the real worker and the server stopped
+- 2026-11-01 · frontend agent (Phase 5a) · Privacy: "Information retained" now says the server keeps a run about an hour after it starts and then deletes it; new "Your History" section (IndexedDB only, never sent back, 20 most recent, cleared with site data, browser may evict e.g. Safari after 7 days unvisited). Effective date left unchanged — owner to decide
+- 2026-11-01 · frontend agent (Phase 5c) · SW: precache /app, / (now the landing) offline-capable, History offline moved to /app?view=history, legacy /?view=history via the landing's redirect; offline page links → /app; measured with the server killed
+- 2026-11-02 · frontend agent (refinement 6) · OFF-03 app/not-found.tsx with shared chrome (out/404.html); SW unchanged
+- 2026-11-02 · frontend agent (refinement 8) · NF-01: installed app sent to `/404.html` for unknown extensionless paths; home-page link hidden in the installed shell
+- 2026-11-02 · frontend agent (refinement 9) · installed app canonicalizes /app to /app.html (asset server only) so Back and the dock agree; web unchanged
+- 2026-11-02 · frontend agent (refinement 10) · Privacy/Terms Back link visible on every shell (`AppBackLink everywhere`), web target /app, app cold-open still /app.html; /offline unchanged (no Back link, plain <a>)

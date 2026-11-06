@@ -75,7 +75,7 @@ async def probe_duration_seconds(settings: Settings, path: str) -> float:
         ) from exc
 
 
-async def enforce_duration_cap(settings: Settings, run_id: str, path: str) -> None:
+async def enforce_duration_cap(settings: Settings, run_id: str, path: str) -> float:
     try:
         duration = await probe_duration_seconds(settings, path)
     except MediaValidationError:
@@ -87,6 +87,7 @@ async def enforce_duration_cap(settings: Settings, run_id: str, path: str) -> No
             f"This video is {_clock(duration)} long. The limit is "
             f"{_clock(settings.max_duration_seconds)}."
         )
+    return duration
 
 
 async def _has_video_stream(settings: Settings, path: str) -> bool:

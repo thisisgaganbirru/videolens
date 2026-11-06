@@ -2,10 +2,11 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from starlette.requests import Request
 
 from ...container import container
-from ...domain.entities import CapabilityReport, Principal, ReleaseIndex
+from ...domain.entities import CapabilityReport, Principal, ReleaseIndex, Run
+from ...domain.run_facts import describe_run
 from .dependencies import get_principal
-from .rate_limiter import limiter
-from .schemas import RunCreateResponse, RunListResponse, RunStatusResponse, RunSummary
+from .rate_limiter import client_ip, limiter
+from .schemas import FreeRunsResponse, RunCreateResponse, RunListResponse, RunStatusResponse, RunSummary
 
 router = APIRouter()
 
@@ -53,6 +54,21 @@ async def releases() -> ReleaseIndex:
     return await container.get_releases_use_case.execute()
 
 
+@router.get("/api/free-runs", response_model=FreeRunsResponse)
+async def free_runs(request: Request) -> FreeRunsResponse:
+    """Today's free-run standing for this device. Never spends a run, and
+    needs no X-Client-ID: it is the first call a fresh install makes."""
+    token, status = await container.get_free_runs_use_case.execute(request.headers.get("x-device-token"))
+    return FreeRunsResponse(
+        device_token=token,
+        enabled=status.enabled,
+        limit=status.limit,
+        used=status.used,
+        remaining=status.remaining,
+        resets_at=status.resets_at,
+    )
+
+
 @router.post("/api/runs", response_model=RunCreateResponse, status_code=202)
 @limiter.limit(f"{container.settings.rate_limit_per_hour}/hour")
 async def create_run(
@@ -69,6 +85,8 @@ async def create_run(
         file=file,
         url=url,
         gemini_api_key=gemini_api_key,
+        device_token=request.headers.get("x-device-token"),
+        client_ip=client_ip(request),
     )
     return RunCreateResponse(run_id=run.run_id, status=run.status)
 
@@ -78,16 +96,23 @@ async def list_runs(
     principal: Principal = Depends(get_principal),
 ) -> RunListResponse:
     runs = await container.list_runs_use_case.execute(principal)
-    return RunListResponse(
-        runs=[
-            RunSummary(
-                run_id=run.run_id,
-                status=run.status,
-                title=run.result.title if run.result else None,
-                created_at=run.created_at,
-            )
-            for run in runs
-        ]
+    return RunListResponse(runs=[_summary(run) for run in runs])
+
+
+def _summary(run: Run) -> RunSummary:
+    facts = describe_run(run)
+    return RunSummary(
+        run_id=run.run_id,
+        status=run.status,
+        title=run.result.title if run.result else None,
+        created_at=run.created_at,
+        source_kind=facts.source_kind,
+        platform=facts.platform,
+        duration_seconds=facts.duration_seconds,
+        summary_snippet=facts.summary_snippet,
+        orientation=facts.orientation,
+        width=facts.width,
+        height=facts.height,
     )
 
 
@@ -97,6 +122,7 @@ async def get_run(
     principal: Principal = Depends(get_principal),
 ) -> RunStatusResponse:
     run = await container.get_run_use_case.execute(run_id, principal)
+    facts = describe_run(run)
     return RunStatusResponse(
         run_id=run.run_id,
         status=run.status,
@@ -105,4 +131,11 @@ async def get_run(
         source_metadata=run.source_metadata,
         completeness=run.completeness,
         error=run.error,
+        source_kind=facts.source_kind,
+        platform=facts.platform,
+        duration_seconds=facts.duration_seconds,
+        thumbnail=run.thumbnail,
+        width=facts.width,
+        height=facts.height,
+        orientation=facts.orientation,
     )

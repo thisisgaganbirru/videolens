@@ -1,13 +1,20 @@
-/* Hallmark · genre: atmospheric · macrostructure: Feature Stack (adapted, UI) · theme: Terminal
- * enrichment: none · nav: N5 floating pill · footer: Ft5 compact bar
- * source of truth: docs/frontend/mockups/terminal-redesign.html
+/* Hallmark · genre: editorial · theme: custom (owner handoff — see app/tokens.css)
+ * nav: flat top bar (web) / floating bottom dock + More sheet (installed app)
+ * footer: compact bar, web shell only
+ * reference: docs/frontend/design-direction-editorial.md, design/shots/*
  *
- * Deviation from the mockup, deliberate and required by the design doc:
- * the mockup's responsive rules are desktop-first @container queries measuring
- * a demo-only .viewport switch. The real app has no such switch, so every rule
- * below is inverted to MOBILE-FIRST @media (min-width: ...).
+ * Phase 1 of the editorial redesign restyled BASE and SHELL/NAV/FOOTER;
+ * Phase 2 rebuilt Analyze (intake, progress, results — the ANALYZE section
+ * near the end of the components layer) and retired the legacy token
+ * aliases. Phase 3 rebuilt History as a poster grid (HISTORY block). Phase 4
+ * rebuilt API key, Releases, Privacy, Terms and Offline (PAGES block) and
+ * retired the Terminal-era panel frame (.tab-view/.surface/.pane): every view
+ * is a `.view-scroll` section. `.col-label`/`.card-label` stay for the two
+ * dev-only preview harnesses.
  *
- * pre-emit critique: P5 H5 E5 S5 R5 V4
+ * Mobile-first @media (min-width: ...) throughout.
+ *
+ * pre-emit critique: P5 H4 E4 S5 R5 V4
  */
 @import "./tokens.css";
 
@@ -22,13 +29,18 @@
 html {
   height: 100%;
   /* themed scrollbars — Firefox */
-  scrollbar-color: var(--color-rule-2) var(--color-paper);
+  scrollbar-color: var(--color-border-strong) var(--color-paper);
   scrollbar-width: thin;
 }
 
 html,
 body {
-  min-width: 20rem;
+  /* 320 CSS px, the narrowest phone width this layout is built for — in px,
+     not rem (refinement 10): as `20rem` it grew with the root font size, so
+     at Android font scale 1.3 the page claimed 416px on a 320px screen and
+     everything past 320 (the nav's theme toggle, the update prompt's right
+     edge) was cut off. */
+  min-width: 320px;
   overflow-x: clip;
 }
 
@@ -44,47 +56,56 @@ body {
   flex-direction: column;
   background: var(--color-paper);
   color: var(--color-ink);
-  font-family: var(--font-body);
+  font-family: var(--font-ui);
   font-size: 1rem;
   font-variant-numeric: tabular-nums;
 }
 
+/* The blocking redirect script (application/landingRedirect.ts, in the root
+   layout's head) sets this on <html> as it navigates away, so the page is
+   never painted on its way through. Here rather than in landing.css because
+   the Capacitor `.html` hop can fire on whichever document answered. */
+:root[data-redirecting] body {
+  visibility: hidden;
+}
+
+/* No serif here on purpose. Most h2/h3 in the app are UI labels; headlines
+   and reading text opt in by class (`.view-title`, `.intake-title`,
+   `.run-title`, `.result-title`, `.prose-serif`). */
 h1,
 h2,
 h3 {
   min-width: 0;
   overflow-wrap: anywhere;
-  font-family: var(--font-display);
 }
 
 ::selection {
   background: var(--color-accent);
-  color: var(--color-accent-ink);
+  color: var(--color-on-accent);
 }
 
-/* themed scrollbars — WebKit/Blink */
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-::-webkit-scrollbar-track {
-  background: var(--color-paper);
-}
-::-webkit-scrollbar-thumb {
-  background: var(--color-rule-2);
-  border: 2px solid var(--color-paper);
-  border-radius: 6px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-accent);
-}
-.source-body::-webkit-scrollbar-track,
-.pane::-webkit-scrollbar-track {
-  background: var(--color-paper-2);
-}
-.source-body::-webkit-scrollbar-thumb,
-.pane::-webkit-scrollbar-thumb {
-  border-color: var(--color-paper-2);
+/* themed scrollbars — WebKit/Blink. Mouse-and-trackpad devices only. Styling
+   `::-webkit-scrollbar` at all turns an overlay scrollbar into a classic one
+   that takes 10px of layout width, and on a touch device (the Android WebView,
+   phones) that made the whole page jump ~10px sideways between a view that
+   scrolls and one that does not. Left unstyled there, the platform's overlay
+   scrollbar takes no width (refinement 1, item 8). */
+@media (hover: hover) and (pointer: fine) {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-paper);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-border-strong);
+    border: 2px solid var(--color-paper);
+    border-radius: 6px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-accent);
+  }
 }
 
 @layer components {
@@ -93,20 +114,21 @@ h3 {
      ======================================================================== */
 
   /* The scroll container. Only place in the app allowed to scroll the page as
-     a whole; it exists so the stacked mobile layout has somewhere to go. */
+     a whole; it exists so the stacked mobile layout has somewhere to go.
+
+     `container-type: inline-size` is what lets the nav and footer hairlines
+     run edge to edge from inside the centred `.shell`: `100cqi` is this box's
+     content width with the scrollbar already excluded, where `100vw` would
+     include it and hand the page a horizontal scrollbar. */
   .viewport {
-    position: relative; /* containing block for the mobile drawer + scrim */
+    position: relative;
     flex: 1;
     min-height: 0;
     width: 100%;
     display: flex;
     flex-direction: column;
     overflow-y: auto;
-  }
-
-  /* nothing scrolls behind an open drawer */
-  .viewport:has(.nav-wrap[data-menu-open="true"]) {
-    overflow: hidden;
+    container-type: inline-size;
   }
 
   .shell {
@@ -118,7 +140,7 @@ h3 {
     /* safe areas: the footer sits at the very bottom, where the iOS home
        indicator and Android gesture bar live */
     padding-top: 0;
-    padding-inline: max(var(--space-sm), var(--safe-left), var(--safe-right));
+    padding-inline: max(var(--page-gutter), var(--safe-left), var(--safe-right));
     padding-bottom: max(var(--space-sm), var(--safe-bottom));
     /* mobile default: the shell takes its natural height and .viewport scrolls
        it. min-height keeps it at least a full frame tall so the footer lands
@@ -136,15 +158,41 @@ h3 {
     min-height: 0;
   }
 
-  .shell > section[data-view] {
+  .shell > main[data-view] {
     display: flex;
     flex-direction: column;
     flex: 0 0 auto;
   }
 
-  .shell[data-frame="fixed"] > section[data-view] {
+  .shell[data-frame="fixed"] > main[data-view] {
     flex: 1;
     min-height: 0;
+  }
+
+  /* Analyze has no inner pane since Phase 2: the section itself is the
+     scroller from 32rem up (see the RESPONSIVE block), between the fixed nav
+     and footer, and only when its content is taller than the band. It is
+     pulled out to the viewport edges the same way the nav and footer bands
+     are, so its scrollbar sits at the window edge rather than inside the
+     gutter, and padded back in so content keeps the shell's left edge. */
+  .shell > main.view-scroll {
+    margin-inline: calc((100% - 100cqi) / 2);
+    padding-inline: calc((100cqi - 100%) / 2);
+    /* Refinement 3, #2: the containing block for absolutely positioned
+       descendants (Tailwind's `.sr-only` spans). Without it they resolved
+       against `.viewport`, escaped this scroller's clipping, and gave the
+       whole frame ~320px of scroll on API key (landscape, 360x640): nav and
+       dock rode up the screen. */
+    position: relative;
+  }
+
+  /* Full-bleed bands inside the centred shell: pull out to the viewport edge,
+     then pad back in by the same amount so their contents still line up with
+     the shell's content edge (the 48px / 16px gutter on the boards). */
+  .nav-wrap,
+  .page-end {
+    margin-inline: calc((100% - 100cqi) / 2);
+    padding-inline: calc((100cqi - 100%) / 2);
   }
 
   /* The footer isn't pinned to the viewport edge — it follows the active view,
@@ -158,13 +206,13 @@ h3 {
     bottom: 0;
     z-index: 3;
     background: var(--color-paper);
+    border-top: var(--rule-w) solid var(--color-rule);
     /* `.shell` already reserves the bottom safe gutter. Reach back into it and
        re-apply the same value as padding rather than adding a second one:
        without the negative margin the footer sits one whole gutter higher on a
-       `flow` route than on a `fixed` one, which broke the identical-chrome rule
-       by exactly 16px at 390px. The padding stays because it is what carries
-       the band's background to the bottom edge while it is stuck mid-scroll —
-       drop it and content shows through underneath the footer. */
+       `flow` route than on a `fixed` one. The padding stays because it is what
+       carries the band's background to the bottom edge while it is stuck
+       mid-scroll — drop it and content shows through underneath the footer. */
     margin-bottom: calc(-1 * max(var(--space-sm), var(--safe-bottom)));
     padding-bottom: max(var(--space-sm), var(--safe-bottom));
   }
@@ -176,209 +224,256 @@ h3 {
     padding-bottom: 0;
   }
 
-  /* ---- N5 floating pill nav ----
-     Not sticky: nothing behind it scrolls, so it is simply the fixed top band
-     of the viewport-locked shell. Pulled out past the shell's gutter on both
-     sides so the pill reads as a container around the content. */
-  /* Carries the drawer's open state (`data-menu-open`) because the nav is what
-     draws the drawer. It must stay unpositioned: the drawer's inset resolves
-     against `.viewport`, and a containing block here is the bug that once
-     rendered the menu as a small box inside the nav pill. */
+  /* ---- top bar (both shells) ----
+     A flat band with a hairline under it, as on every board: brand left,
+     controls right. Sticky so it stays put on a phone, where `.viewport`
+     scrolls the stacked layout; on wider screens nothing behind it scrolls and
+     sticky is inert. Carries the phone menu's open state (`data-menu-open`)
+     because the toggle that drives it lives here. */
   .nav-wrap {
     flex-shrink: 0;
+    position: sticky;
+    top: 0;
     z-index: 10;
-    /* On native Android/iOS the status bar sits right where the pill would
-       otherwise start; --safe-top is 0 in a normal browser tab, so this
-       only adds space where a status bar actually needs clearing. */
-    padding-top: max(var(--space-sm), var(--safe-top));
-    margin-inline: calc(var(--space-2xs) * -1);
+    background: var(--color-paper);
+    border-bottom: var(--rule-w) solid var(--color-rule);
+    /* On native Android/iOS the status bar sits right where the bar would
+       otherwise start; --safe-top is 0 in a normal browser tab. */
+    padding-top: var(--safe-top);
   }
 
+  /* Refinement 13 (D-R12-1): the bar's chrome is capped in px so it stops
+     growing with the root font. At 320 px and 150% text the rem-sized bar
+     (28.5px wordmark, two 66px buttons, 24px gaps) needed 361px of a 272px
+     row and pushed Menu 41px off-screen; at 200% it was 161px off. Every
+     `min(<rem>, <px>)` below equals the old rem value at 100%, so normal
+     scale is pixel-identical; past it the bar holds still. The buttons stay
+     44px — a target does not get easier to hit by growing past that — and
+     the wordmark is a logotype, so it may stop at 22px while the body text
+     keeps scaling. Content-driven, not a breakpoint: nothing here reads the
+     viewport width. */
   .nav {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-sm);
-    background: color-mix(in oklch, var(--color-nav-bg) 85%, transparent);
-    border: var(--rule-w) solid var(--color-rule);
-    border-radius: var(--radius-pill);
-    padding: 0.5rem 0.5rem 0.5rem 1rem;
-    /* MOBILE: backdrop-filter MUST stay off here. Like transform and filter it
-       makes the element a containing block for every absolutely positioned
-       descendant, even a statically positioned one — while it was set, the
-       drawer's inset resolved against the nav pill and the menu rendered as a
-       small scrolling box inside the nav row. */
-    position: static;
-    backdrop-filter: none;
+    gap: min(var(--space-sm), 16px);
+    min-height: min(4.25rem, 68px);
   }
 
-  .wordmark {
-    display: flex;
+  .brand {
+    display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
-    font-size: 0.9rem;
-    font-weight: 500;
-    letter-spacing: 0.01em;
+    gap: min(0.5rem, 8px);
+    font-size: min(1.1875rem, 22px);
+    font-weight: 700;
+    letter-spacing: -0.02em;
     color: var(--color-ink);
+    white-space: nowrap;
   }
-  /* The `/ ""` is the alt-text form of `content`: the glyph is decorative, and
-     without it some screen readers announce the block character before the
-     wordmark on every page that carries one.
-     Declared twice on purpose. The alt form is a single indivisible value, so
-     on an engine that doesn't parse it (Safari below 17.4) the WHOLE
-     declaration is dropped and the accent mark silently disappears from every
-     nav in the app. The plain declaration is the floor; @supports upgrades it
-     where the syntax is understood. */
-  .wordmark::before {
-    content: "▮";
-    color: var(--color-accent);
-    font-size: 0.7em;
-  }
-  @supports (content: "x" / "") {
-    .wordmark::before {
-      content: "▮" / "";
-    }
-  }
-
-  .nav-right {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-  }
-
-  /* ---- mobile drawer over a dimmed scrim ----
-     An overlay painted in --color-paper sits invisibly on top of a
-     --color-paper page; a drawer reads as a distinct surface because it is
-     elevated (paper-2 + shadow) against a darkened one. */
-  .menu-scrim {
-    display: block;
-    position: absolute;
-    inset: 0;
-    z-index: 4;
-    background: var(--color-backdrop);
-    opacity: 0;
-    visibility: hidden;
-    pointer-events: none;
-    transition: opacity var(--dur-mid) var(--ease-out), visibility var(--dur-mid);
-  }
-  .nav-wrap[data-menu-open="true"] .menu-scrim {
-    opacity: 1;
-    visibility: visible;
-    pointer-events: auto;
-  }
-
-  .nav-links {
-    display: flex;
-    position: absolute;
-    top: 0;
-    left: 0;
-    bottom: 0;
-    z-index: 5;
-    width: min(17rem, 84%);
-    flex-direction: column;
-    gap: 0.15rem;
-    padding: var(--space-sm);
-    background: var(--color-paper-2);
-    border-right: var(--rule-w) solid var(--color-rule);
-    box-shadow: 0 0 2.5rem color-mix(in oklch, oklch(0% 0 0) 30%, transparent);
-    overflow-y: auto;
-    transform: translateX(-100%);
-    visibility: hidden;
-    transition: transform var(--dur-mid) var(--ease-out), visibility var(--dur-mid);
-  }
-  .nav-wrap[data-menu-open="true"] .nav-links {
-    transform: none;
-    visibility: visible;
-  }
-
-  .menu-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+  .brand-mark {
+    /* 26px beside a 19px word at 100%; the same ratio at the 22px cap. */
+    width: min(1.625rem, 30px);
+    height: min(1.625rem, 30px);
     flex-shrink: 0;
-    padding: 0.2rem 0.2rem var(--space-sm);
+  }
+  .brand-ring {
+    stroke: var(--color-ink);
+  }
+  .brand-dot {
+    fill: var(--color-accent);
+  }
+  /* Phase 5c: the brand is a link to the landing page in a browser tab and a
+     plain wordmark in the installed app, which has no landing page (`/`
+     redirects to `/app` there). Both are rendered; `data-shell` picks one. */
+  .brand--link {
+    text-decoration: none;
+    border-radius: var(--radius-control);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .brand--link:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 4px;
+  }
+  .brand--static {
+    display: none;
+  }
+  :root[data-shell="app"] .brand--link {
+    display: none;
+  }
+  :root[data-shell="app"] .brand--static {
+    display: inline-flex;
   }
 
-  /* icon + label rows, the way a real app drawer lists destinations.
-     Named for what it is rather than matched as `.nav-links > button`: the tabs
-     are anchors now that each one has a real address, and a selector that
-     encodes the element name has to be rewritten every time the markup earns a
-     better one. `all: unset` strips the anchor's colour and underline; every
-     visual property below is then declared, not inherited from the UA. */
+  .nav-actions {
+    display: flex;
+    align-items: center;
+    gap: min(0.5rem, 8px);
+  }
+
+  /* ---- desktop destinations (web shell only, from 48rem) ----
+     Four labels in a row; the current one is a filled ink pill. Hidden below
+     48rem, where the same four live in the full-screen menu instead. */
+  .nav-links {
+    display: none;
+    align-items: center;
+    gap: 0.25rem;
+    margin-right: 0.5rem;
+  }
   .nav-tab {
     all: unset;
     box-sizing: border-box;
     cursor: pointer;
-    font-family: inherit;
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 0.7rem;
-    width: 100%;
     min-height: 2.75rem;
-    padding: 0.5rem 0.7rem;
-    font-size: 0.85rem;
-    text-align: left;
+    padding: 0 1.125rem;
+    border-radius: var(--radius-pill);
+    font-size: 0.9375rem;
+    font-weight: 500;
     white-space: nowrap;
-    border-radius: 0.5rem;
-    color: var(--color-ink-2);
+    color: var(--color-muted);
     transition: color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out);
   }
-  .nav-tab svg {
-    display: block;
-    width: 1rem;
-    height: 1rem;
-    flex-shrink: 0;
-    color: var(--color-muted);
-  }
-  /* current page is just the filled row — no accent rail. The fill already
-     says "you are here"; a bar was a second marker doing the same job. */
   .nav-tab[aria-current="page"] {
-    background: var(--color-paper-3);
-    color: var(--color-ink);
-  }
-  .nav-tab[aria-current="page"] svg {
-    color: var(--color-accent);
+    background: var(--color-ink);
+    color: var(--color-paper);
   }
   .nav-tab:focus-visible {
     outline: 2px solid var(--color-focus);
     outline-offset: 2px;
   }
   /* The pressed frame. A link that navigates in place gives no other signal
-     that the tap landed, and on touch there is no hover to have given one. */
-  .nav-tab:active {
-    background: var(--color-paper-3);
+     that the tap landed. */
+  .nav-tab:not([aria-current="page"]):active {
+    background: var(--color-tint);
   }
 
-  /* ---- nav icon buttons (theme toggle, drawer open/close) ---- */
+  /* ---- round icon buttons in the bar (theme toggle, menu toggle) ---- */
   .theme-toggle,
-  .menu-toggle,
-  .menu-close,
+  .menu-toggle {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+    color: var(--color-ink);
+    background: var(--color-surface);
+    border: var(--rule-w) solid var(--color-border-strong);
+    border-radius: var(--radius-pill);
+    transition: background-color var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out);
+  }
+  .theme-toggle:focus-visible,
+  .menu-toggle:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  .theme-toggle:active,
+  .menu-toggle:active {
+    background: var(--color-tint);
+  }
+  .theme-toggle svg,
+  .menu-toggle svg {
+    width: 18px;
+    height: 18px;
+  }
+  /* Which glyph shows is decided by the attribute the blocking script in
+     layout.tsx stamps, not by React state — that keeps the toggle free of any
+     hydration mismatch and correct on the very first paint. The boards draw
+     the moon in light mode (the action: go dark) and a sun in dark. */
+  .theme-toggle .icon-sun {
+    display: none;
+  }
+  :root[data-theme="dark"] .theme-toggle .icon-moon {
+    display: none;
+  }
+  :root[data-theme="dark"] .theme-toggle .icon-sun {
+    display: block;
+  }
+
+  /* ---- phone menu (web shell, below 48rem) ----
+     Not a drawer over the page: it takes the content band's place, between
+     the top bar and the footer, as on the Web "Menu" board. It is a sibling of
+     `.nav-wrap` inside `.shell`, so the flex chain measures its height the
+     same way it measures every view — no constant subtracted from 100dvh.
+     While it is open the views are display:none (see the 48rem query), so
+     they leave the tab order and the accessibility tree with it. */
+  .menu-panel {
+    display: none;
+    flex: 1 0 auto;
+    flex-direction: column;
+    gap: 0.625rem;
+    padding-block: var(--space-md);
+  }
+  .nav-wrap[data-menu-open="true"] + .menu-panel {
+    display: flex;
+  }
+  .menu-item {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    width: 100%;
+    min-height: 3.75rem;
+    padding: 0 var(--space-sm);
+    border: var(--rule-w) solid var(--color-rule);
+    border-radius: var(--radius-control);
+    background: var(--color-surface);
+    color: var(--color-ink);
+    font-size: 1.1875rem;
+    font-weight: 600;
+    transition: background-color var(--dur-short) var(--ease-out);
+  }
+  .menu-item svg {
+    width: 1.125rem;
+    height: 1.125rem;
+    flex-shrink: 0;
+  }
+  .menu-item[aria-current="page"] {
+    background: var(--color-ink);
+    border-color: var(--color-ink);
+    color: var(--color-paper);
+  }
+  .menu-item:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  .menu-item:not([aria-current="page"]):active {
+    background: var(--color-tint);
+  }
+
+  /* `.icon-action` is the results view's copy/share button — not part of the
+     bar, kept on its own rule so restyling the bar can't move it. */
   .icon-action {
     all: unset;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    box-sizing: border-box;
     width: 2.75rem;
     height: 2.75rem;
     flex-shrink: 0;
-    color: var(--color-muted);
+    color: var(--color-ink);
+    border: var(--rule-w) solid var(--color-border-strong);
     border-radius: var(--radius-pill);
-    transition: color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out);
+    background: var(--color-surface);
+    transition: color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out),
+      border-color var(--dur-short) var(--ease-out);
   }
-  .theme-toggle:focus-visible,
-  .menu-toggle:focus-visible,
-  .menu-close:focus-visible,
   .icon-action:focus-visible {
     outline: 2px solid var(--color-focus);
     outline-offset: 2px;
   }
-  .theme-toggle svg,
-  .menu-toggle svg,
-  .menu-close svg,
   .icon-action svg {
-    width: 1.05rem;
-    height: 1.05rem;
+    width: 1.125rem;
+    height: 1.125rem;
   }
   /* Same confirmation the old text button gave by swapping its label to
      "copied" — the icon swaps to a check, and this tints it so the change
@@ -386,75 +481,10 @@ h3 {
   .icon-action[data-state="copied"] {
     color: var(--color-accent);
   }
-  /* Which glyph shows is decided by the attribute the blocking script in
-     layout.tsx stamps, not by React state — that keeps the toggle free of any
-     hydration mismatch and correct on the very first paint. */
-  .theme-toggle .icon-moon {
-    display: none;
-  }
-  :root[data-theme="dark"] .theme-toggle .icon-sun {
-    display: none;
-  }
-  :root[data-theme="dark"] .theme-toggle .icon-moon {
-    display: block;
-  }
 
-  /* The single-column tab views borrow Analyze's vertical rhythm: micro-label
-     on a rule, then the shared tinted .surface. The margin has to match
-     `.workspace`'s below, so the label lands at the same height on every tab
-     and nothing shifts when you switch views.
-
-     A class, not a list of `[data-view="…"]` names. The old selector enumerated
-     the three tabs that existed, so a fourth would have silently missed the
-     alignment; opting in by class means a new tab carries it by construction.
-     `:not([data-view="analyze"])` was the other candidate and is wrong: legal
-     and offline are `<section data-view>` too, and neither wants this margin —
-     idle Analyze is not the only exception, just the documented one. */
-  .tab-view {
-    margin-top: var(--space-md);
-    gap: var(--space-sm);
-  }
-
-  /* ========================================================================
-     ANALYZE — two ruled columns. Neither column is a bordered card: structure
-     comes from rules and alignment, which is Terminal's own language. Two
-     bordered tinted rectangles side by side read as a slide deck.
-     ======================================================================== */
-
-  .workspace {
-    margin-top: var(--space-md);
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-sm);
-    flex: 0 0 auto;
-  }
-  .shell[data-frame="fixed"] .workspace {
-    flex: 1;
-    min-height: 0;
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-
-  .left-col,
-  .right-col {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-sm);
-    min-width: 0;
-    height: auto;
-  }
-  .shell[data-frame="fixed"] .left-col,
-  .shell[data-frame="fixed"] .right-col {
-    min-height: 0;
-  }
-
-  /* stacked on mobile, so the dividing hairline is horizontal */
-  .right-col {
-    border-top: var(--rule-w) solid var(--color-rule);
-    padding-top: var(--space-sm);
-  }
-
-  /* Micro-label, not a slide header: small, tracked-out, muted, sitting on the
-     baseline of its column rather than floating as a title above a box. */
+  /* Micro-label for the panel tabs and legal pages (History, API key,
+     Releases, Privacy, Terms — Phases 3-4): small, tracked-out, muted, on a
+     rule. Analyze uses `.section-label` instead (no rule), as drawn. */
   .col-label {
     display: block;
     font-size: 0.64rem;
@@ -473,67 +503,6 @@ h3 {
     color: var(--color-muted);
   }
 
-  /* The Source label doubles as a disclosure. It only actually collapses at
-     phone width, where the column stacks above the results — on web the source
-     is a side column and hiding it would gain nothing. */
-  button.col-label {
-    all: unset;
-    box-sizing: border-box;
-    cursor: pointer;
-    width: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-sm);
-    font-size: 0.64rem;
-    font-weight: 500;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--color-muted);
-    flex-shrink: 0;
-    padding-bottom: var(--space-2xs);
-    border-bottom: var(--rule-w) solid var(--color-rule);
-  }
-  button.col-label:focus-visible {
-    outline: 2px solid var(--color-focus);
-    outline-offset: 2px;
-  }
-  .col-chevron {
-    display: block;
-    width: 0.85rem;
-    height: 0.85rem;
-    flex-shrink: 0;
-    color: var(--color-accent);
-    transition: transform var(--dur-short) var(--ease-out);
-  }
-  .left-col[data-collapsed="false"] .col-chevron {
-    transform: rotate(180deg);
-  }
-  .left-col[data-collapsed="true"] .source-frame {
-    display: none;
-  }
-
-  /* Deliberately unboxed wrapper around the SourceCard: bare text separated
-     from the results by a single hairline, not a card of its own.
-     NOTE: named .source-frame, not .source-card — .source-card is already the
-     SourceCard component's own BEM root (components/ResultsView.tsx). */
-  .source-frame {
-    padding: 0;
-    flex: 0 0 auto;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    overflow: visible;
-  }
-
-  .source-body {
-    flex: 0 1 auto;
-    min-height: 0;
-    overflow-y: visible;
-    padding-bottom: var(--space-xs);
-    border-bottom: var(--rule-w) solid var(--color-rule);
-  }
-
   /* ---- the four rungs of "something is not right", lightest first ----
      Pick by what the thing IS, not by how bad it feels:
 
@@ -542,18 +511,23 @@ h3 {
        .error-note    the same line at danger ink. Something WAS rejected, and
                       the control that caused it is right there — so the note
                       needs no box and no recovery control of its own.
+       .intake-alert  the intake card's one exception: a form-level submit
+                      failure (server unreachable, submit rejected), boxed in
+                      danger-soft at the top of the card, per the owner.
+                      Field-level rejections stay .error-note.
        .error-inline  a panel-scoped failure region: danger rule, the panel's
                       own reading size, and a retry control. Defined further
-                      down, next to .error-block.
-       .error-block   the whole view failed. The one bordered object in a
-                      boxless system; do not reach for it inside a panel.
+                      down.
+       .run-notice    the whole run failed (or lost its connection): the
+                      progress view's notice card with its own actions. Lives
+                      in the ANALYZE section; do not reach for it in a panel.
 
      .pending-note and .error-note share every metric on purpose — they are one
      note in two inks, and a rejection should not also change size or rhythm. */
   .pending-note,
   .error-note {
     margin: 0;
-    font-size: 0.74rem;
+    font-size: 0.875rem;
     line-height: 1.6;
     color: var(--color-muted);
   }
@@ -563,76 +537,28 @@ h3 {
 
   .reset-link {
     all: unset;
+    box-sizing: border-box;
     cursor: pointer;
     font-family: inherit;
-    font-size: 0.74rem;
+    font-size: 1rem;
+    font-weight: 600;
     color: var(--color-accent);
     text-decoration: underline;
-    text-underline-offset: 2px;
+    text-underline-offset: 0.25rem;
     flex-shrink: 0;
     width: fit-content;
-    margin-top: var(--space-xs);
+    min-height: 2.75rem;
+    display: inline-flex;
+    align-items: center;
   }
   .reset-link:focus-visible {
     outline: 2px solid var(--color-focus);
     outline-offset: 2px;
   }
 
-  /* ---- the shared tinted panel ----
-     The results pane, the history list and the API-key form are all the same
-     object, so all three views read alike. One tinted surface, not two: the
-     results lift off the paper while the source column stays bare, so the
-     asymmetry from the de-boxing pass survives. */
-  .surface,
-  .results {
-    flex: 0 0 auto;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    min-height: 0;
-  }
-  .surface {
-    background: transparent;
-  }
-  .results {
-    background: var(--color-paper-2);
-  }
-  .shell[data-frame="fixed"] .surface,
-  .shell[data-frame="fixed"] .results {
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .pane {
-    padding: var(--space-md);
-    min-width: 0;
-    flex: 1;
-    overflow-y: visible;
-  }
-  .shell[data-frame="fixed"] .pane {
-    overflow-y: auto;
-  }
-
   /* ========================================================================
-     CENTRED VIEWS — intake, processing, failed
+     MICRO-LABEL — used by the dev-only preview harnesses
      ======================================================================== */
-
-  /* Dropped below the header rather than sitting against it, but well above
-     true centre — the intake is the only thing on the screen, so it should
-     read as the subject, not as a form clipped to the top edge. */
-  .home-center {
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 12vh 0 var(--space-xl);
-  }
-
-  .intake {
-    width: 100%;
-    max-width: 34rem;
-  }
 
   .card-label {
     display: block;
@@ -642,144 +568,13 @@ h3 {
     color: var(--color-muted);
     margin: 0 0 var(--space-sm);
   }
-  .intake .card-label {
-    color: var(--color-accent);
-  }
-
-  .row {
-    display: flex;
-    gap: var(--space-2xs);
-    flex-wrap: wrap;
-  }
-
-  .run-state {
-    width: 100%;
-    max-width: 44rem;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--space-lg);
-  }
-  .run-state > .status {
-    margin-bottom: 0;
-  }
-
-  /* Pipeline. Vertical on phones — four labelled tracks don't fit — and one
-     equal-width track per stage from 32rem up. */
-  .steps {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    width: 100%;
-    display: grid;
-    grid-auto-flow: row;
-    grid-auto-columns: auto;
-    gap: var(--space-sm);
-  }
-  .step {
-    position: relative;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 0.75rem;
-    font-size: 0.68rem;
-    letter-spacing: 0.04em;
-    text-align: left;
-    color: var(--color-muted);
-  }
-  /* the connector reaches back to the previous mark; the first has none */
-  .step::before {
-    content: "";
-    position: absolute;
-    left: 0.7rem;
-    bottom: 100%;
-    width: var(--rule-w);
-    height: var(--space-sm);
-    background: var(--color-rule);
-  }
-  .step:first-child::before {
-    display: none;
-  }
-  .step[data-status="done"]::before,
-  .step[data-status="active"]::before {
-    background: var(--color-accent);
-  }
-  .step-mark {
-    position: relative;
-    z-index: 1;
-    width: 1.4rem;
-    height: 1.4rem;
-    flex-shrink: 0;
-    border-radius: 50%;
-    border: var(--rule-w) solid var(--color-rule-2);
-    background: var(--color-paper);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.6rem;
-  }
-  .step[data-status="done"] {
-    color: var(--color-ink-2);
-  }
-  .step[data-status="done"] .step-mark {
-    border-color: var(--color-accent);
-    color: var(--color-accent);
-  }
-  .step[data-status="active"] {
-    color: var(--color-ink);
-  }
-  .step[data-status="active"] .step-mark {
-    border-color: var(--color-accent);
-    background: var(--color-accent);
-    animation: pip-pulse 1.1s var(--ease-in-out) infinite;
-  }
-  /* Polling died: this is the stage the run had reached when we lost contact,
-     not the stage it is in. It keeps the accent connector (we did get here) but
-     loses the fill and the pulse (nothing is advancing), and the mark goes
-     dashed — the same "not settled yet" idiom the drop zone already uses —
-     so it reads as neither done nor running. */
-  .step[data-status="stalled"] {
-    color: var(--color-ink-2);
-  }
-  .step[data-status="stalled"]::before {
-    background: var(--color-accent);
-  }
-  .step[data-status="stalled"] .step-mark {
-    border-style: dashed;
-    border-color: var(--color-muted);
-    background: var(--color-paper);
-  }
-
-  .error-block {
-    max-width: 32rem;
-    text-align: left;
-    border: var(--rule-w) solid var(--color-danger);
-    background: color-mix(in oklch, var(--color-danger) 10%, var(--color-paper-2));
-    padding: var(--space-md);
-  }
-  .error-block p {
-    margin: 0 0 var(--space-sm);
-    font-size: 0.92rem;
-    line-height: 1.6;
-    color: var(--color-ink-2);
-  }
-  .error-block p:last-of-type {
-    margin-bottom: var(--space-md);
-  }
-  .error-block strong {
-    color: var(--color-danger);
-  }
-
   /* ---- the panel-inline failure ----
-     Deliberately NOT .error-block. That one is the single bordered object in a
-     boxless system and is sized for a whole view having failed: a bold lead, an
-     explanatory paragraph, and a button its `p:last-of-type` reserves room for.
-     Rendered around one sentence inside a panel it carries full-view weight
-     plus dead space where the missing button should be — which is exactly the
-     complaint here.
+     Deliberately not the progress view's `.run-notice`, which is sized for a
+     whole run having failed and carries its own actions. Rendered around one
+     sentence inside a panel it would carry full-view weight.
 
      So this speaks the system's own language instead: a rule and alignment, no
-     box, at the panel's own reading size (0.8rem, matching .history-row's
+     box, at the panel's own reading size (0.8rem, matching the old history row's
      title — a notch above .pending-note's 0.74rem, because a failure outranks
      "Loading…", and well below the 0.92rem of a failed view). The retry
      control it now carries is what earns it the two-element stack rather than a
@@ -808,37 +603,36 @@ h3 {
      unavailable. There is deliberately no healthy rendering: a permanent
      "all systems operational" strip is chrome that tells a user nothing they
      can act on.
+
+     Editorial Phase 2 (2026-11-01): a compact surface card with the same edge
+     and radius family as .run-notice, one line by default (dot, sentence,
+     "Details"). Severity rides on the dot and the state word only, and only
+     `unavailable` is red: the palette has one danger token and no warning
+     token, and an amber here is how a one-accent system becomes a traffic
+     light. `degraded` is a neutral dot.
      ======================================================================== */
 
-  /* Same left-ruled, boxless geometry as .error-inline above, because this is
-     the same kind of object - a scoped condition inside a view that is
-     otherwise fine - and a second idiom for it would give the app two ways to
-     say "read this". It is deliberately NOT .error-block: that is the single
-     bordered object in a boxless system, sized for a whole view having failed.
-
-     Severity is carried by the rule's ink and by the words, never by a new
-     hue. The palette declares exactly one danger token and no warning token,
-     and adding an amber here is how a disciplined two-accent system becomes a
-     traffic light. `degraded` therefore keeps the neutral --color-rule-2 - the
-     same restraint .status[data-tone="stalled"] uses when it declines to be a
-     fourth severity - and separates itself from `ok` by ink weight instead. */
   .cap-notice {
-    max-width: var(--measure);
-    border-left: calc(var(--rule-w) * 2) solid var(--color-rule-2);
-    padding-left: var(--space-sm);
+    padding: 0.375rem 0.375rem 0.375rem 0.875rem;
+    border: var(--rule-w) solid var(--color-rule);
+    border-radius: var(--radius-control);
+    background: var(--color-surface);
+    /* Refinement 15: the head stacks when the sentence would get too narrow
+       beside the toggle (see the @container rule after .cap-toggle). The
+       query is in em of this box, so font-size is pinned to the root; every
+       size inside is rem already, so nothing else moves. */
+    container: cap-notice / inline-size;
+    font-size: 1rem;
   }
-  .cap-notice[data-state="unavailable"] {
-    border-left-color: var(--color-danger);
+  .cap-notice[data-tone="bad"] {
+    border-color: var(--color-danger-border);
   }
 
-  /* Spacing belongs to the three wrappers, not to .cap-notice, so the
-     announcing slot in the intake collapses to nothing when the deployment is
-     healthy. The slot itself carries no rules at all - in particular no
-     `:empty { display: none }`, which would take the aria-live region out of
-     the accessibility tree and stop it ever announcing the report it exists to
-     announce. An empty div is already zero-height; that is enough. */
+  /* The slot is the polite live region. It carries no `:empty` rule — that
+     would drop the region from the accessibility tree before the report lands.
+     An empty div is already zero-height; spacing lives on the notice. */
   .cap-slot > .cap-notice {
-    margin-bottom: var(--space-sm);
+    margin-bottom: var(--space-md);
   }
   .cap-field-note {
     margin-top: var(--space-2xs);
@@ -847,92 +641,103 @@ h3 {
     margin-bottom: var(--space-sm);
   }
 
-  /* The whole line is the disclosure control. `all: unset` and rebuilt, the
-     way .reset-link and button.col-label already turn a <button> into a piece
-     of text without inheriting a control's chrome. */
-  .cap-summary {
+  .cap-head {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    min-width: 0;
+  }
+  .cap-dot {
+    flex-shrink: 0;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--color-muted);
+  }
+  [data-tone="bad"] > .cap-dot,
+  .cap-notice[data-tone="bad"] .cap-head > .cap-dot {
+    background: var(--color-danger);
+  }
+  .cap-summary-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    font-size: 0.875rem;
+    line-height: 1.45;
+    color: var(--color-ink);
+    /* Not `anywhere`: that let the 84px column at 412/200% split "Limite/d"
+       and "downl/oads". The stacking below keeps the column wide enough for
+       whole words; `break-word` only splits a single word longer than the
+       full line, which no real sentence here has. */
+    overflow-wrap: break-word;
+  }
+
+  /* Text button, 44px tall so it is a real target on any pointer. */
+  .cap-toggle {
     all: unset;
     box-sizing: border-box;
+    flex-shrink: 0;
     cursor: pointer;
     font-family: inherit;
-    display: flex;
-    width: 100%;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--space-sm);
-    padding: var(--space-2xs) 0;
-  }
-  .cap-summary:focus-visible {
-    outline: 2px solid var(--color-focus);
-    outline-offset: 2px;
-  }
-  /* Kept even though the app's other text-buttons have none: this one is the
-     first thing on the intake and is reached on touch, where there is no hover
-     to confirm the press. Tone-agnostic so it works over all three line inks. */
-  .cap-summary:active {
-    opacity: 0.7;
-  }
-
-  .cap-summary-lines {
-    display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
-    min-width: 0;
-  }
-
-  /* One line per severity rather than a sentence. At 34rem of monospace a
-     sentence naming three capabilities wraps to three lines anyway; a readout
-     says the same thing in less space and scans without being read. */
-  .cap-line {
-    display: block;
-    font-size: 0.78rem;
-    line-height: 1.55;
-    min-width: 0;
-    overflow-wrap: anywhere;
-    color: var(--color-ink-2);
-  }
-  .cap-line[data-tone="bad"] {
-    color: var(--color-danger);
-  }
-  .cap-line[data-tone="warn"] {
-    color: var(--color-ink);
-  }
-  .cap-line strong {
-    font-weight: 600;
-  }
-
-  .cap-more {
     display: inline-flex;
     align-items: center;
     gap: 0.25rem;
-    flex-shrink: 0;
-    font-size: 0.68rem;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--color-accent);
+    min-height: 2.75rem;
+    padding: 0 0.625rem;
+    border-radius: var(--radius-pill);
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-accent-strong);
+  }
+  .cap-toggle:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  .cap-toggle:active {
+    opacity: 0.7;
   }
   .cap-chevron {
-    width: 0.85rem;
-    height: 0.85rem;
+    width: 1rem;
+    height: 1rem;
     transition: transform var(--dur-short) var(--ease-out);
   }
-  .cap-summary[aria-expanded="true"] .cap-chevron {
+  .cap-toggle[aria-expanded="true"] .cap-chevron {
     transform: rotate(180deg);
+  }
+  /* Refinement 15 (device round 16): the toggle scales with the text, so at
+     large text it took the line and left the sentence a sliver (84px at
+     412/200%, 32px at 360/200%). Measured in rem: dot + two gaps are 1.75,
+     the widest toggle ("Details" + chevron) 5.21, so the sentence gets the
+     box less ~6.96rem. Below 15em it would get under ~9em of its own 0.875rem
+     text (two or three words a line), so the toggle drops to its own line,
+     its label lined up under the sentence (dot 0.5 + gap 0.625 − the
+     toggle's own 0.625 padding). 320px at 100% has 16.6em and keeps the one
+     line it always had. */
+  @container cap-notice (width < 15em) {
+    .cap-head {
+      flex-wrap: wrap;
+      /* the toggle's own 44px box is the air above its label */
+      row-gap: 0;
+    }
+    .cap-summary-text {
+      flex-basis: calc(100% - 1.125rem);
+    }
+    .cap-toggle {
+      margin-inline-start: 0.5rem;
+    }
   }
 
   .cap-detail {
     display: flex;
     flex-direction: column;
     gap: var(--space-xs);
-    padding: var(--space-2xs) 0 var(--space-xs);
+    margin: 0.25rem 0.5rem 0.5rem 0;
+    padding-top: var(--space-xs);
     border-top: var(--rule-w) solid var(--color-rule);
   }
-  /* Has to beat the flex display above. The region stays in the DOM while
-     collapsed so `aria-controls` never points at an element that isn't there. */
   .cap-detail[hidden] {
     display: none;
   }
-
   .cap-rows {
     list-style: none;
     margin: 0;
@@ -944,105 +749,99 @@ h3 {
   .cap-row {
     display: flex;
     flex-direction: column;
-    gap: 0.15rem;
+    gap: 0.125rem;
     min-width: 0;
   }
   .cap-row-head {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
-    gap: 0.5rem;
+    justify-content: space-between;
+    gap: 0.25rem var(--space-sm);
     min-width: 0;
   }
   .cap-name {
-    font-size: 0.74rem;
+    font-size: 0.875rem;
+    font-weight: 600;
     color: var(--color-ink);
   }
-
-  /* The state word sits in the micro-label register the rest of the app uses
-     for structural marks (.col-label, .history-group), at .history-group's
-     size so this introduces no new smallest type.
-
-     `ok` and `off` (which is what `disabled` renders as) share the muted ink
-     on purpose. An unconfigured optional dependency is not a lesser kind of
-     broken, and a green tick beside it would make it look like one - while a
-     red one would say the deployment is faulty for being shaped the way it was
-     configured to be shaped. */
   .cap-state {
-    font-size: 0.6rem;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--color-muted);
+    font-size: 0.8125rem;
+    color: var(--color-ink-2);
   }
-  .cap-row[data-tone="warn"] .cap-state {
-    color: var(--color-ink);
-  }
-  .cap-row[data-tone="bad"] .cap-state {
+  .cap-state[data-tone="bad"] {
     color: var(--color-danger);
+    font-weight: 600;
   }
-
-  /* "this row was read off configuration, not checked". Outlined and muted, so
-     it reads as a qualifier on the state word beside it rather than as a fifth
-     severity. It is a visible tag and not a `title` tooltip because a caveat
-     you have to hover to find is a caveat that was hidden. */
-  .cap-unverified {
-    font-size: 0.6rem;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
+  .cap-unchecked {
+    font-weight: 400;
     color: var(--color-muted);
-    padding: 0.05rem 0.3rem;
-    box-shadow: inset 0 0 0 var(--rule-w) var(--color-rule-2);
   }
-
   .cap-row-detail {
-    font-size: 0.72rem;
-    line-height: 1.6;
+    font-size: 0.8125rem;
+    line-height: 1.5;
     color: var(--color-muted);
     min-width: 0;
     overflow-wrap: anywhere;
   }
-
   .cap-legend {
     margin: 0;
-    padding-top: var(--space-2xs);
-    border-top: var(--rule-w) solid var(--color-rule);
-    font-size: 0.68rem;
-    line-height: 1.6;
+    font-size: 0.8125rem;
+    line-height: 1.5;
     color: var(--color-muted);
   }
-  .cap-legend strong {
+
+  /* The one-row note beside the control it affects (URL field, API key
+     panel): no card, just the dot and the sentence. */
+  .cap-callout {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin: 0;
+    font-size: 0.8125rem;
+    line-height: 1.5;
     color: var(--color-ink-2);
-    font-weight: 500;
+    overflow-wrap: anywhere;
+  }
+  .cap-callout > .cap-dot {
+    position: relative;
+    top: -0.0625rem;
+  }
+  .cap-callout strong {
+    font-weight: 600;
+    color: var(--color-ink);
   }
 
   /* ========================================================================
      CONTROLS
      ======================================================================== */
 
+  /* Text input. 52px tall and 12px round, as drawn on the intake board; the
+     border is the darker --color-input-border (3:1 against both the card and
+     paper — a text field's edge is a UI boundary WCAG 1.4.11 measures). */
   .field {
     flex: 1 1 20rem;
     min-width: 0;
     width: 100%;
+    box-sizing: border-box;
     font-family: inherit;
-    font-size: 0.92rem;
-    background: var(--color-paper);
-    border: var(--rule-w) solid var(--color-rule-2);
-    border-radius: var(--radius-card);
+    font-size: 1rem;
+    background: var(--color-surface);
+    border: var(--rule-w) solid var(--color-input-border);
+    border-radius: var(--radius-control);
     color: var(--color-ink);
-    padding: 0.65rem 0.85rem;
+    padding: 0.75rem 1rem;
     transition: border-color var(--dur-short) var(--ease-out), box-shadow var(--dur-short) var(--ease-out);
   }
   input.field {
-    flex: 0 0 auto;
-    height: 2.5rem;
+    height: 3.25rem;
   }
   .field::placeholder {
     color: var(--color-muted);
   }
   .field:focus-visible {
-    outline: none;
-    border-color: var(--color-focus);
-    box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-focus) 25%, transparent);
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
   }
   .field[aria-invalid="true"] {
     border-color: var(--color-danger);
@@ -1051,21 +850,27 @@ h3 {
     cursor: not-allowed;
     opacity: 0.55;
   }
+  /* The transcript search: same field, pill-shaped and one step shorter. */
+  input.field-pill {
+    height: 2.75rem;
+    border-radius: var(--radius-pill);
+    padding-inline: 1rem;
+  }
 
   .btn {
     all: unset;
     /* `all: unset` also unsets box-sizing back to content-box, which silently
-       breaks the `@media (pointer: coarse)` rule below: `min-height: 2.75rem`
-       is written to mean a 44px target, but on content-box it measures the
-       CONTENT and the button paints 44 + 20.8 padding + 2 border = 66.8px.
-       Measured, not reasoned about. `.history-row` already re-declares this for
-       the same reason; `.btn` was the one that didn't. */
+       breaks the 44px minimum below: `min-height` would measure the CONTENT
+       and the button paints taller than drawn. Measured, not reasoned about. */
     box-sizing: border-box;
     cursor: pointer;
     font-family: inherit;
-    font-size: 0.8rem;
-    font-weight: 500;
-    padding: 0.65rem 1.2rem;
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.25;
+    min-height: 2.75rem;
+    padding: 0.625rem 1.25rem;
+    border-radius: var(--radius-control);
     text-align: center;
     white-space: nowrap;
     display: inline-flex;
@@ -1074,6 +879,11 @@ h3 {
     gap: var(--space-2xs);
     transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out),
       border-color var(--dur-short) var(--ease-out), transform var(--dur-instant) var(--ease-in);
+  }
+  .btn svg {
+    width: 1.125rem;
+    height: 1.125rem;
+    flex-shrink: 0;
   }
   .btn:active {
     transform: translateY(1px) scale(0.99);
@@ -1092,39 +902,56 @@ h3 {
     outline: 2px solid var(--color-focus);
     outline-offset: 2px;
   }
+  /* The one filled-green control per view: Analyze link, Download .md. */
   .btn-primary {
     background: var(--color-accent);
-    color: var(--color-accent-ink);
+    color: var(--color-on-accent);
   }
   .btn-primary:disabled {
-    background: var(--color-paper-3);
+    background: var(--color-tint);
     color: var(--color-muted);
     cursor: not-allowed;
   }
+  /* Near-black fill: the recovery actions on the progress boards (Try again,
+     Try now). Neutral on purpose — green there would read as "it worked". */
+  .btn-ink {
+    background: var(--color-ink);
+    color: var(--color-paper);
+  }
+  .btn-ink:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+  /* Outlined. The ink border is the boards' "Browse files" / "Analyze another
+     file" — darker than --color-border-strong, which is for icon buttons. */
   .btn-secondary {
     background: transparent;
     color: var(--color-ink);
-    border: var(--rule-w) solid var(--color-rule-2);
+    border: var(--rule-w) solid var(--color-ink);
   }
   .btn-secondary:disabled {
     cursor: not-allowed;
     opacity: 0.55;
   }
   .btn-secondary[data-state="copied"] {
-    color: var(--color-accent-ink);
+    color: var(--color-on-accent);
     background: var(--color-accent);
     border-color: var(--color-accent);
+  }
+  .btn-pill {
+    border-radius: var(--radius-pill);
+  }
+  .btn-block {
+    width: 100%;
   }
 
   .divider {
     display: flex;
     align-items: center;
-    gap: var(--space-xs);
-    margin: var(--space-sm) 0;
+    gap: var(--space-sm);
+    margin: 1.25rem 0;
     color: var(--color-muted);
-    font-size: 0.68rem;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
+    font-size: 0.875rem;
   }
   .divider::before,
   .divider::after {
@@ -1134,78 +961,116 @@ h3 {
     background: var(--color-rule);
   }
 
+  /* The drop zone: a compact dashed row, paper-filled (a well inside the white
+     card) — upload glyph in an accent-soft disc, title over limits, and the
+     outlined Browse button pinned right. On a narrow card the button wraps
+     onto its own full-width line rather than squeezing the text. */
   .drop {
-    border: 1px dashed var(--color-rule-2);
-    padding: 0.85rem 1rem;
+    border: var(--rule-w) dashed var(--color-input-border);
+    border-radius: var(--radius-control);
+    background: var(--color-paper);
+    padding: var(--space-sm);
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-sm);
     flex-wrap: wrap;
-    transition: border-color var(--dur-short) var(--ease-out);
+    align-items: center;
+    gap: var(--space-xs) var(--space-sm);
+    transition: border-color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out);
+  }
+  .drop-icon {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-accent-soft);
+    color: var(--color-accent-strong);
+  }
+  .drop-text {
+    flex: 1 1 12rem;
+    min-width: 0;
   }
   .drop p {
     margin: 0;
-    font-size: 0.8rem;
-    color: var(--color-ink-2);
+  }
+  .drop-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  /* "Drop …" only where dropping is possible: the drop zone's title and the
+     intake lede (refinement 2, #5) each carry both wordings, one shown.
+     `display: none` keeps the hidden one out of the accessibility tree. */
+  .only-touch {
+    display: none;
+  }
+  @media (hover: none) {
+    .only-pointer {
+      display: none;
+    }
+    .only-touch {
+      display: inline;
+    }
   }
   .drop .hint {
-    font-size: 0.7rem;
+    font-size: 0.875rem;
+    line-height: 1.35;
     color: var(--color-muted);
-    margin-top: 0.15rem;
+  }
+  .drop .btn {
+    flex: none;
+  }
+  @media (max-width: 30rem) {
+    .drop .btn {
+      flex: 1 1 100%;
+    }
   }
   .drop[data-dragging="true"] {
     border-color: var(--color-accent);
-    background: color-mix(in oklch, var(--color-accent) 8%, transparent);
+    background: var(--color-accent-soft);
   }
 
-  /* Run-status pill. Deliberately absent from the completed view — the real
-     SourceCard has no status of its own — but the processing and failed views
-     have no metadata to show yet, so the pill is what identifies them. */
+  /* Run-status pill: soft fill, strong ink, a dot. One per tone; none of them
+     is a solid fill any more — the pill labels the screen, the notice card
+     below it carries the weight. */
   .status {
     display: inline-flex;
     align-items: center;
-    gap: 0.4rem;
-    font-size: 0.68rem;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--color-accent-ink);
-    background: var(--color-accent);
-    padding: 0.25rem 0.55rem;
-    margin-bottom: var(--space-xs);
+    gap: 0.5rem;
     width: fit-content;
+    padding: 0.375rem 0.875rem;
+    border-radius: var(--radius-pill);
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-accent-strong);
+    background: var(--color-accent-soft);
   }
-  /* the pip inherits the pill's own text colour so it stays legible on all
-     three tones instead of being pinned to the accent pill's ink */
+  /* the pip inherits the pill's own text colour so it stays legible on every
+     tone */
   .status .pip {
-    width: 0.35rem;
-    height: 0.35rem;
+    width: 0.5rem;
+    height: 0.5rem;
     border-radius: 50%;
     background: currentColor;
   }
-  /* Neutral, not accent-inked: --color-accent-ink is near-white in light mode
-     and near-black in dark, and read poorly on --color-rule-2 in both. */
-  .status[data-tone="processing"] {
-    color: var(--color-ink);
-    background: var(--color-paper-3);
-    box-shadow: inset 0 0 0 var(--rule-w) var(--color-rule-2);
-  }
-  .status[data-tone="processing"] .pip {
+  .status[data-tone="processing"] .pip,
+  .status[data-tone="queued"] .pip {
     animation: pip-pulse 1.1s var(--ease-in-out) infinite;
   }
   .status[data-tone="failed"] {
-    color: var(--color-danger-ink);
-    background: var(--color-danger);
+    color: var(--color-danger);
+    background: var(--color-danger-soft);
   }
-  /* Stalled is not a fourth severity — it is the processing pill with its
-     claim withdrawn: same outline, no fill, muted ink, and crucially no pulse
-     on the pip. It is deliberately NOT danger-coloured; the run has not failed,
-     we have only stopped hearing about it, and the .error-block directly below
-     is the one thing on this screen allowed to carry danger ink. */
-  .status[data-tone="stalled"] {
-    color: var(--color-muted);
-    background: transparent;
-    box-shadow: inset 0 0 0 var(--rule-w) var(--color-rule-2);
+  /* Connection lost is not a fourth severity — it is the processing pill with
+     its claim withdrawn: neutral tint, ink-2 text, a still muted dot. Never
+     danger-coloured; the run has not failed, we have only stopped hearing
+     about it. */
+  .status[data-tone="lost"] {
+    color: var(--color-ink-2);
+    background: var(--color-tint);
+  }
+  .status[data-tone="lost"] .pip {
+    background: var(--color-muted);
   }
 
   /* ---- what the analysis could actually look at ----
@@ -1221,7 +1086,7 @@ h3 {
      /api/capabilities, and borrowing either would couple this to a feature it
      has nothing to do with.
 
-     Neutral --color-rule-2, never --color-danger. The run SUCCEEDED; the
+     Neutral --color-border-strong, never --color-danger. The run SUCCEEDED; the
      salvage is the good outcome and the caveat is a qualifier on scope, much
      closer to .cap-unverified's "read off configuration, not checked" than to
      a fault. Danger ink here would say the result is broken, and the palette
@@ -1232,14 +1097,12 @@ h3 {
   .completeness-note {
     flex-shrink: 0;
     max-width: var(--measure);
-    /* The gutter the title band and .tab-list already use, so all three hang
-       off one left edge. */
-    margin: 0 var(--space-md) var(--space-sm);
+    margin: 0 0 var(--space-sm);
     /* 2px, matching .error-inline: at the 1px structural hairline with no fill
        behind it a rule this short reads as a stray divider. */
-    border-left: calc(var(--rule-w) * 2) solid var(--color-rule-2);
+    border-left: calc(var(--rule-w) * 2) solid var(--color-border-strong);
     padding: var(--space-2xs) 0 var(--space-2xs) var(--space-sm);
-    font-size: 0.78rem;
+    font-size: 0.875rem;
     line-height: 1.6;
     color: var(--color-ink-2);
     min-width: 0;
@@ -1250,31 +1113,57 @@ h3 {
     font-weight: 600;
   }
 
-  /* ---- result tabs ---- */
-  /* Four equal columns rather than a scrolling flex row: every tab is visible
-     at once on a phone, and each active underline spans an identical share of
-     the rule. `grid-auto-flow: column` + `grid-auto-columns: 1fr` rather than
-     `repeat(4, 1fr)` so the count is not hard-coded here as well as in TABS.
-     No gap, so the underlines read as segments of the one bottom rule. */
+  /* ---- result tabs ----
+     Underlined tabs, not a segmented control: labels at their natural widths
+     with a fixed gap (28px desktop, 20px phone) on one full-width 1px rule;
+     the selected tab's 2px accent underline sits on that rule, overlapping it
+     by 1px with no gap.
+
+     The row is a sideways scroller so a very narrow phone scrolls rather than
+     wraps or truncates. A scroll container clips its descendants, which is
+     why two things are not done the obvious way:
+     - the rule is the list's own background (positioned on the content box's
+       bottom edge), not a border the tabs pull themselves over with
+       margin-bottom: -1px — that 1px is exactly what the clip removes;
+     - the list carries 4px of padding (cancelled by negative margin, so
+       nothing moves) so the focus ring's 2px offset is not clipped either. */
   .tab-list {
-    display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: 1fr;
-    padding: 0 var(--space-md);
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 1.75rem;
     flex-shrink: 0;
-    border-bottom: var(--rule-w) solid var(--color-rule);
+    overflow-x: auto;
+    /* A tab brought into view (chosen, or focused by the arrow keys) stops
+       clear of the edge chevrons' fade, not underneath it (refinement 11). */
+    scroll-padding-inline: 48px; /* = .tab-more width: 44px + the list's 4px padding */
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    padding: 4px;
+    margin: -4px;
+    background-image: linear-gradient(var(--color-rule), var(--color-rule));
+    background-origin: content-box;
+    background-clip: content-box;
+    background-repeat: no-repeat;
+    background-position: left bottom;
+    background-size: 100% var(--rule-w);
+  }
+  .tab-list::-webkit-scrollbar {
+    display: none;
   }
   .tab {
     all: unset;
+    box-sizing: border-box;
+    flex-shrink: 0;
     cursor: pointer;
     font-family: inherit;
-    font-size: 0.82rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    line-height: 1.3;
     color: var(--color-muted);
-    /* Side padding is deliberately small: the grid column supplies the spacing
-       now, and a wide inline padding would push the longest label out of a
-       quarter-width column on a narrow phone. */
-    padding: 0.85rem 0.25rem;
-    text-align: center;
+    min-height: 2.75rem;
+    padding: 0.5rem 0 0.625rem;
+    display: inline-flex;
+    align-items: center;
     white-space: nowrap;
     border-bottom: 2px solid transparent;
     transition: color var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out);
@@ -1283,33 +1172,89 @@ h3 {
     color: var(--color-ink);
     border-bottom-color: var(--color-accent);
   }
-  .tab:disabled {
-    cursor: not-allowed;
-    opacity: 0.55;
-  }
   .tab:focus-visible {
     outline: 2px solid var(--color-focus);
-    outline-offset: -2px;
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+  /* Refinement 11 (D-R10-2): when the row does not fit (a narrow phone with
+     large text) it says it scrolls. ResultsView sets data-more-start/-end
+     from the list's scroll position; the matching side gets a fade into the
+     card surface with a chevron on it. The fade stops one rule-width above
+     the bottom, so the 1px row rule stays continuous under it. Nothing shows
+     when the tabs fit: at the normal text size the row overflows only below
+     360 CSS px (at 320 it is 41px too wide, so the chevron shows there).
+     Refinement 12 (device QA): the list bleeds 4px past the wrapper on each
+     side (the focus-ring padding above, cancelled by -4px margin), and its
+     scrollport is that padding box. Pinned to the wrapper's edges, the fades
+     left those 4px open and tab text peeked past each chevron. They now
+     start at the list's outer edge (--tab-bleed) and are widened by the same
+     amount, so the covered band still ends where scroll-padding stops a
+     chosen tab: 48px in from the scrollport. The fade and chevron are fixed
+     px, not rem: they only appear when the text is large, and a rem fade
+     grew with it (61px a side at 130%, 92px at 200%) until no tab fit
+     between the two. */
+  .tab-scroller {
+    --tab-bleed: 4px; /* = .tab-list padding / negative margin */
+    position: relative;
+    flex-shrink: 0;
+    min-width: 0;
+  }
+  .tab-more {
+    all: unset;
+    box-sizing: border-box;
+    position: absolute;
+    top: 0;
+    bottom: var(--rule-w);
+    z-index: 1;
+    width: calc(44px + var(--tab-bleed));
+    display: none;
+    align-items: center;
+    cursor: pointer;
+    color: var(--color-ink);
+  }
+  .tab-more svg {
+    width: 18px;
+    height: 18px;
+  }
+  .tab-more--start {
+    left: calc(-1 * var(--tab-bleed));
+    justify-content: flex-start;
+    background: linear-gradient(to right, var(--color-surface) 70%, transparent);
+  }
+  .tab-more--end {
+    right: calc(-1 * var(--tab-bleed));
+    justify-content: flex-end;
+    background: linear-gradient(to left, var(--color-surface) 70%, transparent);
+  }
+  .tab-scroller[data-more-start="true"] .tab-more--start,
+  .tab-scroller[data-more-end="true"] .tab-more--end {
+    display: inline-flex;
   }
 
   .panel {
     display: none;
     opacity: 0;
+    padding-top: var(--space-md);
   }
   .panel[data-active="true"] {
     display: block;
     animation: panel-in var(--dur-mid) var(--ease-out) 50ms forwards;
   }
+  .panel:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
 
   /* ========================================================================
      READING
-     Mono sets wider per character than a serif, so the reading sizes step
-     down a notch to keep the measure sane at the same column width.
      ======================================================================== */
 
+  /* UI-face reading text — panels, legal pages, offline. */
   .prose {
     max-width: var(--measure);
-    font-size: 0.86rem;
+    font-size: 0.9375rem;
     line-height: 1.65;
     color: var(--color-ink-2);
   }
@@ -1318,101 +1263,371 @@ h3 {
     font-weight: 600;
   }
 
-  .line {
-    display: grid;
-    grid-template-columns: 2.8rem 1fr;
-    gap: var(--space-sm);
-    padding: 0.6rem 0;
-    border-bottom: var(--rule-w) solid var(--color-rule);
-    align-items: baseline;
-  }
-  .line:last-child {
-    border-bottom: none;
-  }
-  .line time {
-    font-size: 0.76rem;
-    color: var(--color-accent);
-  }
-  .line p {
+  /* The result's own reading text (Notes, TL;DR, transcript fallbacks), set in
+     Newsreader as drawn. Its measure is its own token: a serif sets narrower
+     per character than Hanken, so the UI measure would run long.
+     --measure-serif is checked in the browser, not assumed — see
+     results-view.md for the measured characters per line. */
+  .prose-serif {
+    max-width: var(--measure-serif);
     margin: 0;
-    font-size: 0.92rem;
+    font-family: var(--font-serif);
+    /* 18px on a phone (ResultsWeb.png), 19px from tablet up (Results.png). */
+    font-size: 1.125rem;
+    line-height: 1.65;
+    color: var(--color-ink);
+    overflow-wrap: anywhere;
+  }
+  @media (min-width: 48rem) {
+    .prose-serif {
+      font-size: 1.1875rem;
+    }
+  }
+  .prose-serif > :first-child {
+    margin-top: 0;
+  }
+  .prose-serif > :last-child {
+    margin-bottom: 0;
+  }
+  .prose-serif p {
+    margin: 0 0 var(--space-sm);
+  }
+  .prose-serif h3,
+  .prose-serif h4,
+  .prose-serif h5 {
+    font-family: var(--font-serif);
+    font-weight: 600;
+    line-height: 1.25;
+    color: var(--color-ink);
+    margin: var(--space-lg) 0 var(--space-2xs);
+  }
+  .prose-serif h3 {
+    font-size: 1.5rem;
+  }
+  .prose-serif h4 {
+    font-size: 1.25rem;
+  }
+  .prose-serif h5 {
+    font-size: 1.1875rem;
+  }
+  /* Logical sides (refinement 6, RES-14): a list the notes mark dir="auto"
+     and that turns out right-to-left keeps its marker gutter on the right. */
+  .prose-serif ul,
+  .prose-serif ol {
+    margin: 0 0 var(--space-sm);
+    padding-inline-start: 1.5rem;
+  }
+  .prose-serif ul {
+    list-style: disc;
+  }
+  .prose-serif ol {
+    list-style: decimal;
+  }
+  .prose-serif li {
+    margin-bottom: 0.4rem;
+    padding-inline-start: 0.25rem;
+  }
+  .prose-serif li::marker {
+    color: var(--color-ink);
+  }
+  .prose-serif strong {
+    font-weight: 600;
+  }
+  /* A quote in the notes is the model's pull-out, drawn in the same panel as
+     the TL;DR's key takeaway (accent-soft, serif) but unlabelled: the label
+     belongs only to the TL;DR's first sentence (.takeaway below), which the
+     owner chose to call the key takeaway. Labelling every quote would invent
+     structure the result does not have. */
+  .prose-serif blockquote,
+  .takeaway {
+    margin: var(--space-lg) 0;
+    padding: var(--space-md);
+    border-radius: var(--radius-poster);
+    background: var(--color-accent-soft);
+    color: var(--color-ink);
+    font-size: 1.25rem;
+    line-height: 1.5;
+  }
+  .prose-serif blockquote p:last-child {
+    margin-bottom: 0;
+  }
+  /* TL;DR key takeaway: the summary's first sentence (split in
+     components/takeaway.ts) under a small-caps label, as on the boards. */
+  .takeaway {
+    margin-top: 0;
+  }
+  .takeaway:last-child {
+    margin-bottom: 0;
+  }
+  .takeaway-label {
+    display: block;
+    margin-bottom: var(--space-2xs);
+    font-family: var(--font-ui);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-accent-strong);
+  }
+  .takeaway .takeaway-text {
+    margin: 0;
+  }
+  .prose-serif code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.85em;
+    background: var(--color-tint);
+    border-radius: 4px;
+    padding: 0.1em 0.35em;
+  }
+  .prose-serif pre {
+    margin: 0 0 var(--space-sm);
+    overflow-x: auto;
+    padding: var(--space-sm);
+    border: var(--rule-w) solid var(--color-rule);
+    border-radius: var(--radius-control);
+    background: var(--color-paper);
+    font-size: 0.875rem;
     line-height: 1.55;
-    color: var(--color-ink-2);
   }
-  .line .speaker {
-    font-size: 0.68rem;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--color-muted);
-    display: block;
-    margin-bottom: 0.1rem;
+  .prose-serif pre code {
+    background: transparent;
+    padding: 0;
+  }
+  .prose-serif hr {
+    margin: var(--space-lg) 0;
+    border: 0;
+    border-top: var(--rule-w) solid var(--color-rule);
+  }
+  .notes-table {
+    margin: 0 0 var(--space-sm);
+    overflow-x: auto;
+  }
+  .notes-table table {
+    border-collapse: collapse;
+    font-family: var(--font-ui);
+    font-size: 0.875rem;
+  }
+  /* `start`, not `left` (refinement 6, RES-14): each cell is dir="auto", so
+     a right-to-left cell aligns right and the rest stay left. */
+  .notes-table th,
+  .notes-table td {
+    text-align: start;
+    padding: 0.4rem 0.6rem;
+    border-bottom: var(--rule-w) solid var(--color-rule);
+    vertical-align: top;
+  }
+  .notes-table thead {
+    border-bottom: var(--rule-w) solid var(--color-border-strong);
+  }
+  .notes-table th {
+    font-weight: 600;
+    white-space: nowrap;
   }
 
-  .ocr-tag {
-    display: block;
-    width: fit-content;
-    font-size: 0.65rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--color-accent-ink);
-    background: var(--color-accent);
-    padding: 0.08rem 0.45rem;
-    margin-bottom: 0.2rem;
-  }
-
-  /* The results title band. Carries the padding the `<h2>` used to hold itself,
-     plus `flex-shrink: 0` — it is a direct child of `.results` (a flex column),
-     and without it the band compresses and throws off the measured heights
-     below, the same trap documented in `app-shell-layout.md`. */
-  .result-head {
+  /* ---- timestamped rows (Transcript, On-screen) ---- */
+  .t-toolbar {
     display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--space-xs);
-    flex-shrink: 0;
-    min-width: 0;
-    padding: var(--space-sm) var(--space-md) var(--space-xs);
-  }
-  .result-actions {
-    display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 0.1rem;
-    flex-shrink: 0;
-    /* The 2.75rem touch targets are taller than the title's line box, so pull
-       them back into the band's own padding instead of letting them set its
-       height — the title stays optically aligned with the tab row below. */
-    margin: calc(var(--space-2xs) * -1) calc(var(--space-2xs) * -1) 0 0;
+    gap: var(--space-xs) var(--space-sm);
+    max-width: var(--measure-serif);
+    margin-bottom: var(--space-xs);
   }
-
-  .actions {
+  .t-search {
+    position: relative;
+    flex: 1 1 14rem;
+    min-width: 0;
+  }
+  .t-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-width: var(--measure-serif);
+  }
+  .t-row {
+    display: grid;
+    grid-template-columns: 3.5rem minmax(0, 1fr);
+    gap: var(--space-sm);
+    padding: 0.75rem 0;
+    border-top: var(--rule-w) solid var(--color-rule);
+  }
+  .t-list[data-times="off"] .t-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .t-time {
+    padding-top: 0.15rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-accent);
+    font-variant-numeric: tabular-nums;
+  }
+  .t-body {
+    min-width: 0;
+  }
+  .t-speaker {
+    display: block;
+    margin-bottom: 0.2rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--color-muted);
+  }
+  .t-text {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-size: 1.125rem;
+    line-height: 1.5;
+    color: var(--color-ink);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .t-list mark {
+    background: var(--color-accent-soft);
+    color: inherit;
+    border-radius: 2px;
+    box-shadow: 0 0 0 1px var(--color-accent-soft);
+  }
+  .t-empty {
     display: flex;
     flex-direction: column;
+    align-items: flex-start;
     gap: var(--space-2xs);
-    margin-top: var(--space-md);
-    flex-wrap: wrap;
+    padding: var(--space-md) 0;
+    border-top: var(--rule-w) solid var(--color-rule);
+    max-width: var(--measure-serif);
   }
-  .actions .btn {
-    width: 100%;
+
+  /* On-screen, text only (design/newshots/ResultsOnScreenText*.png): a muted
+     line of context, then time | text rows on a 40rem measure with hairlines
+     between them and none under the last. The text keeps the model's line
+     breaks, one item per line. */
+  .t-intro {
+    margin: 0 0 0.875rem;
+    max-width: 40rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--color-muted);
+  }
+  .t-list--screen {
+    max-width: 40rem;
+  }
+  .t-list--screen .t-row {
+    grid-template-columns: 3rem minmax(0, 1fr);
+    padding: 0.75rem 0;
+  }
+  .t-list--screen .t-time {
+    padding-top: 0.25rem;
+  }
+  .t-list--screen .t-text {
+    line-height: 1.65;
+  }
+  .screen-text {
+    max-width: 40rem;
+    margin: 0;
+    padding-top: 0.75rem;
+    border-top: var(--rule-w) solid var(--color-rule);
+    font-family: var(--font-serif);
+    font-size: 1.125rem;
+    line-height: 1.65;
+    color: var(--color-ink);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  @media (min-width: 48rem) {
+    .t-list--screen .t-row {
+      grid-template-columns: 3.75rem minmax(0, 1fr);
+    }
+  }
+
+  /* The results title band: serif title left, actions right. On a phone the
+     actions drop under the title and Download takes the remaining width
+     (ResultsMobile.png). */
+  .result-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-sm) var(--space-md);
+    min-width: 0;
+    margin-bottom: var(--space-md);
+  }
+  .result-title {
+    flex: 1 1 18rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    margin: 0;
+    font-family: var(--font-serif);
+    font-weight: 400;
+    font-size: clamp(1.75rem, 1.2rem + 1.6vw, 2.25rem);
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+    color: var(--color-ink);
+  }
+  /* Refinement 11 (D-R10-2): the row wraps. At 320-360 px with large text
+     the icons plus "Download .md" are wider than the card, and the pill used
+     to run out past the card edge ("Download .m"). Now Download drops to its
+     own line (and fills it on a phone) instead; at normal sizes everything
+     still fits on one line, so nothing moves there. max-width and a normal
+     white-space are the last resort for a pill wider than the card alone. */
+  .result-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2xs);
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .result-download {
+    padding-inline: 1.125rem;
+    max-width: 100%;
+    white-space: normal;
+  }
+  /* Copy's visible confirmation (refinement 4, RES-05): "Transcript copied"
+     in a small ink label under the button for the tick's two seconds.
+     Absolutely placed, so it covers a sliver of the tab row rather than
+     pushing it down and back. Opacity only; reduced motion keeps the fade
+     short (the global reduced-motion rule). */
+  .copy-wrap {
+    position: relative;
+    display: inline-flex;
+  }
+  .copy-flash {
+    position: absolute;
+    top: calc(100% + 0.375rem);
+    left: 0;
+    z-index: 2;
+    padding: 0.3125rem 0.625rem;
+    border-radius: var(--radius-control);
+    background: var(--color-ink);
+    color: var(--color-paper);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    line-height: 1.3;
+    white-space: nowrap;
+    pointer-events: none;
+    animation: copy-flash-in var(--dur-short) var(--ease-out);
   }
 
   .disclosure {
     all: unset;
+    box-sizing: border-box;
     cursor: pointer;
     font-family: inherit;
-    font-size: 0.72rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
     color: var(--color-accent);
     display: inline-flex;
     align-items: center;
     gap: 0.25rem;
-    margin-top: 0.3rem;
+    min-height: 2.75rem;
   }
   .disclosure:focus-visible {
     outline: 2px solid var(--color-focus);
     outline-offset: 2px;
   }
   .disclosure svg {
-    width: 0.85rem;
-    height: 0.85rem;
+    width: 1rem;
+    height: 1rem;
     transition: transform var(--dur-short) var(--ease-out);
   }
   .disclosure[aria-expanded="true"] svg {
@@ -1420,184 +1635,1349 @@ h3 {
   }
 
   /* ========================================================================
-     HISTORY
-     Only what RunSummary carries: run_id, status, title, created_at.
+     HISTORY — poster grid (Phase 3; design/shots/HistoryA*.png,
+     HistoryMobile.png, HistoryWeb.png). Serif page header, filter pills +
+     search + sort, day-bucketed groups of 3:4 posters (16:9 spanning two
+     columns for landscape runs). Thumbnails are flat --poster-N tints until
+     real thumbnails exist; the tint is a stable hash of run_id
+     (components/history.ts).
      ======================================================================== */
 
-  .history-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
+  .history {
+    padding-top: clamp(1.5rem, 0.9rem + 2.6vw, 3rem);
+    padding-bottom: var(--space-xl);
+    min-width: 0;
+  }
+  .history-lede {
+    margin: 0.5rem 0 0;
+    max-width: 30rem;
+    font-size: clamp(1rem, 0.97rem + 0.15vw, 1.0625rem);
+    line-height: 1.5;
+    color: var(--color-ink-2);
+  }
+  .history-state {
+    margin-top: var(--space-lg);
   }
 
-  /* Runs bucketed by day, derived from created_at — the only extra structure
-     available without inventing fields RunSummary doesn't carry. */
-  .history-group {
-    padding: var(--space-md) 0 var(--space-2xs);
-    font-size: 0.6rem;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--color-muted);
+  /* ---- controls ----
+     Phone (HistoryWeb.png, HistoryMobile.png): search on the first row, then
+     the pill row, which scrolls sideways and bleeds off the right edge as
+     drawn. The boards drew no sort on a phone; refinement 4 (HIS-03) puts it
+     at the end of the search row, where it costs the field ~7rem and no new
+     row. From 48rem: pills left, search and sort right, one row. DOM order is
+     pills, search, sort — the desktop reading order. */
+  /* Refinement 11 (device QA): on a phone this is a wrapping flex row, not
+     the two-row grid it was. With large text at 320 px the sort select took
+     so much of the search row that the placeholder clipped ("Search your").
+     The field now has a floor (see .history-search; refinement 12 moved it
+     from 8.5rem to the placeholder's width in ch), and when
+     the field and the sort cannot both meet it the sort drops under the
+     field. At normal sizes the row is unchanged: search, sort, then pills. */
+  .history-controls {
+    margin-top: var(--space-md);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+    align-items: center;
   }
-  .history-list > li:first-child .history-group {
-    padding-top: 0;
+  .history-filters {
+    grid-area: filters;
+    order: 1;
+    flex: 1 1 100%;
+    display: flex;
+    gap: 0.5rem;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    /* room for the 2px + 2px focus ring, which a scroll box would clip */
+    padding: 0.25rem;
+    margin: -0.25rem;
+    margin-right: calc(-1 * var(--page-gutter));
+    padding-right: var(--page-gutter);
+  }
+  .history-filters::-webkit-scrollbar {
+    display: none;
+  }
+  /* Refinement 12 (device QA): the field's floor is measured in the
+     placeholder's own characters, not rem. "Search runs" is 11 characters;
+     12ch (ch tracks the field's actual font size, whatever scales it) plus
+     the pill's 1rem + 1rem padding is always wide enough for it, so the sort
+     drops under the field before the placeholder could clip. 8.5rem was not:
+     at Android font scale 1.5 the text outgrew it while the sort still fit
+     beside it ("Search ru"). Alone on its row the field takes the full
+     width. At 100% text the floor is ~140px, so the phone row is unchanged
+     at 320-430 px; from 48rem the grid below takes over. */
+  .history-search {
+    grid-area: search;
+    flex: 1 1 calc(12ch + 2rem);
+    min-width: 0;
+    font-size: 1rem; /* = .field, so ch here is the field's ch */
+  }
+  .history-search .field {
+    width: 100%;
+  }
+  /* Chromium's clear glyph is a fixed off-palette blue; Escape still clears
+     the field, and the no-matches state carries "Show all runs". */
+  .history-search .field::-webkit-search-cancel-button {
+    appearance: none;
+  }
+  .history-sort {
+    grid-area: sort;
+    flex: 0 0 auto;
+    position: relative;
   }
 
-  /* The pane drops its side padding for this view and the rows carry it
-     instead, so hover fills and separators span the full panel while the text
-     still lines up on the normal text edge. */
-  .tab-view .pane,
-  [data-view="history"] .pane {
-    padding-inline: 0;
-  }
-
-  .history-row {
+  .filter-pill {
     all: unset;
     box-sizing: border-box;
     cursor: pointer;
-    width: 100%;
-    display: flex;
+    flex-shrink: 0;
+    display: inline-flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--space-sm);
-    padding: 0.95rem 0;
-    border-bottom: var(--rule-w) solid var(--color-rule);
+    min-height: 2.75rem;
+    padding: 0 1.125rem;
+    border-radius: var(--radius-pill);
+    border: var(--rule-w) solid var(--color-border-strong);
+    background: var(--color-surface);
+    color: var(--color-ink);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out);
+  }
+  .filter-pill[aria-pressed="true"] {
+    background: var(--color-ink);
+    border-color: var(--color-ink);
+    color: var(--color-paper);
+  }
+  .filter-pill:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+
+  .sort-select {
+    appearance: none;
+    box-sizing: border-box;
+    height: 2.75rem;
+    padding: 0 2.5rem 0 1.125rem;
+    border-radius: var(--radius-pill);
+    border: var(--rule-w) solid var(--color-border-strong);
+    background: var(--color-surface);
+    color: var(--color-ink);
+    font-family: inherit;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    cursor: pointer;
     transition: background-color var(--dur-short) var(--ease-out);
   }
-  .history-row:last-child {
-    border-bottom: none;
-  }
-  .history-row:focus-visible {
+  .sort-select:focus-visible {
     outline: 2px solid var(--color-focus);
-    outline-offset: -2px;
+    outline-offset: 2px;
   }
-  .history-row .h-left {
-    display: flex;
-    align-items: center;
-    gap: 0.7rem;
-    min-width: 0;
-    flex: 1;
-  }
-  .history-row .h-title {
-    font-size: 0.8rem;
-    line-height: 1.35;
+  .sort-chevron {
+    position: absolute;
+    right: 0.875rem;
+    top: 50%;
+    width: 1rem;
+    height: 1rem;
+    margin-top: -0.5rem;
     color: var(--color-ink);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    pointer-events: none;
+  }
+
+  /* ---- groups ---- */
+  .history-group {
+    margin-top: var(--space-md);
+  }
+  .history-group + .history-group {
+    margin-top: var(--space-lg);
+  }
+  .history-group-label {
+    margin: 0 0 0.875rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+
+  /* ---- the grid ----
+     2 columns on a phone, 5 on the desktop board, 3 and 4 between. `dense`
+     back-fills the hole a two-column landscape poster leaves at a row's end;
+     `align-items: start` keeps a row from stretching posters to the tallest
+     title in it. */
+  .poster-grid {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-flow: row dense;
+    align-items: start;
+    gap: 1.25rem 0.875rem;
+  }
+  .poster-item {
     min-width: 0;
   }
-  /* the "Untitled run" / "Failed run" fallbacks the real panel renders when
-     title is null — muted so they read as absent rather than as a name */
-  .history-row .h-title[data-fallback] {
-    color: var(--color-muted);
-  }
-  .history-row .h-meta {
-    font-size: 0.68rem;
-    color: var(--color-muted);
+  .poster-item[data-orientation="landscape"] {
+    grid-column: span 2;
   }
 
-  /* status as a colour-coded dot rather than a word: it reads down the left
-     edge as a column you can scan, instead of repeating in every row */
-  .h-dot {
-    width: 0.45rem;
-    height: 0.45rem;
-    border-radius: 50%;
-    flex-shrink: 0;
-    background: var(--color-accent);
-  }
-  .history-row[data-run-status="failed"] .h-dot {
-    background: var(--color-danger);
-  }
-  .history-row[data-run-status="processing"] .h-dot,
-  .history-row[data-run-status="queued"] .h-dot {
-    background: var(--color-rule-2);
-    animation: pip-pulse 1.1s var(--ease-in-out) infinite;
-  }
-
-  .h-text {
+  .poster {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
     display: flex;
     flex-direction: column;
-    gap: 0.1rem;
+    width: 100%;
     min-width: 0;
+    border-radius: var(--radius-poster);
+    -webkit-tap-highlight-color: transparent;
   }
-  /* run_id, short-hash style — mono suits it and it's genuinely in the payload */
-  .h-sub {
-    font-size: 0.62rem;
-    letter-spacing: 0.05em;
+  .poster:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 4px;
+  }
+
+  .poster-thumb {
+    position: relative;
+    display: block;
+    aspect-ratio: 3 / 4;
+    border-radius: var(--radius-poster);
+    overflow: hidden;
+    background: var(--poster-1);
+    transition: transform var(--dur-short) var(--ease-out);
+  }
+  .poster-item[data-orientation="landscape"] .poster-thumb {
+    aspect-ratio: 16 / 9;
+  }
+  .poster-thumb[data-tint="2"] { background: var(--poster-2); }
+  .poster-thumb[data-tint="3"] { background: var(--poster-3); }
+  .poster-thumb[data-tint="4"] { background: var(--poster-4); }
+  .poster-thumb[data-tint="5"] { background: var(--poster-5); }
+  /* The stored poster (Phase 5a): covers the whole thumb under the chips and
+     the hover veil; the tint behind it shows only while it decodes, and is
+     the whole poster when there is no image (audio, failed, older runs). */
+  .poster-img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    user-select: none;
+  }
+  /* hover wash: an ink veil faded in by opacity, so nothing reflows */
+  .poster-thumb::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--color-ink);
+    opacity: 0;
+    transition: opacity var(--dur-short) var(--ease-out);
+    pointer-events: none;
+  }
+  .poster:active .poster-thumb {
+    transform: scale(0.985);
+  }
+
+  /* Chips invert with the theme, as drawn: the platform chip and play disc
+     are surface-on-tint (white in light, near-black in dark); the duration
+     chip is the ink pill (dark in light, pale in dark). */
+  .poster-chip,
+  .poster-badge {
+    position: absolute;
+    z-index: 1;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    white-space: nowrap;
+  }
+  .poster-chip {
+    top: 0.625rem;
+    left: 0.625rem;
+    max-width: calc(100% - 1.25rem);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 0.1875rem 0.5625rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-surface);
+    color: var(--color-ink);
+    font-weight: 600;
+  }
+  .poster-badge {
+    right: 0.625rem;
+    bottom: 0.625rem;
+    padding: 0.125rem 0.4375rem;
+    border-radius: 0.4375rem;
+    background: var(--color-ink);
+    color: var(--color-surface);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  /* Run state takes the duration's slot. Failed is the muted danger notice,
+     not a red alarm: red is for errors and this is one, quietly. */
+  .poster-badge[data-kind="failed"] {
+    background: var(--color-danger-soft);
+    color: var(--color-danger);
+    box-shadow: inset 0 0 0 var(--rule-w) var(--color-danger-border);
+  }
+  /* Expired (refinement 6, RUN-13) is the processing chip's neutral
+     surface: the server forgot the run, nothing failed that the user can
+     fix, so it is not drawn as an error. */
+  .poster-badge[data-kind="processing"],
+  .poster-badge[data-kind="expired"] {
+    background: var(--color-surface);
+    color: var(--color-ink-2);
+    font-weight: 600;
+  }
+
+  .poster-play {
+    position: absolute;
+    z-index: 1;
+    top: 50%;
+    left: 50%;
+    width: 2.5rem;
+    height: 2.5rem;
+    margin: -1.25rem 0 0 -1.25rem;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--color-surface);
+    color: var(--color-ink);
+    transition: transform var(--dur-short) var(--ease-out);
+  }
+  .poster-glyph {
+    width: 0.875rem;
+    height: 0.875rem;
+  }
+  .poster-glyph[data-glyph="play"] {
+    fill: currentColor;
+    /* a triangle's optical centre sits right of its box centre */
+    transform: translateX(1px);
+  }
+  .poster-glyph[data-glyph="audio"] {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .poster-title {
+    margin-top: 0.625rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    line-height: 1.33;
+    color: var(--color-ink);
+    text-wrap: pretty;
+    overflow-wrap: anywhere;
+  }
+  .poster-title[data-fallback] {
     color: var(--color-muted);
   }
-  .h-right {
+  .poster-date {
+    margin-top: 0.125rem;
+    font-size: 0.8125rem;
+    line-height: 1.4;
+    color: var(--color-muted);
+  }
+
+  /* ---- empty / no matches ---- */
+  .history-empty {
+    margin-top: var(--space-xl);
+    max-width: 28rem;
+  }
+  .history-empty-title {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-size: 1.5rem;
+    line-height: 1.2;
+    color: var(--color-ink);
+  }
+  .history-empty-body {
+    margin: 0.5rem 0 var(--space-md);
+    line-height: 1.55;
+    color: var(--color-ink-2);
+  }
+
+  @media (min-width: 40rem) {
+    .poster-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1.5rem 1.25rem;
+    }
+    .poster-play {
+      width: 2.75rem;
+      height: 2.75rem;
+      margin: -1.375rem 0 0 -1.375rem;
+    }
+  }
+  @media (min-width: 48rem) {
+    .history-controls {
+      margin-top: var(--space-lg);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 16.25rem) auto;
+      grid-template-areas: "filters search sort";
+      gap: var(--space-2xs);
+    }
+    .history-filters {
+      flex-wrap: wrap;
+      overflow: visible;
+      margin-right: -0.25rem;
+      padding-right: 0.25rem;
+    }
+    .history-group {
+      margin-top: var(--space-lg);
+    }
+    .history-group + .history-group {
+      margin-top: var(--space-xl);
+    }
+  }
+  @media (min-width: 52rem) {
+    .poster-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+  @media (min-width: 64rem) {
+    .poster-grid {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+  }
+
+  /* ========================================================================
+     PAGES — Phase 4: API key, Releases, Privacy, Terms, Offline, built to
+     design/phase4-boards/ (desktop 1280, Web = phone browser, Mobile =
+     installed app). A centred 43.5rem column (the boards' 696px), a serif
+     title with the lede tight under it, white cards on paper, a tint panel
+     for asides. Same title rule as History (`.history-title`). The boards
+     were rendered with fallback fonts: sizes, weights and spacing are
+     matched, not glyph shapes.
+     ======================================================================== */
+
+  .view-head {
+    min-width: 0;
+  }
+  /* 36px on a phone, 48px from ~1280 — both boards' measured cap heights. */
+  .view-title,
+  .history-title {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-weight: 400;
+    font-size: clamp(2.25rem, 1.75rem + 1.6vw, 3rem);
+    line-height: 1.1;
+    letter-spacing: -0.015em;
+    color: var(--color-ink);
+  }
+  /* Tight under the title, as drawn: the lede is the title's second line,
+     not a new block. */
+  .view-lede {
+    margin: 0;
+    max-width: 43.5rem;
+    font-size: clamp(1rem, 0.97rem + 0.15vw, 1.0625rem);
+    line-height: 1.55;
+    color: var(--color-ink-2);
+  }
+  .view-state {
+    margin-top: var(--space-lg);
+  }
+
+  /* The centred page column. The title's cap line sits ~32px under the nav
+     on a phone and ~64px at 1280, as the boards measure. */
+  .key-page,
+  .releases,
+  .legal-page {
+    width: 100%;
+    max-width: 43.5rem;
+    margin-inline: auto;
+    padding-top: clamp(1.875rem, 1.1rem + 3.5vw, 3.875rem);
+    padding-bottom: var(--space-xl);
+    min-width: 0;
+  }
+
+  /* ---- API key ---- */
+  .key-notice {
+    margin: var(--space-md) 0 0;
+  }
+  .key-card {
+    margin-top: var(--space-md);
+    padding: 1.25rem;
+    background: var(--color-surface);
+    border: var(--rule-w) solid var(--color-rule);
+    border-radius: var(--radius-card);
+  }
+  .key-label {
+    display: block;
+    margin: 0 0 0.5rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  .key-row {
     display: flex;
+    gap: 0.5rem;
+    align-items: stretch;
+  }
+  input.key-field {
+    flex: 1 1 auto;
+    height: 3rem;
+    /* the dots of a masked key read better tracked out, as drawn */
+    letter-spacing: 0.04em;
+  }
+  /* Chromium draws the mask bullets at the field's font size; one step up
+     matches the board's weight of dot. */
+  input.key-field[type="password"] {
+    font-size: 1.125rem;
+  }
+  input.key-field[type="text"] {
+    letter-spacing: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .key-reveal {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    flex: 0 0 auto;
+    display: inline-flex;
     align-items: center;
-    gap: var(--space-sm);
+    justify-content: center;
+    width: 3rem;
+    height: 3rem;
+    border-radius: var(--radius-control);
+    border: var(--rule-w) solid var(--color-border-strong);
+    background: var(--color-surface);
+    color: var(--color-ink);
+    transition: background-color var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out);
+  }
+  .key-reveal svg {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+  .key-reveal[aria-pressed="true"] {
+    background: var(--color-tint);
+  }
+  .key-reveal:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  .key-reveal:active {
+    transform: translateY(1px);
+  }
+  .key-error {
+    margin-top: 0.5rem;
+  }
+  .key-help {
+    margin: 0.75rem 0 0;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--color-muted);
+    overflow-wrap: anywhere;
+  }
+  .key-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 1.25rem;
+  }
+  .key-actions .btn {
+    min-height: 3rem;
+    padding-inline: 1.5rem;
+  }
+  /* The board's Remove key has a grey edge, not the ink edge of the progress
+     view's secondary actions: removing is quieter than recovering. Still the
+     3:1 input-border tone, so the button's boundary is visible. */
+  .key-remove {
+    border-color: var(--color-input-border);
+  }
+  .key-status-slot {
+    margin: 0;
+    min-width: 0;
+  }
+  .key-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.875rem;
+    color: var(--color-muted);
+  }
+  .key-status[data-tone="saved"] {
+    padding: 0.3125rem 0.75rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-accent-soft);
+    color: var(--color-accent-strong);
+    font-size: 0.8125rem;
+    font-weight: 600;
+  }
+  .key-status svg {
+    width: 0.875rem;
+    height: 0.875rem;
     flex-shrink: 0;
   }
-  /* The reveal-on-hover arrow has no touch equivalent, so it is permanent by
-     default and only hides itself where a real hover exists (see @media
-     (hover: hover) below). */
-  .h-go {
-    width: 0.8rem;
-    height: 0.8rem;
-    color: var(--color-accent);
-    transition: opacity var(--dur-short) var(--ease-out), transform var(--dur-short) var(--ease-out);
+
+  .key-guide {
+    margin-top: 1.25rem;
+    padding: 1.25rem;
+    background: var(--color-tint);
+    border-radius: var(--radius-card);
+  }
+  .key-guide-title {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-weight: 400;
+    font-size: 1.5rem;
+    line-height: 1.2;
+    color: var(--color-ink);
+  }
+  .key-steps {
+    margin: 0.75rem 0 0;
+    padding-left: 1.375rem;
+    /* Tailwind's preflight strips list markers; the numbers are the point */
+    list-style: decimal;
+    line-height: 1.75;
+    color: var(--color-ink-2);
+  }
+  .key-guide-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    min-height: 2.75rem;
+    margin-top: 0.25rem;
+    font-weight: 600;
+    /* Refinement 6 (A11-07): it sits on the tint panel, where the plain
+       accent measured 4.22:1 in light. accent-strong is 6.14:1 there in
+       light and 10.1:1 in dark, so it is the link colour in both themes and
+       ink takes over on hover. */
+    color: var(--color-accent-strong);
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+    text-decoration-thickness: 1px;
+    transition: color var(--dur-short) var(--ease-out);
+  }
+  .key-guide-link svg {
+    width: 0.875rem;
+    height: 0.875rem;
+  }
+  .key-guide-link:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+    border-radius: 4px;
   }
 
-  /* ========================================================================
-     API KEY
-     ======================================================================== */
+  @media (min-width: 40rem) {
+    .key-card {
+      padding: 1.75rem;
+    }
+    .release-card {
+      padding: 1.75rem 1.75rem 1.25rem;
+    }
+    .key-guide {
+      padding: 1.5rem 1.75rem;
+    }
+  }
 
-  .apikey-form {
-    max-width: 48rem;
-  }
-  .apikey-form .prose {
-    max-width: 100%;
-  }
-  .apikey-form .card-label {
-    display: block;
-  }
-  .apikey-form .field {
-    display: block;
-    width: 100%;
-    max-width: 28rem;
-    height: 2.5rem;
-    flex: 0 0 auto;
-  }
-  .apikey-actions {
+  /* ---- Releases ----
+     One white card per release (Releases*.png): serif version title, the
+     Latest pill on the newest, the date, then what the API can say — the
+     release name when it adds anything, and a link to the notes. */
+  .release-list {
+    list-style: none;
+    margin: var(--space-lg) 0 0;
+    padding: 0;
     display: flex;
-    gap: var(--space-2xs);
-    margin-top: var(--space-sm);
+    flex-direction: column;
+    gap: 1rem;
+  }
+  .release-card {
+    padding: 1.375rem 1.25rem 0.75rem;
+    background: var(--color-surface);
+    border: var(--rule-w) solid var(--color-rule);
+    border-radius: var(--radius-card);
+    min-width: 0;
+  }
+  .release-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 0.625rem;
+    row-gap: 0.25rem;
+  }
+  .release-title {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-weight: 400;
+    font-size: 1.625rem;
+    line-height: 1.2;
+    color: var(--color-ink);
+    overflow-wrap: anywhere;
+    min-width: 0;
+  }
+  .release-latest {
+    align-self: center;
+    padding: 0.125rem 0.625rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-accent-soft);
+    color: var(--color-accent-strong);
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.5;
+  }
+  .release-date {
+    font-size: 0.875rem;
+    color: var(--color-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .release-note {
+    margin: 0.625rem 0 0;
+    font-size: 1.0625rem;
+    line-height: 1.6;
+    color: var(--color-ink-2);
+  }
+  .release-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    min-height: 2.75rem;
+    margin-top: 0.25rem;
+    font-weight: 600;
+    color: var(--color-accent);
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+    text-decoration-thickness: 1px;
+    transition: color var(--dur-short) var(--ease-out);
+  }
+  .release-link svg {
+    width: 0.875rem;
+    height: 0.875rem;
+    transition: transform var(--dur-short) var(--ease-out);
+  }
+  .release-link:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* ---- Privacy, Terms (Privacy*.png, Terms*.png) ----
+     Date line right under the title, then sections with no rules between
+     them: a serif head, Hanken body at the reading measure. */
+  .legal-meta {
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--color-muted);
+  }
+  .legal-copy {
+    margin-top: var(--space-lg);
+    display: flex;
+    flex-direction: column;
+    gap: 1.875rem;
+    max-width: var(--measure);
+  }
+  .legal-heading {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-weight: 400;
+    font-size: clamp(1.5rem, 1.35rem + 0.5vw, 1.75rem);
+    line-height: 1.2;
+    color: var(--color-ink);
+  }
+  .legal-text {
+    margin: 0.25rem 0 0;
+    font-size: 1.0625rem;
+    line-height: 1.65;
+    color: var(--color-ink-2);
+  }
+
+  /* ---- Offline (Offline*.png) ----
+     A tint disc with the wifi-off glyph, a serif title, two short lines,
+     the action. Neutral, never red. Centred in the band. */
+  /* The offline band fills the band at every width (below 32rem the
+     viewport, not the band, scrolls), so the block centres as drawn. The
+     404 page (app/not-found.tsx, refinement 6) is the same kind of page —
+     one state, one sentence, the ways out — so it shares every rule here
+     under its own class names. */
+  .shell > main[data-view="offline"],
+  .shell > main[data-view="not-found"] {
+    display: flex;
+    flex-direction: column;
+    flex: 1 0 auto;
+  }
+  .offline,
+  .not-found {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    max-width: 28rem;
+    margin: auto;
+    padding: var(--space-xl) 0;
+  }
+  .offline-frame,
+  .not-found-frame {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 4.75rem;
+    height: 4.75rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-tint);
+    color: var(--color-ink);
+  }
+  .offline-frame svg,
+  .not-found-frame svg {
+    width: 1.75rem;
+    height: 1.75rem;
+  }
+  .offline-title,
+  .not-found-title {
+    margin: var(--space-md) 0 0;
+    font-family: var(--font-serif);
+    font-weight: 400;
+    font-size: clamp(2.25rem, 1.75rem + 1.6vw, 3rem);
+    line-height: 1.1;
+    letter-spacing: -0.015em;
+    color: var(--color-ink);
+  }
+  .offline-lede,
+  .not-found-lede {
+    margin: 0.5rem 0 0;
+    font-size: clamp(1rem, 0.97rem + 0.15vw, 1.0625rem);
+    line-height: 1.5;
+    color: var(--color-ink-2);
+    text-wrap: balance;
+  }
+  /* Try again (ink) + Open History (outline), side by side as drawn; they
+     wrap rather than squeeze on the narrowest phones. */
+  .offline-actions,
+  .not-found-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.75rem;
+    margin-top: var(--space-md);
+  }
+  .offline-action,
+  .not-found-action {
+    min-height: 3rem;
+    padding-inline: 1.5rem;
+  }
+  /* The installed app never shows the landing page (refinement 8, NF-01). */
+  :root[data-shell="app"] .not-found-action--web {
+    display: none;
   }
 
   /* ========================================================================
-     FOOTER — Ft5 compact bar: wordmark left, legal links right, hairline above
+     FOOTER — web shell only: name left, legal links right, hairline above
+     (the hairline is on `.page-end`, which runs full-bleed)
      ======================================================================== */
 
+  /* Refinement 13: at 320 px and 150% text "VideoLens AI" and the two links
+     cannot share a line (they need ~287px of 272 even with tighter gaps), so
+     the bar wraps; what it no longer does is grow its spacing with the text.
+     The rem gaps, the 3.5rem floor and the 2.75rem link height made the
+     wrapped footer 146px tall at 150% and 195px at 200%, leaving a ~330px
+     content band. Capped in px (each equal to the old value at 100%) and with
+     no row gap — the links' own 44px height spaces the two lines — it is
+     ~100px at 150%. Text still scales; targets stay 44px. */
   .foot {
     display: flex;
     align-items: center;
-    justify-content: center;
-    text-align: center;
-    gap: var(--space-sm);
+    justify-content: space-between;
+    gap: 0 min(var(--space-sm), 16px);
     flex-wrap: wrap;
-    margin-top: 0;
-    padding: 0.6rem 0 0;
-    border-top: var(--rule-w) solid var(--color-rule);
-    font-size: 0.72rem;
+    min-height: min(3.5rem, 56px);
+    font-size: 0.875rem;
     color: var(--color-muted);
   }
   .foot-legal {
     display: flex;
-    gap: var(--space-sm);
+    gap: min(var(--space-md), 24px);
   }
   .foot-legal a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
     color: inherit;
-    text-decoration: none;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-thickness: 1px;
     transition: color var(--dur-short) var(--ease-out);
+  }
+  .foot-legal a[aria-current="page"] {
+    color: var(--color-ink);
   }
   .foot-legal a:focus-visible {
     outline: 2px solid var(--color-focus);
     outline-offset: 2px;
+  }
+
+  /* ========================================================================
+     BOTTOM TAB BAR — installed-app shell only (App boards). A floating dock
+     inset from the screen edges and lifted off the gesture bar. Fixed, so it
+     never travels; the shell reserves its footprint (see SHELL MODE below) so
+     the last line of content can always scroll clear of it.
+     ======================================================================== */
+
+  /* Sticky, in the shell's flow, last thing in it — NOT position: fixed.
+     `.viewport` is a size container (`container-type: inline-size`), and size
+     containment includes layout containment, which makes it the containing
+     block for fixed-position descendants. A "fixed" dock inside it was really
+     pinned to the scroller's content, so it rode up the page with the scroll
+     and came to rest over the terms row and Retry (refinement 1, item 1).
+     Sticky needs nothing from its ancestors: below 32rem it sticks to the
+     bottom of `.viewport` while the stacked page scrolls under it, and from
+     32rem up (one measured viewport) it simply ends the column under the
+     scrolling section. Its own box is the clearance — at the end of the
+     scroll the last control sits above it, never underneath. */
+  /* Refinement 15: the dock is chrome, so it follows the refinement 13 rule —
+     text may scale, chrome does not grow. Every length is min(<old rem>,
+     <its px at 100%>), so normal scale is pixel-identical, and from 100% up
+     the dock holds still instead of growing 64 -> 128px (portrait) and
+     52 -> 104px (sideways) at 200%, which took that height off the content
+     band. Items keep a 44px floor; icons stop at 20px; labels may grow to
+     14px (from 12), which is what four labels fit in at 320px. */
+  .tabbar {
+    display: none;
+    position: sticky;
+    z-index: 20;
+    bottom: max(min(var(--space-sm), 16px), var(--safe-bottom));
+    flex-shrink: 0;
+    width: 100%;
+    margin: auto auto max(min(var(--space-sm), 16px), var(--safe-bottom));
+    max-width: 30rem;
+    height: min(var(--tabbar-height), 64px);
+    align-items: stretch;
+    gap: min(0.25rem, 4px);
+    padding: min(0.375rem, 6px);
+    background: var(--color-dock);
+    border-radius: var(--radius-pill);
+    box-shadow: var(--shadow-floating);
+  }
+  :root[data-theme="dark"] .tabbar {
+    /* the dark dock is a raised tint, so it needs an edge to read as raised */
+    outline: var(--rule-w) solid var(--color-border-strong);
+    outline-offset: calc(-1 * var(--rule-w));
+  }
+  .tabbar-item {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: min(0.2rem, 3.2px);
+    min-height: 44px;
+    min-width: 0;
+    border-radius: var(--radius-pill);
+    font-size: min(0.75rem, 14px);
+    font-weight: 600;
+    color: var(--color-dock-muted);
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out);
+  }
+  .tabbar-item svg {
+    flex-shrink: 0;
+    width: min(1.25rem, 20px);
+    height: min(1.25rem, 20px);
+  }
+  /* `data-active` is More's version of aria-current: a button opens the sheet
+     rather than being a page, but while you are on API key, Releases or a
+     legal page, More is where you are. */
+  .tabbar-item[aria-current="page"],
+  .tabbar-item[data-active="true"] {
+    background: var(--color-dock-active);
+    color: var(--color-dock-ink);
+  }
+  .tabbar-item[aria-current="page"] svg,
+  .tabbar-item[data-active="true"] svg {
+    color: var(--color-dock-accent);
+  }
+  .tabbar-item:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  .tabbar-item:active {
+    background: var(--color-dock-active);
+  }
+
+  /* ========================================================================
+     MORE SHEET — a native modal <dialog>: top layer, focus containment,
+     Escape and ::backdrop come from the platform rather than being rebuilt.
+     Bottom-anchored. The padding lives on `.sheet-body`, not the dialog, so a
+     click whose target is the <dialog> itself can only be a backdrop click.
+     ======================================================================== */
+
+  .sheet {
+    margin: auto auto 0;
+    padding: 0;
+    border: none;
+    width: 100%;
+    max-width: 32rem;
+    max-height: calc(100% - var(--safe-top) - var(--space-xl));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: var(--color-surface);
+    color: var(--color-ink);
+    border-radius: var(--radius-card) var(--radius-card) 0 0;
+    box-shadow: var(--shadow-floating);
+  }
+  .sheet::backdrop {
+    background: var(--color-backdrop);
+  }
+  .sheet[open] {
+    animation: sheet-in var(--dur-mid) var(--ease-out);
+  }
+  .sheet-body {
+    padding: 0.625rem var(--space-sm) calc(max(var(--space-sm), var(--safe-bottom)) + var(--space-2xs));
+  }
+  .sheet-handle {
+    display: block;
+    width: 2.5rem;
+    height: 0.25rem;
+    margin: 0 auto 0.75rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-border-strong);
+  }
+  .sheet-title {
+    margin: 0 0 0.375rem 0.25rem;
+    font-family: var(--font-serif);
+    font-size: 1.625rem;
+    font-weight: 400;
+    line-height: 1.2;
+    color: var(--color-ink);
+  }
+  .sheet-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .sheet-list + .sheet-list {
+    margin-top: 0.375rem;
+    padding-top: 0.375rem;
+    border-top: var(--rule-w) solid var(--color-rule);
+  }
+  /* Refinement 15 (device round 16): at 320/200% the label's box was squeezed
+     below its one word by the icon tile, the gaps and the chevron, all
+     growing with the text, and "Releases" ran 39px into its chevron. The
+     icon tile, gap and chevron are now capped like the top bar's
+     (min(<old rem>, <px at 100%>), identical at normal scale), so the label
+     takes what the text needs; the chevron keeps its own fixed box, and the
+     label may wrap between words but never into it. */
+  .sheet-row {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: min(0.875rem, 14px);
+    width: 100%;
+    min-height: 3.5rem;
+    /* inline padding left as rem: it matches .theme-choice's, whose content
+       box the refinement 13 container queries measure */
+    padding: 0.375rem 0.25rem;
+    border-radius: var(--radius-control);
+    font-size: 1.0625rem;
+    font-weight: 600;
+    color: var(--color-ink);
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color var(--dur-short) var(--ease-out);
+  }
+  .sheet-row:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  .sheet-row:active {
+    background: var(--color-tint);
+  }
+  .sheet-row[aria-current="page"] .sheet-label {
+    color: var(--color-accent);
+  }
+  /* Shared by the rows and the theme row's head, so the icon column and the
+     label column stay one straight line down the sheet at any text size. */
+  .sheet-icon {
+    display: grid;
+    place-items: center;
+    width: min(2.5rem, 40px);
+    height: min(2.5rem, 40px);
+    flex-shrink: 0;
+    border-radius: min(0.625rem, 10px);
+    background: var(--color-tint);
+    color: var(--color-ink);
+  }
+  .sheet-icon svg {
+    width: min(1.125rem, 18px);
+    height: min(1.125rem, 18px);
+  }
+  .sheet-label {
+    flex: 1;
+    min-width: 0;
+  }
+  .sheet-sublabel {
+    display: block;
+    margin-top: 0.125rem;
+    font-size: 0.8125rem;
+    font-weight: 400;
+    line-height: 1.3;
+    color: var(--color-muted);
+  }
+  .sheet-chevron {
+    width: min(1.125rem, 18px);
+    height: min(1.125rem, 18px);
+    color: var(--color-muted);
+    flex: none;
+  }
+  /* ---- the More sheet's theme choice (refinement 4, THM-01) ----
+     System / Light / Dark as one segmented radio group under the row's
+     icon + label. It replaced a switch that could only store light or dark,
+     so "Following your device" could never come back once touched. Native
+     radios (visually hidden, each covering its 44px segment) keep the arrow
+     keys, the single tab stop and the group name. The checked segment is a
+     raised surface on the tint track: no accent fill, because this is a
+     setting, not a call to action. */
+  .theme-choice {
+    margin: 0;
+    padding: 0.375rem 0.25rem;
+    border: none;
+    min-width: 0;
+    /* Refinement 13: the segmented control below sizes itself from the room
+       this fieldset has, measured in em, so the switch points move with the
+       text size rather than with the viewport. */
+    container: theme-choice / inline-size;
+    font-size: 1rem;
+  }
+  .theme-choice__legend {
+    padding: 0;
+    width: 100%;
+  }
+  .theme-choice__head {
+    display: flex;
+    align-items: center;
+    gap: min(0.875rem, 14px);
+    font-size: 1.0625rem;
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  .segmented {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.25rem;
+    /* the indent is the icon tile + head gap (3.375rem at 100%), capped with
+       them in refinement 15 so the track stays under the label */
+    margin: 0.5rem 0 0 calc(min(2.5rem, 40px) + min(0.875rem, 14px));
+    padding: 0.1875rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-tint);
+  }
+  .segmented__option {
+    position: relative;
+    display: grid;
+    place-items: center;
+    min-height: 2.75rem;
+    min-width: 0;
+    padding-inline: 0.375rem;
+    border-radius: var(--radius-pill);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-ink-2);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out);
+  }
+  .segmented__option input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+  .segmented__option:has(input:checked) {
+    background: var(--color-surface);
+    color: var(--color-ink);
+    box-shadow: 0 0 0 var(--rule-w) var(--color-border-strong);
+  }
+  .segmented__option:has(input:focus-visible) {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  .segmented__option:active {
+    background: var(--color-paper);
+  }
+  /* Refinement 13: room for the three labels at any text size. Measured
+     need, in em of this fieldset: "System" (the widest label) is ~3.1em of
+     text at the 0.9375rem label size, plus 0.375rem padding a side, so a row
+     of three equal segments needs ~12.3em with the track's gaps and padding,
+     and ~15.7em with the 3.375rem indent that lines it up under the label.
+     The switch points below leave ~0.3–0.45em of slack for font metrics.
+     Tier 1: too narrow for the indent, the track takes the full width under
+     the icon. Tier 2: too narrow for a row, the three stack, each still a
+     full-width 44px target. 320 px at 100% keeps the indented row it has
+     always had. */
+  @container theme-choice (width < 16em) {
+    .segmented {
+      margin-left: 0;
+    }
+  }
+  @container theme-choice (width < 12.75em) {
+    .segmented {
+      grid-template-columns: minmax(0, 1fr);
+      padding: 3px;
+      border-radius: var(--radius-control);
+    }
+    .segmented__option {
+      border-radius: calc(var(--radius-control) - 3px);
+    }
+  }
+
+  /* A switch's track and knob — the More sheet's theme row and the
+     transcript's Timestamps toggle. State is the owning `role="switch"`
+     button's own aria-checked, so what is drawn is exactly what is
+     announced. */
+  .switch {
+    position: relative;
+    width: 3rem;
+    height: 1.75rem;
+    flex-shrink: 0;
+    border-radius: var(--radius-pill);
+    background: var(--color-border-strong);
+    transition: background-color var(--dur-short) var(--ease-out);
+  }
+  .switch::after {
+    content: "";
+    position: absolute;
+    top: 0.1875rem;
+    left: 0.1875rem;
+    width: 1.375rem;
+    height: 1.375rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-surface);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    transition: transform var(--dur-short) var(--ease-out);
+  }
+  [role="switch"][aria-checked="true"] .switch {
+    background: var(--color-accent);
+  }
+  [role="switch"][aria-checked="true"] .switch::after {
+    transform: translateX(1.25rem);
+  }
+  :root[data-theme="dark"] .switch::after {
+    background: var(--color-ink);
+  }
+  /* The transcript's labelled switch: a 44px row, track then label. */
+  .switch-row {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2xs);
+    min-height: 2.75rem;
+    font-family: inherit;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  .switch-row:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+    border-radius: var(--radius-control);
+  }
+
+  /* ========================================================================
+     SHELL MODE — which chrome this display mode gets. `data-shell` is
+     stamped on <html> by the pre-paint script in app/layout.tsx, so the right
+     nav is on screen at first paint; both variants are always in the DOM and
+     the inactive one is display:none, which also takes it out of the tab
+     order and the accessibility tree. No attribute (script blocked) = web.
+     ======================================================================== */
+
+  /* The dock and its More sheet are a phone pattern. Only up to 37.5rem
+     (600px — a phone in portrait, or a narrow window) does an installed app
+     get the dock and lose the footer; Privacy and Terms are then rows in the
+     More sheet. A wider installed window (tablet, desktop PWA, phone in
+     landscape) gets the web shell's chrome whole: the top bar (links inline
+     from 48rem, the menu button between) AND the footer, which is its only
+     way to Privacy and Terms (owner decision 2026-11-01). */
+  /* `max-height: 31.25rem` (500px) is a phone held sideways (refinement 1,
+     item 10): wide, but still a phone, so it keeps the dock rather than
+     switching to the desktop chrome. A tablet or a wide installed window is
+     also tall and keeps the top bar and footer. The matching unlayered
+     overrides (inline nav links at 48rem+, compact nav) are in the RESPONSIVE
+     block at the end of the file. */
+  @media (max-width: 37.5rem), (max-height: 31.25rem) {
+    :root[data-shell="app"] .page-end {
+      display: none;
+    }
+    :root[data-shell="app"] .tabbar {
+      display: flex;
+    }
+    :root[data-shell="app"] .nav-links,
+    :root[data-shell="app"] .menu-toggle,
+    :root[data-shell="app"] .menu-panel {
+      display: none;
+    }
+    /* The dock is in the flow now (sticky, see BOTTOM TAB BAR) and carries
+       the gesture-bar gap as its own bottom margin, so the shell reserves
+       nothing: the dock's box IS the footprint. On a one-viewport frame it
+       shortens the measured band; on a flowing one it is the runway past the
+       last line. */
+    :root[data-shell="app"] .shell {
+      padding-bottom: 0;
+    }
+    /* While the soft keyboard is up (application/useSoftKeyboard.ts) the dock
+       steps out of the way, so it can never sit over the field being typed
+       into. display:none, not a transform: the band it frees is exactly the
+       room the keyboard took. */
+    :root[data-shell="app"][data-keyboard="open"] .tabbar {
+      display: none;
+    }
+  }
+
+  /* The installed app's Back link (components/AppBackLink.tsx) above the
+     title of API key, Releases, Privacy and Terms. Hidden in the web shell —
+     display:none, so it is out of the tab order and the accessibility tree,
+     and since data-shell is stamped pre-paint it never flashes. Shown in the
+     app shell at every width: iOS standalone has no back button on an iPad
+     either.
+
+     Quiet by design: Hanken 15px in muted ink, no box. The 44px target is
+     padding, pulled back out with negative margins — 12px into the column's
+     top padding, 6px to the left so the chevron lines up with the title — so
+     the title moves down by only the link's visible line plus its gap
+     (~32px), not by the whole target. */
+  .app-back {
+    display: none;
+    align-items: center;
+    gap: 0.125rem;
+    min-height: 2.75rem;
+    margin: calc(-1 * var(--space-xs)) 0 0 -0.375rem;
+    padding: 0 0.625rem 0 0.375rem;
+    font-family: var(--font-ui);
+    font-size: 0.9375rem;
+    font-weight: 500;
+    line-height: 1;
+    color: var(--color-muted);
+    text-decoration: none;
+    border-radius: var(--radius-control);
+    -webkit-tap-highlight-color: transparent;
+    transition: color var(--dur-instant) var(--ease-out);
+  }
+  .app-back svg {
+    width: 1.125rem;
+    height: 1.125rem;
+    flex: none;
+  }
+  :root[data-shell="app"] .app-back,
+  .app-back--everywhere {
+    /* Refinement 10: Privacy and Terms show it on the web too (owner). */
+    display: inline-flex;
+  }
+  .app-back:active {
+    color: var(--color-ink);
+  }
+  .app-back:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 0;
+    color: var(--color-ink);
   }
 
   /* ========================================================================
@@ -1608,187 +2988,6 @@ h3 {
      /offline moved onto the shell — the same way the rest of the old Midnight
      Glass class set went.
      ======================================================================== */
-
-  /* Crumb bar — sits under the nav, not inside it: the nav carries the brand,
-     this carries the way back. Legal routes are outside the shell's tab nav,
-     so without it the only exit is the browser's back button, which fails
-     anyone arriving by direct link (app footer, terms checkbox, store listing).
-
-     ONE type spec for the whole row, set here and inherited. The parent link,
-     the separator and the current page are the same micro-label; only the ink
-     changes between them. Two near-identical rules differing by one colour is
-     how a vocabulary quietly turns into a pile of one-off classes.
-
-     NO hairline anywhere in this chain — user's call, and it is gone rather
-     than moved. It was `border-bottom` here, then briefly `border-top` on
-     `.legal-body`; neither earned its keep. `.page-title` is 28px of mono
-     against a 0.68rem tracked-out crumb, which is already all the separation
-     the two need, and the rule was costing more vertical space (its own
-     leading above and below) than it bought in structure. The section rules
-     under each `.col-label` still carry the document's internal rhythm.
-
-     The row is a control THEN a location: `.crumb-back` (a button) sits outside
-     the `<ol>`, separated by --space-xs so the two read as two things rather
-     than as one four-glyph run.
-
-     `margin-top` stays --space-md so the crumb lands at the same y as
-     `.col-label` does on every other route. `padding-bottom` is --space-2xs and
-     is now the whole gap between the crumb row and the heading. */
-  .crumb-bar {
-    display: flex;
-    flex-shrink: 0;
-    align-items: center;
-    gap: var(--space-xs);
-    margin-top: var(--space-md);
-    padding-bottom: var(--space-2xs);
-    font-size: 0.68rem;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: var(--color-muted);
-  }
-  .crumb-bar ol {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    list-style: none;
-    margin: 0;
-    padding: 0;
-  }
-  .crumb-bar li {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  /* The back CONTROL: a ringed square holding one chevron, standalone, ahead of
-     the trail. Shape is `--radius-control`, NOT `--radius-pill`: a pill radius
-     on a square box is a circle, and this is a button, not one of the nav's
-     round glyph controls. The ring is what detaches it from the trail; its
-     colour is `--color-rule`, the same hairline every other rule on the page is
-     drawn in.
-
-     DELIBERATELY OUTSIDE the nav icon-button family. `.theme-toggle`,
-     `.menu-toggle` and `.menu-close` share a 2.75rem/2rem box; this is a flat
-     1.75rem at every width. That divergence is a user call, not drift, and the
-     reason it holds up is that those three are nav chrome sitting in a 52-62px
-     band, while this sits in a 0.68rem micro-label row — matching them made it
-     the loudest thing on the page. It is the only member of its size class, so
-     it carries its own value rather than a shared one; do not "restore
-     consistency" by folding it back into that group.
-
-     A `<Link href="/">`, not a `history.back()` button: a real destination is
-     honest about where it goes, and browser-back from a deep link (store
-     listing, terms checkbox) would leave the app entirely. */
-  .crumb-back {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    width: 1.35rem;
-    height: 1.35rem;
-    color: var(--color-muted);
-    border: var(--rule-w) solid var(--color-rule);
-    border-radius: 5px;
-    text-decoration: none;
-    transition: color var(--dur-short) var(--ease-out),
-      border-color var(--dur-short) var(--ease-out),
-      background-color var(--dur-short) var(--ease-out);
-  }
-  .crumb-back svg {
-    width: 0.75rem;
-    height: 0.75rem;
-    flex-shrink: 0;
-  }
-  .crumb-back:focus-visible {
-    outline: 2px solid var(--color-focus);
-    outline-offset: 2px;
-  }
-
-  /* The trail's first item: the house alone, which is the user's explicit call
-     (asked for twice). It has no visible text, so it carries a visually-hidden
-     accessible name, and the 44x44 target the word `BACK` used to buy it now
-     comes from `min-width`/`min-height` in the coarse-pointer block. */
-  .crumb-home {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    color: inherit;
-    letter-spacing: inherit;
-    text-decoration: none;
-    transition: color var(--dur-short) var(--ease-out);
-  }
-  .crumb-home svg {
-    width: 0.75rem;
-    height: 0.75rem;
-    flex-shrink: 0;
-  }
-  .crumb-home:focus-visible {
-    outline: 2px solid var(--color-focus);
-    outline-offset: 2px;
-  }
-  /* The separator is the whole reason this reads as a path rather than as two
-     loose labels — and `/` is the one punctuation mark a monospace system has
-     an unambiguous claim to. */
-  .crumb-sep {
-    color: var(--color-rule-2);
-    user-select: none;
-  }
-  .crumb-current {
-    color: var(--color-ink);
-  }
-
-  /* The only scrolling region on a legal route. `auto`, not `scroll`, so short
-     documents show no scrollbar at all while the nav and footer stay put.
-
-     No padding-top: the --space-lg that used to sit here opened a 32px void
-     between the crumb and the heading and was the whole reason the block read
-     as unrelated rows. Nav → crumb → heading is one unit now. */
-  .legal-doc {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-  }
-
-  /* THE MEASURE, applied to the layout and not just to the paragraphs.
-     `.col-label` draws a hairline the full width of its container. In the
-     results pane that container is a narrow column, so the rule tracks the
-     text. Dropped into a 68rem shell it did not: every section rule ran ~450px
-     past the last character under it, and the page read as though the right
-     half had failed to load. Capping the column is what makes the rules and
-     the prose share one right edge — in a theme with no boxes, that shared
-     edge IS the structure.
-
-     Max-width and nothing else. A `border-top` briefly lived here as the
-     document's opening rule; it was deleted outright, not zeroed — see
-     `.crumb-bar` for why. Its `padding-top` went with it, since the only thing
-     that padding did was hold the heading off that rule. */
-  .legal-body {
-    max-width: 52rem;
-  }
-  /* Inside the legal body, paragraphs fill the available width. */
-  .legal-body .prose {
-    max-width: none;
-  }
-
-  /* The h1 of a standalone route — legal document or offline state alike.
-     Named for the position, not the route: it was `.legal-title` while the two
-     legal pages were its only callers, and a class whose name lies about where
-     it belongs is how a vocabulary turns into a pile of one-offs.
-
-     Sized here rather than as Tailwind arbitrary values on the element: the
-     inline version introduced a `sm:` (40rem) step that existed nowhere else
-     in the app, while every other responsive rule in this file turns at 32rem. */
-  .page-title {
-    font-size: 1.5rem;
-    font-weight: 500;
-    line-height: 1.25;
-    color: var(--color-ink);
-    margin: 0;
-  }
-
-  .legal-copy p {
-    margin-top: var(--space-2xs);
-  }
 
   .text-link:focus-visible,
   input[type="checkbox"]:focus-visible {
@@ -1806,25 +3005,1044 @@ h3 {
     text-underline-offset: 0.25rem;
   }
 
-  /* SourceCard's own BEM block — owned by Phase 2, re-toned only. */
+  /* ========================================================================
+     ANALYZE — Phase 2 of the editorial redesign. Three states, each drawn on
+     its own boards (design/shots/): intake (Main, IntakeWeb), progress
+     (Progress*, ProgressFailed, ProgressLost), results (Results*, ResultsMobile,
+     ResultsTranscript). None of them scrolls on its own: the Analyze section
+     is the one scroller (see the SHELL rules and app-shell-layout.md).
+     ======================================================================== */
+
+  /* Tracked-out small caps label: "NEW ANALYSIS", "WHAT YOU GET", "SOURCE". */
+  .eyebrow,
+  .section-label,
+  .wyg-title {
+    margin: 0;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .eyebrow {
+    color: var(--color-accent);
+  }
+  .section-label,
+  .wyg-title {
+    color: var(--color-ink-2);
+  }
+
+  /* ---- intake ----
+     One column on a phone (service notice if any, the form column, then the
+     panel); two from 60rem, the form column at the board's 620px and the panel
+     at 460px, with the service notice at the top of the panel column so it
+     never pushes the intake card down.
+
+     Both wide tracks are minmax(0, max): neither has a floor, so the grid can
+     never be wider than its container. (The panel used to be
+     minmax(17rem, 28.75rem); the floor bought nothing at 60rem+, where the
+     panel is never that narrow, and was the one way this grid could overflow.)
+     Rows have no gap because the notice slot is always in the DOM (it is the
+     live region) and is zero-height when healthy; spacing is margins. */
+  .intake-layout {
+    width: 100%;
+    min-width: 0;
+    max-width: 38.75rem;
+    margin-inline: auto;
+    padding-block: var(--space-lg) var(--space-xl);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "cap" "intake" "wyg";
+    row-gap: 0;
+    align-items: start;
+  }
+  .intake-layout > .cap-slot {
+    grid-area: cap;
+    min-width: 0;
+  }
+  .intake-layout > .intake {
+    grid-area: intake;
+  }
+  .intake-layout > .wyg {
+    grid-area: wyg;
+    min-width: 0;
+    margin-top: var(--space-lg);
+  }
+  .wyg-long {
+    display: none;
+  }
+  @media (min-width: 60rem) {
+    .wyg-short {
+      display: none;
+    }
+    .wyg-long {
+      display: inline;
+    }
+    /* Prefixed only to outrank the phone values defined further down. */
+    .intake-layout .wyg {
+      padding: var(--space-lg) var(--space-lg) var(--space-md);
+    }
+    .intake-layout .wyg-list {
+      margin-top: var(--space-md);
+      gap: var(--space-md);
+    }
+    .intake-layout .intake-card {
+      padding: var(--space-md);
+    }
+    .intake-layout {
+      max-width: none;
+      margin-inline: 0;
+      grid-template-columns: minmax(0, 38.75rem) minmax(0, 28.75rem);
+      grid-template-rows: auto 1fr;
+      grid-template-areas: "intake cap" "intake wyg";
+      column-gap: 4rem;
+      padding-top: 4.5rem;
+    }
+    .intake-layout > .wyg {
+      margin-top: 0;
+    }
+    /* The desktop intake header, to the owner's spec (2026-11-01): a 40px
+       top, eyebrow 13/600/0.08em with 16px under it, the headline in
+       Newsreader 50/500 at 1.05 and -0.02em with 20px under it, the intro
+       18px at 1.55 in ink-2 with a 480px measure and 24px under it. Fixed
+       sizes, so the intake fits one desktop screen without the page
+       scrolling. */
+    .intake-layout {
+      padding-top: 2.5rem;
+      padding-bottom: var(--space-md);
+    }
+    .intake-layout .eyebrow {
+      letter-spacing: 0.08em;
+      margin-bottom: var(--space-sm);
+    }
+    .intake-layout .intake-title {
+      margin: 0 0 1.25rem;
+      font-size: 3.125rem;
+      font-weight: 500;
+      line-height: 1.05;
+      letter-spacing: -0.02em;
+    }
+    .intake-layout .intake-lede {
+      margin: 0;
+      max-width: 30rem;
+      font-size: 1.125rem;
+      line-height: 1.55;
+    }
+    .intake-layout .intake-card {
+      margin-top: var(--space-md);
+      padding: 1.25rem var(--space-md);
+    }
+    .intake-layout .terms-row {
+      margin-top: var(--space-sm);
+    }
+  }
+  /* A short desktop window (a 768px laptop screen after browser chrome):
+     tighten the card's inner rhythm too, so the intake still fits whole. */
+  @media (min-width: 60rem) and (max-height: 50rem) {
+    .intake-layout {
+      padding-bottom: var(--space-sm);
+    }
+    .intake-layout .intake-card {
+      margin-top: var(--space-sm);
+      padding: var(--space-sm) var(--space-md);
+    }
+    .intake-layout .divider {
+      margin: var(--space-xs) 0;
+    }
+    /* Phase 5b: the free-run banner adds ~90px above the eyebrow, which made
+       a 1366x768 window scroll by 43px (measured). Win it back only while the
+       banner is showing, so the bannerless intake is unchanged. */
+    .intake-layout:has(.free-runs) {
+      padding-top: var(--space-sm);
+    }
+    .intake-layout:has(.free-runs) .intake-title {
+      margin-bottom: var(--space-sm);
+    }
+    .intake-layout .free-runs-slot {
+      margin-bottom: var(--space-sm);
+    }
+    .intake-layout .free-runs {
+      padding-block: var(--space-2xs);
+    }
+    /* The spent sentence is two lines; at 1.45 it stood 3px taller than the
+       pill and tipped the window into scrolling. */
+    .intake-layout .free-runs__text {
+      line-height: 1.35;
+    }
+  }
+  .intake {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .intake-title {
+    margin: var(--space-xs) 0 0;
+    font-family: var(--font-serif);
+    font-weight: 400;
+    font-size: clamp(2.25rem, 1.4rem + 3.4vw, 3.5rem);
+    line-height: 1.06;
+    letter-spacing: -0.015em;
+    color: var(--color-ink);
+    /* pretty, not balance: balance splits the desktop line after "video",
+       where Main.png fills the first line and breaks before "clean notes." */
+    text-wrap: pretty;
+  }
+  .intake-lede {
+    margin: var(--space-sm) 0 0;
+    max-width: 30rem;
+    font-size: clamp(1rem, 0.95rem + 0.3vw, 1.125rem);
+    line-height: 1.55;
+    color: var(--color-ink-2);
+  }
+  /* Form-level submit error, first thing inside the intake card (owner fix
+     2026-11-01; it used to be a bare red line under the card). The failed
+     run notice's palette at the card's control size: danger-soft fill, a
+     hairline danger border, danger ink (5.6:1 light, 5.8:1 dark). Absent,
+     it is not rendered, so the card does not move. */
+  .intake-alert {
+    margin: 0 0 var(--space-sm);
+    padding: 0.625rem 0.875rem;
+    border: var(--rule-w) solid var(--color-danger-border);
+    border-radius: var(--radius-control);
+    background: var(--color-danger-soft);
+    color: var(--color-danger);
+    font-size: 0.9375rem;
+    font-weight: 500;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+
+  /* Refinement 9: why Analyze link and Browse files are disabled, inside the
+     card (the banner above the headline is off screen once the form is
+     scrolled to). Neutral, not danger: nothing the user did was rejected.
+     The disabled controls point at it with aria-describedby. */
+  .intake-blocked {
+    margin: 0 0 var(--space-sm);
+    padding: 0.625rem 0.875rem;
+    border-radius: var(--radius-control);
+    background: var(--color-tint);
+    color: var(--color-ink-2);
+    font-size: 0.9375rem;
+    line-height: 1.5;
+  }
+  /* Ink, not the accent: green on the tint fill is ~4:1, under AA for 15px
+     text. The underline and weight still mark it as the link. */
+  .intake-blocked .text-link {
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+
+  /* ---- free runs (Phase 5b · IntakeFreeApp.png, IntakeLimitApp.png) ----
+     A white strip above the eyebrow: sentence left, near-black "Add key"
+     pill right. The spent state only swaps the sentence and draws the strip's
+     hairline in --color-danger-border — a decorative edge, so its contrast is
+     not load-bearing; the words say the state. The slot is the live region
+     and is always rendered, empty (zero-height, no margin) when quiet. */
+  .free-runs-slot:empty {
+    display: none;
+  }
+  .free-runs-slot {
+    margin-bottom: var(--space-md);
+    /* Refinement 15: the strip stacks when the sentence would get too narrow
+       beside the pill (the @container rule after .free-runs__action). The
+       query is in em of this slot, so its font-size is pinned to the root;
+       everything inside is rem. */
+    container: free-runs / inline-size;
+    font-size: 1rem;
+  }
+  .free-runs {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-xs) var(--space-xs) var(--space-xs) var(--space-sm);
+    background: var(--color-surface);
+    border: var(--rule-w) solid var(--color-rule);
+    border-radius: var(--radius-poster);
+  }
+  .free-runs[data-state="spent"] {
+    border-color: var(--color-danger-border);
+  }
+  .free-runs__text {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    font-size: 0.9375rem;
+    line-height: 1.45;
+    color: var(--color-ink-2);
+  }
+  .free-runs__text strong {
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  /* The spent sentence is two lines on the board, the headline on its own. */
+  .free-runs[data-state="spent"] .free-runs__text strong {
+    display: block;
+  }
+  .free-runs__action {
+    flex: 0 0 auto;
+    min-height: 2.5rem;
+    padding: 0.5rem 1.125rem;
+    font-size: 0.9375rem;
+  }
+  /* Refinement 15 (device round 16): the "Add key" pill scales with the text,
+     so at 200% it left the sentence one word a line. Measured in rem: the
+     strip's padding, border and gap take ~2.85, the pill 5.68, so the
+     sentence gets the slot less ~8.5rem. Below 17em that is under ~9em of
+     its own 0.9375rem text, so the pill goes under the sentence, left-aligned
+     with it. 320px at 100% has 18em and keeps the row it always had. */
+  @container free-runs (width < 17em) {
+    .free-runs {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: var(--space-xs);
+    }
+    .free-runs__text {
+      align-self: stretch;
+    }
+  }
+
+  /* ---- update prompt (native Android only; refinement 10) ----
+     A centred card in a native modal <dialog> (components/UpdatePrompt.tsx).
+     The top layer takes it out of .viewport's flow entirely, so the measured
+     nav / content band / footer frame never moves; it replaces the R9 band
+     that sat above the shell.
+
+     Sized for the worst cases device QA found on the band: 320 and 343 CSS px
+     wide with Android font scale 1.3. The actions wrap (each wants ~9.5em
+     before it shares a row) and stack full width when two do not fit, and the
+     button labels themselves may wrap rather than overflow. Sideways on a
+     phone (915x360) the dialog is capped to the viewport less a margin and
+     scrolls inside, so no button is ever cut off. */
+  .update-prompt {
+    box-sizing: border-box;
+    width: min(100% - 2 * var(--page-gutter), 24rem);
+    max-width: none;
+    max-height: calc(100% - 2 * var(--space-sm));
+    margin: auto;
+    padding: 0;
+    border: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: var(--color-surface);
+    color: var(--color-ink);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-floating);
+  }
+  .update-prompt::backdrop {
+    background: var(--color-backdrop);
+  }
+  .update-prompt[open] {
+    animation: prompt-in var(--dur-mid) var(--ease-out);
+  }
+  .update-prompt__card {
+    padding: var(--space-md);
+  }
+  .update-prompt__mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    margin-bottom: var(--space-sm);
+    border-radius: var(--radius-pill);
+    background: var(--color-tint);
+    color: var(--color-ink);
+  }
+  .update-prompt__mark svg {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+  .update-prompt__title {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-size: 1.625rem;
+    font-weight: 400;
+    line-height: 1.2;
+    color: var(--color-ink);
+    overflow-wrap: anywhere;
+  }
+  .update-prompt__text {
+    margin: var(--space-2xs) 0 0;
+    font-size: 1rem;
+    line-height: 1.5;
+    color: var(--color-ink-2);
+    overflow-wrap: anywhere;
+  }
+  .update-prompt__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+    margin-top: var(--space-md);
+  }
+  /* Refinement 11 (device QA): labels stay on one line. With `min-width: 0`
+     and a wrapping label, a 9.5em basis at 130% text squeezed "Get the
+     update" onto two lines (two 72px buttons) in landscape instead of
+     stacking. Now the label cannot wrap, so a flex item's automatic minimum
+     is the whole label: when both no longer fit side by side the row wraps
+     and each button fills its own line, the same stacking as portrait. Equal
+     widths are kept whenever both fit at the 9.5em basis. */
+  .update-prompt__btn {
+    flex: 1 1 9.5em;
+    white-space: nowrap;
+  }
+  /* Sideways: less air, so the card stays well inside 360px. */
+  @media (max-height: 31.25rem) {
+    .update-prompt__card {
+      padding: var(--space-sm) var(--space-md);
+    }
+    .update-prompt__mark {
+      display: none;
+    }
+    .update-prompt__actions {
+      margin-top: var(--space-sm);
+    }
+  }
+
+  .intake-card {
+    margin-top: var(--space-lg);
+    padding: 1.25rem;
+    background: var(--color-surface);
+    border: var(--rule-w) solid var(--color-rule);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+  }
+  .intake-card__label {
+    display: block;
+    margin-bottom: var(--space-2xs);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  /* Field and Analyze button side by side; the button drops under the field
+     where the card is too narrow to keep the field usefully wide (IntakeWeb
+     at 390). Container query, not viewport: the card is what runs out of
+     room. */
+  .link-form {
+    container-type: inline-size;
+  }
+  /* Refinement 4 (INT-01): a grid, so a link error sits directly under the
+     field it is about in both arrangements — between the field and the
+     button when they stack, under the field+button row when they sit side by
+     side. It used to be a line at the foot of the card, where a soft keyboard
+     covered it. Spacing is margins, not row-gap: an absent error must not
+     leave an empty gap track behind. */
+  .link-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "field"
+      "error"
+      "button";
+  }
+  .link-row .field {
+    grid-area: field;
+  }
+  .link-row .field-error {
+    grid-area: error;
+  }
+  .link-row .btn {
+    grid-area: button;
+    margin-top: var(--space-xs);
+    min-height: 3.25rem;
+    font-size: 1.0625rem;
+    padding-inline: 1.5rem;
+  }
+  @container (min-width: 28rem) {
+    .link-row {
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas:
+        "field button"
+        "error error";
+      column-gap: var(--space-xs);
+    }
+    .link-row .btn {
+      margin-top: 0;
+    }
+  }
+
+  .terms-row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-xs);
+    margin-top: 1.25rem;
+    font-size: 0.875rem;
+    line-height: 1.55;
+    color: var(--color-ink-2);
+  }
+  /* Refinement 6 (A11-13): a 44x44 tap target around the 20x20 box. The
+     negative margins give the room back, so the box sits exactly where it
+     did (0.1rem below the first line's top, flush with the row's left edge)
+     and the text keeps its place; the extra area overlaps only the card's
+     padding and the gap. Inside the label, so the whole square toggles. */
+  .terms-box {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 2.75rem;
+    height: 2.75rem;
+    margin: -0.65rem -0.75rem -0.65rem -0.75rem;
+    cursor: pointer;
+  }
+  .terms-row input[type="checkbox"] {
+    width: 1.25rem;
+    height: 1.25rem;
+    margin: 0;
+    flex-shrink: 0;
+    accent-color: var(--color-accent);
+    cursor: pointer;
+  }
+  /* Field-level errors (refinement 4, INT-01/INT-03): each sits right under
+     the control it is about and is wired to it with aria-describedby. */
+  .intake-card .field-error {
+    margin-top: var(--space-2xs);
+  }
+  /* The terms box when it is the reason a run was refused: the same danger
+     edge as an invalid field. Outline, not border — a native checkbox has no
+     border to recolour, and outline does not move the row. Its focus ring
+     (below) wins while it has keyboard focus, as on the field. */
+  .terms-row input[type="checkbox"][aria-invalid="true"] {
+    outline: 2px solid var(--color-danger);
+    outline-offset: 2px;
+    border-radius: 0.1875rem;
+  }
+  .terms-row input[type="checkbox"]:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  .terms-row:has(input[aria-invalid="true"]) > span:not(.terms-box) {
+    color: var(--color-ink);
+  }
+
+  /* "What you get": the quiet tint panel. Chips are a fixed width so the four
+     descriptions start on one left edge, as drawn. */
+  .wyg {
+    padding: 1.25rem;
+    border-radius: var(--radius-card);
+    background: var(--color-tint);
+  }
+  .wyg-list {
+    margin: var(--space-sm) 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+  .wyg-row {
+    display: grid;
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+    gap: var(--space-sm);
+    align-items: start;
+  }
+  .wyg-row dd {
+    margin: 0;
+    font-size: 1rem;
+    line-height: 1.5;
+    color: var(--color-ink-2);
+  }
+  .chip {
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 1.75rem;
+    padding: 0 0.625rem;
+    border-radius: var(--radius-pill);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--color-accent-strong);
+    background: var(--color-accent-soft);
+    white-space: nowrap;
+  }
+  .wyg-foot {
+    margin: var(--space-md) 0 0;
+    padding-top: var(--space-md);
+    border-top: var(--rule-w) solid var(--color-border-strong);
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--color-ink-2);
+  }
+
+  /* ---- progress ----
+     A centred column: pill, serif title, lede, filmstrip, source chip, then
+     the notice card or the reset link. */
+  .run-state {
+    width: 100%;
+    max-width: 56rem;
+    margin-inline: auto;
+    padding-block: var(--space-lg) var(--space-xl);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+  .run-title {
+    margin: var(--space-md) 0 0;
+    font-family: var(--font-serif);
+    font-weight: 400;
+    font-size: clamp(2rem, 1.5rem + 2vw, 2.75rem);
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+    color: var(--color-ink);
+  }
+  .run-lede {
+    margin: var(--space-xs) 0 0;
+    max-width: 48rem; /* ProgressCaptions' lede is one line on desktop */
+    font-size: 1.0625rem;
+    line-height: 1.5;
+    color: var(--color-ink-2);
+  }
+
+  /* The filmstrip. A dark strip with sprocket holes along both long edges;
+     the holes are painted (a repeating gradient in the strip's padding), not
+     elements, so the frame list stays the only thing in the a11y tree.
+     Stacked, one frame per row, until the strip is wide enough for four
+     across; the holes move to the sides with it. */
+  .filmstrip {
+    --hole-w: 0.5625rem;
+    --hole-h: 0.875rem;
+    --hole-pitch: 2rem;
+    position: relative;
+    width: 100%;
+    margin-top: var(--space-md);
+    padding: 0.875rem 1.75rem;
+    border-radius: var(--radius-poster);
+    background-color: var(--color-strip);
+    text-align: left;
+  }
+  .filmstrip::before,
+  .filmstrip::after {
+    content: "";
+    position: absolute;
+    top: 1rem;
+    bottom: 1rem;
+    width: var(--hole-w);
+    /* One hole per tile, `round` so the run always ends on a whole hole
+       instead of a sliver at the strip's end, whatever its length. */
+    background-image: linear-gradient(
+      to bottom,
+      var(--color-strip-hole) 0 var(--hole-h),
+      transparent var(--hole-h)
+    );
+    background-size: 100% var(--hole-pitch);
+    background-repeat: round;
+    border-radius: 2px;
+  }
+  .filmstrip::before {
+    left: 0.5625rem;
+  }
+  .filmstrip::after {
+    right: 0.5625rem;
+  }
+  .filmstrip-frames {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.625rem;
+  }
+
+  .frame {
+    position: relative;
+    overflow: hidden;
+    display: grid;
+    grid-template-columns: 1.625rem minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-xs);
+    min-height: 5.75rem;
+    padding: var(--space-sm) var(--space-md) var(--space-sm) var(--space-sm);
+    border-radius: 0.5rem;
+    background: var(--color-strip-waiting);
+    color: var(--color-strip-waiting-text);
+  }
+  .frame-num {
+    position: relative;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .frame-text {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    min-width: 0;
+  }
+  /* Bold per the boards (owner decision 2026-11-01). No frame state overrides
+     the weight, so every state, both themes and the phone layout get it. */
+  .frame-label {
+    font-size: 1.125rem;
+    font-weight: 700;
+    line-height: 1.25;
+  }
+  .frame-caption {
+    font-size: 0.8125rem;
+    font-weight: 600;
+  }
+  .frame-icon {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+  .frame-icon:empty {
+    visibility: hidden;
+  }
+
+  .frame[data-state="done"] {
+    background: var(--color-accent-soft);
+    color: var(--color-accent-strong);
+  }
+  .frame[data-state="active"] {
+    background: var(--color-surface);
+    color: var(--color-ink);
+  }
+  .frame[data-state="active"] .frame-num,
+  .frame[data-state="active"] .frame-caption {
+    color: var(--color-accent-strong);
+  }
+  /* The scan: a soft-green fill that sweeps left to right behind the text,
+     its leading edge the 2px accent line from the boards. One transform, so
+     it composites. Reduced motion: the global rule stops the animation and
+     the base transform leaves a still frame about 60% filled — the board's
+     own resting picture, with nothing moving. */
+  .frame-scan {
+    position: absolute;
+    inset: 0;
+    background: color-mix(in srgb, var(--color-accent-soft) 70%, var(--color-surface));
+    border-right: 2px solid var(--color-accent);
+    transform: translateX(-40%);
+    animation: frame-scan 2.4s var(--ease-in-out) infinite;
+  }
+  /* `missed` is the captions route's download frame (ProgressCaptions.png):
+     drawn as a failure because it was one, though the run carried on. */
+  .frame[data-state="failed"],
+  .frame[data-state="missed"] {
+    background: var(--color-danger-soft);
+    color: var(--color-danger);
+    box-shadow: inset 0 0 0 2px var(--color-danger);
+  }
+  /* Connection lost: dashed and neutral, never red — the frame is where the
+     run had got to when we stopped hearing about it. */
+  .frame[data-state="lost"] {
+    background: var(--color-tint);
+    color: var(--color-ink);
+    outline: 2px dashed var(--color-input-border);
+    outline-offset: -2px;
+  }
+  .frame[data-state="lost"] .frame-caption {
+    color: var(--color-ink-2);
+  }
+  /* Skipped (captions route): the step never ran. An empty slot in the strip
+     — no fill, a dashed edge, the waiting text colour. */
+  .frame[data-state="skipped"] {
+    background: transparent;
+    color: var(--color-strip-waiting-text);
+    outline: 1.5px dashed var(--color-strip-skipped-edge);
+    outline-offset: -1.5px;
+  }
+
+  /* Four across: holes along the top and bottom instead of the sides, and
+     each frame becomes a tall cell — number and mark on top, label at the
+     foot. */
+  @media (min-width: 46rem) {
+    .run-state {
+      padding-top: 4rem;
+    }
+    .filmstrip {
+      margin-top: var(--space-lg);
+    }
+    .source-chip {
+      margin-top: 1.75rem;
+    }
+    .filmstrip-frames {
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(0, 1fr);
+      grid-template-columns: none;
+      gap: 0.75rem;
+    }
+    .frame {
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-rows: auto 1fr auto;
+      align-items: start;
+      min-height: 10rem;
+      padding: var(--space-sm) var(--space-sm) var(--space-sm) 1.125rem;
+    }
+    .frame-num {
+      grid-column: 1;
+      grid-row: 1;
+    }
+    .frame-icon {
+      grid-column: 2;
+      grid-row: 1;
+    }
+    .frame-text {
+      grid-column: 1 / -1;
+      grid-row: 3;
+    }
+  }
+  /* The strip's padding and holes follow the same switch (one viewport
+     breakpoint for both, so frames and holes can never disagree). */
+  @media (min-width: 46rem) {
+    .filmstrip {
+      padding: 1.875rem 1.125rem;
+    }
+    .filmstrip::before,
+    .filmstrip::after {
+      top: auto;
+      bottom: auto;
+      left: 1.75rem;
+      right: 1.75rem;
+      width: auto;
+      height: var(--hole-w);
+      background-image: linear-gradient(
+        to right,
+        var(--color-strip-hole) 0 var(--hole-h),
+        transparent var(--hole-h)
+      );
+      background-size: var(--hole-pitch) 100%;
+    }
+    .filmstrip::before {
+      top: 0.75rem;
+    }
+    .filmstrip::after {
+      bottom: 0.75rem;
+    }
+  }
+
+  /* What is being analyzed: a white chip with a Link/File tag. */
+  .source-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.625rem;
+    max-width: 100%;
+    margin: 1.25rem 0 0;
+    padding: 0.5rem 0.875rem 0.5rem 0.5rem;
+    border: var(--rule-w) solid var(--color-rule);
+    border-radius: var(--radius-control);
+    background: var(--color-surface);
+  }
+  .source-chip__kind {
+    flex-shrink: 0;
+    padding: 0.2rem 0.5rem;
+    border-radius: 0.375rem;
+    background: var(--color-tint);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  .source-chip__name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.9375rem;
+    color: var(--color-ink-2);
+  }
+  .run-state > .reset-link {
+    margin-top: 1.25rem;
+  }
+  /* One column of frames (ProgressWeb.png): the chip spans the strip's
+     width instead of floating centred under it. */
+  @media (max-width: 45.99rem) {
+    .source-chip {
+      display: flex;
+      width: 100%;
+    }
+  }
+
+  /* Failed / connection lost (ProgressFailed.png, ProgressLostWeb.png): the
+     message alone in a card, the actions centred under it — side by side from
+     40rem, full-width and stacked below. Danger edge only for failed. */
+  .run-notice {
+    width: 100%;
+    max-width: 40rem;
+    margin: 1.25rem 0 0;
+    padding: 0.875rem var(--space-sm);
+    text-align: left;
+    border: var(--rule-w) solid var(--color-rule);
+    border-radius: var(--radius-control);
+    background: var(--color-surface);
+    font-size: 0.9375rem;
+    line-height: 1.55;
+    color: var(--color-ink-2);
+    overflow-wrap: anywhere;
+  }
+  .run-notice[data-tone="failed"] {
+    border-color: var(--color-danger-border);
+  }
+  /* Refinement 9: "This didn't use one of your free runs", under the failed
+     notice, only once the server's count proves it. Neutral ink, not green —
+     it is reassurance, not a success. Empty (and taking no room) otherwise. */
+  .run-refund {
+    margin: var(--space-xs) 0 0;
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    color: var(--color-ink-2);
+    text-align: center;
+  }
+  .run-refund:empty {
+    margin: 0;
+  }
+  .run-actions {
+    width: 100%;
+    margin-top: var(--space-sm);
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+  }
+  .run-actions .btn {
+    min-height: 3rem;
+    border-radius: var(--radius-pill);
+  }
+  @media (min-width: 40rem) {
+    .run-actions {
+      width: auto;
+      margin-top: var(--space-md);
+      flex-direction: row;
+      justify-content: center;
+      gap: var(--space-xs);
+    }
+    .run-actions .btn {
+      padding-inline: var(--space-md);
+    }
+  }
+
+  /* ---- results ----
+     Phone: source pill, the results card, then "Analyze another file".
+     From 56rem: a 300px source column beside the card, both labelled. */
+  .results-layout {
+    width: 100%;
+    padding-block: var(--space-md) var(--space-xl);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-sm);
+    align-items: start;
+  }
+  .source-col,
+  .results-col {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    min-width: 0;
+  }
+  .results-layout .section-label,
+  .reset-wide {
+    display: none;
+  }
+  .source-panel {
+    display: none;
+    padding: 1.25rem var(--space-md);
+    background: var(--color-surface);
+    border: var(--rule-w) solid var(--color-rule);
+    border-radius: var(--radius-card);
+  }
+  .source-panel[data-open="true"] {
+    display: block;
+  }
+  /* A file run has no source card, and on a phone no pill to open one, so
+     the note would be orphaned — it shows only in the wide column. */
+  .source-col:not(:has(.source-toggle)) .source-panel {
+    display: none;
+  }
+
+  .source-toggle {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    width: 100%;
+    min-height: 3.25rem;
+    padding: 0.5rem 1rem 0.5rem 0.75rem;
+    border: var(--rule-w) solid var(--color-rule);
+    border-radius: var(--radius-control);
+    background: var(--color-surface);
+    font-family: inherit;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  .source-toggle:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  .source-toggle__text {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .source-toggle__chevron {
+    width: 1.125rem;
+    height: 1.125rem;
+    flex-shrink: 0;
+    transition: transform var(--dur-short) var(--ease-out);
+  }
+  .source-toggle[aria-expanded="true"] .source-toggle__chevron {
+    transform: rotate(180deg);
+  }
+
+  .result-card {
+    min-width: 0;
+    padding: 1.25rem 1.25rem var(--space-md);
+    background: var(--color-surface);
+    border: var(--rule-w) solid var(--color-rule);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+  }
+
+  @media (max-width: 35.99rem) {
+    /* Phone: actions under the title, Download takes what is left. */
+    .result-actions {
+      flex: 1 1 100%;
+    }
+    .result-download {
+      flex: 1 1 auto;
+    }
+    .tab-list {
+      gap: 1.25rem;
+    }
+  }
+
+  @media (min-width: 56rem) {
+    .results-layout {
+      grid-template-columns: 18.75rem minmax(0, 1fr);
+      gap: var(--space-lg);
+      padding-top: 2.5rem;
+    }
+    .results-layout .section-label,
+    .reset-wide {
+      display: flex;
+    }
+    .reset-narrow,
+    .source-toggle {
+      display: none;
+    }
+    .source-panel,
+    .source-panel[data-open="false"],
+    .source-col:not(:has(.source-toggle)) .source-panel {
+      display: block;
+    }
+    .result-card {
+      padding: var(--space-lg) 2.5rem 2.5rem;
+    }
+  }
+
+  /* SourceCard's own BEM block (components/ResultsView.tsx). The card surface
+     is the parent's `.source-panel`, so the same block renders inside the
+     phone disclosure and the wide column alike. */
   .source-card {
     display: flex;
     width: 100%;
     min-width: 0;
     flex-direction: column;
     gap: var(--space-xs);
-    overflow: clip;
-    border-radius: var(--radius-card);
-    background: transparent;
     color: var(--color-ink-2);
-    padding: 0;
   }
-  /* Row, space-between — mirrors the mockup's .origin. This was still the
-     legacy stacked layout, which ResultsView was overriding with Tailwind
-     utilities; the rule and the component were fighting each other. */
   .source-card__origin {
     display: flex;
-    flex-direction: row;
     align-items: center;
     justify-content: space-between;
     gap: var(--space-xs);
@@ -1832,113 +4050,118 @@ h3 {
   .source-card__platform {
     display: inline-flex;
     align-items: center;
-    gap: 0.35rem;
-    color: var(--color-muted);
-    font-size: 0.72rem;
-    letter-spacing: 0.06em;
-    line-height: 1rem;
-    text-transform: uppercase;
+    gap: 0.375rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-tint);
+    color: var(--color-ink);
+    font-size: 0.875rem;
+    font-weight: 500;
   }
   .source-card__platform-icon {
-    width: 0.85rem;
-    height: 0.85rem;
+    width: 0.875rem;
+    height: 0.875rem;
     flex-shrink: 0;
-  }
-  .source-card__action,
-  .source-card__creator-link {
-    outline: 2px solid transparent;
-    outline-offset: 2px;
   }
   .source-card__action {
     display: inline-flex;
     align-items: center;
-    gap: 0.3rem;
-    color: var(--color-ink-2);
-    font-size: 0.7rem;
-    line-height: 1rem;
+    gap: 0.25rem;
+    min-height: 2.75rem;
+    color: var(--color-accent);
+    font-size: 0.9375rem;
+    font-weight: 600;
     text-decoration: none;
     white-space: nowrap;
+  }
+  .source-card__action svg {
+    width: 1rem;
+    height: 1rem;
+  }
+  .source-card__action:focus-visible,
+  .source-card__creator-link:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
   }
   .source-card__creator {
     display: grid;
     min-width: 0;
     grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
-    gap: 0.5rem;
-    padding-block: var(--space-2xs);
+    gap: var(--space-xs);
   }
   .source-card__monogram {
     display: grid;
-    width: 1.75rem;
-    height: 1.75rem;
+    flex-shrink: 0;
+    width: 2.5rem;
+    height: 2.5rem;
     place-items: center;
-    border-radius: var(--radius-card);
-    background: var(--color-paper-3);
-    color: var(--color-accent);
-    font-size: 0.68rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-accent-soft);
+    color: var(--color-accent-strong);
+    font-size: 0.875rem;
     font-weight: 700;
+  }
+  .source-toggle .source-card__monogram {
+    width: 2rem;
+    height: 2rem;
+    font-size: 0.75rem;
   }
   .source-card__creator-link,
   .source-card__creator-name {
     display: block;
     min-width: 0;
+    margin: 0;
     overflow: hidden;
     color: var(--color-ink);
-    font-size: 0.78rem;
-    line-height: 1.25rem;
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.35;
     text-overflow: ellipsis;
     white-space: nowrap;
     text-decoration: none;
   }
-  /* Two-line clamp, matching the mockup's .source-title. Single-line
-     nowrap+ellipsis truncated more of the title than the design intends. */
   .source-card__source-title {
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     line-clamp: 2;
     overflow: hidden;
+    margin: 0;
     color: var(--color-muted);
-    font-size: 0.72rem;
+    font-size: 0.9375rem;
     line-height: 1.35;
   }
   .source-card__caption {
-    max-width: 65ch;
+    margin: 0;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     color: var(--color-ink-2);
-    font-size: 0.74rem;
-    line-height: 1.6;
+    font-size: 0.9375rem;
+    line-height: 1.5;
   }
-  /* The description show-more control uses the shared `.disclosure` instead —
-     only that rule carries the `all: unset` reset, the pointer cursor, and the
-     `[aria-expanded="true"]` chevron rotation the design keys off. The BEM
-     variants that lived here were dead once ResultsView switched over. */
+  .source-card .disclosure {
+    margin-top: calc(-1 * var(--space-xs));
+  }
   .source-card__footer {
     display: flex;
-    min-width: 0;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2xs) var(--space-sm);
-    margin-top: var(--space-2xs);
-    padding-top: var(--space-xs);
+    flex-direction: column;
+    gap: var(--space-xs);
+    padding-top: var(--space-sm);
     border-top: var(--rule-w) solid var(--color-rule);
   }
   .source-card__stats {
+    list-style: none;
+    margin: 0;
+    padding: 0;
     display: flex;
-    min-width: 0;
     flex-wrap: wrap;
-    gap: var(--space-xs);
+    justify-content: space-between;
+    gap: 0.375rem var(--space-sm);
   }
-  .source-card__stat,
-  .source-card__date {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    color: var(--color-muted);
-    font-size: 0.72rem;
-    line-height: 1rem;
+  .source-card__stat {
+    color: var(--color-ink-2);
+    font-size: 0.9375rem;
   }
   .source-card__stat strong {
     color: var(--color-ink);
@@ -1946,17 +4169,20 @@ h3 {
     font-variant-numeric: tabular-nums;
   }
   .source-card__date {
-    white-space: nowrap;
+    margin: 0;
+    color: var(--color-muted);
+    font-size: 0.875rem;
   }
-  .source-card__action:focus-visible,
-  .source-card__creator-link:focus-visible {
-    outline-color: var(--color-focus);
-  }
-  .source-card__action[aria-disabled="true"],
-  .source-card__creator-link[aria-disabled="true"] {
-    cursor: not-allowed;
-    opacity: 0.55;
-    pointer-events: none;
+  /* FileSourceCard: an uploaded file's name. File names are long and have no
+     spaces to break at, so it wraps anywhere rather than truncating — the
+     name is the whole point of the card. */
+  .source-card__file-name {
+    margin: 0;
+    color: var(--color-ink);
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
   }
 }
 
@@ -1966,183 +4192,195 @@ h3 {
    ========================================================================== */
 
 @media (min-width: 32rem) {
-  .steps {
-    grid-auto-flow: column;
-    grid-auto-columns: 1fr;
-    gap: 0;
-  }
-  .step {
-    flex-direction: column;
-    gap: 0.6rem;
-    text-align: center;
-  }
-  .step::before {
-    top: 0.7rem;
-    right: 50%;
-    left: auto;
-    bottom: auto;
-    width: 100%;
-    height: var(--rule-w);
-  }
-
-  .actions {
-    flex-direction: row;
-  }
-  .actions .btn {
-    width: auto;
-  }
-
-  .foot {
-    justify-content: space-between;
-    text-align: left;
-  }
-
-  /* The shell stops growing: one viewport, measured, nothing scrolls but the
-     panes that opt in. */
+  /* The shell stops growing: one viewport, measured. Nothing scrolls but the
+     bands that opt in — the panes on the panel tabs, and the Analyze section
+     itself. */
   .shell,
   .shell[data-frame="fixed"] {
     flex: 1;
     min-height: 0;
     height: auto;
   }
-  .shell > section[data-view],
-  .shell[data-frame="fixed"] > section[data-view] {
+  .shell > main[data-view],
+  .shell[data-frame="fixed"] > main[data-view] {
     flex: 1;
     min-height: 0;
   }
+  .shell > main.view-scroll {
+    overflow-y: auto;
+  }
+  /* The band runs to the bottom edge, as on every desktop board: reach back
+     through the shell's bottom gutter and keep only the safe-area inset. */
   .page-end,
   .shell[data-frame="fixed"] .page-end {
     position: static;
     margin-top: var(--space-sm);
-    margin-bottom: 0;
-    padding-bottom: 0;
+    margin-bottom: calc(-1 * max(var(--space-sm), var(--safe-bottom)));
+    padding-bottom: var(--safe-bottom);
+  }
+  /* With a page-wide scroller under it, the footer's top hairline is the
+     only edge between content and chrome; the gap above it would show
+     scrolled content stopping short of the rule, so it is closed here. */
+  .shell > main.view-scroll + .page-end {
+    margin-top: 0;
   }
 
-  /* nav: tabs inline, pill translucent again */
+}
+
+/* Refinement 3, #2. Below 32rem the installed app used to scroll `.viewport`
+   as a whole, with the dock sticky at its bottom edge. Sticky overlays: with a
+   view taller than the screen, whatever sat in the dock's last 64px at rest
+   was under the dock (on the run screen that was "Retry now", and a tap on it
+   landed on History). The phone app shell now uses the same measured frame as
+   32rem and up: the shell is exactly one viewport, the section between the top
+   bar and the dock is the only scroller, and the dock ends the column below
+   it, so no view can ever have content under the dock, at rest or scrolled.
+   The web shell (no dock) keeps the page-scroll model. */
+@media (width < 32rem) {
+  :root[data-shell="app"] .shell {
+    flex: 1;
+    min-height: 0;
+    height: auto;
+  }
+  :root[data-shell="app"] .shell > main[data-view] {
+    flex: 1;
+    min-height: 0;
+  }
+  :root[data-shell="app"] .shell > main.view-scroll {
+    overflow-y: auto;
+  }
+  /* The same 8px the landscape dock keeps above it, so the scroller visibly
+     ends before the dock and the last control never sits flush against it. */
+  :root[data-shell="app"] .tabbar {
+    margin-top: min(var(--space-2xs), 8px);
+  }
+}
+
+/* 48rem is where the four destinations fit inline beside the brand and the
+   theme toggle (the Desktop boards). Below it they live in the phone menu. */
+@media (min-width: 48rem) {
   .nav {
-    position: relative; /* anchors nothing on desktop; kept for parity */
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    padding: 0.55rem 0.55rem 0.55rem 1.1rem;
+    min-height: min(4.75rem, 76px);
   }
-  .menu-toggle,
-  .menu-head,
-  .menu-scrim {
-    display: none;
+  .brand {
+    font-size: min(1.3125rem, 24px);
   }
+  /* Both shells: from Phase 2 an installed window this wide has the top bar
+     too (the app-shell hide is scoped to <=37.5rem, so this unlayered rule no
+     longer has a layered hide to beat). */
   .nav-links {
     display: flex;
-    position: static;
-    width: auto;
-    flex-direction: row;
-    gap: 0.2rem;
-    padding: 0;
-    background: none;
-    border-right: none;
-    box-shadow: none;
-    overflow: visible;
-    transform: none;
-    visibility: visible;
   }
-  .nav-tab {
-    width: auto;
-    min-height: 0;
-    gap: 0;
-    padding: 0.45rem 0.85rem;
-    font-size: 0.78rem;
-    border-radius: var(--radius-pill);
-    color: var(--color-muted);
-  }
-  .nav-tab svg {
-    display: none;
-  }
-  .nav-tab[aria-current="page"] {
-    color: var(--color-accent-ink);
-    background: var(--color-accent);
-  }
-  /* paper-3 would be invisible under the accent fill of the current tab */
-  .nav-tab:active {
-    background: var(--color-paper-3);
-  }
-  .nav-tab[aria-current="page"]:active {
-    background: var(--color-focus);
-  }
-  .theme-toggle,
   .menu-toggle,
-  .menu-close {
-    width: 2rem;
-    height: 2rem;
-  }
-
-  /* Analyze: two ruled columns at 3fr / 7fr, one vertical hairline between */
-  .workspace,
-  .shell[data-frame="fixed"] .workspace {
-    grid-template-columns: minmax(0, 3fr) minmax(0, 7fr);
-    grid-template-rows: 100%;
-    gap: var(--space-md);
-    flex: 1;
-    min-height: 0;
-  }
-  .left-col,
-  .right-col {
-    height: 100%;
-    min-height: 0;
-  }
-  /* the left column is a fixed-height frame; only the source body scrolls */
-  .left-col {
-    overflow: hidden;
-  }
-  .source-frame {
-    overflow: hidden;
-  }
-  .source-body {
-    overflow-y: auto;
-  }
-  .right-col {
-    border-top: none;
-    padding-top: 0;
-    border-left: var(--rule-w) solid var(--color-rule);
-    padding-left: var(--space-md);
-  }
-  .left-col[data-collapsed="true"] .source-frame {
-    display: flex;
-  }
-  .col-chevron {
+  .menu-panel,
+  .nav-wrap[data-menu-open="true"] + .menu-panel {
     display: none;
   }
-  button.col-label {
-    cursor: default;
+}
+
+/* A phone held sideways in the installed app keeps the app chrome (the dock
+   rule above, item 10). From 48rem the unlayered `.nav-links` rule just above
+   would bring the inline tabs back beside the dock, so it is undone here, and
+   the bar is made compact: a 390px-tall screen cannot spare 76px of nav. */
+@media (max-height: 31.25rem) {
+  :root[data-shell="app"] .nav-links {
+    display: none;
+  }
+  :root[data-shell="app"] .nav {
+    min-height: min(3.5rem, 56px);
   }
 
-  .surface,
-  .results,
-  .shell[data-frame="fixed"] .surface,
-  .shell[data-frame="fixed"] .results {
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
+  /* Refinement 2, #7. At ~390px tall the portrait dock (64px, stacked
+     icon-over-label, lifted 16px) plus the nav left a ~250px band, and the
+     two-line display headline ran into the dock: it read as the dock sitting
+     on the Analyze heading. Sideways, the dock goes one row (icon beside
+     label), 52px with 44px targets, lifted 8px, with an 8px gap above it so
+     the scroller visibly ends before the dock starts; the headline drops to
+     the bottom of its clamp so it fits on one line and the intake card starts
+     in the first screen. */
+  /* Refinement 15: capped like the portrait dock, at exactly its 100% size,
+     so sideways it is 52px at every text size (it was 104px at 200%, leaving
+     a 167px band on a 360px-tall screen). */
+  :root[data-shell="app"] .tabbar {
+    height: min(3.25rem, 52px);
+    padding: min(0.25rem, 4px);
+    margin-top: min(var(--space-2xs), 8px);
+    margin-bottom: max(min(var(--space-2xs), 8px), var(--safe-bottom));
+    bottom: max(min(var(--space-2xs), 8px), var(--safe-bottom));
   }
-  .pane,
-  .shell[data-frame="fixed"] .pane {
-    overflow-y: auto;
+  :root[data-shell="app"] .tabbar-item {
+    flex-direction: row;
+    gap: min(0.5rem, 8px);
+    font-size: min(0.8125rem, 15px);
+  }
+  :root[data-shell="app"] .intake-title {
+    font-size: 2.25rem;
   }
 
-  /* optically centred — a touch above true centre reads as centred */
-  .home-center {
-    flex: 1;
-    min-height: 0;
-    padding: 0 0 6vh;
+  /* The More sheet held five rows stacked (~380px) in a ~340px frame, so it
+     opened scrolled-clipped with Terms half off the bottom edge and nothing
+     saying there was more. Sideways the two groups sit side by side under
+     the title, which fits a 300px frame with room to spare; it still scrolls
+     (overflow-y on .sheet) if a frame is shorter than that. */
+  :root[data-shell="app"] .sheet {
+    max-width: 44rem;
+    max-height: calc(100% - var(--safe-top) - var(--space-sm));
   }
+  :root[data-shell="app"] .sheet-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: var(--space-md);
+    align-items: start;
+    padding-top: 0.5rem;
+  }
+  :root[data-shell="app"] .sheet-handle,
+  :root[data-shell="app"] .sheet-title {
+    grid-column: 1 / -1;
+  }
+  :root[data-shell="app"] .sheet-handle {
+    margin-bottom: 0.5rem;
+  }
+  :root[data-shell="app"] .sheet-title {
+    font-size: 1.375rem;
+  }
+  :root[data-shell="app"] .sheet-row {
+    min-height: 3rem;
+  }
+  :root[data-shell="app"] .sheet-list + .sheet-list {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+    padding-left: var(--space-md);
+    border-left: var(--rule-w) solid var(--color-rule);
+  }
+}
 
-  .tab {
-    padding: 0.75rem 0.25rem;
+/* The scroller keeps its scrollbar's room whether or not it is scrolling, so
+   a view that overflows and one that does not lay out at the same width
+   (item 8). Mouse/trackpad only: touch scrollbars are overlays and take no
+   room (see the scrollbar block at the top), so a gutter there would only be
+   empty space. Below 32rem `.viewport` is the scroller; from 32rem it is the
+   full-bleed section, and `.viewport` never overflows. */
+@media (hover: hover) and (pointer: fine) {
+  .viewport {
+    scrollbar-gutter: stable;
   }
-  .line {
-    grid-template-columns: 3.6rem 1fr;
+  @media (min-width: 32rem) {
+    .viewport {
+      scrollbar-gutter: auto;
+    }
+    .shell > main.view-scroll {
+      scrollbar-gutter: stable;
+    }
   }
+}
 
-  .page-title {
-    font-size: 1.75rem;
+/* While the phone menu is open it IS the content band: the views step out of
+   layout entirely. Scoped below 48rem so a menu left open while the window
+   widens can never blank the page. */
+@media (width < 48rem) {
+  .nav-wrap[data-menu-open="true"] ~ main[data-view] {
+    display: none;
   }
 }
 
@@ -2150,11 +4388,9 @@ h3 {
    any size, and hover-revealed affordances stay permanent because there is no
    hover to reveal them with. */
 @media (pointer: coarse) {
-  .nav-tab,
   .tab,
   .btn,
-  .cap-summary,
-  .history-row {
+  .cap-toggle {
     min-height: 2.75rem;
     /* Both axes, because WCAG 2.5.5 asks for both and — unlike `.text-link` —
        this is a standalone control, not a link inline in a block of text, so it
@@ -2165,66 +4401,55 @@ h3 {
        leaving 30px of dead target hanging off one side. */
     min-width: 2.75rem;
   }
-  .theme-toggle,
-  .menu-toggle,
-  .menu-close {
-    width: 2.75rem;
-    height: 2.75rem;
-  }
-  /* The back button keeps its 1.75rem PAINTED box on touch and grows only its
-     HIT area, via an invisible ::before. Shrinking the button was the user's
-     ask; shrinking the target with it would not have been.
-
-     Two things here are measured facts, not arithmetic done in my head:
-
-     1. Every offset adds `var(--rule-w)` back. An abspos child's containing
-        block is the PADDING box, and `box-sizing: border-box` means a 1.75rem
-        button with a 1px border has a 26px padding box — so a flat
-        `inset: -0.5rem` yields a 42x42 target, not 44x44. Measured at 42
-        before this correction.
-     2. The 18px of growth is split 14 left / 2 right instead of 9/9. To the
-        left is the shell's empty gutter; to the right is `.crumb-home`'s own
-        44px target. Centred, the two hit areas end up 7px apart — under the
-        8px adjacent-target minimum. Biased, they sit 14px apart, and the
-        extra target area lands on dead gutter instead of crowding a
-        neighbour. A target does not have to be concentric with its paint. */
-  .crumb-back::before {
-    content: "";
-    position: absolute;
-    top: calc(-0.5rem - var(--rule-w));
-    bottom: calc(-0.5rem - var(--rule-w));
-    left: calc(-0.875rem - var(--rule-w));
-    right: calc(-0.125rem - var(--rule-w));
-  }
-  /* the row opens up one step on touch, since both controls are now 44 wide */
-  .crumb-bar {
-    gap: var(--space-sm);
-  }
-  .h-go {
-    opacity: 1;
-    transform: none;
-  }
 }
 
 @media (hover: hover) {
-  .nav-tab:hover {
+  .nav-tab:not([aria-current="page"]):hover {
     color: var(--color-ink);
+    background: var(--color-tint);
   }
   .theme-toggle:hover,
-  .menu-toggle:hover,
-  .menu-close:hover {
+  .menu-toggle:hover {
+    background: var(--color-tint);
+    border-color: var(--color-input-border);
+  }
+  .menu-item:not([aria-current="page"]):hover,
+  .sheet-row:hover {
+    background: var(--color-tint);
+  }
+  .segmented__option:not(:has(input:checked)):hover {
     color: var(--color-ink);
-    background: var(--color-paper-3);
   }
+  .app-back:hover {
+    color: var(--color-ink);
+  }
+  .brand--link:hover {
+    color: var(--color-ink-2);
+  }
+  .tabbar-item:not([aria-current="page"]):not([data-active="true"]):hover {
+    color: var(--color-dock-ink);
+  }
+  /* --color-focus IS --color-accent now, so the old "hover to focus colour"
+     rules were no-ops. Hover steps to the strong green instead. */
   .btn-primary:hover:not(:disabled) {
-    background: var(--color-focus);
+    background: var(--color-accent-strong);
   }
-  /* --color-accent (the standalone-text role), not --color-accent-ink (the
-     text-on-accent-fill role) — this sits on a 12% tint, not a solid fill. */
+  :root[data-theme="dark"] .btn-primary:hover:not(:disabled) {
+    /* dark accent-strong is a pale green, still dark text on it */
+    color: var(--color-on-accent);
+  }
+  .btn-ink:hover:not(:disabled) {
+    background: var(--color-ink-2);
+  }
   .btn-secondary:hover:not(:disabled):not([aria-disabled="true"]) {
-    border-color: var(--color-accent);
-    color: var(--color-accent);
-    background: color-mix(in oklch, var(--color-accent) 12%, transparent);
+    background: var(--color-tint);
+  }
+  .icon-action:hover {
+    background: var(--color-tint);
+    border-color: var(--color-input-border);
+  }
+  .source-toggle:hover {
+    border-color: var(--color-border-strong);
   }
   .drop:hover {
     border-color: var(--color-accent);
@@ -2234,45 +4459,51 @@ h3 {
   }
   .reset-link:hover,
   .disclosure:hover {
-    color: var(--color-focus);
+    color: var(--color-accent-strong);
   }
-  .cap-summary:hover .cap-more {
-    color: var(--color-focus);
+  .cap-toggle:hover {
+    background: var(--color-tint);
   }
-  .history-row:hover {
-    background: var(--color-paper-3);
+  .poster:hover .poster-thumb::after {
+    opacity: 0.04;
   }
-  /* the affordance only appears on the row you're pointed at */
-  .h-go {
-    opacity: 0;
-    transform: translateX(-0.25rem);
+  :root[data-theme="dark"] .poster:hover .poster-thumb::after {
+    opacity: 0.06;
   }
-  .history-row:hover .h-go,
-  .history-row:focus-visible .h-go {
-    opacity: 1;
-    transform: none;
+  .poster:hover .poster-play {
+    transform: scale(1.06);
+  }
+  .filter-pill:not([aria-pressed="true"]):hover,
+  .sort-select:hover {
+    background: var(--color-tint);
   }
   .foot-legal a:hover {
     color: var(--color-ink);
   }
-  /* the control lights up the way every other icon button in the nav does */
-  .crumb-back:hover {
-    color: var(--color-ink);
-    border-color: var(--color-rule-2);
-    background: var(--color-paper-3);
+  .key-reveal:hover {
+    background: var(--color-tint);
+    border-color: var(--color-input-border);
   }
-  .crumb-home:hover {
-    color: var(--color-accent);
+  .key-guide-link:hover {
+    color: var(--color-ink);
+  }
+  .release-link:hover {
+    color: var(--color-accent-strong);
+  }
+  .release-link:hover svg {
+    transform: translate(2px, -2px);
   }
   .field:hover:not(:disabled) {
-    border-color: var(--color-rule-2);
+    border-color: var(--color-border-strong);
   }
   .text-link:hover {
-    color: var(--color-focus);
+    color: var(--color-accent-strong);
   }
-  .source-card__creator-link:hover,
-  .source-card__action:hover {
+  .source-card__creator-link:hover {
     color: var(--color-accent);
+  }
+  .source-card__action:hover {
+    color: var(--color-accent-strong);
   }
 }
 
@@ -2283,6 +4514,41 @@ h3 {
   }
   50% {
     opacity: 0.35;
+  }
+}
+
+@keyframes frame-scan {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes copy-flash-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+@keyframes prompt-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 

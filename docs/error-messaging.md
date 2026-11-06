@@ -72,6 +72,12 @@ API answers `{"detail": ...}` and that is the key `runsGateway` reads. A
 rate-limited caller therefore used to see the bare fallback "Could not create
 run (429)". `_rate_limited` replaces it.
 
+Since refinement 7 the 429 also carries `Retry-After` (seconds until the
+limiter's window frees, exposed via CORS), and `runsGateway` turns it into
+"You're going a bit fast. Try again in about N minutes." The daily-cap 503
+carries one too (seconds to UTC midnight). See
+`backend/cost-abuse-protection.md`.
+
 ## Known issues
 
 - **Copy lives in the backend.** A reason code on the run schema with a
@@ -104,3 +110,7 @@ never reaches the run). No frontend test runner exists — see
 - 2026-08-21 · main session · introduced UserFacingError's message/log_detail split, rewrote every leaking message, added AnalysisUnavailableError for Gemini 429/5xx, gave rate limiting a `detail`-shaped response, keyed recovery advice on the failed stage, and removed the dead `data-error-kind` attribute
 - 2026-10-02 · gemini-retry agent · resolved the "retry policy is still weak" known issue: transient-only full-jitter backoff around the failing call, optional `GEMINI_FALLBACK_MODEL`; copy unchanged
 - 2026-10-02 · gemini-retry agent · default retry attempts raised 5 → 6 (owner-approved)
+- 2026-11-02 · frontend agent (refinement 7) · 429 sends and exposes Retry-After, so the client's "Try again in about N minutes" wording is live; daily-cap 503 carries one too
+- 2026-11-02 · backend agent (720p download cap) · `_download_failure`: 403/429 blocks get their own cause-only sentence (no upload advice, `recoveryAdvice` supplies it); see `backend/media-validation.md`
+- 2026-11-02 · backend agent (geo-block message) · `_download_failure`: real geo-blocks (yt-dlp wording or `GeoRestrictedError`) get the region sentence, even alongside a 403; see `backend/media-validation.md`
+- 2026-11-02 · frontend agent (refinement 9) · `recoveryAdvice` now takes the run's error: a link run whose message contains "site blocked this download" (backend `_BLOCKED_DOWNLOAD`, 796d71e) is told to try the same link later or upload the file, not to try a different link. Text match only, because no reason code reaches the client. See the Known issues entry on reason codes, which would retire it

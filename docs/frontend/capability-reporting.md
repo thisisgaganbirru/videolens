@@ -22,18 +22,12 @@ what `probed` is for, and why the endpoint always answers 200.
 
 ## Three surfaces, one fetch
 
-**1. The intake strip (`CapabilityNotice`).** A collapsed two-line readout above
-`UploadForm`, expanding to the full per-row table. Collapsed it says only what
-is affected:
-
-```
-unavailable — daily budget                              DETAILS ⌄
-degraded — url download
-```
-
-One line per severity rather than a sentence: at `.intake`'s 34rem in a
-monospace face, a sentence naming three capabilities wraps to three lines
-anyway.
+**1. The intake notice (`CapabilityNotice`).** A compact card, collapsed to one
+sentence-case line ("Unavailable right now: media processing. Limited: link
+downloads.") with a "Details" toggle that opens the full per-row list. It sits
+at the top of the "What you get" column on a wide screen and first on a phone,
+never between the lede and the intake card. See "Visual language" below; the
+Terminal-era two-line uppercase readout this section used to show is gone.
 
 **2. `url_download` under the URL field.** `URL runs may fail — <backend
 detail>` (or *are unavailable* at that state). Wired to the input as
@@ -106,23 +100,55 @@ omission. `mode` (`local`/`distributed`) is the one field deliberately **not**
 rendered — it names a topology with no user-visible consequence the rows do not
 already state (`run_store`'s detail already says "runs are lost on restart").
 
-## Visual language
+## Visual language (editorial Phase 2, 2026-11-01)
 
-Same left-ruled, boxless geometry as `.error-inline` — the same kind of object
-(a scoped condition inside a view that is otherwise fine), so it does not invent
-a second idiom. It is deliberately **not** `.error-block`, which is the single
-bordered object in a boxless system and is sized for a whole view having failed.
+The Terminal-era treatment (left rule, uppercase `UNAVAILABLE` / `OK` /
+`NOT CONFIGURED`, boxed `UNVERIFIED` tags, uppercase `HIDE ^`) is gone. No board
+covers this state, so it follows `design-direction-editorial.md`:
 
-Severity is carried by the rule's ink and by the words, never by a new hue. The
-palette declares exactly one danger token and no warning token: `unavailable`
-takes `--color-danger`, `degraded` keeps the neutral `--color-rule-2` on the
-rule and separates from `ok` by ink weight (`--color-ink` vs `--color-muted`).
-This is the same restraint `.status[data-tone="stalled"]` uses when it declines
-to be a fourth severity. Adding an amber here is how a two-accent system becomes
-a traffic light — don't.
+- **Collapsed by default, one compact card**: a status dot, one sentence-case
+  line, a "Details" text button. Same surface and edge family as `.run-notice`
+  (`--color-surface`, 1px `--color-rule`, `--radius-control`).
+- **The sentence is label-first** — "Unavailable right now: media processing.
+  Limited: link downloads." — so it never has to agree a verb with a name it
+  does not control (plural or not, known or added server-side later).
+- **Red only for an actual failure.** `unavailable` paints the dot, the card's
+  edge (`--color-danger-border`) and its state word in danger; `degraded` gets a
+  neutral (`--color-muted`) dot and the word "Limited". Still no warning token,
+  no amber.
+- **Expanded rows** are plain words: name (ink, 600) on the left, state on the
+  right in sentence case — Working / Limited / Unavailable / Not set up — with
+  "· not checked" in muted ink for `probed: false`, then the backend's detail
+  verbatim. A legend explains "not checked" only when some row is unchecked.
+- **Names**: a small map gives plain names (`media_tools` → "Media processing",
+  `url_download` → "Link downloads", …); anything unknown still falls back to
+  the backend name with underscores replaced, so new rows render on old builds.
+- **The one-row callout** (`CapabilityCallout`, under the URL field and in the
+  API-key panel) is a dot plus "**Link runs may fail.** <backend detail>", no
+  card and no rule.
+- **Placement**: `.cap-slot` moved out of `.intake` to be a grid item of
+  `.intake-layout` — top of the "What you get" column from 60rem, first item
+  (above the eyebrow) on a phone. It no longer sits between the lede and the
+  card, so the card does not move: measured card top 462px at 1086×900 with and
+  without the notice, collapsed or expanded.
 
-`.cap-state` and `.cap-unverified` are both `0.6rem`, matching `.history-group`,
-so nothing here introduces a new smallest type size.
+## Large text (refinement 15)
+
+The toggle scales with the text and does not shrink, so at large text it used
+to take the line and leave the sentence a sliver: 84px at 412/200% and 32px at
+360/200% on the device (round 16), split mid-word ("Limite/d", "downl/oads")
+by `overflow-wrap: anywhere`.
+
+Now `.cap-notice` is a size container (`cap-notice`, font-size pinned to 1rem;
+everything inside was already rem). Below **15em** of content width the head
+wraps: the sentence keeps the full line beside the dot and the toggle drops to
+its own line, its label lined up under the sentence. 15em is where the
+sentence would get under ~9em of its own text beside the widest toggle
+("Details" + chevron, 5.21rem; dot + gaps 1.75rem). 320px at 100% has 16.6em,
+so normal scale keeps its one line, pixel-identical to before. The sentence's
+`overflow-wrap` is now `break-word`, which only splits a word longer than the
+whole line. The reachability notice ("You're offline right now…" + History)
+shares `.cap-head` and stacks the same way.
 
 ## Accessibility
 
@@ -136,14 +162,17 @@ so nothing here introduces a new smallest type size.
   `.cap-detail[hidden] { display: none }` is required to beat the flex display.
 - The URL note is `aria-describedby` on `#media-url`, composed with the existing
   `intake-error` id rather than replacing it.
-- `.cap-summary` gets `min-height: 2.75rem` under `@media (pointer: coarse)`,
-  measured at 340.0 × 57.1 at 390px.
+- The toggle is `.cap-toggle`, a real `<button>` with `aria-expanded` /
+  `aria-controls`, 44px tall at every pointer (and in the coarse-pointer list),
+  2px accent focus ring at 2px offset. It is no longer the whole line: the
+  summary sentence is a plain `<p>`, so the announced text is not a button
+  label.
 
 ## Known issues
 
-- **Expanded, the strip is tall.** Six rows with details push the drop zone and
-  terms checkbox below the fold at 390×844, and off a 900px-tall desktop
-  viewport. Accepted: it is opt-in (the user tapped `details`), the idle Analyze
+- **Expanded, the notice is tall on a phone.** On a wide screen it expands in
+  the panel column and moves nothing on the left. On a phone (first item) six
+  rows push the form down. Accepted: it is opt-in (the user tapped `details`), the idle Analyze
   view is on the `flow` frame so the content band scrolls, and collapsing
   restores the form. Not worked around — capping the region's height and giving
   it its own scroller puts a second scroll context inside a one-viewport shell.
@@ -193,6 +222,52 @@ non-text threshold — accepted, because the tag's meaning is carried by its tex
 Not tested on a physical device — emulation only, and never against a live
 backend (the fixture is the exact payload shape in `docs/backend/capabilities.md`).
 
+## Unreachable notice (refinement 4, LCH-06)
+
+Decision (1) above, "failure is silent", still holds for the report itself,
+but a launch with the server unreachable looked identical to a healthy one.
+`useCapabilities` now reports each fetch to `application/serverReachability.ts`
+and, if the first fetch never arrived, fetches again when that module signals
+a reconnect chance (`online`, window `focus`, page visible; only while the
+notice is up). Decision (2) holds on a healthy launch: one request (verified:
+capabilities, free-runs and runs once each; a focus event adds nothing).
+
+`components/ReachabilityNotice.tsx` renders in `.cap-slot` (the polite live
+region) in place of the capability notice while unreachable or offline: the
+same `.cap-notice` card, neutral dot, one sentence and a "History" link
+(`?view=history`). Never red, never blocks the form. Verified at 390x844 and
+844x390, light and dark: notice up and Analyze enabled with `/api/*` refusing
+connections; after the server returns, a focus event removes it and the
+free-runs pill appears; offline (`navigator.onLine` false) shows the offline
+wording, and a visibilitychange after coming back clears it.
+
+Installed app (refinement 5, LCH-06d): android-66 saw "Can't reach the
+server" in airplane mode, not the offline wording. The logic is right
+(`offline` is `navigator.onLine === false`, checked first), but Android WebView
+only feeds connectivity into `navigator.onLine` and the `online`/`offline`
+events when the app holds `ACCESS_NETWORK_STATE`; the manifest had only
+`INTERNET`, so `onLine` stayed true and the offline branch was unreachable in
+the app (the quiet retry on `online` never fired either; focus/visibility
+still did). Added the permission (normal, install-time, no prompt) to
+`AndroidManifest.xml`. Whether this WebView version honours it is unverified
+here (Chromium has gated it on that permission; not confirmed for current
+builds); both wordings remain true if it does not.
+
+Known gap: coming back online after an offline spell during which every read
+had *succeeded* does not probe again, so a server that went down meanwhile is
+only discovered on submit (the offline flag knows nothing about the server).
+
+**Refinement 11 (D-R10-1).** The flag is no longer shared and overwritten:
+each read reports under its own name (`noteReadResult("capabilities", err)`),
+and the notice is up while either read's latest result is unreachable. A
+healthy capabilities reply no longer clears a free-runs 503, and the other way
+round. Details in `free-runs.md`.
+
 ## Changelog
 
 - 2026-08-29 · frontend agent · added the capability surface: `CapabilitiesGateway` port + `FetchCapabilitiesGateway` adapter (normalising, not casting), `useCapabilities` hook fetched once in `HomeScreen`, the `CapabilityNotice` intake strip with a `probed`-aware disclosure, and `CapabilityCallout` wired to the URL field and the API-key panel; extracted `infrastructure/apiBase.ts` so two adapters share one origin
+- 2026-11-01 · frontend agent · editorial restyle: compact collapsed card (dot, sentence-case label-first line, Details toggle), red only for `unavailable`, sentence-case states with inline "not checked", plain names map with fallback; callout de-ruled; notice moved to its own intake grid cell (top of the panel column / first on phone) so the intake card no longer moves
+- 2026-11-02 · frontend agent (refinement 4) · added the shared reachability flag, retry on reconnect, and the ReachabilityNotice in the capability slot (LCH-06)
+- 2026-11-02 · frontend agent (refinement 5) · LCH-06d: offline branch unreachable in the app because WebView needs ACCESS_NETWORK_STATE for navigator.onLine; permission added to the manifest (device check pending)
+- 2026-11-02 · frontend agent (refinement 11) · capabilities reports reachability under its own source name; the notice holds while any launch read is unreachable (D-R10-1)
+- 2026-11-02 · frontend (refinement 15) · `.cap-notice` is an em size container; below 15em the toggle drops under the sentence (no more 84px column split mid-word at 412/200%); sentence `overflow-wrap` anywhere → break-word; also covers the reachability notice

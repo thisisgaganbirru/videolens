@@ -26,9 +26,17 @@ only in `container.py`.
 - `policies.py` — pure functions/constants that encode a business rule
   without needing any infrastructure: `quota_key_from_headers`,
   `is_valid_client_id`.
+- `run_facts.py` — pure derivations of the media facts the history grid
+  shows (`describe_run` → source kind, normalized platform, duration,
+  orientation, summary snippet). Routes call it and only map the result.
 - `ports.py` — `Protocol` interfaces the application layer depends on:
   `RunRepository`, `MediaProcessor`, `AnalysisEngine`, `ObjectStore`,
   `JobQueue`, `SpendCap`, `KeyVault`, `TokenVerifier`, `UploadedFile`.
+  Phase 5b added `DeviceTokenSigner` and `FreeRunAllowance` (the anonymous
+  per-device free-run allowance; entities `FreeRunStatus`/`FreeRunClaim`).
+  Phase 5a added `MediaProcessor.describe_visuals` (history poster +
+  display size, never raises; returns `entities.MediaVisuals`) and
+  `RunRepository.set_visuals`.
   These are structural (duck-typed) — an adapter satisfies a port just by
   having the right methods, no inheritance required.
 
@@ -36,13 +44,19 @@ only in `container.py`.
 orchestrating ports to do the work. This is where the business rules that
 used to live inline in `main.py`/`pipeline.py` now live.
 - `create_run.py` — `CreateRunUseCase`: validates terms accepted and
-  exactly-one-source, spends the daily budget, saves/enqueues the run, and
-  owns its own cleanup if something fails partway through.
+  exactly-one-source, admits the caller (`_admit`: BYOK, or a free run
+  against a signed device token; the seam for future plan checks), spends
+  the daily budget, saves/enqueues the run, and owns its own cleanup,
+  including refunding the free run, if something fails partway through.
+- `get_free_runs.py`: `GetFreeRunsUseCase`, a device's standing for today,
+  issuing a token when needed. Read-only.
 - `get_run.py` — `GetRunUseCase`: fetch + ownership check.
 - `list_runs.py` — `ListRunsUseCase`.
 - `process_run.py` — `ProcessRunUseCase`: download/validate → normalize →
-  analyze → persist. Run by both the in-process local runner and the arq
-  worker — it doesn't know or care which.
+  analyze → persist, then releases the run's held free run (refunding it
+  only when a link run was rejected before analysis: the download failed,
+  or the downloaded file failed the duration cap). Run by both the in-process local
+  runner and the arq worker — it doesn't know or care which.
 
 **`infrastructure/`** — concrete adapters implementing the ports above.
 Every adapter takes `Settings` in its constructor instead of importing a
@@ -50,8 +64,8 @@ global (this is what makes them independently testable — see
 `backend/tests/`).
 - `persistence/run_repository.py` — `RunStore`: Redis-backed in distributed
   mode, an in-process dict otherwise. Implements `RunRepository`.
-- `media/{ffmpeg,ytdlp_downloader,uploads}.py` — FFmpeg probing/normalizing,
-  yt-dlp downloading, and upload/run-dir handling. `media/service.py`'s
+- `media/{ffmpeg,ytdlp_downloader,uploads,thumbnails}.py` — FFmpeg probing/normalizing,
+  yt-dlp downloading, upload/run-dir handling, and the history thumbnail. `media/service.py`'s
   `MediaService` composes all three into one `MediaProcessor` adapter,
   since `ProcessRunUseCase` always uses them together in sequence.
 - `ai/gemini_engine.py` — `GeminiEngine`, implements `AnalysisEngine`.
@@ -59,6 +73,9 @@ global (this is what makes them independently testable — see
 - `queue/job_queue.py` — `RunQueue`: dispatches to arq/Redis in distributed
   mode, or an in-process `asyncio` task otherwise. Implements `JobQueue`.
 - `quota/daily_budget.py` — `DailyBudget`, implements `SpendCap`.
+- `quota/device_tokens.py`: `HmacDeviceTokens`, implements `DeviceTokenSigner`.
+- `quota/free_run_allowance.py`: `FreeRunAllowanceStore`, implements
+  `FreeRunAllowance` (Redis Lua or an in-process dict).
 - `byok/key_vault.py` — `ByokKeyStore`, implements `KeyVault`.
 - `auth/jwt_verifier.py` — `JwtVerifier`, implements `TokenVerifier`.
 - `config.py`, `logging_config.py` — settings and log formatting, unchanged

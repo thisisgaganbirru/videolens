@@ -100,6 +100,15 @@ place of `up` for the other local lifecycle operations.
   An optional `X-Gemini-Api-Key` header (see "Bring your own key" below)
   exempts that run from `DAILY_RUN_CAP`, since it doesn't spend the shared
   quota; the per-IP/token rate limit still applies.
+  Without a key, the caller also needs `X-Device-Token` (from
+  `GET /api/free-runs`) and gets `FREE_RUNS_PER_DEVICE` (default 3) runs per
+  UTC day, with `FREE_RUNS_PER_IP` (default 10) as a per-network backstop:
+  `401 {"code": "device_token_invalid"}` for a missing/forged token,
+  `402 {"code": "free_runs_used", "limit", "used"}` once spent. See
+  `docs/backend/free-runs.md`.
+- `GET /api/free-runs` — `{ device_token, enabled, limit, used, remaining,
+  resets_at }` for the device in `X-Device-Token`, issuing a new token when
+  it is missing or not genuine. Read-only: never spends a run.
 - `GET /api/runs/{run_id}` — returns
   `{ run_id, status, stage, result, error }`, where `status` is one of
   `queued`, `processing`, `complete`, `failed`, and `stage` (only set while
@@ -109,8 +118,12 @@ place of `up` for the other local lifecycle operations.
   the caller's own run history (newest first, capped at 20). Backs the
   in-app History panel.
 
-Run access is owner-bound. In distributed mode, Redis expires run state (and
-each caller's history entries) after `RUN_TTL_SECONDS` (default 7 days).
+Run access is owner-bound. Run state (and each caller's history entries)
+expires `RUN_TTL_SECONDS` after its last write (default 1 hour): the browser
+keeps History itself, so the server only holds a run until it is delivered.
+`GET /api/runs`, and the MCP server's `list_recent_runs`, therefore only see
+the last hour. `GET /api/runs/{run_id}` also returns `thumbnail` (a ≤20 KB
+JPEG data URL), `width`, `height` and `orientation` for that hand-off.
 
 ### Bring your own key
 
@@ -125,8 +138,8 @@ that run only:
   (arq logs job args/results), so it's held in a dedicated, single-use Redis
   entry (`backend/app/infrastructure/byok/key_vault.py`) keyed by `run_id`, deleted the instant the
   worker reads it, with a 15-minute safety-net TTL in case it's never read.
-- Exempt from `DAILY_RUN_CAP` (that cap protects the shared key's spend, not
-  a key someone brought themselves) but still subject to the normal per-IP
+- Exempt from `DAILY_RUN_CAP` and the per-device free-run allowance (both
+  protect the shared key's spend, not a key someone brought themselves) but still subject to the normal per-IP
   rate limit, since FFmpeg/bandwidth/worker capacity are still spent either way.
 
 ## Use from an AI agent
@@ -222,7 +235,7 @@ the installed app's `versionCode` via `@capacitor/app`'s `App.getInfo()`,
 fetches the videolens GitHub repo's release list, and compares against the
 `version.json` manifest attached to the newest release (see the "Write
 version manifest" step in the `android` CI job). If a newer build exists,
-`components/UpdateBanner.tsx` shows a banner linking to that release's page.
+`components/UpdatePrompt.tsx` shows an on-screen prompt linking to that release's page.
 This is a check-and-link flow, not silent installation — Android doesn't
 allow apps to install APKs without the user going through the system
 installer UI outside of Play Store's own privileged path.

@@ -99,11 +99,11 @@ Two things about that config are hand-written and load-bearing:
   purpose — see `docs/frontend/legal-offline-routes.md`. The rule stays on
   everywhere else.
 
-`npm run lint` currently **exits 1** with 6 errors and 1 warning, all
-pre-existing: six `react-hooks/set-state-in-effect` (`useGeminiApiKey.ts`,
-`ResultsView.tsx` ×2, `UploadForm.tsx` ×3 — the third arrived with the shared-link
-effect from PR #26, which `dev` had no ESLint config to catch) and one
-`@next/next/no-img-element` (`ResultsView.tsx`). Most of the five are the read-`localStorage`-after-hydration
+`npm run lint` currently **exits 1** with 4 errors and 1 warning (as of the
+2026-11-01 refinement pass, down from 6+1), all pre-existing:
+`react-hooks/set-state-in-effect` in `useGeminiApiKey.ts` and `UploadForm.tsx`
+(the `ResultsView.tsx` ones are gone), and one `@next/next/no-img-element`
+(`ResultsView.tsx`). Most of them are the read-`localStorage`-after-hydration
 pattern this app needs to avoid a hydration mismatch on a static export; they
 were deliberately **not** "fixed", because silencing the rule or rewriting the
 effects is a behavioural decision for the owner, not lint tidying. CI still does
@@ -319,8 +319,14 @@ adapter every hook imports from (e.g. one `ApiKeyStore` backing both
   reset), `useGeminiApiKey.ts`, `useRunHistory.ts`, `useVersionLog.ts`,
   `useUpdateCheck.ts`. Components never call an adapter directly.
 - **`app/` + `components/`** — framework-bound presentation. `app/` holds
-  only what Next.js requires (route files, global CSS); `app/page.tsx` is
-  4 lines rendering `<HomeScreen />`. `components/HomeScreen.tsx` is the
+  only what Next.js requires (route files, global CSS). Routes: `/` is the
+  landing page (`app/page.tsx` → `components/LandingScreen.tsx`; inside the
+  installed app, and for legacy `/?view=…`/share links, it redirects to
+  `/app` before paint via `application/landingRedirect.ts`); `/app` is the
+  tool (`app/app/page.tsx` → `RoutedHomeScreen` plus the installed-app-only
+  `Splash` and once-only `Welcome`); `/offline`, `/privacy`, `/terms`. The
+  manifest keeps `id: "/"` with `start_url: "/app"`. Full table in
+  `frontend/ARCHITECTURE.md`. `components/HomeScreen.tsx` is the
   real page body (header, tabs, composes `useAnalysisRun()` with
   presentational pieces); `components/panels/{ApiKeyPanel,HistoryPanel,
   VersionLogPanel}.tsx` are one-per-tab; `format.ts` holds the shared
@@ -339,11 +345,30 @@ in `components/panels/`, wired into `HomeScreen.tsx`'s tab list.
    `accept_terms=true`.
 2. For URL runs, backend downloads via yt-dlp first. Either way: validate +
    normalize with FFmpeg → upload to Gemini → analyze.
-3. Frontend polls `GET /api/runs/{run_id}` until `status` is `complete` or
+3. Alongside normalize/analyze, the backend makes a thumbnail **server
+   side** (`infrastructure/media/thumbnails.py`, behind
+   `MediaProcessor.describe_visuals`): yt-dlp's thumbnail URL fetched through
+   the SSRF guard, else a frame from the media (uploads included), JPEG
+   ≤320px / ≤20 KB; plus rotation-aware `width`/`height`. Audio and failed
+   runs get none. A thumbnail failure never fails a run.
+4. Frontend polls `GET /api/runs/{run_id}` until `status` is `complete` or
    `failed`; `stage` (only set while `processing`) is one of
-   `downloading`, `normalizing`, `uploading_to_gemini`, `analyzing`.
-4. `GET /api/runs` returns the caller's own history (newest first, capped
-   at 20), owner-bound and Redis-expired after `RUN_TTL_SECONDS`.
+   `downloading`, `normalizing`, `uploading_to_gemini`, `analyzing`. The
+   detail carries `source_kind`, `platform`, `duration_seconds`,
+   `thumbnail` (data URL), `width`, `height`, `orientation`.
+5. **History lives in the browser**, not on the server: the frontend writes
+   each run into IndexedDB (`infrastructure/historyStore.ts`, via
+   `application/historySync.ts`) on submit, on each status change, and with
+   the full result on completion — capped at 20, oldest dropped first, and
+   reopened from there (works offline). It calls `navigator.storage.persist()`
+   once. The browser may still evict it (e.g. Safari after 7 days unvisited,
+   unless added to the Home Screen).
+6. The server keeps a run only to deliver it: Redis/in-memory entries expire
+   `RUN_TTL_SECONDS` (default **3600**, one hour) after the last write, and
+   the TTL is refreshed when the run completes or fails. `GET /api/runs`
+   still exists (the web app only uses it for a one-time import; the MCP
+   server's `list_recent_runs` uses it) and therefore only sees the last
+   hour.
 
 Local dev can run entirely in-process (no Redis/arq); production mode uses
 Redis + arq worker + S3-compatible storage. Uploaded/downloaded files are

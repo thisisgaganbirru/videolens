@@ -41,12 +41,13 @@ const staticDir = isExport
   ? path.join(buildRoot, "_next", "static")
   : path.join(buildRoot, "static");
 
-/* The prerendered HTML for the four precached routes. Its bytes go into the
+/* The prerendered HTML for the five precached routes. Its bytes go into the
  * cache digest because the documents themselves are not content-hashed — a copy
  * change with no chunk change still has to invalidate the old cache. */
 const htmlDir = isExport ? buildRoot : path.join(buildRoot, "server", "app");
 const documentHtml = [
   ["/", "index.html"],
+  ["/app", "app.html"],
   ["/offline", "offline.html"],
   ["/privacy", "privacy.html"],
   ["/terms", "terms.html"],
@@ -64,7 +65,10 @@ async function collectAssets(dir, prefix = "") {
     const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
     if (entry.isDirectory()) {
       found.push(...(await collectAssets(path.join(dir, entry.name), rel)));
-    } else if (/\.(js|css)$/.test(entry.name)) {
+    } else if (/\.(js|css|woff2)$/.test(entry.name)) {
+      /* woff2: next/font self-hosts the UI and headline faces under
+         /_next/static/media. Without them in the precache, the offline page
+         and every route opened offline fall back to system fonts. */
       found.push(`/_next/static/${rel}`);
     }
   }
@@ -96,6 +100,10 @@ for (const [route, file] of documentHtml) {
   digest.update(route);
   digest.update(await readFile(file));
 }
+/* The template's own bytes too: a change to the offline policy alone (Phase 5a
+ * opened `/?view=history` offline) must produce a new cache name and sweep the
+ * old cache even if, unusually, nothing else moved. */
+digest.update(await readFile(templatePath));
 const cacheName = `videolens-shell-${digest.digest("hex").slice(0, 12)}`;
 
 const template = await readFile(templatePath, "utf8");

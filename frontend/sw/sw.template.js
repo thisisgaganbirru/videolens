@@ -18,8 +18,9 @@
  * precisely what the old hand-written `videolens-shell-v1` never did. */
 const CACHE_NAME = "__CACHE_NAME__";
 
-/* The four documents that have to be readable with no network. */
-const SHELL_DOCUMENTS = ["/", "/offline", "/privacy", "/terms"];
+/* The documents that have to be readable with no network. `/` is the landing
+ * page and `/app` the tool since Phase 5c. */
+const SHELL_DOCUMENTS = ["/", "/app", "/offline", "/privacy", "/terms"];
 
 const STATIC_ASSETS = ["/icon-192.png", "/icon-512.png"];
 
@@ -42,14 +43,39 @@ const PRECACHE = [...SHELL_DOCUMENTS, ...STATIC_ASSETS, ...BUILD_ASSETS];
  * documents qualify — they are static text, they are already precached, and
  * hiding them behind an offline screen is a pure loss.
  *
- * `/` is deliberately NOT here, and this is the whole product call. The app is
+ * `/` qualifies too since Phase 5c: it is the landing page now, static text
+ * with no API call. It is also what answers the legacy `/?view=history`
+ * offline — its inline redirect script (application/landingRedirect.ts) needs
+ * no bundle and sends the browser on to `/app?view=history`, which the view
+ * rule below serves from the cache. Every other legacy `/?view=…` hops the
+ * same way and lands on /offline, as it did before.
+ *
+ * Bare `/app` (Analyze) is deliberately NOT here, and this is the whole product
+ * call — `/app?view=history` is, via OFFLINE_CAPABLE_VIEWS below. The tool is
  * useless without the API: serving the cached shell would give an upload form
- * that cannot upload and a history panel that errors. That is a worse lie than
- * "you are offline", and it would make the offline page's own `Try again`
- * button load a half-working app instead of staying put.
+ * that cannot upload. That is a worse lie than "you are offline", and it would
+ * make the offline page's own `Try again` button load a half-working app
+ * instead of staying put.
  */
-const OFFLINE_CAPABLE_DOCUMENTS = ["/privacy", "/terms"];
+const OFFLINE_CAPABLE_DOCUMENTS = ["/", "/privacy", "/terms"];
 const OFFLINE_FALLBACK = "/offline";
+
+/* Phase 5a: History lives in this browser (IndexedDB), so the History view is
+ * genuinely complete with no network — its list, its posters and every
+ * finished run's result are all on the device. It is the one app address
+ * served from the cached shell (`/app` since Phase 5c, whose client code reads
+ * `?view=` after hydrating). Every other view of `/app` still needs the API
+ * and still gets the offline page. Like the list above, an allowlist: a new view stays on the
+ * safe side until someone decides otherwise. */
+const OFFLINE_CAPABLE_VIEWS = ["history"];
+
+const APP_DOCUMENT = "/app";
+
+function cachedAppView(route, requestUrl) {
+  if (route !== APP_DOCUMENT) return null;
+  const view = requestUrl.searchParams.get("view");
+  return view && OFFLINE_CAPABLE_VIEWS.includes(view) ? APP_DOCUMENT : null;
+}
 
 /* One route can arrive as `/privacy`, `/privacy/` or `/privacy.html` depending
  * on whether the caller is `next start`, the static export or a deep link. All
@@ -85,6 +111,11 @@ async function respondToNavigation(request, requestUrl) {
     const route = documentRoute(requestUrl.pathname);
     if (OFFLINE_CAPABLE_DOCUMENTS.includes(route)) {
       const cached = await caches.match(route);
+      if (cached) return cached;
+    }
+    const shell = cachedAppView(route, requestUrl);
+    if (shell) {
+      const cached = await caches.match(shell);
       if (cached) return cached;
     }
     const fallback = await caches.match(OFFLINE_FALLBACK);

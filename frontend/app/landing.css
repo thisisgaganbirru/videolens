@@ -1,0 +1,305 @@
+/* Hallmark · page: landing (Phase 5c) · genre: editorial · theme: custom (app/tokens.css)
+ * boards: design/shots/Landing.png (390 phone), LandingWeb.png (1280 desktop)
+ * Every colour and family is a token; the only new tokens are --color-band /
+ * --color-band-ink (tokens.css), for the closing dark band.
+ *
+ * Imported by app/page.tsx only, so none of this reaches the tool's routes.
+ * Unlayered on purpose: these are new class names that nothing in globals.css
+ * styles, and an imported file cannot open `@layer components` without a
+ * matching `@tailwind components` directive of its own. */
+
+/* The content column. The boards inset it from the nav's edges (96px at
+   1280 against the nav's 48px), so it is narrower than the shell. */
+.landing {
+  width: 100%;
+  max-width: 68rem;
+  margin-inline: auto;
+  padding-block: var(--space-lg) var(--space-xl);
+  min-width: 0;
+}
+
+/* ---- hero: intro + sample card ---- */
+.landing-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-lg);
+  align-items: center;
+}
+.landing-intro {
+  min-width: 0;
+}
+.landing-title {
+  margin: var(--space-xs) 0 0;
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: clamp(2.5rem, 1.55rem + 3.6vw, 4.25rem);
+  line-height: 1.04;
+  letter-spacing: -0.02em;
+  color: var(--color-ink);
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.landing-lede {
+  margin: var(--space-sm) 0 0;
+  max-width: 34rem;
+  font-size: clamp(1.0625rem, 1rem + 0.3vw, 1.1875rem);
+  line-height: 1.6;
+  color: var(--color-ink-2);
+}
+.landing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-top: var(--space-md);
+}
+.landing-btn {
+  min-height: 3.125rem;
+  padding-inline: 1.5rem;
+  text-decoration: none;
+}
+
+/* The sample card: the results card in miniature. */
+.sample-card {
+  min-width: 0;
+  padding: 1.25rem 1.5rem 1.5rem;
+  background: var(--color-surface);
+  border: var(--rule-w) solid var(--color-rule);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+.sample-label {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+.sample-title {
+  margin: var(--space-2xs) 0 var(--space-xs);
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: clamp(1.375rem, 1.2rem + 0.6vw, 1.625rem);
+  line-height: 1.25;
+  color: var(--color-ink);
+}
+.sample-tabs {
+  gap: 1.25rem;
+}
+.sample-panel {
+  padding-top: 1.25rem;
+  font-family: var(--font-serif);
+}
+.sample-text {
+  margin: 0 0 1.25rem;
+  font-size: 1.0625rem;
+  line-height: 1.65;
+  color: var(--color-ink);
+}
+.sample-panel .takeaway {
+  margin: 0;
+  font-size: 1.0625rem;
+}
+.sample-lines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  font-size: 1.0625rem;
+  line-height: 1.5;
+  color: var(--color-ink);
+}
+.sample-lines li {
+  display: grid;
+  grid-template-columns: 2.75rem minmax(0, 1fr);
+  gap: var(--space-xs);
+}
+.sample-time {
+  font-family: var(--font-ui);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.95;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- sections ---- */
+.landing-block {
+  margin-top: var(--space-xl);
+  /* "See how it works" jumps here. Below 32rem the page scrolls under a
+     sticky nav, so the target stops below it rather than behind it. */
+  scroll-margin-top: 5.5rem;
+}
+.landing-h2 {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: clamp(1.875rem, 1.6rem + 1vw, 2.375rem);
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+}
+
+.landing-steps {
+  margin: var(--space-md) 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-sm);
+}
+.landing-step {
+  min-width: 0;
+  padding: 1.5rem;
+  background: var(--color-surface);
+  border: var(--rule-w) solid var(--color-rule);
+  border-radius: var(--radius-card);
+}
+.landing-step-num {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--color-accent);
+  font-variant-numeric: tabular-nums;
+}
+.landing-step-title {
+  margin: var(--space-xs) 0 var(--space-2xs);
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: 1.625rem;
+  line-height: 1.2;
+  color: var(--color-ink);
+}
+.landing-step-text {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--color-ink-2);
+}
+
+/* "What you get": the intake's tint panel at landing scale. Rows reuse the
+   intake's .wyg-row and .chip, so the two pages say it the same way. */
+.landing-wyg {
+  padding: 1.5rem 1.25rem;
+  border-radius: var(--radius-card);
+  background: var(--color-tint);
+}
+.landing-wyg-list {
+  margin: var(--space-md) 0 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-sm) var(--space-lg);
+}
+.landing-wyg-list .wyg-row {
+  grid-template-columns: 6rem minmax(0, 1fr);
+  align-items: baseline;
+}
+.landing-wyg-list dd {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--color-ink);
+}
+.landing-wyg-foot {
+  margin: var(--space-md) 0 0;
+  padding-top: var(--space-md);
+  border-top: var(--rule-w) solid var(--color-border-strong);
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  color: var(--color-ink-2);
+  text-wrap: pretty;
+}
+
+/* The closing band: near-black in light mode, raised tint in dark. */
+.landing-band {
+  margin-top: var(--space-xl);
+  padding: 1.75rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-md);
+  border-radius: var(--radius-card);
+  background: var(--color-band);
+  color: var(--color-band-ink);
+}
+.landing-band-title {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: clamp(1.875rem, 1.6rem + 1vw, 2.375rem);
+  line-height: 1.15;
+  color: var(--color-band-ink);
+}
+
+/* ---- wider ---- */
+@media (min-width: 48rem) {
+  .landing {
+    padding-block: var(--space-xl) 4rem;
+  }
+  .landing-steps {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .landing-wyg {
+    padding: 2.5rem 2.75rem;
+  }
+  .landing-wyg-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .landing-band {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 2.25rem 3rem;
+  }
+  .landing-block {
+    margin-top: 4.5rem;
+  }
+  .landing-wyg,
+  .landing-band {
+    margin-top: var(--space-xl);
+  }
+}
+
+@media (min-width: 60rem) {
+  .landing {
+    padding-top: 5rem;
+  }
+  .landing-hero {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 30.5rem);
+    gap: 4rem;
+  }
+}
+
+/* Desktop: the hero fills the first screen, so "How it works" starts below
+   the fold instead of peeking in, cut off, above the footer. The landing
+   section is the scroller between the fixed nav and footer; as a size
+   container, 100cqb is exactly the visible band, with no nav or footer height
+   subtracted from 100dvh. The grid's one row stretches to that height and
+   align-items centres the intro and card in it. Short windows (under 40rem
+   tall) keep the natural height, so the CTAs never get pushed off-screen. */
+@media (min-width: 60rem) and (min-height: 40rem) {
+  .shell > main.view-scroll[data-view="landing"] {
+    container-type: size;
+  }
+  .landing {
+    padding-top: 0;
+  }
+  .landing-hero {
+    min-height: 100cqb;
+  }
+  /* "How it works" is the second screen: "See how it works" lands it exactly
+     on the band, with the heading and steps centred in it, and "What you get"
+     starting below the fold rather than cut off by the footer. */
+  .landing > #how {
+    min-height: 100cqb;
+    margin-top: 0;
+    scroll-margin-top: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+}

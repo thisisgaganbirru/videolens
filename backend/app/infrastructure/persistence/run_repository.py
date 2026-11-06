@@ -1,10 +1,17 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from redis.asyncio import Redis
 
-from ...domain.entities import AnalysisCompleteness, Run, RunStatus, SourceMetadata, VideoAnalysis
+from ...domain.entities import (
+    AnalysisCompleteness,
+    MediaVisuals,
+    Run,
+    RunStatus,
+    SourceMetadata,
+    VideoAnalysis,
+)
 from ..config import Settings
 
 # Cap on how many run_ids the per-owner history index retains, independent of
@@ -15,7 +22,15 @@ _HISTORY_INDEX_CAP = 50
 
 class RunStore:
     """RunRepository adapter: Redis-backed when a queue is configured
-    (distributed mode), in-process dict otherwise (local dev)."""
+    (distributed mode), in-process dict otherwise (local dev).
+
+    Retention is `RUN_TTL_SECONDS` (1 hour by default): the browser keeps
+    History in IndexedDB now, so the server only holds a run long enough to
+    deliver it. Every write re-arms the TTL, so a run that finishes late still
+    gets the full window after it reaches complete/failed; those two writes
+    also re-arm the owner's history index so `GET /api/runs` keeps listing it.
+    The in-memory store applies the same window by pruning on write.
+    """
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -46,8 +61,30 @@ class RunStore:
             return
         async with self._lock:
             self._memory[run.run_id] = run
+            self._prune_memory()
 
-    async def create(self, run_id: str, owner_id: str) -> Run:
+    def _prune_memory(self) -> None:
+        # Same retention as Redis's `ex=`: measured from the last write.
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=self._settings.run_ttl_seconds)
+        expired = [run_id for run_id, run in self._memory.items() if run.updated_at < cutoff]
+        for run_id in expired:
+            del self._memory[run_id]
+
+    async def _refresh_owner_index(self, owner_id: str) -> None:
+        if self._settings.queue_enabled:
+            await self._client().expire(
+                self._owner_index_key(owner_id), self._settings.run_ttl_seconds
+            )
+
+    async def create(
+        self,
+        run_id: str,
+        owner_id: str,
+        *,
+        source_kind: str | None = None,
+        platform: str | None = None,
+        duration_seconds: float | None = None,
+    ) -> Run:
         now = datetime.now(timezone.utc)
         run = Run(
             run_id=run_id,
@@ -55,6 +92,9 @@ class RunStore:
             status=RunStatus.QUEUED,
             created_at=now,
             updated_at=now,
+            source_kind=source_kind,
+            platform=platform,
+            duration_seconds=duration_seconds,
         )
         await self._write(run)
         if self._settings.queue_enabled:
@@ -98,11 +138,13 @@ class RunStore:
         result: VideoAnalysis | None = None,
         completeness: AnalysisCompleteness | None = None,
         source_metadata: SourceMetadata | None = None,
+        duration_seconds: float | None = None,
+        visuals: MediaVisuals | None = None,
         error: str | None = None,
-    ) -> None:
+    ) -> Run | None:
         run = await self.get(run_id)
         if run is None:
-            return
+            return None
         if status is not None:
             run.status = status
         if stage is not None:
@@ -113,10 +155,19 @@ class RunStore:
             run.completeness = completeness
         if source_metadata is not None:
             run.source_metadata = source_metadata
+        if duration_seconds is not None:
+            run.duration_seconds = duration_seconds
+        if visuals is not None:
+            if visuals.thumbnail is not None:
+                run.thumbnail = visuals.thumbnail
+            if visuals.width is not None and visuals.height is not None:
+                run.width = visuals.width
+                run.height = visuals.height
         if error is not None:
             run.error = error
         run.updated_at = datetime.now(timezone.utc)
         await self._write(run)
+        return run
 
     async def set_status(self, run_id: str, status: RunStatus) -> None:
         await self._update(run_id, status=status)
@@ -130,15 +181,25 @@ class RunStore:
         result: VideoAnalysis,
         completeness: AnalysisCompleteness = AnalysisCompleteness.FULL,
     ) -> None:
-        await self._update(
+        run = await self._update(
             run_id, status=RunStatus.COMPLETE, result=result, completeness=completeness
         )
+        if run is not None:
+            await self._refresh_owner_index(run.owner_id)
 
     async def set_source_metadata(self, run_id: str, metadata: SourceMetadata) -> None:
         await self._update(run_id, source_metadata=metadata)
 
+    async def set_duration(self, run_id: str, duration_seconds: float) -> None:
+        await self._update(run_id, duration_seconds=duration_seconds)
+
+    async def set_visuals(self, run_id: str, visuals: MediaVisuals) -> None:
+        await self._update(run_id, visuals=visuals)
+
     async def set_error(self, run_id: str, error: str) -> None:
-        await self._update(run_id, status=RunStatus.FAILED, error=error)
+        run = await self._update(run_id, status=RunStatus.FAILED, error=error)
+        if run is not None:
+            await self._refresh_owner_index(run.owner_id)
 
     async def ping(self) -> bool:
         if not self._settings.queue_enabled:

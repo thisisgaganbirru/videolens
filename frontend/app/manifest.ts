@@ -7,10 +7,21 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "VideoLens AI",
     short_name: "VideoLens",
     description: "Turn short media into transcripts, timelines, summaries, and notes.",
-    start_url: "/",
+    /* Phase 5c. `id` is pinned to "/" because that is the id every existing
+       install already has: the old manifest had no `id`, and a browser then
+       uses `start_url` ("/") as the app's identity. Keeping it means a
+       changed `start_url` updates those installs in place instead of turning
+       them into a second, different app. `start_url` now opens the tool
+       directly; `scope` stays the whole origin so the landing page, the legal
+       pages and /offline are all inside the installed app. */
+    id: "/",
+    start_url: "/app",
+    scope: "/",
     display: "standalone",
-    background_color: "#0b0d0c",
-    theme_color: "#0b0d0c",
+    // The light `--color-paper`. Light is the first-run theme, so the splash
+    // and the install-time chrome match the page that then paints.
+    background_color: "#F6F4EE",
+    theme_color: "#F6F4EE",
     orientation: "portrait-primary",
     icons: [
       {
@@ -32,8 +43,12 @@ export default function manifest(): MetadataRoute.Manifest {
         purpose: "maskable",
       },
     ],
+    shortcuts: [
+      { name: "Analyze", short_name: "Analyze", url: "/app" },
+      { name: "History", short_name: "History", url: "/app?view=history" },
+    ],
     share_target: {
-      action: "/?share-target=1",
+      action: "/app?share-target=1",
       method: "GET",
       enctype: "application/x-www-form-urlencoded",
       params: {
