@@ -78,12 +78,17 @@ jobs:
       backend: ${{ needs.changes.outputs.backend == 'true' }}
       frontend: ${{ needs.changes.outputs.frontend == 'true' }}
 
-  # Gate only: proves the Capacitor sync and Gradle build still work, then
-  # discards the APK. Releases are built and published from main.
+  # Gate plus a testing build: proves the Capacitor sync and Gradle build
+  # still work, and keeps the APK as a 14-day workflow artifact pointed at the
+  # dev backend, with the `.dev` application id so it installs beside the
+  # production app. Never a release; releases are published from main only.
   android:
     needs: changes
     if: needs.changes.outputs.frontend == 'true'
     uses: ./.github/workflows/reusable-android-checks.yml
+    with:
+      dev_artifact: true
+      api_base_url: https://videolens-backend-dev.up.railway.app
 
   security:
     needs: changes
