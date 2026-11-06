@@ -337,6 +337,42 @@ the document-start script lands before the first paint on a cold launch (no
 jump), a live font change with a result open, and the run 15 measurements
 re-taken.
 
+## Dev APK beside production (`.dev` suffix, 2026-11-05)
+
+`frontend/android/app/build.gradle` declares a `debug { }` build type that,
+only when Gradle gets `-PdevBuild=true`, adds `applicationIdSuffix ".dev"` and
+`versionNameSuffix "-dev"`. The dev lane (`reusable-android-checks.yml` with
+`dev_artifact`, see `../container-workflows.md`) passes it, so its APK is
+`ai.videolens.app.dev` / `<version>-dev` and installs **beside** the production
+`ai.videolens.app` instead of over it. Every other build (main release, local
+`./gradlew assembleDebug`) omits the property and is unchanged.
+
+- Signing is unaffected: an explicit `debug` block configures AGP's existing
+  debug type, which keeps `signingConfigs.debug` (the checked-in
+  `debug.keystore`). Verified with `apksigner`: both APKs carry the same cert.
+- Package-id dependents follow automatically: the FileProvider authority is
+  `${applicationId}.fileprovider` (becomes `ai.videolens.app.dev.fileprovider`),
+  the Java `namespace` / `R` package stays `ai.videolens.app`, and
+  `capacitor.config.ts` `appId` is only read by `cap sync`, not at runtime.
+  There are no deep-link or custom-scheme intent filters (only LAUNCHER and
+  `SEND text/plain`). `strings.xml` `package_name` / `custom_url_scheme` are
+  unused Capacitor template strings.
+- This update check compares `versionCode` only, so the `-dev` versionName
+  does not affect it. The dev app still asks the dev backend's
+  `/api/releases`; if that names a newer production build, the prompt links
+  to an APK that installs as the *separate* production app rather than
+  updating the dev one. That is harmless, but worth knowing in QA.
+- Both apps show the same launcher label, "VideoLens AI". A distinct dev label
+  would need a `src/debug` string override or a `resValue` (which clashes with
+  `strings.xml`); not done.
+- The APK file name (`videolens-ai-v<appVersionName>-…-debug.apk`) uses the
+  unsuffixed version, so local dev and production-style debug builds overwrite
+  each other in `app/build/outputs/apk/debug/`. CI is unaffected: it globs
+  `*.apk` and the artifact name carries `dev`.
+
+App version is **2.2.0** (`frontend/package.json`, which `build.gradle` reads
+as `versionName`).
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported UpdateBanner; added shrink-0 so it cannot compress the measured viewport frame
@@ -355,3 +391,4 @@ re-taken.
 - 2026-11-02 · frontend agent (refinement 14) · system font scale now reaches the page as the root font-size (FontScalePlugin: document-start script + pre-paint head script, live via onConfigurationChanged), text zoom pinned to 100; R11 setTextZoom explanation marked superseded; text-zoom fallback for WebViews without DOCUMENT_START_SCRIPT
 - 2026-11-02 · android-66 (device QA) · verified refinement 14 on the bundled APK (run 16 in docs/qa/android-app-test-cases.md): document-start script active on WebView 124 (no fallback), root font-size 16–32px with text zoom at 100, no cold-launch size jump at 1.5/2.0, live change and reload on /terms keep the new scale; the "Pinch zoom … nothing is lost" claim is not borne out statically: Capacitor's setBuiltInZoomControls follows zoomEnabled (default false), and a real pinch couldn't be run on the emulator
 - 2026-11-02 · frontend (refinement 15) · corrected the pinch-zoom note: Capacitor's Bridge sets setBuiltInZoomControls(zoomEnabled), default false and unset here, so pinch zoom never existed in the app and R14 lost nothing; zoom left off (open owner question); no behaviour change
+- 2026-11-05 · frontend (dev-apk suffix) · added the `debug` build type with the `-PdevBuild` `.dev` applicationId / `-dev` versionName suffix (dev APK installs beside production), bumped the app to 2.2.0, documented the package-id dependents checked
