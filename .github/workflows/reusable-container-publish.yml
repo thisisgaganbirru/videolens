@@ -41,6 +41,8 @@ jobs:
     name: ${{ matrix.service }} / ${{ inputs.environment }}
     environment: ${{ inputs.environment }}
     runs-on: ubuntu-latest
+    # arm64 is built under QEMU, so this is the slowest job in the repository.
+    timeout-minutes: 30
     env:
       API_BASE_URL: ${{ inputs.api_base_url || vars.PRODUCTION_API_BASE_URL }}
     strategy:

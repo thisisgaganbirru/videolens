@@ -58,6 +58,9 @@ jobs:
   android:
     name: Android
     runs-on: ubuntu-latest
+    # Generous: green runs take well under 10 minutes. The cap exists so a hung
+    # Gradle daemon costs 25 minutes, not GitHub's default 360.
+    timeout-minutes: 25
     outputs:
       version_name: ${{ steps.version.outputs.name }}
       version_sha: ${{ steps.version.outputs.sha }}

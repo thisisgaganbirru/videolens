@@ -31,7 +31,7 @@ promotion PR, push to `main`), built its images three times, and published a
 
 | Event | Runs | Does not run, and why |
 |---|---|---|
-| PR into `dev` | `changes`, then only the touched parts: backend and/or frontend checks, Android if `frontend/` changed, advisory scan of the touched images; `required` aggregates | — |
+| PR into `dev` | `changes`, then only the touched parts: backend and/or frontend checks, Android if `frontend/` changed, advisory scan of the touched images, `lint-workflows` (actionlint) if `.github/` changed; `required` aggregates | — |
 | Push to `dev` | nothing | The PR just tested this exact tree (requires "up to date before merging"). Railway deploys. |
 | PR into `main` (promotion, Dependabot) | full application checks, **enforced** scan of both images; `required` aggregates | Android: `dev`'s PRs built this tree, and the push builds it again with the production URL. |
 | Push to `main` | `publish` (build once, scan, promote), `android` (APK with the production URL), `release` | Application checks: the promotion PR tested this tree. |
@@ -65,6 +65,21 @@ on `dev` and on `main`, not the individual jobs: the `dev` lane skips jobs on
 purpose, and a required check that never reports leaves a PR waiting forever.
 The `dev` gate treats `skipped` as fine; the production gate demands every job
 `success`, since nothing there is path-filtered.
+
+**Workflow lint.** `lint-workflows` on the dev lane runs
+[actionlint](https://github.com/rhysd/actionlint) (the `rhysd/actionlint`
+image, SHA-pinned, which bundles shellcheck) over `.github/` whenever a PR
+touches it. A broken workflow file otherwise surfaces only when it runs, and
+for `production-environment.yml` that is the promotion into `main`. Findings
+are fixed, not suppressed; the one inline `# shellcheck disable=` (SC2016 in
+the nightly issue script) carries its reason beside it.
+
+**Timeouts.** Every job carries `timeout-minutes`, so a hung step costs that
+much and not GitHub's default of 360 minutes: 5 for `changes`, `required`,
+`lint-workflows` and the nightly `issue`; 15 for `backend` and `frontend`; 20
+for `scan`; 25 for `android`; 30 for `publish` (arm64 under QEMU); 10 for
+`release`. Green runs take 2 to 5 minutes end to end, so these are generous.
+Reusable-workflow jobs take the key inside the reusable file, not the caller.
 
 **Shared setup.** `.github/actions/setup-backend` (Python from
 `.python-version`, pip cache, hashed install), `setup-frontend` (Node from
@@ -384,9 +399,9 @@ Each runtime is declared in exactly **two** places, not eight:
 | Runtime | Declaration | Holds |
 |---|---|---|
 | Node | `/.nvmrc` | the major (`24`) |
-| Node | `frontend/Dockerfile` `ARG NODE_IMAGE` | `node:24-alpine` + digest |
+| Node | `frontend/Dockerfile` `FROM node:... AS base` | `node:24-alpine` + digest |
 | Python | `/.python-version` | the major (`3.13`) |
-| Python | `backend/Dockerfile` `ARG PYTHON_IMAGE` | `python:3.13-slim` + digest |
+| Python | `backend/Dockerfile` `FROM python:... AS base` | `python:3.13-slim` + digest |
 
 Everything else reads from those. The workflows carry no version literal at
 all: the composite actions `.github/actions/setup-backend` (`python-version-file:
@@ -396,9 +411,14 @@ Both inputs were verified present on the exact pinned action SHAs
 (`actions/setup-node@49933ea5`; `actions/setup-python@5fda3b95` v7.0.0,
 re-checked against that tag's `action.yml` on 2026-10-29) — if you ever
 bump those pins, re-check, and never bump an action version just to get an
-input. Inside the Dockerfiles a single global `ARG` before the first `FROM`
-feeds every stage (`FROM ${NODE_IMAGE}` three times, `FROM ${PYTHON_IMAGE}`
-twice), so a digest bump is a one-line edit.
+input. Inside the Dockerfiles the base image appears once, as a literal
+digest-pinned `FROM image:tag@sha256:... AS base` stage that every other stage
+inherits (`FROM base AS deps|builder|runner`, `FROM base AS wheels|runtime`),
+so a digest bump is still a one-line edit, and because the literal sits on the
+`FROM` line Dependabot's docker ecosystem sees it (see "Dependabot coverage"
+below). From 2026-08-15 to 2026-11-06 the same thing was done with a global
+`ARG` (`FROM ${PYTHON_IMAGE}`), which Dependabot does not resolve; the
+restructure is what made the bumps automatic again.
 
 Bonus: `.nvmrc` and `.python-version` are the same files `nvm` and `pyenv`
 read, so a developer's local runtime and CI can no longer silently disagree.
@@ -420,8 +440,8 @@ one place — and neither can be:
 
 Because the major is necessarily written twice, CI enforces that the two
 agree. Two shell steps in `reusable-application-checks.yml` (backend job and
-frontend job) `sed` the major out of the `ARG` line and compare it against the
-version file, failing the build on mismatch. A few lines in an existing job,
+frontend job) `sed` the major out of the `FROM python:` / `FROM node:` line of
+the `base` stage and compare it against the version file, failing the build on mismatch. A few lines in an existing job,
 deliberately not a new workflow.
 
 The Python check covers a **third** copy of the minor version:
@@ -452,23 +472,28 @@ Resolve digests from the registry, never from documentation or memory. A
 useful check on the method: resolve the tag you are replacing at the same
 time and confirm it returns the digest already pinned in the file.
 
-#### What this costs: Dependabot
+#### Dependabot coverage
 
 Dependabot's Dockerfile parser matches literal `FROM image:tag@sha256:...`
-references, and generally cannot resolve `FROM ${NODE_IMAGE}`. Moving the
-literal onto an `ARG` line therefore probably forfeits automated digest-bump
-PRs for `backend/Dockerfile` and `frontend/Dockerfile`. That trade was
-accepted deliberately: upgrades here are meant to be manual.
+references and nothing else: it does not resolve an `ARG` default. The
+`/backend` and `/frontend` docker entries in `.github/dependabot.yml` therefore
+only work while the digest sits on the `FROM` line, which is why the base is
+declared as `FROM ... AS base` and inherited rather than put behind an `ARG`.
+Digest bumps within the pinned tag are automatic again; majors stay manual.
 
-What is **not** lost — the `/` docker entry still covers `docker-compose.yml`,
-where `redis`, `minio/minio`, and `minio/mc` remain literal digest pins and
-keep getting bumped. The `github-actions`, `npm`, and `pip` ecosystems are
-untouched.
+This was learned the hard way. From 2026-08-15 the base lived behind
+`FROM ${PYTHON_IMAGE}` / `FROM ${NODE_IMAGE}`, the doc at the time hedged
+that Dependabot "may or may not" resolve it, and in practice it never opened a
+single base-image PR. The `python:3.13-slim` digest stayed on CPython 3.13.16
+after 3.13.18 shipped with a fix for CVE-2026-115557 (Critical), and the gap
+only showed up when the old `main` workflow's scan went red on Dependabot's
+own pip PRs (run 41323927142). The 2026-11-06 hardening PR moved the digest to
+3.13.18, bumped `pyasn1` 0.6.4 -> 0.6.5 (four Highs) and `pyjwt` 2.14.0 ->
+2.15.1 with it, and restructured both Dockerfiles so the next such digest
+arrives as a weekly PR instead.
 
-The `/backend` and `/frontend` docker entries are kept rather than deleted, so
-that coverage resumes automatically if anyone reverts to a literal `FROM`.
-The practical consequence: **a quiet Dependabot is no longer evidence that the
-application base images are current.** Check them by hand when bumping.
+The `/` docker-compose entry still covers `docker-compose.yml` (`redis`,
+`minio/minio`, `minio/mc`); `github-actions`, `npm` and `pip` are untouched.
 
 ## Dev and production hosting
 
@@ -717,3 +742,4 @@ jobs.
 - 2026-10-29 · claude (session ccr-ee9ca9d3) · moved the frontend `NODE_IMAGE` digest to Node 24.22.2 for CVE-2026-111497 (KEV)
 - 2026-10-29 · claude (session ccr-ee9ca9d3) · CI redesign: three independent lanes (dev PR-only and path-filtered, production with enforced security, nightly advisory scan), build-once/scan/promote publish, `required` aggregate checks, composite setup actions; dropped the `dev` GHCR publish and the duplicate push re-runs
 - 2026-10-29 · claude (session ccr-ee9ca9d3) · bumped checkout v7.0.1, setup-buildx v4.3.0, setup-java v6.0.0, download-artifact v8.0.1, setup-python v7.0.0 (inputs re-verified per tag); Dependabot now targets `dev` with grouped updates and a Tailwind-major ignore
+- 2026-11-06 · claude (ci-hardening session) · CI hardening: Python base to 3.13.18 (CVE-2026-115557), `pyasn1` 0.6.5 / `pyjwt` 2.15.1 in the hashed lock; both Dockerfiles restructured to a literal `FROM ... AS base` so Dependabot sees the digest (drift checks re-pointed at the FROM line); `timeout-minutes` on every job; `lint-workflows` (actionlint, SHA-pinned image) on the dev lane; stale `reusable-container-checks.yml` references fixed

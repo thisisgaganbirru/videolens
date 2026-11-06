@@ -51,6 +51,7 @@ jobs:
     if: always() && github.event_name == 'pull_request'
     needs: [application, security]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Application checks and the security scan passed
         env:
@@ -98,6 +99,7 @@ jobs:
     # images for the same commit passed the enforced security scan.
     needs: [android, publish]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # The only job in this repository holding contents: write. Keep it that
     # way: everything else, including the Android build itself, is read-only.
     permissions:
