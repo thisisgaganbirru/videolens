@@ -51,6 +51,7 @@ jobs:
     if: always() && github.event_name == 'pull_request'
     needs: [application, security]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Application checks and the security scan passed
         env:
@@ -98,6 +99,7 @@ jobs:
     # images for the same commit passed the enforced security scan.
     needs: [android, publish]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # The only job in this repository holding contents: write. Keep it that
     # way: everything else, including the Android build itself, is read-only.
     permissions:
@@ -110,12 +112,12 @@ jobs:
       RELEASE_TAG: ${{ needs.android.outputs.release_tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.android.outputs.artifact_name }}
           path: release-assets
       - name: Publish release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           # Pins the tag to the exact commit the APK was built from rather than

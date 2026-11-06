@@ -11,29 +11,41 @@ version: 2
 # ungrouped (npm and pip) so a breaking upgrade arrives as its own reviewable PR.
 
 updates:
-  # Docker ecosystem coverage is NOT uniform across these three directories.
   # Dependabot's Dockerfile parser matches literal `FROM image:tag@sha256:...`
-  # references. Both application Dockerfiles now declare their base image once,
-  # through a global `ARG` (`FROM ${PYTHON_IMAGE}` / `FROM ${NODE_IMAGE}`), so
-  # the literal no longer sits on the FROM line.
+  # references only. Both application Dockerfiles declare their base image
+  # exactly once in that shape (`FROM python:3.13-slim@sha256:... AS base`,
+  # `FROM node:24-alpine@sha256:... AS base`) and every other stage inherits it
+  # with `FROM base`, so these two entries propose digest bumps within the
+  # pinned tag. Between 2026-08 and 2026-11 the base sat behind a global `ARG`
+  # (`FROM ${PYTHON_IMAGE}`), which the parser does not resolve; no bump PR was
+  # ever opened and a Critical in CPython 3.13.16 went unnoticed until a scan
+  # went red. Keep the literal on the FROM line.
   #
-  # These two entries are kept deliberately rather than deleted:
-  #   - if Dependabot does resolve an ARG default, coverage continues unchanged;
-  #   - if it does not, they are inert, and they resume working the moment
-  #     anyone reverts to a literal FROM without needing to remember this file.
-  # Either way the runtime majors are upgraded manually and deliberately — see
-  # docs/container-workflows.md, "Runtime versions". Do not treat a silent
-  # Dependabot as evidence the base images are current.
+  # Digest bumps stay inside the tag. The runtime majors are upgraded manually
+  # and deliberately — see docs/container-workflows.md, "Runtime versions".
   - package-ecosystem: docker
     directory: /backend
     target-branch: dev
     schedule:
       interval: weekly
+    ignore:
+      # Runtime majors are a deliberate, manual upgrade (see "Runtime versions"
+      # in docs/container-workflows.md): /.python-version pins the major, the
+      # drift check in reusable-application-checks.yml fails any Dockerfile
+      # that disagrees, and a Dependabot PR to a new major would simply go red.
+      - dependency-name: python
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: docker
     directory: /frontend
     target-branch: dev
     schedule:
       interval: weekly
+    ignore:
+      # Same policy as the backend entry: newest LTS major only, pinned in
+      # /.nvmrc. Node's odd majors (25, 27, ...) are never LTS, and even an LTS
+      # major is upgraded by hand. Closed #93 (24 -> 25) is why this exists.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
   # `docker-compose`, not `docker`. The intent has always been the literal
   # digests docker-compose.yml pins for redis, minio/minio and minio/mc - but
   # the `docker` ecosystem scans Dockerfiles and Kubernetes YAML, not compose
