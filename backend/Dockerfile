@@ -1,16 +1,21 @@
 # syntax=docker/dockerfile:1
 # check=error=true
 
-# Single source of truth for the Python base image across both stages below.
+# The base image is declared once, on the literal FROM line below, and every
+# other stage inherits it with `FROM base`. It has to be a literal
+# `image:tag@sha256:...` on a FROM line, not an ARG default: Dependabot's docker
+# parser only matches that shape, so the digest gets a weekly bump PR. With the
+# base behind an ARG (`FROM ${PYTHON_IMAGE}`, until 2026-11) it never did, and
+# a Critical in CPython 3.13.16 sat unnoticed until a scan went red.
 # Pin the newest supported major, never `latest`. The major must match
-# /.python-version — CI fails the build if they drift
+# /.python-version: CI fails the build if they drift
 # (reusable-application-checks.yml), and that check also covers the ensurepip
 # path near the bottom of this file, which hardcodes the same minor. The digest
-# has to be a literal here and cannot move into .python-version: it is a content
-# hash, not something derivable from a version string.
-ARG PYTHON_IMAGE=python:3.13-slim@sha256:bb2988715db2cf7ace7b53f38f3cffbef7c7046a656bee66245eb0ed386e2e81
+# cannot move into .python-version: it is a content hash, not something
+# derivable from a version string.
+FROM python:3.13-slim@sha256:09a17cad02668ae61ece136b4fd36ac3849e14f670ebedb637ea3e15580525bc AS base
 
-FROM ${PYTHON_IMAGE} AS wheels
+FROM base AS wheels
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_COMPILE=1
@@ -19,7 +24,7 @@ WORKDIR /build
 COPY requirements.txt ./
 RUN python -m pip wheel --require-hashes --wheel-dir=/wheels -r requirements.txt
 
-FROM ${PYTHON_IMAGE} AS runtime
+FROM base AS runtime
 
 LABEL org.opencontainers.image.title="VideoLens backend" \
       org.opencontainers.image.description="VideoLens API and asynchronous media-analysis worker" \
@@ -40,7 +45,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 # window without unpinning anything: the base digest still fixes the starting
 # point, this only pulls forward packages Debian has already fixed.
 # CI rebuilds this whole `runtime` stage on every build (`no-cache-filters` in
-# reusable-container-checks.yml and reusable-container-publish.yml), because a
+# reusable-security-scan.yml and reusable-container-publish.yml), because a
 # cached copy of this layer would never pick up a new fix. Renaming the stage
 # means updating both workflows.
 RUN apt-get update \
