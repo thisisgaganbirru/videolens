@@ -28,11 +28,24 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    ignore:
+      # Runtime majors are a deliberate, manual upgrade (see "Runtime versions"
+      # in docs/container-workflows.md): /.python-version pins the major, the
+      # drift check in reusable-application-checks.yml fails any Dockerfile
+      # that disagrees, and a Dependabot PR to a new major would simply go red.
+      - dependency-name: python
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: docker
     directory: /frontend
     target-branch: dev
     schedule:
       interval: weekly
+    ignore:
+      # Same policy as the backend entry: newest LTS major only, pinned in
+      # /.nvmrc. Node's odd majors (25, 27, ...) are never LTS, and even an LTS
+      # major is upgraded by hand. Closed #93 (24 -> 25) is why this exists.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
   # `docker-compose`, not `docker`. The intent has always been the literal
   # digests docker-compose.yml pins for redis, minio/minio and minio/mc - but
   # the `docker` ecosystem scans Dockerfiles and Kubernetes YAML, not compose
