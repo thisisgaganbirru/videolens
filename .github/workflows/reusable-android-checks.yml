@@ -1,8 +1,10 @@
 name: Reusable Android checks
 
 # Single definition of the Android build. Called two ways:
-#   development-environment.yml -> PRs into dev that touch frontend/, as a
-#     gate: upload_apk false, the APK is discarded.
+#   development-environment.yml -> PRs into dev that touch frontend/:
+#     dev_artifact true, the APK is built against the dev backend with the
+#     `.dev` application id suffix and kept as a short-lived workflow artifact
+#     for testing on a device. Never a release.
 #   production-environment.yml  -> push to main, upload_apk true, then a
 #     separate release job in that workflow consumes the artifact.
 # This workflow never creates a tag or a release; it is capped at contents: read.
@@ -15,12 +17,21 @@ on:
         required: false
         default: false
         type: boolean
+      dev_artifact:
+        description: >-
+          Keep the APK as a workflow artifact for testing (14 days), built
+          with -PdevBuild=true so Gradle applies the `.dev` application id and
+          `-dev` version name suffixes and it installs beside the production
+          app. No version manifest, no release. Mutually exclusive with
+          upload_apk.
+        required: false
+        default: false
+        type: boolean
       api_base_url:
         description: >-
           Backend URL compiled into the APK as NEXT_PUBLIC_API_BASE_URL.
-          Required whenever upload_apk is true, because that APK reaches real
-          devices. The gate-only caller (PRs into dev) omits it: that APK is
-          built to prove it compiles and is then discarded, never installed.
+          Required whenever upload_apk or dev_artifact is true, because that
+          APK reaches real devices.
         required: false
         default: ""
         type: string
@@ -79,16 +90,21 @@ jobs:
         env:
           API_BASE_URL: ${{ inputs.api_base_url }}
           UPLOAD_APK: ${{ inputs.upload_apk }}
+          DEV_ARTIFACT: ${{ inputs.dev_artifact }}
         run: |
+          if [ "$UPLOAD_APK" = "true" ] && [ "$DEV_ARTIFACT" = "true" ]; then
+            echo "upload_apk and dev_artifact are mutually exclusive: a release APK must not carry the .dev suffix." >&2
+            exit 1
+          fi
           # Both failures below are silent at runtime, which is why they are
           # caught here instead: a missing backend URL falls back to
           # http://localhost:8000 (infrastructure/runsGateway.ts) - on a phone
           # that is the phone - and a missing web URL makes updateCheck.ts
           # no-op, so the app can never tell the user a newer build exists.
           # Neither turns CI red on its own; the APK builds perfectly either way.
-          if [ "$UPLOAD_APK" = "true" ]; then
+          if [ "$UPLOAD_APK" = "true" ] || [ "$DEV_ARTIFACT" = "true" ]; then
             test -n "$API_BASE_URL" || {
-              echo "api_base_url is required when upload_apk is true: this APK is published to real devices and must know where the backend lives." >&2
+              echo "api_base_url is required when upload_apk or dev_artifact is true: this APK is installed on real devices and must know where the backend lives." >&2
               exit 1
             }
           fi
@@ -129,11 +145,18 @@ jobs:
             echo "tag=${TAG_PREFIX}${name}-build${code}"
             echo "artifact=videolens-ai-v${name}-code${code}-${sha}-debug"
           } >> "$GITHUB_OUTPUT"
+      # -PdevBuild=true is read by frontend/android/app/build.gradle, which
+      # then adds applicationIdSuffix ".dev" and versionNameSuffix "-dev" to
+      # the debug build type. Without the suffix a dev APK would install OVER
+      # the production app (same signing key), and because versionCode is the
+      # commit count, a PR branch can out-number main and then block the next
+      # production update until the app is uninstalled.
       - run: |
           ./gradlew assembleDebug testDebugUnitTest \
             -PappVersionName=${{ steps.version.outputs.name }} \
             -PappVersionCode=${{ steps.version.outputs.code }} \
-            -PbuildRef=${{ steps.version.outputs.sha }}
+            -PbuildRef=${{ steps.version.outputs.sha }} \
+            ${{ inputs.dev_artifact && '-PdevBuild=true' || '' }}
         working-directory: frontend/android
       - name: Write version manifest
         # Read by the app's in-app update check
@@ -159,3 +182,13 @@ jobs:
             frontend/android/app/build/outputs/apk/debug/version.json
           if-no-files-found: error
           retention-days: 30
+      # The dev/testing APK. Short retention, no manifest, never a release:
+      # it exists so a PR's change can be installed on a phone beside the
+      # production app, nothing more.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: inputs.dev_artifact
+        with:
+          name: videolens-ai-dev-v${{ steps.version.outputs.name }}-code${{ steps.version.outputs.code }}-${{ steps.version.outputs.sha }}
+          path: frontend/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14

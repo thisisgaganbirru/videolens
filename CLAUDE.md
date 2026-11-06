@@ -125,21 +125,28 @@ checked into the repo intentionally (not a secret) so every debug build —
 local or CI — signs with the same identity, letting a freshly downloaded
 APK install as an update over an existing one.
 
-**Do not run the mobile build locally.** The commands above are documented so
-you know what CI does, not so an agent runs them here. `npm run build:mobile`,
-`npm run android:sync`, `cap sync`, and anything under `frontend/android/`
-(`./gradlew assembleDebug`, `testDebugUnitTest`) are **CI's job**. GitHub
-Actions builds the APK on every PR into `dev` as a compile check and discards
-it, and builds and publishes it to Releases on every push to `main`, which is
-where the owner downloads and installs it — a local APK is never the artifact
-anyone uses. Running these here only burns session minutes on a
-gradle build whose output is thrown away.
+**Where APKs come from.** Three places, each for a different purpose:
 
-`.claude/settings.local.json` denies these commands as a backstop, but the
-rule is what governs: if you find yourself wanting to verify an Android
-change, push it and read the CI result instead. If something genuinely cannot
-be checked any other way, stop and ask the owner rather than working around
-the deny.
+- **Production**: every push to `main` builds the APK against the production
+  backend and publishes it to GitHub Releases. That is the only APK anyone
+  installs for real, and the only one the in-app update check offers.
+- **Dev / testing**: every PR into `dev` that touches `frontend/` builds the
+  APK against the dev backend (`videolens-backend-dev.up.railway.app`) and
+  keeps it as a workflow artifact for 14 days (`videolens-ai-dev-v<version>-
+  code<code>-<sha>`), downloadable from the run page. It is built with
+  `-PdevBuild=true`, which gives it the `.dev` application id suffix and a
+  `-dev` version name, so it installs beside the production app rather than
+  over it. Never a release.
+- **Local**: `npm run android:sync`, `cap sync android` and
+  `./gradlew assembleDebug testDebugUnitTest` are allowed on a developer
+  machine for previews and device QA. QA tests the bundled APK on a device or
+  emulator, never live reload against the dev server. A local APK is never
+  shipped or attached anywhere.
+
+**In a cloud session, do not run the mobile build.** There is no device to
+install on, so a Gradle build there only burns minutes on an APK that is
+thrown away; push the change and read the dev lane's Android job instead. If
+something genuinely cannot be checked any other way, stop and ask the owner.
 
 This does **not** restrict the web build — `npm run build`, `npx tsc
 --noEmit`, and `npm run dev` are all fine and are how frontend work gets
@@ -176,7 +183,7 @@ repeats.
 
 | Trigger | Runs |
 |---|---|
-| PR into `dev` | only what the PR touches (path-classified): backend and/or frontend checks, Android if `frontend/` changed, **advisory** security scan |
+| PR into `dev` | only what the PR touches (path-classified): backend and/or frontend checks, Android if `frontend/` changed (dev APK kept as a 14-day artifact), **advisory** security scan |
 | push to `dev` | nothing; the PR tested this tree. Railway deploys |
 | PR into `main` | full application checks, **enforced** security scan |
 | push to `main` | build each image once, scan it (enforced), promote to `latest`; Android APK; release |
@@ -194,8 +201,9 @@ merging" and no direct pushes to `dev`/`main`; these are repository settings,
 not files.
 
 **Releases are published from `main` only**, and the release job waits on the
-security-gated publish. `dev` builds the APK to prove it still compiles and
-then discards it.
+security-gated publish. `dev` builds the APK as a gate and keeps it as a
+short-lived testing artifact with the `.dev` application id; it is never
+released.
 
 The reusables: `reusable-application-checks.yml` (backend compileall +
 unittest discover + import check; frontend `tsc --noEmit` + `build` +
