@@ -44,3 +44,6 @@ mem/
 # previous one instead of Android refusing the install over a mismatched key.
 !frontend/android/debug.keystore
 keystore.properties
+
+# Owner design handoff (boards, screenshots, tokens): local only, kept out of dev
+design/

@@ -9,7 +9,10 @@ pages, free-run banner, thumbnails, landing) are not done; those views render
 with the shared component classes on the new tokens.
 
 Source of truth for the look is the owner's handoff in `design/`
-(`design-handoff.md`, `tokens.css`, `shots/*.png`). This doc records how it was
+(`design-handoff.md`, `tokens.css`, `shots/*.png`). `design/` is local to the
+owner's machine and gitignored (2026-11-06: kept out of `dev`), so the
+`design/...png` boards named across these docs are provenance, not files in the
+repository; this doc and the frontend code are the record. This doc records how it was
 mapped into `frontend/` and every value that had to be decided because the
 handoff did not specify it.
 
@@ -152,3 +155,4 @@ generated one). Nothing is persisted outside this doc and `frontend/app/tokens.c
 - 2026-11-01 · frontend agent (Phase 4) · API key / Releases / Privacy / Terms / Offline built editorially (shared `.view-title`, no new tokens); dark-mode contrast audit of danger and new pairs, computed — all text passes, no token change; no-board pages listed
 - 2026-11-01 · frontend agent (Phase 4, boards) · pages rebuilt to design/phase4-boards/; `.view-title` (and History's title) now clamp(2.25rem, 1.75rem + 1.6vw, 3rem) = 36px phone / 48px at 1280 to match the boards; new `.release-latest` pill reuses accent-strong on accent-soft (already audited both themes); no token change
 - 2026-11-01 · frontend agent (Phase 5c) · added --color-band / --color-band-ink (landing closing band) with computed contrast
+- 2026-11-06 · lead (videolens-ac) · design/ untracked and gitignored before the PR into dev; noted that the boards these docs cite are local-only
