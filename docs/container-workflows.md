@@ -10,33 +10,115 @@ is never reused as a hosted deployment manifest.
 | Scope | Entry point | Runs | Publishes or deploys |
 | --- | --- | --- | --- |
 | Local workspace | `scripts/workspace.ps1` and `docker-compose.yml` | Hardened frontend, API, worker, Redis, and MinIO on loopback/private networks | Nothing external |
-| Pull request | `.github/workflows/pull-request-checks.yml` | Application checks, native container builds/scans, and the Android build/unit tests for PRs targeting `dev` or `main` | Nothing |
-| Dev | `.github/workflows/development-environment.yml` on `dev` | Application checks, container checks, and the Android build/unit tests | Signed amd64/arm64 images tagged `dev` and `sha-<commit>` in GHCR |
-| Production | `.github/workflows/production-environment.yml` on `main` | Application checks, container checks, and the Android build/unit tests | Signed amd64/arm64 images tagged `latest` and `sha-<commit>` in GHCR, plus the debug APK as a GitHub Release |
+| Dev | `.github/workflows/development-environment.yml`, PRs into `dev` only | Only what the PR touches: backend and/or frontend checks, the Android build when `frontend/` changed, and an **advisory** security scan | Nothing. Railway deploys `dev` from the push |
+| Production | `.github/workflows/production-environment.yml`, PRs into `main` and pushes to `main` | PR: full application checks and an **enforced** security scan. Push: build once, scan that image (enforced), promote; Android build | amd64/arm64 images tagged `sha-<commit>` then `latest` in GHCR, plus the debug APK as a GitHub Release |
+| Security | `.github/workflows/security-nightly-scan.yml`, nightly on `main` | Advisory scan of both images | A tracking issue while findings exist, closed after a clean run |
 
 Workflow filenames use lowercase kebab-case. Call-only building blocks follow
 `reusable-<responsibility>.yml`; event-driven entry points follow
 `<scope>-<purpose>.yml`. The environment workflows orchestrate reusable
-application, container, and publication logic without duplication.
+application, security-scan and publication logic without duplication, and the
+setup every job repeats lives in composite actions under `.github/actions/`.
+
+## CI layout (since 2026-10-29)
+
+Three independent lanes. Before this, one change ran the same application,
+container and Android checks **four times** (PR into `dev`, push to `dev`,
+promotion PR, push to `main`), built its images three times, and published a
+`dev` image nothing consumed: roughly 60-65 billed minutes per change.
+
+**Each check runs once, where it decides something.**
+
+| Event | Runs | Does not run, and why |
+|---|---|---|
+| PR into `dev` | `changes`, then only the touched parts: backend and/or frontend checks, Android if `frontend/` changed, advisory scan of the touched images, `lint-workflows` (actionlint) if `.github/` changed; `required` aggregates | — |
+| Push to `dev` | nothing | The PR just tested this exact tree (requires "up to date before merging"). Railway deploys. |
+| PR into `main` (promotion, Dependabot) | full application checks, **enforced** scan of both images; `required` aggregates | Android: `dev`'s PRs built this tree, and the push builds it again with the production URL. |
+| Push to `main` | `publish` (build once, scan, promote), `android` (APK with the production URL), `release` | Application checks: the promotion PR tested this tree. |
+| Nightly 06:17 UTC | advisory scan of `main`, tracking issue | — |
+
+**Security is mandatory for production only.** The scan is one reusable
+(`reusable-security-scan.yml`) with an `enforce` input. `production-environment.yml`
+passes `true` on the promotion PR, and `reusable-container-publish.yml`
+scans the pushed image with the same hard gate. `dev` and the nightly run pass
+`false`: findings appear as a warning, a job-summary note and a
+`security-findings-<service>` artifact, and the job stays **green**.
+
+That green matters more than it looks. Railway's Wait for CI skips a deploy
+while *any* workflow on the commit is red, so an advisory scan that failed would
+silently block the `dev` deploy, and a red nightly run (which attaches to
+`main`'s head) would block production redeploys, including the one a variable
+change triggers. For the same reason the nightly `issue` job is
+`continue-on-error`.
+
+**Build once, scan that image, promote it.** On push to `main`,
+`reusable-container-publish.yml` pushes each multi-platform image under
+`sha-<commit>` only, scans that pushed digest (the runner's linux/amd64 leg),
+and only then copies the index to `latest` with `docker buildx imagetools
+create`. The image behind `latest` is byte-for-byte the scanned one; before,
+the publish job rebuilt an image separate from the one the check job scanned.
+A failed scan leaves an unpromoted `sha-` tag, which nothing pulls.
+
+**Required checks.** Each caller ends in a job named `required` that always
+reports (`if: always()`). Branch protection should require exactly that check
+on `dev` and on `main`, not the individual jobs: the `dev` lane skips jobs on
+purpose, and a required check that never reports leaves a PR waiting forever.
+The `dev` gate treats `skipped` as fine; the production gate demands every job
+`success`, since nothing there is path-filtered.
+
+**Workflow lint.** `lint-workflows` on the dev lane runs
+[actionlint](https://github.com/rhysd/actionlint) (the `rhysd/actionlint`
+image, SHA-pinned, which bundles shellcheck) over `.github/` whenever a PR
+touches it. A broken workflow file otherwise surfaces only when it runs, and
+for `production-environment.yml` that is the promotion into `main`. Findings
+are fixed, not suppressed; the one inline `# shellcheck disable=` (SC2016 in
+the nightly issue script) carries its reason beside it.
+
+**Timeouts.** Every job carries `timeout-minutes`, so a hung step costs that
+much and not GitHub's default of 360 minutes: 5 for `changes`, `required`,
+`lint-workflows` and the nightly `issue`; 15 for `backend` and `frontend`; 20
+for `scan`; 25 for `android`; 30 for `publish` (arm64 under QEMU); 10 for
+`release`. Green runs take 2 to 5 minutes end to end, so these are generous.
+Reusable-workflow jobs take the key inside the reusable file, not the caller.
+
+**Shared setup.** `.github/actions/setup-backend` (Python from
+`.python-version`, pip cache, hashed install), `setup-frontend` (Node from
+`.nvmrc`, npm cache, `npm ci`) and `setup-android` (JDK 21, Gradle cache,
+pinned SDK packages). They stay in this repo: one project does not justify a
+separate actions repo, and an in-repo path cannot drift from the code it builds.
+
+**Repository settings this design relies on** (not files; an administrator
+sets them in GitHub):
+- Branch protection on `dev` and `main`: require the `required` check, require
+  branches to be up to date before merging, and disallow direct pushes. Without
+  "up to date", a push could merge a tree no workflow tested; without blocking
+  direct pushes, a push to `dev` deploys with no checks at all (Railway's Wait
+  for CI treats "no workflow runs" as a pass).
+- The `production` GitHub environment still protects `publish`.
+
+Rough cost per change: one `dev` PR (about 4-10 minutes depending on what it
+touches) plus a share of the promotion (about 10 for the PR, about 15 for the
+push). Promotions batch many changes, so the per-change cost is well under half
+of the old 60-65.
 
 ### Android gating
 
 The Android build exists in exactly one place,
 `.github/workflows/reusable-android-checks.yml` (Capacitor sync, `gradlew
 assembleDebug testDebugUnitTest`). It is capped at `contents: read` and never
-creates a tag or a release. Three callers:
+creates a tag or a release. Two callers:
 
-- `pull-request-checks.yml` — pre-merge gate. Nobody builds Android locally, so
-  this is the only thing that catches a broken Capacitor sync or Gradle build
-  before it lands. It costs roughly 6-10 minutes of extra PR CI wall-clock, in
-  parallel with the application and container jobs.
-- `development-environment.yml` — same gate on `dev`. Builds the APK to prove
-  the Capacitor sync and Gradle build still work, then discards it. Nothing on
-  `dev` reaches a device.
-- `production-environment.yml` — passes `upload_apk: true`, so the reusable
+- `development-environment.yml` — pre-merge gate on PRs into `dev` that touch
+  `frontend/` (which includes `frontend/android/`). Nobody builds Android
+  locally, so this is the only thing that catches a broken Capacitor sync or
+  Gradle build before it lands. The APK is discarded; nothing on `dev`
+  reaches a device.
+- `production-environment.yml` — on push to `main`, passes `upload_apk: true`, so the reusable
   also writes `version.json` and uploads the APK as a workflow artifact. A
   separate `release` job in that workflow (the only job in the repository
-  holding `contents: write`) downloads the artifact and publishes the release.
+  holding `contents: write`) downloads the artifact and publishes the release,
+and since 2026-10-29 it also waits on `publish`, so an APK never ships for a
+commit whose images failed the enforced scan.
 
 #### The APK's backend URL
 
@@ -175,8 +257,10 @@ console has a loopback host port.
   service IDs, and Railway validates the mount's embedded ID against
   whichever service is actually building, so no single static ID in a
   shared Dockerfile can satisfy both — see *Known issues*.
-- Container checks run Dockerfile validation, cached native builds, and fail on
-  fixable high or critical vulnerabilities.
+- The security scan (`reusable-security-scan.yml`) runs Dockerfile validation,
+  cached native builds, and Grype for fixable high or critical vulnerabilities;
+  it fails on them when `enforce` is true (production) and reports them when
+  false (`dev`, nightly).
 - **The final stage is never restored from cache.** Both the check build and
   the publication build pass `no-cache-filters` with the image's last stage
   (`runtime` for backend, `runner` for frontend). That stage holds the
@@ -211,7 +295,11 @@ console has a loopback host port.
   the only build arg is `NEXT_PUBLIC_API_BASE_URL`, which is compiled into
   client-side JS and therefore public by construction.
 - Third-party GitHub Actions are pinned to commit SHAs. Dependabot monitors
-  Docker, Actions, npm, and Python dependency sources.
+  Docker, Actions, npm, and Python dependency sources. Every entry sets
+  `target-branch: dev`, so bumps go through the dev lane like any other change
+  instead of landing on `main` directly, and Actions, npm minor/patch and pip
+  minor/patch are each grouped into one weekly PR. npm and pip majors stay
+  separate PRs; Tailwind majors are ignored (staying on v3 deliberately).
 - Dependabot's Docker ecosystem bumps base-image digests only; it never looks
   inside a `RUN` layer. Package constraints written there (`apk add`, `pip
   install`) must therefore be `>=` security floors, not exact pins — an exact
@@ -222,8 +310,10 @@ console has a loopback host port.
 
 ### The vulnerability gate and its exception list
 
-The gate lives entirely in `reusable-container-checks.yml`:
-`severity-cutoff: high`, `only-fixed: true`, `fail-build: true`. Exceptions
+The gate lives in `reusable-security-scan.yml` and, for the pushed production
+image, in `reusable-container-publish.yml`: `severity-cutoff: high`,
+`only-fixed: true`, `fail-build: true`. Advisory mode does not loosen these; it
+only sets `continue-on-error` on the scan step. Exceptions
 live in the repo-root **`.grype.yaml`**, never in those three settings.
 
 **There are currently no exceptions**: `.grype.yaml` holds `ignore: []`.
@@ -309,20 +399,26 @@ Each runtime is declared in exactly **two** places, not eight:
 | Runtime | Declaration | Holds |
 |---|---|---|
 | Node | `/.nvmrc` | the major (`24`) |
-| Node | `frontend/Dockerfile` `ARG NODE_IMAGE` | `node:24-alpine` + digest |
+| Node | `frontend/Dockerfile` `FROM node:... AS base` | `node:24-alpine` + digest |
 | Python | `/.python-version` | the major (`3.13`) |
-| Python | `backend/Dockerfile` `ARG PYTHON_IMAGE` | `python:3.13-slim` + digest |
+| Python | `backend/Dockerfile` `FROM python:... AS base` | `python:3.13-slim` + digest |
 
 Everything else reads from those. The workflows carry no version literal at
-all: `reusable-application-checks.yml` uses `python-version-file:
-.python-version` and `node-version-file: .nvmrc`, and
-`reusable-android-checks.yml` uses `node-version-file: .nvmrc`. Both inputs
-were verified present on the exact pinned action SHAs
-(`actions/setup-node@49933ea5`, `actions/setup-python@a26af69b`) — if you ever
+all: the composite actions `.github/actions/setup-backend` (`python-version-file:
+.python-version`) and `.github/actions/setup-frontend` (`node-version-file:
+.nvmrc`) read them, and every job that needs a runtime goes through those two.
+Both inputs were verified present on the exact pinned action SHAs
+(`actions/setup-node@49933ea5`; `actions/setup-python@5fda3b95` v7.0.0,
+re-checked against that tag's `action.yml` on 2026-10-29) — if you ever
 bump those pins, re-check, and never bump an action version just to get an
-input. Inside the Dockerfiles a single global `ARG` before the first `FROM`
-feeds every stage (`FROM ${NODE_IMAGE}` three times, `FROM ${PYTHON_IMAGE}`
-twice), so a digest bump is a one-line edit.
+input. Inside the Dockerfiles the base image appears once, as a literal
+digest-pinned `FROM image:tag@sha256:... AS base` stage that every other stage
+inherits (`FROM base AS deps|builder|runner`, `FROM base AS wheels|runtime`),
+so a digest bump is still a one-line edit, and because the literal sits on the
+`FROM` line Dependabot's docker ecosystem sees it (see "Dependabot coverage"
+below). From 2026-08-15 to 2026-11-06 the same thing was done with a global
+`ARG` (`FROM ${PYTHON_IMAGE}`), which Dependabot does not resolve; the
+restructure is what made the bumps automatic again.
 
 Bonus: `.nvmrc` and `.python-version` are the same files `nvm` and `pyenv`
 read, so a developer's local runtime and CI can no longer silently disagree.
@@ -335,7 +431,7 @@ one place — and neither can be:
 1. A digest is a **content hash**. It cannot be derived from a version string,
    so `.nvmrc` (which must stay `nvm`-readable) cannot carry it.
 2. The Docker **build context is the service subdirectory** (`./frontend`,
-   `./backend`) in Compose, `reusable-container-checks.yml`, and
+   `./backend`) in Compose, `reusable-security-scan.yml`, and
    `reusable-container-publish.yml` alike. A repo-root file is not in the
    build context at all, so the Dockerfile could not read it even if the
    format allowed.
@@ -344,8 +440,8 @@ one place — and neither can be:
 
 Because the major is necessarily written twice, CI enforces that the two
 agree. Two shell steps in `reusable-application-checks.yml` (backend job and
-frontend job) `sed` the major out of the `ARG` line and compare it against the
-version file, failing the build on mismatch. A few lines in an existing job,
+frontend job) `sed` the major out of the `FROM python:` / `FROM node:` line of
+the `base` stage and compare it against the version file, failing the build on mismatch. A few lines in an existing job,
 deliberately not a new workflow.
 
 The Python check covers a **third** copy of the minor version:
@@ -376,23 +472,28 @@ Resolve digests from the registry, never from documentation or memory. A
 useful check on the method: resolve the tag you are replacing at the same
 time and confirm it returns the digest already pinned in the file.
 
-#### What this costs: Dependabot
+#### Dependabot coverage
 
 Dependabot's Dockerfile parser matches literal `FROM image:tag@sha256:...`
-references, and generally cannot resolve `FROM ${NODE_IMAGE}`. Moving the
-literal onto an `ARG` line therefore probably forfeits automated digest-bump
-PRs for `backend/Dockerfile` and `frontend/Dockerfile`. That trade was
-accepted deliberately: upgrades here are meant to be manual.
+references and nothing else: it does not resolve an `ARG` default. The
+`/backend` and `/frontend` docker entries in `.github/dependabot.yml` therefore
+only work while the digest sits on the `FROM` line, which is why the base is
+declared as `FROM ... AS base` and inherited rather than put behind an `ARG`.
+Digest bumps within the pinned tag are automatic again; majors stay manual.
 
-What is **not** lost — the `/` docker entry still covers `docker-compose.yml`,
-where `redis`, `minio/minio`, and `minio/mc` remain literal digest pins and
-keep getting bumped. The `github-actions`, `npm`, and `pip` ecosystems are
-untouched.
+This was learned the hard way. From 2026-08-15 the base lived behind
+`FROM ${PYTHON_IMAGE}` / `FROM ${NODE_IMAGE}`, the doc at the time hedged
+that Dependabot "may or may not" resolve it, and in practice it never opened a
+single base-image PR. The `python:3.13-slim` digest stayed on CPython 3.13.16
+after 3.13.18 shipped with a fix for CVE-2026-115557 (Critical), and the gap
+only showed up when the old `main` workflow's scan went red on Dependabot's
+own pip PRs (run 41323927142). The 2026-11-06 hardening PR moved the digest to
+3.13.18, bumped `pyasn1` 0.6.4 -> 0.6.5 (four Highs) and `pyjwt` 2.14.0 ->
+2.15.1 with it, and restructured both Dockerfiles so the next such digest
+arrives as a weekly PR instead.
 
-The `/backend` and `/frontend` docker entries are kept rather than deleted, so
-that coverage resumes automatically if anyone reverts to a literal `FROM`.
-The practical consequence: **a quiet Dependabot is no longer evidence that the
-application base images are current.** Check them by hand when bumping.
+The `/` docker-compose entry still covers `docker-compose.yml` (`redis`,
+`minio/minio`, `minio/mc`); `github-actions`, `npm` and `pip` are untouched.
 
 ## Dev and production hosting
 
@@ -541,7 +642,7 @@ jobs.
   `mem/20260816-grype-cve-exception.md`. Moot while the list is empty;
   revisit if an exception is ever added.
 - **Resolved 2026-10-02: the cached `apt-get upgrade` layer hid OS security
-  fixes.** `reusable-container-checks.yml` built with `cache-from: type=gha`,
+  fixes.** `reusable-container-checks.yml` (now `reusable-security-scan.yml`) built with `cache-from: type=gha`,
   and that `RUN` layer's cache key is the base digest plus the command text.
   Neither changes when Debian publishes a fix, so the layer was restored
   `CACHED` and `apt-get upgrade` never ran again. Observed on PR #64 (run
@@ -639,3 +740,6 @@ jobs.
 - 2026-10-02 · ci-cache agent · stopped the GHA cache restoring the final image stage (`no-cache-filters: runtime`/`runner`) in both `reusable-container-checks.yml` and `reusable-container-publish.yml` so OS-package upgrades always run and the shipped image matches the scanned one; resolved the apt-layer Known issue. Removed the dead `CVE-2026-15308` rule from `.grype.yaml` (now `ignore: []`; Grype DB v6.1.9 NVD range for 3.13 is `< 3.13.15`, image is 3.13.16) and rewrote the gate section as an exception list with that rule's history
 - 2026-10-28 · claude (session ccr-ee9ca9d3) · cleared the 2026-10-28 Grype failures on both images (next 16.4.x, sharp 0.35.5, zlib floor, certifi 2026.10.23) and noted the npm 11 lockfile requirement
 - 2026-10-29 · claude (session ccr-ee9ca9d3) · moved the frontend `NODE_IMAGE` digest to Node 24.22.2 for CVE-2026-111497 (KEV)
+- 2026-10-29 · claude (session ccr-ee9ca9d3) · CI redesign: three independent lanes (dev PR-only and path-filtered, production with enforced security, nightly advisory scan), build-once/scan/promote publish, `required` aggregate checks, composite setup actions; dropped the `dev` GHCR publish and the duplicate push re-runs
+- 2026-10-29 · claude (session ccr-ee9ca9d3) · bumped checkout v7.0.1, setup-buildx v4.3.0, setup-java v6.0.0, download-artifact v8.0.1, setup-python v7.0.0 (inputs re-verified per tag); Dependabot now targets `dev` with grouped updates and a Tailwind-major ignore
+- 2026-11-06 · claude (ci-hardening session) · CI hardening: Python base to 3.13.18 (CVE-2026-115557), `pyasn1` 0.6.5 / `pyjwt` 2.15.1 in the hashed lock; both Dockerfiles restructured to a literal `FROM ... AS base` so Dependabot sees the digest (drift checks re-pointed at the FROM line); `timeout-minutes` on every job; `lint-workflows` (actionlint, SHA-pinned image) on the dev lane; stale `reusable-container-checks.yml` references fixed

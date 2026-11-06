@@ -1,20 +1,24 @@
 # syntax=docker/dockerfile:1
 # check=error=true
 
-# Single source of truth for the Node base image across every stage below.
-# Pin the newest LTS major, never `latest`. The major must match /.nvmrc — CI
+# The base image is declared once, on the literal FROM line below, and every
+# other stage inherits it with `FROM base`. It has to be a literal
+# `image:tag@sha256:...` on a FROM line, not an ARG default: Dependabot's docker
+# parser only matches that shape, so the digest gets a weekly bump PR; behind
+# an ARG (`FROM ${NODE_IMAGE}`, until 2026-11) it never did.
+# Pin the newest LTS major, never `latest`. The major must match /.nvmrc: CI
 # fails the build if they drift (reusable-application-checks.yml). The digest
-# has to be a literal here and cannot move into .nvmrc: it is a content hash,
-# not something derivable from a version string.
-ARG NODE_IMAGE=node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85
+# cannot move into .nvmrc: it is a content hash, not something derivable from
+# a version string.
+FROM node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85 AS base
 
-FROM ${NODE_IMAGE} AS deps
+FROM base AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,id=s/c8f38ea2-9c6a-40fc-ba16-a249b3108561-/root/.npm,target=/root/.npm \
     npm ci
 
-FROM ${NODE_IMAGE} AS builder
+FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -23,7 +27,7 @@ ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL \
     NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
-FROM ${NODE_IMAGE} AS runner
+FROM base AS runner
 
 LABEL org.opencontainers.image.title="VideoLens frontend" \
       org.opencontainers.image.description="VideoLens Next.js web application" \
@@ -37,7 +41,7 @@ ENV HOSTNAME=0.0.0.0 \
     PORT=3000
 
 # CI rebuilds this whole `runner` stage on every build (`no-cache-filters` in
-# reusable-container-checks.yml and reusable-container-publish.yml) so a cached
+# reusable-security-scan.yml and reusable-container-publish.yml) so a cached
 # layer cannot pin openssl below a newer Alpine security fix. Renaming the
 # stage means updating both workflows.
 RUN apk add --no-cache --upgrade 'openssl>=3.5.7-r0' 'zlib>=1.3.2-r1' \

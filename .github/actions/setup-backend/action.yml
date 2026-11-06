@@ -1,0 +1,18 @@
+name: Set up backend
+description: >-
+  Python from /.python-version with the pip cache, then the hashed backend
+  dependencies. Shared by every job that runs backend code, so the interpreter
+  pin and the install flags live in one place.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version-file: .python-version
+        cache: pip
+        cache-dependency-path: backend/requirements.txt
+    - name: Install backend dependencies
+      shell: bash
+      working-directory: backend
+      run: pip install --require-hashes -r requirements.txt
