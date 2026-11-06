@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-from yt_dlp.utils import DownloadError
+from yt_dlp.utils import DownloadError, GeoRestrictedError
 
 from app.domain.errors import MediaValidationError
 from app.infrastructure.config import Settings
@@ -46,6 +46,82 @@ class CookieAndErrorHandlingTests(unittest.TestCase):
 
         self.assertEqual(message, "YouTube is blocking automated downloads from this server.")
         self.assertIn("not a bot", detail)
+
+    BLOCKED = (
+        "The site blocked this download for now - the video itself is fine. Try again "
+        "in a few minutes."
+    )
+
+    def test_mid_download_403_is_a_block_not_a_private_video(self) -> None:
+        # The exact shape seen in device QA on a public 3:33 YouTube video.
+        message, detail = _download_failure(
+            DownloadError("ERROR: unable to download video data: HTTP Error 403: Forbidden")
+        )
+
+        self.assertEqual(message, self.BLOCKED)
+        self.assertNotIn("private", message)
+        self.assertIn("HTTP Error 403", detail)
+
+    def test_rate_limit_is_a_block(self) -> None:
+        for raw in (
+            "ERROR: [youtube] abc: HTTP Error 429: Too Many Requests",
+            "ERROR: [instagram] xyz: Too Many Requests",
+        ):
+            with self.subTest(raw=raw):
+                message, _ = _download_failure(DownloadError(raw))
+                self.assertEqual(message, self.BLOCKED)
+
+    def test_genuine_private_deleted_and_region_cases_keep_their_messages(self) -> None:
+        cases = (
+            ("ERROR: [youtube] abc: Private video. This video is private", "This video is private."),
+            ("ERROR: [youtube] abc: Video unavailable", "This video is no longer available."),
+            (
+                "ERROR: [vimeo] abc: This video is not available in your country",
+                "This video isn't available in this server's region.",
+            ),
+        )
+        for raw, expected in cases:
+            with self.subTest(raw=raw):
+                message, _ = _download_failure(DownloadError(raw))
+                self.assertEqual(message, expected)
+
+    def test_real_yt_dlp_geo_block_wording_is_a_region_lock(self) -> None:
+        # Verbatim from yt-dlp 2026.07.04: YouTube's subreason
+        # (extractor/youtube/_video.py), raise_geo_restricted's default
+        # (extractor/common.py), and the hint YoutubeDL.py appends to every
+        # GeoRestrictedError it reports.
+        cases = (
+            "ERROR: The uploader has not made this video available in your country"
+            "\nThis video is available in Japan."
+            "\nYou might want to use a VPN or a proxy server (with --proxy) to workaround.",
+            "ERROR: This video is not available from your location due to geo restriction"
+            "\nYou might want to use a VPN or a proxy server (with --proxy) to workaround.",
+            "ERROR: [someextractor] abc: Geo-restricted to Chile"
+            "\nYou might want to use a VPN or a proxy server (with --proxy) to workaround.",
+        )
+        for raw in cases:
+            with self.subTest(raw=raw):
+                message, detail = _download_failure(DownloadError(raw))
+                self.assertEqual(message, "This video isn't available in this server's region.")
+                self.assertNotIn("VPN", message)
+                self.assertIn("VPN", detail)
+
+    def test_geo_block_wins_over_a_403_in_the_same_error(self) -> None:
+        raw = (
+            "ERROR: unable to download video data: HTTP Error 403: Forbidden. "
+            "The uploader has not made this video available in your country"
+        )
+        message, _ = _download_failure(DownloadError(raw))
+        self.assertEqual(message, "This video isn't available in this server's region.")
+
+    def test_geo_restricted_error_type_is_a_region_lock_whatever_its_wording(self) -> None:
+        original = GeoRestrictedError("Media is not playable here (HTTP Error 403)")
+        error = DownloadError(
+            "ERROR: Media is not playable here (HTTP Error 403)",
+            (GeoRestrictedError, original, None),
+        )
+        message, _ = _download_failure(error)
+        self.assertEqual(message, "This video isn't available in this server's region.")
 
     def test_unrecognised_failure_keeps_its_detail_out_of_the_message(self) -> None:
         message, detail = _download_failure(
@@ -139,6 +215,72 @@ class SourceMetadataExtractionTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(saved.metadata.title)
             self.assertIsNone(saved.metadata.uploader)
             self.assertIsNone(saved.metadata.like_count)
+
+
+class FormatCapTests(unittest.IsolatedAsyncioTestCase):
+    """The options handed to YoutubeDL: a 720p soft cap via format_sort."""
+
+    async def _options_for(self, settings: Settings) -> dict:
+        downloaded_path = os.path.join(settings.temp_dir, "download.mp4")
+        with open(downloaded_path, "wb") as fh:
+            fh.write(b"fake video bytes")
+        downloader = MagicMock()
+        downloader.__enter__.return_value = downloader
+        downloader.__exit__.return_value = False
+        downloader.extract_info.return_value = {"requested_downloads": [{"filepath": downloaded_path}]}
+        downloader.prepare_filename.return_value = downloaded_path
+        with patch(
+            "app.infrastructure.media.ytdlp_downloader.validate_public_url"
+        ), patch(
+            "app.infrastructure.media.ytdlp_downloader._media_binary",
+            return_value=os.path.join("opt", "ffmpeg", "bin", "ffmpeg"),
+        ), patch(
+            "app.infrastructure.media.ytdlp_downloader.YoutubeDL", return_value=downloader
+        ) as youtube_dl:
+            await download_url(settings, "run-fmt", "https://www.youtube.com/watch?v=x")
+        return youtube_dl.call_args.args[0]
+
+    async def test_defaults_to_a_720p_soft_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            options = await self._options_for(
+                Settings(temp_dir=temp_dir, ytdlp_cookies_file="", ytdlp_cookies_from_browser="")
+            )
+
+        self.assertEqual(options["format_sort"], ["res:720"])
+        # Selector keeps every fallback: split streams, progressive file, audio only.
+        self.assertEqual(options["format"], "bestvideo*+bestaudio/best/bestaudio")
+        # No hard height filter in the selector - it would reject sources with
+        # no <=720p variant and drop formats of unknown height.
+        self.assertNotIn("height", options["format"])
+        # Merging split streams still uses the configured FFmpeg.
+        self.assertEqual(options["ffmpeg_location"], os.path.join("opt", "ffmpeg", "bin"))
+
+    async def test_cap_follows_the_setting(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            options = await self._options_for(
+                Settings(
+                    temp_dir=temp_dir,
+                    ytdlp_cookies_file="",
+                    ytdlp_cookies_from_browser="",
+                    ytdlp_max_height=480,
+                )
+            )
+
+        self.assertEqual(options["format_sort"], ["res:480"])
+
+    async def test_zero_removes_the_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            options = await self._options_for(
+                Settings(
+                    temp_dir=temp_dir,
+                    ytdlp_cookies_file="",
+                    ytdlp_cookies_from_browser="",
+                    ytdlp_max_height=0,
+                )
+            )
+
+        self.assertNotIn("format_sort", options)
+        self.assertEqual(options["format"], "bestvideo*+bestaudio/best/bestaudio")
 
 
 if __name__ == "__main__":

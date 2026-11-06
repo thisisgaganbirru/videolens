@@ -50,7 +50,28 @@ class InvalidSourceError(Exception):
 
 
 class QuotaExceededError(Exception):
-    """The shared daily analysis budget has been exhausted."""
+    """The shared daily analysis budget has been exhausted.
+
+    `retry_after_seconds` is how long until the budget frees (the next UTC
+    day); the API sends it as `Retry-After`. None when unknown.
+    """
+
+    def __init__(self, message: str, *, retry_after_seconds: int | None = None) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+
+
+class RateLimitedError(Exception):
+    """The caller has made too many requests in the current rate-limit window.
+
+    `retry_after_seconds` is how long until the window frees a request; the
+    API sends it as `Retry-After`, which the frontend turns into "Try again in
+    about N minutes". None when the limiter could not say.
+    """
+
+    def __init__(self, message: str, *, retry_after_seconds: int | None = None) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
 
 
 class RunSchedulingError(Exception):
@@ -59,3 +80,18 @@ class RunSchedulingError(Exception):
 
 class RunNotFoundError(Exception):
     """No run exists for the given id and owner."""
+
+
+class DeviceTokenInvalidError(Exception):
+    """A free run was requested without a valid signed device token. The
+    client fetches a fresh one from `GET /api/free-runs` and retries."""
+
+
+class FreeRunsExhaustedError(Exception):
+    """This device (or its network) has used today's free runs. `limit` and
+    `used` are always the device's own numbers, whichever counter tripped."""
+
+    def __init__(self, message: str, *, limit: int, used: int) -> None:
+        super().__init__(message)
+        self.limit = limit
+        self.used = used

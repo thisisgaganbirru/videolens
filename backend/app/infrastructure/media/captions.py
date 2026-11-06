@@ -18,6 +18,7 @@ from yt_dlp import YoutubeDL
 from ...domain.entities import CaptionTrack, SourceMetadata
 from ..config import Settings
 from .net import validate_public_url
+from .thumbnails import dimensions_from_info, thumbnail_urls_from_info
 from .ytdlp_downloader import _cookie_options, _source_metadata_from_info
 
 # Ordered by how little parsing they need. json3 is YouTube's own structured
@@ -105,6 +106,14 @@ def parse_caption_payload(payload: str, ext: str) -> str:
     return _parse_cue_format(payload)
 
 
+def _duration(value: object) -> float | None:
+    try:
+        seconds = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds > 0 else None
+
+
 async def fetch_captions(settings: Settings, url: str) -> CaptionTrack | None:
     """Return the best available transcript for `url`, or None.
 
@@ -148,11 +157,16 @@ async def fetch_captions(settings: Settings, url: str) -> CaptionTrack | None:
         text = parse_caption_payload(payload, track.get("ext", ""))
         if not text.strip():
             return None
+        width, height = dimensions_from_info(info)
         return CaptionTrack(
             text=text,
             language=language,
             automatic=automatic,
             metadata=_source_metadata_from_info(info, url),
+            duration_seconds=_duration(info.get("duration")),
+            thumbnail_urls=thumbnail_urls_from_info(info),
+            width=width,
+            height=height,
         )
 
     try:

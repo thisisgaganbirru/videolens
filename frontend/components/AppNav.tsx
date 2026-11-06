@@ -1,75 +1,75 @@
 "use client";
 
-import { useCallback, useEffect, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import Link from "next/link";
-import {
-  Film,
-  History as HistoryIcon,
-  KeyRound,
-  Menu,
-  ScrollText,
-  X,
-} from "lucide-react";
+import { ChevronRight, Menu, X } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
+import { isPlainLeftClick } from "@/components/navClick";
 import { MAIN_TABS, mainTabHref, type MainTab } from "@/application/useMainTab";
 
-/* Hallmark · theme: Terminal (locked) · nav: N5 floating pill
+/* Hallmark · theme: editorial (app/tokens.css) · nav: flat top bar
  *
- * The whole nav band — brand, the four destinations, the mobile drawer, the
- * theme toggle — as one component every route renders.
+ * The top bar every route renders, in both shells. What it carries depends on
+ * the display mode `<html data-shell>` names (see components/shell.ts):
  *
- * It exists now because the tabs became addressable. While the active tab was
- * React state inside HomeScreen, a shared nav was impossible: HomeScreen could
- * never have used it (only HomeScreen could route the tabs), so extracting one
- * would have produced a second canonical chrome for the standalone routes to
- * drift with — exactly what `legal-offline-routes.md` argued against. With the
- * tab in the URL, HomeScreen is just another caller, and there is one nav.
+ *  - web, 48rem and up: brand · four destinations · theme toggle (Desktop boards)
+ *  - web, below 48rem:  brand · theme toggle · menu toggle, and the four
+ *                       destinations in a full-screen menu (Web "Menu" board)
+ *  - app:               brand · theme toggle; the destinations live in the
+ *                       bottom tab bar instead (BottomTabBar)
  *
- * Icon + label rows in a drawer on mobile, an inline pill strip on desktop;
- * both shapes are `.nav-tab` in `globals.css`, keyed only off `aria-current`,
- * so the same markup serves both.
+ * All of it is always rendered and CSS hides what a mode doesn't use, with
+ * display:none — so the hidden parts are out of the tab order and the
+ * accessibility tree, not just out of sight.
  */
 
-const TAB_META: Record<MainTab, { label: string; icon: typeof Film }> = {
-  analyze: { label: "analyze", icon: Film },
-  history: { label: "history", icon: HistoryIcon },
-  "api-key": { label: "api key", icon: KeyRound },
-  releases: { label: "releases", icon: ScrollText },
+export const TAB_LABEL: Record<MainTab, string> = {
+  analyze: "Analyze",
+  history: "History",
+  "api-key": "API key",
+  releases: "Releases",
 };
 
 type AppNavProps = {
   /** The tab this route *is*, or `null` on a route that is none of them. */
   activeTab: MainTab | null;
   /**
-   * Supplied only by the route that already renders the tabs (`/`). It swaps
+   * Supplied only by the route that already renders the tabs (`/app`). It swaps
    * the anchor's navigation for an in-place URL update so the shell is never
    * unmounted. Everywhere else the href *is* the navigation, which is why the
-   * tabs are real links and not buttons: on `/privacy` there is genuinely a
-   * document to fetch, and middle-click, ctrl-click and "copy link address"
-   * all have to keep working on both.
+   * tabs are real links and not buttons.
    */
   onSelectTab?: (tab: MainTab) => void;
+  /** True only on the landing page, where the brand link is the current page. */
+  landing?: boolean;
 };
 
-/** Anything the browser would rather handle itself than let us intercept. */
-function isPlainLeftClick(event: MouseEvent<HTMLAnchorElement>): boolean {
+/** The ring-and-dot mark from the boards. Decorative: the word beside it is the
+ *  name. Exported for the installed app's splash and Welcome (Phase 5d), which
+ *  draw the same mark larger via their own class. */
+export function BrandMark({ className = "brand-mark" }: { className?: string }) {
   return (
-    event.button === 0 &&
-    !event.metaKey &&
-    !event.ctrlKey &&
-    !event.shiftKey &&
-    !event.altKey
+    <svg className={className} viewBox="0 0 26 26" aria-hidden="true" focusable="false">
+      <circle className="brand-ring" cx="13" cy="13" r="11.25" fill="none" strokeWidth="2.25" />
+      <circle className="brand-dot" cx="13" cy="13" r="5" />
+    </svg>
   );
 }
 
-export default function AppNav({ activeTab, onSelectTab }: AppNavProps) {
+export default function AppNav({ activeTab, onSelectTab, landing = false }: AppNavProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement>(null);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
 
+  /* Escape closes the phone menu and hands focus back to the button that
+     opened it — the menu replaced the content band, so there is nowhere else
+     sensible for focus to land. */
   useEffect(() => {
     if (!menuOpen) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeMenu();
+      if (event.key !== "Escape") return;
+      closeMenu();
+      toggleRef.current?.focus();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -83,33 +83,30 @@ export default function AppNav({ activeTab, onSelectTab }: AppNavProps) {
   };
 
   return (
-    /* The drawer's open state sits here rather than on `.shell` so the nav owns
-       everything the nav draws. `.nav-wrap` must stay unpositioned — the drawer
-       resolves its inset against `.viewport`, and a containing block here is
-       the bug that once trapped it inside the nav pill. */
-    <div className="nav-wrap" data-menu-open={menuOpen ? "true" : "false"}>
-      <nav className="nav" aria-label="Main">
-        <span className="wordmark">videolens</span>
-        <div className="nav-right">
-          <div className="menu-scrim" aria-hidden="true" onClick={closeMenu} />
+    <>
+      {/* `data-menu-open` lives on the bar because the toggle that drives it
+          does; the stylesheet reads it through the sibling combinator to swap
+          the views for `.menu-panel` below. */}
+      <header className="nav-wrap" data-menu-open={menuOpen ? "true" : "false"}>
+        <div className="nav">
+          {/* Two copies of the brand, CSS shows one (Phase 5c). In a browser
+              tab it is a link to the landing page at `/`. In the installed app
+              there is no landing page — `/` redirects straight back to
+              `/app` — so it stays a plain wordmark there rather than a link
+              that reloads the screen you are on. `<html data-shell>` is
+              stamped pre-paint, so neither flashes. */}
+          <Link href="/" className="brand brand--link" aria-current={activeTab === null && landing ? "page" : undefined}>
+            <BrandMark />
+            videolens
+          </Link>
+          <span className="brand brand--static">
+            <BrandMark />
+            videolens
+          </span>
 
-          <div className="nav-links" id="nav-links">
-            {/* Only rendered inside the mobile drawer, which covers the nav
-                row, so it carries its own wordmark and close. */}
-            <div className="menu-head">
-              <span className="wordmark">videolens</span>
-              <button
-                type="button"
-                className="menu-close"
-                onClick={closeMenu}
-                aria-label="Close menu"
-              >
-                <X aria-hidden="true" />
-              </button>
-            </div>
-            {MAIN_TABS.map((tab) => {
-              const { label, icon: Icon } = TAB_META[tab];
-              return (
+          <div className="nav-actions">
+            <nav className="nav-links" aria-label="Main">
+              {MAIN_TABS.map((tab) => (
                 <Link
                   key={tab}
                   className="nav-tab"
@@ -117,27 +114,46 @@ export default function AppNav({ activeTab, onSelectTab }: AppNavProps) {
                   aria-current={activeTab === tab ? "page" : undefined}
                   onClick={handleTabClick(tab)}
                 >
-                  <Icon aria-hidden="true" />
-                  {label}
+                  {TAB_LABEL[tab]}
                 </Link>
-              );
-            })}
+              ))}
+            </nav>
+
+            <ThemeToggle />
+
+            <button
+              ref={toggleRef}
+              type="button"
+              className="menu-toggle"
+              onClick={() => setMenuOpen((open) => !open)}
+              aria-expanded={menuOpen}
+              aria-controls="site-menu"
+              aria-label={menuOpen ? "Close menu" : "Menu"}
+            >
+              {menuOpen ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
+            </button>
           </div>
-
-          <button
-            type="button"
-            className="menu-toggle"
-            onClick={() => setMenuOpen((open) => !open)}
-            aria-expanded={menuOpen}
-            aria-controls="nav-links"
-            aria-label="Menu"
-          >
-            {menuOpen ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
-          </button>
-
-          <ThemeToggle />
         </div>
+      </header>
+
+      {/* The phone menu. A sibling of the bar, not a child, so it sits in the
+          shell's flex chain where the views do and is measured like them.
+          Labelled "Main" like the inline links: below 48rem it is the main
+          navigation, and the two are never on screen together. */}
+      <nav id="site-menu" className="menu-panel" aria-label="Main">
+        {MAIN_TABS.map((tab) => (
+          <Link
+            key={tab}
+            className="menu-item"
+            href={mainTabHref(tab)}
+            aria-current={activeTab === tab ? "page" : undefined}
+            onClick={handleTabClick(tab)}
+          >
+            {TAB_LABEL[tab]}
+            <ChevronRight aria-hidden="true" />
+          </Link>
+        ))}
       </nav>
-    </div>
+    </>
   );
 }

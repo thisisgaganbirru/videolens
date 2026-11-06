@@ -1,9 +1,8 @@
 import type { MediaSource, RunCreateResponse, RunListResponse, RunStatusResponse } from "@/domain/entities";
 import { ApiError, NetworkError } from "@/domain/errors";
-import type { ApiKeyStore, RunsGateway } from "@/domain/ports";
+import type { ApiKeyStore, DeviceTokenStore, RunsGateway } from "@/domain/ports";
 import { API_BASE_URL } from "./apiBase";
-
-const CLIENT_ID_KEY = "videolens-client-id";
+import { getClientId } from "./clientId";
 
 /* The one place in the app that knows the difference between "the server said
    no" and "there was no server to say anything". `fetch` rejects (with a
@@ -14,30 +13,122 @@ const CLIENT_ID_KEY = "videolens-client-id";
 const UNREACHABLE = "Can't reach the server. It may be offline, or your connection dropped.";
 const UNREADABLE = "The server replied with something this app could not read.";
 
-function getClientId(): string {
-  let clientId = window.localStorage.getItem(CLIENT_ID_KEY);
-  if (!clientId) {
-    clientId = crypto.randomUUID();
-    window.localStorage.setItem(CLIENT_ID_KEY, clientId);
+/* An error body's `code` and a 402's `limit`/`used`, carried onto the
+   `ApiError` so the hook can branch on `code` (`free_runs_used`,
+   `device_token_invalid`) instead of matching the sentence. */
+function errorExtras(body: unknown): { code?: string; limit?: number; used?: number } {
+  if (typeof body !== "object" || body === null) return {};
+  const b = body as Record<string, unknown>;
+  return {
+    code: typeof b.code === "string" ? b.code : undefined,
+    limit: typeof b.limit === "number" ? b.limit : undefined,
+    used: typeof b.used === "number" ? b.used : undefined,
+  };
+}
+
+/* ---- Refinement 6 (RUN-16): what a refused POST /api/runs says ----------
+
+   The backend's 4xx `detail` strings are written for people (terms, invalid
+   link, media validation, 401/402 codes, and the 429 sentence in
+   interface/api/app.py), so they are shown as sent. A 5xx is different: the
+   API's own 503s (RunSchedulingError, QuotaExceededError,
+   AnalysisUnavailableError) are curated sentences too, but a 500/502/504 is
+   an unhandled exception, a proxy page or a gateway timeout, and its body is
+   whatever that layer emitted. So a 5xx keeps its detail only when it is a
+   503 carrying a short, one-line string; everything else gets one calm line. */
+const CREATE_SERVER_TROUBLE = "The server had a problem starting this run. Try again in a moment.";
+const CREATE_UNREADABLE_REFUSAL = "The server could not accept this run. Check the link or file and try again.";
+const RATE_LIMITED = "You're going a bit fast.";
+const DETAIL_MAX = 240;
+
+/** `detail` when it is a plain sentence fit to show, else null. FastAPI's
+ *  422 sends an array of objects here; a proxy may send HTML or JSON text. */
+function userFacingDetail(body: unknown): string | null {
+  if (typeof body !== "object" || body === null) return null;
+  const detail = (body as Record<string, unknown>).detail;
+  if (typeof detail !== "string") return null;
+  const text = detail.trim();
+  if (!text || text.length > DETAIL_MAX || /[\r\n]/.test(text)) return null;
+  if (/^[[{<]/.test(text) || /traceback|exception|error:/i.test(text)) return null;
+  return text;
+}
+
+/** Seconds to wait from a `Retry-After` header: delta-seconds or an HTTP
+ *  date. Null when absent, unreadable or already past. Note that a browser
+ *  only lets the page read this header cross-origin when the API lists it in
+ *  `Access-Control-Expose-Headers`; until then this is null and the caller
+ *  keeps its general wording. */
+function retryAfterSeconds(value: string | null, now: number = Date.now()): number | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) {
+    const seconds = Number(trimmed);
+    return seconds > 0 ? seconds : null;
   }
-  return clientId;
+  const at = Date.parse(trimmed);
+  if (Number.isNaN(at)) return null;
+  const seconds = Math.ceil((at - now) / 1000);
+  return seconds > 0 ? seconds : null;
+}
+
+/** "Try again in about a minute." / "… about 5 minutes." Never "0 minutes". */
+function tryAgainIn(seconds: number): string {
+  const minutes = Math.max(1, Math.ceil(seconds / 60));
+  return minutes === 1 ? "Try again in about a minute." : `Try again in about ${minutes} minutes.`;
+}
+
+/** The sentence for a refused run creation. */
+function createRunFailureMessage(status: number, body: unknown, retryAfter: string | null): string {
+  const detail = userFacingDetail(body);
+  if (status === 429) {
+    const wait = retryAfterSeconds(retryAfter);
+    if (wait !== null) return `${RATE_LIMITED} ${tryAgainIn(wait)}`;
+    return detail ?? `${RATE_LIMITED} Wait a minute and try again.`;
+  }
+  if (status >= 500) return status === 503 && detail ? detail : CREATE_SERVER_TROUBLE;
+  return detail ?? CREATE_UNREADABLE_REFUSAL;
 }
 
 export class FetchRunsGateway implements RunsGateway {
-  constructor(private readonly apiKeyStore: ApiKeyStore) {}
+  constructor(
+    private readonly apiKeyStore: ApiKeyStore,
+    private readonly deviceTokenStore: DeviceTokenStore
+  ) {}
 
-  private requestHeaders(): HeadersInit {
+  /* BYOK: the Gemini key travels ONLY on run creation (POST /api/runs), the
+     one endpoint that reads it (backend interface/api/routes.py create_run).
+     Polling a run and listing history never needed it, and before 2026-11-01
+     it rode along on every one of those requests too — dozens per run, each a
+     fresh copy of the secret on the wire for no reason. `X-Client-ID` still
+     goes everywhere: it scopes which runs a caller can see.
+
+     `X-Device-Token` (Phase 5b) rides on run creation too, and only there — it
+     is what the server counts a free run against. Sent alongside a key as
+     well; the server simply does not count bring-your-own-key runs. */
+  private requestHeaders({ withGeminiKey }: { withGeminiKey: boolean }): HeadersInit {
     const headers: Record<string, string> = { "X-Client-ID": getClientId() };
-    const geminiApiKey = this.apiKeyStore.get();
-    if (geminiApiKey) headers["X-Gemini-Api-Key"] = geminiApiKey;
+    if (withGeminiKey) {
+      const geminiApiKey = this.apiKeyStore.get();
+      if (geminiApiKey) headers["X-Gemini-Api-Key"] = geminiApiKey;
+      const deviceToken = this.deviceTokenStore.get();
+      if (deviceToken) headers["X-Device-Token"] = deviceToken;
+    }
     return headers;
   }
 
   /** Transport layer only: resolves with whatever HTTP response came back
-   *  (status untouched), throws `NetworkError` when none came back at all. */
-  private async send(path: string, init: RequestInit = {}): Promise<Response> {
+   *  (status untouched), throws `NetworkError` when none came back at all.
+   *  `withGeminiKey` defaults to false; only `createRun` passes true. */
+  private async send(
+    path: string,
+    init: RequestInit = {},
+    { withGeminiKey = false }: { withGeminiKey?: boolean } = {}
+  ): Promise<Response> {
     try {
-      return await fetch(`${API_BASE_URL}${path}`, { ...init, headers: this.requestHeaders() });
+      return await fetch(`${API_BASE_URL}${path}`, {
+        ...init,
+        headers: this.requestHeaders({ withGeminiKey }),
+      });
     } catch {
       throw new NetworkError(UNREACHABLE);
     }
@@ -60,11 +151,15 @@ export class FetchRunsGateway implements RunsGateway {
     if (source.url) formData.append("url", source.url);
     formData.append("accept_terms", "true");
 
-    const res = await this.send("/api/runs", { method: "POST", body: formData });
+    const res = await this.send("/api/runs", { method: "POST", body: formData }, { withGeminiKey: true });
 
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      throw new ApiError(body?.detail || `Could not create run (${res.status})`);
+      throw new ApiError(
+        createRunFailureMessage(res.status, body, res.headers.get("Retry-After")),
+        res.status,
+        errorExtras(body)
+      );
     }
 
     return this.parse<RunCreateResponse>(res);
@@ -74,7 +169,7 @@ export class FetchRunsGateway implements RunsGateway {
     const res = await this.send(`/api/runs/${runId}`);
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      throw new ApiError(body?.detail || `Could not fetch run status (${res.status})`);
+      throw new ApiError(body?.detail || `Could not fetch run status (${res.status})`, res.status);
     }
     return this.parse<RunStatusResponse>(res);
   }
@@ -83,7 +178,7 @@ export class FetchRunsGateway implements RunsGateway {
     const res = await this.send("/api/runs");
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      throw new ApiError(body?.detail || `Could not fetch run history (${res.status})`);
+      throw new ApiError(body?.detail || `Could not fetch run history (${res.status})`, res.status);
     }
     return this.parse<RunListResponse>(res);
   }

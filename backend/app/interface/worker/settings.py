@@ -15,6 +15,7 @@ async def startup(ctx: dict) -> None:
 async def shutdown(ctx: dict) -> None:
     await container.run_repository.close()
     await container.key_vault.close()
+    await container.free_runs.close()
 
 
 async def process_run(
