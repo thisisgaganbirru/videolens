@@ -341,7 +341,7 @@ or `20-alpine` exists to move to. The automation that looks like it covers
 this does not.
 
 **The scan gate is correctly configured**, which is why this is a real finding
-and not a false one. `reusable-container-checks.yml` sets `only-fixed: true`
+and not a false one. `reusable-security-scan.yml` (then named `reusable-container-checks.yml`) sets `only-fixed: true`
 alongside `severity-cutoff: high`, so unfixable CVEs are already excluded.
 Everything reported here has a fix available; it just lives in a later major.
 Do not loosen the threshold to get green.
@@ -438,7 +438,11 @@ fail the build, so nothing else would ever catch it. Both checks were tested
 against deliberately drifted copies and do fire.
 
 **Cost, accepted knowingly: Dependabot digest bumps for the two application
-Dockerfiles.** Its parser matches literal `FROM image:tag@sha256:...` and
+Dockerfiles.** *(Reversed 2026-11-06: the cost turned out to be real, not
+hypothetical. A Critical in CPython 3.13.16 went unproposed until a scan went
+red, so both Dockerfiles now declare the base on a literal `FROM ... AS base`
+line that the other stages inherit, and Dependabot sees the pin again. See
+`docs/container-workflows.md`, "Runtime versions".)* Its parser matches literal `FROM image:tag@sha256:...` and
 generally cannot resolve `FROM ${NODE_IMAGE}`. The `/backend` and `/frontend`
 docker entries were kept rather than deleted so coverage resumes automatically
 if anyone reverts to a literal `FROM`. Coverage *not* lost: the `/` docker
@@ -664,3 +668,4 @@ Re-verify before fixing; do not treat the line numbers as authoritative.
 - 2026-08-16 · grype-exception agent · recorded the rescan outcome under "Container base images are past end-of-life" (Node/Android clear, backend down to one High) and added "The one outstanding CVE" covering the scoped `CVE-2026-15308` ignore rule, why `severity-cutoff`/`only-fixed` were left untouched, and the missing expiry enforcement; entry left OPEN — CI has not gone green
 - 2026-08-29 · main session · merged dev: the count is 6 errors + 1 warning, not 5 + 1 — dev's PR #26 `UploadForm.tsx` share effect trips the same `set-state-in-effect` rule, and `dev` has no eslint config to have caught it
 - 2026-10-02 · ci-cache agent · marked "Container base images are past end-of-life" resolved pending this branch's CI and "The one outstanding CVE" removed: `CVE-2026-15308` ignore rule deleted from `.grype.yaml` (image on CPython 3.13.16; Grype DB range `< 3.13.15`)
+- 2026-11-06 · claude (ci-hardening session) · fixed the stale `reusable-container-checks.yml` reference and recorded that the ARG-based base image layout was reversed (Dependabot-visible `FROM ... AS base` now)
