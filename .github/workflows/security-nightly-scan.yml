@@ -32,6 +32,7 @@ jobs:
     needs: scan
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     # Reporting is best-effort; it must not turn the run red (see above).
     continue-on-error: true
     permissions:
@@ -43,7 +44,7 @@ jobs:
       TITLE: "Security scan: fixable high/critical vulnerabilities on main"
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         # No findings means no artifacts; that must not stop the step below,
         # which is also what closes the issue after a clean run.
         continue-on-error: true
@@ -58,7 +59,8 @@ jobs:
         run: |
           existing="$(gh issue list --state open --search "in:title \"${TITLE}\"" --json number --jq '.[0].number // empty')"
           if compgen -G "findings/*.txt" >/dev/null; then
-            services="$(cd findings && ls *.txt | sed 's/\.txt$//' | paste -sd, -)"
+            services="$(for f in findings/*.txt; do basename "$f" .txt; done | paste -sd, -)"
+            # shellcheck disable=SC2016 # the backticks are Markdown in the issue body, not command substitution
             body="$(printf 'The nightly scan of `main` found fixable high or critical vulnerabilities in: **%s**.\n\nThe next promotion into `main` will fail its enforced scan until these are fixed. The table is in the scan step log of %s.\n\nThis issue is updated by `security-nightly-scan.yml` and closed automatically after a clean run.' "$services" "$RUN_URL")"
             if [ -n "$existing" ]; then
               gh issue comment "$existing" --body "$body"

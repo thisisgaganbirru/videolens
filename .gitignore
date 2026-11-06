@@ -44,6 +44,3 @@ mem/
 # previous one instead of Android refusing the install over a mismatched key.
 !frontend/android/debug.keystore
 keystore.properties
-
-# Agent instructions are local to each contributor, not tracked
-CLAUDE.md

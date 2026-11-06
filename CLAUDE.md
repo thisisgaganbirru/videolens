@@ -1,0 +1,494 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+VideoLens AI: upload short audio/video (or paste a public URL) and get a
+transcript, on-screen text extraction, summary, and markdown notes via
+Gemini's multimodal video understanding. Backend is FastAPI + arq worker;
+frontend is a Next.js PWA with a Capacitor Android wrapper.
+
+- `backend/` — FastAPI API, worker, FFmpeg, Gemini, Redis/S3 adapters
+- `frontend/` — Next.js PWA and Capacitor source
+- `frontend/android/` — Android API 36 native project
+- `mcp/` — MCP server exposing video analysis to terminal AI agents (Claude
+  Code, Cursor, Codex, Antigravity); thin REST client over the same
+  `backend/` API the frontend uses, not a new backend. See `mcp/README.md`.
+- `docs/` — per-feature reference docs (what a feature does, files it
+  touches, known issues). Check here before touching a feature; add/update
+  the relevant doc when you change one. Doesn't replace this file or the
+  `ARCHITECTURE.md` files.
+- `mem/` — per-task session logs (`mem/YYYYMMDD-{slug}.md`: The Ask, Changes
+  Made, Decisions & Rationale, Current Architecture). Gitignored, local only.
+  Search here before re-deriving why something was built a certain way.
+
+**This applies to every agent and subagent, with no exceptions.** If you were
+dispatched to do a piece of work — however small — you read the relevant doc
+under `docs/` before starting, and you update it plus the `mem/` entry before
+reporting back. The agent that did the work is the one that knows what changed
+and why; deferring it to whoever dispatched you loses that. Append a one-line
+entry to the doc's `## Changelog` naming yourself (`YYYY-MM-DD · <who> ·
+<what>`) so parallel agents sharing these files can see what has already been
+done instead of duplicating or reverting it. See `docs/README.md`.
+
+Both backend and frontend have their own `ARCHITECTURE.md` — read those
+before making structural changes; they're the authoritative layering
+reference and more detailed than the summary below.
+
+## Commands
+
+### Backend (`cd backend`)
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env          # fill in GEMINI_API_KEY
+uvicorn app.main:app --reload
+
+python -m compileall -q app                    # syntax check, run before tests (matches CI)
+python -m unittest discover -s tests            # run all tests
+python -m unittest tests.application.test_create_run   # run a single test module
+python -m unittest tests.application.test_create_run.CreateRunUseCaseTests.test_rejects_missing_terms  # single test
+```
+
+Requires `ffmpeg`/`ffprobe` on `PATH`, or `FFMPEG_LOCATION` set — validated
+at startup. `backend/tests/` mirrors `backend/app/` (`tests/domain/`,
+`tests/application/`, `tests/infrastructure/<adapter>/`,
+`tests/interface/api/`); each adapter test constructs the class directly
+with an explicit `Settings(...)` rather than monkeypatching a module-level
+global.
+
+### Frontend (`cd frontend`)
+
+```bash
+npm install
+cp .env.example .env.local
+npm run dev              # dev server
+npx tsc --noEmit         # typecheck (CI uses this, no separate test suite)
+npm run build             # production build
+npm run build:mobile      # Capacitor build (sets CAPACITOR_BUILD=true)
+npm run lint
+```
+
+`next.config.mjs` sets **`agentRules: false`** deliberately — leave it off.
+Without it, every `next dev` writes `frontend/AGENTS.md` and
+`frontend/CLAUDE.md`. The second one is the problem: a subdirectory `CLAUDE.md`
+is auto-loaded as agent context whenever someone works in `frontend/`, making it
+a competing instruction source alongside this file. Next emits both files
+together, so disabling generation is the only way to suppress just that one.
+Agent instructions for this repo live here, in the root `CLAUDE.md`, only.
+
+`npm run lint` **works again** as of 2026-08-29. It was broken for a long
+while — Next 16 removed `next lint`, so the script resolved `lint` as a
+directory (`no such directory: frontend/lint`) — and was repaired by running
+`npx @next/codemod@latest next-lint-to-eslint-cli`, which rewrote the script to
+`eslint .`, added `eslint` + `eslint-config-next` as devDependencies, and
+created `frontend/eslint.config.mjs`.
+
+Two things about that config are hand-written and load-bearing:
+
+- **`android/**` is ignored.** The codemod's default ignores miss it, and the
+  Capacitor native project holds 80 `.js` files — Gradle intermediates plus the
+  web bundle `cap sync` copies into `app/src/main/assets/public/`. None of it is
+  hand-written. Without the ignore, `eslint .` reports ~8,940 problems, of which
+  7 are in code anyone here writes. `public/sw.js` is ignored for the same
+  reason (generated from `sw/sw.template.js` on every build, and gitignored).
+- **`@next/next/no-html-link-for-pages` is off for `app/offline/**` only.** That
+  page is served from the service-worker cache with the network down, where a
+  client-side RSC navigation cannot resolve, so its links are plain `<a>` on
+  purpose — see `docs/frontend/legal-offline-routes.md`. The rule stays on
+  everywhere else.
+
+`npm run lint` currently **exits 1** with 4 errors and 1 warning (as of the
+2026-11-01 refinement pass, down from 6+1), all pre-existing:
+`react-hooks/set-state-in-effect` in `useGeminiApiKey.ts` and `UploadForm.tsx`
+(the `ResultsView.tsx` ones are gone), and one `@next/next/no-img-element`
+(`ResultsView.tsx`). Most of them are the read-`localStorage`-after-hydration
+pattern this app needs to avoid a hydration mismatch on a static export; they
+were deliberately **not** "fixed", because silencing the rule or rewriting the
+effects is a behavioural decision for the owner, not lint tidying. CI still does
+not run it (the frontend job is `tsc --noEmit` + `build` + `build:mobile`), so
+this is not gating anything today.
+
+### Android (`cd frontend`)
+
+```bash
+npm run android:sync      # build:mobile + cap sync android
+cd android && ./gradlew assembleDebug testDebugUnitTest
+```
+
+`frontend/android/app/build.gradle` reads `versionName` from
+`frontend/package.json`'s `version` — bump it there for releases.
+`versionCode` is supplied at build time (CI passes the GitHub Actions run
+number); local builds default to `1`. `frontend/android/debug.keystore` is
+checked into the repo intentionally (not a secret) so every debug build —
+local or CI — signs with the same identity, letting a freshly downloaded
+APK install as an update over an existing one.
+
+**Where APKs come from.** Three places, each for a different purpose:
+
+- **Production**: every push to `main` builds the APK against the production
+  backend and publishes it to GitHub Releases. That is the only APK anyone
+  installs for real, and the only one the in-app update check offers.
+- **Dev / testing**: every PR into `dev` that touches `frontend/` builds the
+  APK against the dev backend (`videolens-backend-dev.up.railway.app`) and
+  keeps it as a workflow artifact for 14 days (`videolens-ai-dev-v<version>-
+  code<code>-<sha>`), downloadable from the run page. It is built with
+  `-PdevBuild=true`, which gives it the `.dev` application id suffix and a
+  `-dev` version name, so it installs beside the production app rather than
+  over it. Never a release.
+- **Local**: `npm run android:sync`, `cap sync android` and
+  `./gradlew assembleDebug testDebugUnitTest` are allowed on a developer
+  machine for previews and device QA. QA tests the bundled APK on a device or
+  emulator, never live reload against the dev server. A local APK is never
+  shipped or attached anywhere.
+
+**In a cloud session, do not run the mobile build.** There is no device to
+install on, so a Gradle build there only burns minutes on an APK that is
+thrown away; push the change and read the dev lane's Android job instead. If
+something genuinely cannot be checked any other way, stop and ask the owner.
+
+This does **not** restrict the web build — `npm run build`, `npx tsc
+--noEmit`, and `npm run dev` are all fine and are how frontend work gets
+verified.
+
+### MCP server (`cd mcp`)
+
+```bash
+npm install
+npm run build             # emits dist/index.js
+GEMINI_API_KEY=... node dist/index.js   # manual smoke test; real usage is via an MCP client, not direct invocation
+```
+
+Not published to npm yet — see `mcp/README.md` for how agents (Claude Code,
+Cursor, etc.) point at the local build in the meantime, and the repo's own
+root `.mcp.json` for the config this repo's contributors get automatically.
+
+### Docker Compose (full stack)
+
+```bash
+cp backend/.env.example backend/.env
+docker compose up --build
+```
+
+Frontend at `:3000`, backend at `:8000`, MinIO console at `:9001`.
+
+### CI (`.github/workflows/`)
+
+Three independent lanes in a caller/reusable split, redesigned 2026-10-29 so
+each check runs **once**, where it decides something. Callers decide when;
+reusables hold the steps; composite actions in `.github/actions/`
+(`setup-backend`, `setup-frontend`, `setup-android`) hold the setup every job
+repeats.
+
+| Trigger | Runs |
+|---|---|
+| PR into `dev` | only what the PR touches (path-classified): backend and/or frontend checks, Android if `frontend/` changed (dev APK kept as a 14-day artifact), **advisory** security scan |
+| push to `dev` | nothing; the PR tested this tree. Railway deploys |
+| PR into `main` | full application checks, **enforced** security scan |
+| push to `main` | build each image once, scan it (enforced), promote to `latest`; Android APK; release |
+| nightly (06:17 UTC) | advisory scan of `main`; opens/closes a tracking issue |
+
+**Security is mandatory for production only.** Advisory runs must finish
+**green** (findings go to a warning, the job summary and an artifact): Railway's
+Wait for CI skips a deploy while any workflow on the commit is red, so a red
+advisory or nightly run would silently block a deploy.
+
+**Branch protection requires the `required` job**, which each caller ends with
+and which always reports, never the individual jobs (the `dev` lane skips
+jobs on purpose). It also relies on "require branches to be up to date before
+merging" and no direct pushes to `dev`/`main`; these are repository settings,
+not files.
+
+**Releases are published from `main` only**, and the release job waits on the
+security-gated publish. `dev` builds the APK as a gate and keeps it as a
+short-lived testing artifact with the `.dev` application id; it is never
+released.
+
+The reusables: `reusable-application-checks.yml` (backend compileall +
+unittest discover + import check; frontend `tsc --noEmit` + `build` +
+`build:mobile`; `backend`/`frontend` inputs), `reusable-android-checks.yml`
+(gradle `assembleDebug` + `testDebugUnitTest`), `reusable-security-scan.yml`
+(Dockerfile lint, image build, Grype; `enforce` input),
+`reusable-container-publish.yml` (multi-arch push to GHCR under `sha-<commit>`,
+scan of that digest, `imagetools` promotion to `latest`, in-registry SBOM and
+provenance).
+
+Images are deliberately **not** signed. Cosign's keyless mode was removed
+because it writes a permanent, undeletable entry to Rekor, the public
+transparency log — and keyless signatures cannot be kept without it, since
+the short-lived certificate is only verifiable through that log. The SBOM and
+provenance attestations stay: BuildKit attaches those to the image index in
+the destination registry, so they never leave it. Because `provenance:
+mode=max` records build arguments, never pass a secret via `build-args` —
+use the `secrets` input.
+
+Two properties worth preserving if you touch these:
+
+- **Exactly one job in the whole set has `contents: write`** — the release
+  job in `production-environment.yml`. Everything else is `contents: read`.
+  The Android build steps live in a reusable precisely so the `dev` PR gate
+  and the `main` release build run the same steps without either holding a
+  write token. (The nightly scan's issue job has `issues: write`, nothing more.)
+- **`target_commitish: ${{ github.sha }}` on the release step is
+  load-bearing.** It pins the tag to the commit the APK was built from rather
+  than to wherever the branch tip has moved. This shipped broken once, back
+  when releases ran on `dev` and the tag landed on `main`; don't drop it.
+- **`versionCode` is `git rev-list --count HEAD`, not `github.run_number`.**
+  It must never decrease: Android refuses to install an APK below the
+  installed code, and `updateCheck.ts` compares these to find a newer build.
+  `run_number` is per-workflow and resets to near zero whenever a different
+  workflow starts publishing — which is precisely what moving releases from
+  `dev` to `main` did. This also means the Android checkout needs
+  `fetch-depth: 0`; at the default depth of 1 every build is version 1.
+
+Full reference — trigger table, tag scheme, signing, the container channels
+— is `docs/container-workflows.md`. Read it before editing a workflow.
+
+## Architecture
+
+Both backend and frontend follow the same clean-architecture layering,
+dependencies pointing inward toward `domain/`:
+
+```
+domain  <-  application  <-  infrastructure
+                           <-  interface (api, worker / app+components)
+```
+
+`infrastructure/` and `interface/` never import each other directly — only
+`container.py` (backend) / `infrastructure/container.ts` (frontend) wires
+them together.
+
+### Backend (`backend/app/`)
+
+- **`domain/`** — pure types/rules, no I/O: `entities.py` (`Run`,
+  `VideoAnalysis`, `Principal`, ...), `errors.py`, `policies.py`,
+  `ports.py` (structural `Protocol` interfaces adapters satisfy by
+  duck-typing, no inheritance needed: `RunRepository`, `MediaProcessor`,
+  `AnalysisEngine`, `ObjectStore`, `JobQueue`, `SpendCap`, `KeyVault`,
+  `TokenVerifier`).
+- **`application/`** — one use case per user-facing operation, orchestrating
+  ports: `create_run.py`, `get_run.py`, `list_runs.py`, `process_run.py`
+  (the download → normalize → analyze → persist pipeline, run identically
+  by the in-process local runner and the arq worker).
+- **`infrastructure/`** — concrete adapters, each taking `Settings` in its
+  constructor (not a module-level global) for independent testability:
+  `persistence/run_repository.py` (Redis or in-process dict),
+  `media/service.py` (composes ffmpeg + yt-dlp + uploads into one
+  `MediaProcessor`), `ai/gemini_engine.py`, `storage/s3_object_store.py`,
+  `queue/job_queue.py` (arq/Redis or in-process asyncio task),
+  `quota/daily_budget.py`, `byok/key_vault.py`, `auth/jwt_verifier.py`.
+- **`interface/`** — the only layer allowed to know FastAPI/arq directly:
+  `api/app.py` (app factory, lifespan, CORS, rate-limit middleware),
+  `api/routes.py` (thin handlers — extract request, call one use case via
+  `container`, return a schema), `api/schemas.py` (response DTOs,
+  deliberately not merged with `domain.entities.Run` so `owner_id` never
+  leaks), `api/dependencies.py` (`get_principal`), `api/error_handlers.py`
+  (domain exception → HTTP status), `worker/settings.py` (arq
+  `WorkerSettings`).
+- **`container.py`** — composition root; builds every adapter once, wires
+  use cases. Only file allowed to import from every layer.
+  `app/main.py`/`app/worker.py` are one-line re-export shims so
+  `Dockerfile`/`docker-compose.yml`/`railway.worker.json` (which reference
+  `app.main:app` / `app.worker.WorkerSettings`) needed no changes.
+
+Adding something new: new business rule → edit the `application/` use case
+(it only sees ports). New storage backend / swap the model → new
+`infrastructure/` adapter satisfying the matching `domain.ports` Protocol,
+point `container.py` at it. New endpoint → route in
+`interface/api/routes.py` calling a use case.
+
+### Frontend (`frontend/`)
+
+Same layering, lighter — no per-adapter DI ceremony beyond
+`infrastructure/container.ts`, which builds the one shared instance of each
+adapter every hook imports from (e.g. one `ApiKeyStore` backing both
+`useGeminiApiKey` and `FetchRunsGateway`'s headers).
+
+- **`domain/`** — pure types, no `fetch`/`localStorage`/React:
+  `entities.ts`, `errors.ts`, `ports.ts` (`RunsGateway`, `ApiKeyStore`,
+  `VersionLogGateway`, `UpdateChecker`).
+- **`infrastructure/`** — one adapter per external system:
+  `runsGateway.ts` (`FetchRunsGateway`, builds `X-Client-ID`/
+  `X-Gemini-Api-Key` headers), `apiKeyStore.ts` (`LocalStorageApiKeyStore`),
+  `versionLogGateway.ts` (`FetchVersionLogGateway`), `updateCheck.ts`
+  (`ApiUpdateChecker`, native-Android-only via `@capacitor/app`),
+  `container.ts`.
+- **`application/`** — one hook per state/orchestration concern:
+  `useAnalysisRun.ts` (core state machine: submit/poll/open-from-history/
+  reset), `useGeminiApiKey.ts`, `useRunHistory.ts`, `useVersionLog.ts`,
+  `useUpdateCheck.ts`. Components never call an adapter directly.
+- **`app/` + `components/`** — framework-bound presentation. `app/` holds
+  only what Next.js requires (route files, global CSS). Routes: `/` is the
+  landing page (`app/page.tsx` → `components/LandingScreen.tsx`; inside the
+  installed app, and for legacy `/?view=…`/share links, it redirects to
+  `/app` before paint via `application/landingRedirect.ts`); `/app` is the
+  tool (`app/app/page.tsx` → `RoutedHomeScreen` plus the installed-app-only
+  `Splash` and once-only `Welcome`); `/offline`, `/privacy`, `/terms`. The
+  manifest keeps `id: "/"` with `start_url: "/app"`. Full table in
+  `frontend/ARCHITECTURE.md`. `components/HomeScreen.tsx` is the
+  real page body (header, tabs, composes `useAnalysisRun()` with
+  presentational pieces); `components/panels/{ApiKeyPanel,HistoryPanel,
+  VersionLogPanel}.tsx` are one-per-tab; `format.ts` holds the shared
+  `formatDate`.
+
+Adding something new: new client state/API call → hook in `application/`,
+port in `domain/ports.ts` if it talks externally, adapter in
+`infrastructure/`, registered in `container.ts`. New tab/panel → component
+in `components/panels/`, wired into `HomeScreen.tsx`'s tab list.
+
+## How a run flows
+
+1. Frontend `POST /api/runs` (multipart: `file` XOR `url`) → `202` with
+   `{ run_id, status: "queued" }` after validating an uploaded file.
+   Requires `X-Client-ID` (scopes visible runs, not quota) and
+   `accept_terms=true`.
+2. For URL runs, backend downloads via yt-dlp first. Either way: validate +
+   normalize with FFmpeg → upload to Gemini → analyze.
+3. Alongside normalize/analyze, the backend makes a thumbnail **server
+   side** (`infrastructure/media/thumbnails.py`, behind
+   `MediaProcessor.describe_visuals`): yt-dlp's thumbnail URL fetched through
+   the SSRF guard, else a frame from the media (uploads included), JPEG
+   ≤320px / ≤20 KB; plus rotation-aware `width`/`height`. Audio and failed
+   runs get none. A thumbnail failure never fails a run.
+4. Frontend polls `GET /api/runs/{run_id}` until `status` is `complete` or
+   `failed`; `stage` (only set while `processing`) is one of
+   `downloading`, `normalizing`, `uploading_to_gemini`, `analyzing`. The
+   detail carries `source_kind`, `platform`, `duration_seconds`,
+   `thumbnail` (data URL), `width`, `height`, `orientation`.
+5. **History lives in the browser**, not on the server: the frontend writes
+   each run into IndexedDB (`infrastructure/historyStore.ts`, via
+   `application/historySync.ts`) on submit, on each status change, and with
+   the full result on completion — capped at 20, oldest dropped first, and
+   reopened from there (works offline). It calls `navigator.storage.persist()`
+   once. The browser may still evict it (e.g. Safari after 7 days unvisited,
+   unless added to the Home Screen).
+6. The server keeps a run only to deliver it: Redis/in-memory entries expire
+   `RUN_TTL_SECONDS` (default **3600**, one hour) after the last write, and
+   the TTL is refreshed when the run completes or fails. `GET /api/runs`
+   still exists (the web app only uses it for a one-time import; the MCP
+   server's `list_recent_runs` uses it) and therefore only sees the last
+   hour.
+
+Local dev can run entirely in-process (no Redis/arq); production mode uses
+Redis + arq worker + S3-compatible storage. Uploaded/downloaded files are
+deleted after every run, success or failure.
+
+### Bring-your-own-key (BYOK)
+
+The in-app menu's API key panel lets a user paste their own Gemini key,
+stored only in browser `localStorage`, sent as `X-Gemini-Api-Key`. Backend
+never writes it to `RunStore` or logs it. In distributed mode it can't
+travel as a normal arq job argument (arq logs job args), so it's held in a
+single-use Redis entry (`infrastructure/byok/key_vault.py`) keyed by
+`run_id`, deleted the instant the worker reads it, with a 15-minute
+safety-net TTL. BYOK runs are exempt from `DAILY_RUN_CAP` but still subject
+to the normal per-IP rate limit.
+
+### MCP server (`mcp/`)
+
+Lets terminal AI agents (Claude Code, Cursor, Codex, Antigravity, ...) call
+VideoLens directly via two tools: `analyze_video` (blocks until the run
+finishes, returns the parsed result) and `list_recent_runs`. It's a thin
+Node/TypeScript REST client over the same `POST /api/runs` /
+`GET /api/runs{,/{run_id}}` endpoints the frontend uses — no new backend
+surface, no shared use-case code (matches `frontend/infrastructure/
+runsGateway.ts`'s role, different transport).
+
+Two things deliberately differ from the web app's BYOK panel:
+
+- **BYOK is mandatory, not optional.** Agent-driven traffic can loop or
+  batch far more easily than a human clicking upload, so there's no
+  shared-quota fallback — every call requires the caller's own
+  `GEMINI_API_KEY`, supplied only via the MCP client's `env` config (never
+  a tool argument, never a file on disk — read once from `process.env` at
+  process start, mirroring how every major MCP server handles credentials).
+- **Client identity is a local dotfile, not `localStorage`.** `~/.videolens/
+  client_id` (`mcp/src/clientId.ts`) is created once and reused, playing the
+  same non-secret scoping role `X-Client-ID` plays for the web app — it
+  only determines what `list_recent_runs` can see, never authorizes quota.
+
+### Cost protection
+
+No accounts, no paid tier — server-side limits are the only thing gating
+Gemini spend. Two independent caps: `RATE_LIMIT_PER_HOUR` (per-IP or
+per-token, Redis-backed across replicas when `REDIS_URL` is set) and
+`DAILY_RUN_CAP` (global backstop across all callers, UTC day). Both are
+checked before any download/FFmpeg work happens. `ALLOWED_ORIGINS` must
+never be `*` in production — the backend logs a startup warning if it
+detects a distributed deployment still running with `*`.
+
+## Configuration
+
+See `backend/.env.example` and `frontend/.env.example`. Key backend
+settings: `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL` (optional;
+retry tuning via `GEMINI_RETRY_*`), `MAX_FILE_SIZE_MB`,
+`MAX_DURATION_SECONDS`, `RATE_LIMIT_PER_HOUR`, `DAILY_RUN_CAP`,
+`RUN_TTL_SECONDS`, `FFMPEG_LOCATION`, `REDIS_URL`, `S3_*`, optional
+`AUTH_*` OIDC settings, `ALLOWED_ORIGINS`. Login-gated URL sources (some
+Instagram links etc.) need either `YTDLP_COOKIES_FROM_BROWSER` (local) or
+`YTDLP_COOKIES_FILE` pointing at a mounted Netscape-format cookie file
+(deployed) — configure only one, and never commit a cookie file.
+
+## Product direction
+
+**Right now**: stay free, open-source-ready, and usable both logged-in and
+anonymous, from desktop or mobile, and callable by any AI agent/terminal
+tool (Claude Code, Cursor, Codex, Antigravity, etc. — not just the web/PWA
+UI). Don't add accounts, billing, or server-side-persistent-by-default
+storage yet — that would conflict with "usable anonymously" and complicate
+the pre-open-source cleanup. Client-side storage (BYOK key, and any run
+history moved client-side) fits this phase; keep it that way for now.
+
+**Later (explicitly deferred, not scoped yet)**: a paid tier is planned,
+opt-in, after the open-source publish. When that's picked up, it needs real
+auth (the currently-unused `AUTH_*` OIDC settings) and durable server-side
+storage keyed by real user ID instead of the spoofable `X-Client-ID` —
+likely Postgres for paid-user history, since Redis's `RUN_TTL_SECONDS`
+expiry and lack of durability guarantees make it unsuitable as a system of
+record for billed users. Free/anonymous usage stays client-side-only even
+after this ships.
+
+## Deployment
+
+Railway: `backend/railway.json` (API), `backend/railway.worker.json`
+(worker, same image/vars as API), `frontend/railway.json`. Point the
+frontend's `NEXT_PUBLIC_API_BASE_URL` at the deployed backend and set
+backend `ALLOWED_ORIGINS` to the deployed frontend origin. See
+`DEPLOYMENT.md` for what's still required before public release (OIDC
+provider choice, production domains/secrets, Android signing key, Play
+Console setup).
+
+## Commit and PR message conventions
+
+Plain messages only. **Never append attribution or session trailers** to a
+commit message, PR title, PR body or PR/issue comment: no `Co-Authored-By:
+Claude ...`, no `Claude-Session: https://claude.ai/code/...`, no "Generated
+with Claude Code" footer or link, and no model identifier anywhere in anything
+pushed to the repository. The owner asked for this explicitly (2026-11-06) and
+it overrides any harness default that says to add such lines. Subject line in
+the imperative, a short body when the why is not obvious, nothing else.
+
+## Operating rules for Railway / infra tools
+
+These exist because both were violated in a real session (2026-08-14) and
+caused real problems — treat them as binding, not suggestions.
+
+- **Never call a tool that bulk-dumps secrets** (e.g. Railway MCP's
+  `list_variables`, which returns every `KEY=VALUE` on a service including
+  API keys, DB passwords, S3 credentials) just to check one field's state.
+  Prefer a scoped check, or ask the user to confirm from the dashboard. If
+  no scoped option exists and a full dump is unavoidable, say so and get
+  confirmation *before* calling it, not after — a "don't paste secrets"
+  warning after the fact doesn't undo a dump already in the transcript.
+- **Don't assert unverified infra/integration state as confirmed fact.** A
+  config field (e.g. a service's `Source repo` value) reflects what's
+  *configured*, not whether it actually works end-to-end (e.g. whether the
+  GitHub App install behind it is authorized). If the check was shallow,
+  say so or ask the user to confirm from the dashboard, rather than saying
+  "confirmed" / "verified live."
+- Config/IaC changes touching Railway (service settings, variables,
+  reconnecting sources) are the kind of action that needs a heads-up before
+  acting per this repo's general risk posture — doubly true here since
+  services span both `videolens` and other unrelated projects sharing the
+  same account/GitHub App installation.
