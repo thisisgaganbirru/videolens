@@ -2,6 +2,17 @@ name: Reusable application checks
 
 on:
   workflow_call:
+    inputs:
+      backend:
+        description: Run the backend job. Callers pass false when a change touches no backend files.
+        required: false
+        default: true
+        type: boolean
+      frontend:
+        description: Run the frontend job. Callers pass false when a change touches no frontend files.
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -9,35 +20,33 @@ permissions:
 jobs:
   backend:
     name: Backend
+    if: inputs.backend
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check Python version pins agree
         # /.python-version is the single source of truth for the Python major.
-        # backend/Dockerfile repeats it twice (the PYTHON_IMAGE digest tag, and
-        # the ensurepip path, which silently stops removing anything if it goes
-        # stale). Nothing else would catch either drifting, so fail here.
+        # backend/Dockerfile repeats it twice (the digest-pinned `FROM python:`
+        # line of the `base` stage, and the ensurepip path, which silently stops
+        # removing anything if it goes stale). Nothing else would catch either
+        # drifting, so fail here.
         working-directory: ${{ github.workspace }}
         run: |
           want="$(tr -d '[:space:]' < .python-version)"
-          image="$(sed -n 's/^ARG PYTHON_IMAGE=python:\([0-9]*\.[0-9]*\)-slim@.*/\1/p' backend/Dockerfile)"
+          image="$(sed -n 's/^FROM python:\([0-9]*\.[0-9]*\)-slim@.*/\1/p' backend/Dockerfile)"
           ensurepip="$(sed -n 's|.*/usr/local/lib/python\([0-9]*\.[0-9]*\)/ensurepip.*|\1|p' backend/Dockerfile)"
           for got in "$image" "$ensurepip"; do
             if [ "$want" != "$got" ]; then
-              echo "::error::.python-version is '${want}' but backend/Dockerfile has PYTHON_IMAGE='${image}', ensurepip='${ensurepip}'"
+              echo "::error::.python-version is '${want}' but backend/Dockerfile has FROM python:'${image}', ensurepip='${ensurepip}'"
               exit 1
             fi
           done
           echo "Python pin agrees everywhere: ${want}"
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version-file: .python-version
-          cache: pip
-          cache-dependency-path: backend/requirements.txt
-      - run: pip install --require-hashes -r requirements.txt
+      - uses: ./.github/actions/setup-backend
       - run: python -m compileall -q app
       - run: python -m unittest discover -s tests
       - run: python -c "import app.main; import app.worker"
@@ -46,32 +55,30 @@ jobs:
 
   frontend:
     name: Frontend
+    if: inputs.frontend
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check Node version pins agree
         # /.nvmrc is the single source of truth for the Node major;
-        # frontend/Dockerfile's NODE_IMAGE ARG has to repeat it because a digest
-        # cannot be derived from a version string. This is the only thing
-        # stopping the two from silently diverging.
+        # frontend/Dockerfile's digest-pinned `FROM node:` line (the `base`
+        # stage) has to repeat it because a digest cannot be derived from a
+        # version string. This is the only thing stopping the two from silently
+        # diverging.
         working-directory: ${{ github.workspace }}
         run: |
           want="$(tr -d '[:space:]' < .nvmrc | sed 's/^v//')"
-          got="$(sed -n 's/^ARG NODE_IMAGE=node:\([0-9]*\)-alpine@.*/\1/p' frontend/Dockerfile)"
+          got="$(sed -n 's/^FROM node:\([0-9]*\)-alpine@.*/\1/p' frontend/Dockerfile)"
           if [ "$want" != "$got" ]; then
-            echo "::error::.nvmrc is '${want}' but frontend/Dockerfile NODE_IMAGE is '${got}'"
+            echo "::error::.nvmrc is '${want}' but frontend/Dockerfile has FROM node:'${got}'"
             exit 1
           fi
           echo "Node pin agrees: ${want}"
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
+      - uses: ./.github/actions/setup-frontend
       - run: npx tsc --noEmit
       - run: npm run build
       - run: npm run build:mobile

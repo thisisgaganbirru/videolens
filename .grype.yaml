@@ -1,7 +1,7 @@
 # Grype configuration for the CI container vulnerability gate.
 #
 # Consumed by the "Scan fixable high and critical vulnerabilities" step in
-# .github/workflows/reusable-container-checks.yml, which passes this file
+# .github/workflows/reusable-security-scan.yml, which passes this file
 # explicitly through the scan action's `config` input. The path is repo root
 # because that is the checkout root ($GITHUB_WORKSPACE) and therefore Grype's
 # working directory.

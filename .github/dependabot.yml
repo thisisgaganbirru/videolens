@@ -1,24 +1,36 @@
 version: 2
+
+# Every entry targets `dev`, not the default branch (`main`). Without
+# `target-branch`, Dependabot opens PRs straight against `main`, skipping the
+# dev lane entirely; by 2026-10-29 that had piled up 16 stale PRs, most of
+# them superseded by later bumps on `dev`. On `dev` they go through the normal
+# PR checks and reach production with the next promotion.
+#
+# Language and Actions updates are grouped into one weekly PR per ecosystem,
+# so a week of bumps costs one CI run, not one per package. Majors stay
+# ungrouped (npm and pip) so a breaking upgrade arrives as its own reviewable PR.
+
 updates:
-  # Docker ecosystem coverage is NOT uniform across these three directories.
   # Dependabot's Dockerfile parser matches literal `FROM image:tag@sha256:...`
-  # references. Both application Dockerfiles now declare their base image once,
-  # through a global `ARG` (`FROM ${PYTHON_IMAGE}` / `FROM ${NODE_IMAGE}`), so
-  # the literal no longer sits on the FROM line.
+  # references only. Both application Dockerfiles declare their base image
+  # exactly once in that shape (`FROM python:3.13-slim@sha256:... AS base`,
+  # `FROM node:24-alpine@sha256:... AS base`) and every other stage inherits it
+  # with `FROM base`, so these two entries propose digest bumps within the
+  # pinned tag. Between 2026-08 and 2026-11 the base sat behind a global `ARG`
+  # (`FROM ${PYTHON_IMAGE}`), which the parser does not resolve; no bump PR was
+  # ever opened and a Critical in CPython 3.13.16 went unnoticed until a scan
+  # went red. Keep the literal on the FROM line.
   #
-  # These two entries are kept deliberately rather than deleted:
-  #   - if Dependabot does resolve an ARG default, coverage continues unchanged;
-  #   - if it does not, they are inert, and they resume working the moment
-  #     anyone reverts to a literal FROM without needing to remember this file.
-  # Either way the runtime majors are upgraded manually and deliberately — see
-  # docs/container-workflows.md, "Runtime versions". Do not treat a silent
-  # Dependabot as evidence the base images are current.
+  # Digest bumps stay inside the tag. The runtime majors are upgraded manually
+  # and deliberately — see docs/container-workflows.md, "Runtime versions".
   - package-ecosystem: docker
     directory: /backend
+    target-branch: dev
     schedule:
       interval: weekly
   - package-ecosystem: docker
     directory: /frontend
+    target-branch: dev
     schedule:
       interval: weekly
   # `docker-compose`, not `docker`. The intent has always been the literal
@@ -33,17 +45,36 @@ updates:
   # this silently blocked production - see docs/railway-environments.md.
   - package-ecosystem: docker-compose
     directory: /
+    target-branch: dev
     schedule:
       interval: weekly
   - package-ecosystem: github-actions
     directory: /
+    target-branch: dev
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
   - package-ecosystem: npm
     directory: /frontend
+    target-branch: dev
     schedule:
       interval: weekly
+    groups:
+      npm-minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # Deliberately staying on Tailwind 3 (see 40dc380). v4 replaces the
+      # config model and PostCSS plugin, so it is a planned migration, not a
+      # weekly bump. Remove this entry when that migration is picked up.
+      - dependency-name: tailwindcss
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: pip
     directory: /backend
+    target-branch: dev
     schedule:
       interval: weekly
+    groups:
+      pip-minor-and-patch:
+        update-types: ["minor", "patch"]
