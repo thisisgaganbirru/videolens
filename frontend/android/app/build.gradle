@@ -53,6 +53,18 @@ android {
         }
     }
     buildTypes {
+        // Declaring debug here configures AGP's existing debug build type; it
+        // keeps signingConfig signingConfigs.debug (the checked-in keystore
+        // above). The dev lane (reusable-android-checks.yml, dev_artifact)
+        // builds with -PdevBuild=true so its APK installs beside the
+        // production app instead of over it: ai.videolens.app.dev, "<ver>-dev".
+        // Local builds without the property are unchanged.
+        debug {
+            if (project.hasProperty('devBuild')) {
+                applicationIdSuffix ".dev"
+                versionNameSuffix "-dev"
+            }
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
