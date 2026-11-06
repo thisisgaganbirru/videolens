@@ -129,9 +129,10 @@ APK install as an update over an existing one.
 you know what CI does, not so an agent runs them here. `npm run build:mobile`,
 `npm run android:sync`, `cap sync`, and anything under `frontend/android/`
 (`./gradlew assembleDebug`, `testDebugUnitTest`) are **CI's job**. GitHub
-Actions builds the APK on every push to `dev` and publishes it to Releases,
-which is where the owner downloads and installs it — a local APK is never the
-artifact anyone uses. Running these here only burns session minutes on a
+Actions builds the APK on every PR into `dev` as a compile check and discards
+it, and builds and publishes it to Releases on every push to `main`, which is
+where the owner downloads and installs it — a local APK is never the artifact
+anyone uses. Running these here only burns session minutes on a
 gradle build whose output is thrown away.
 
 `.claude/settings.local.json` denies these commands as a backstop, but the
