@@ -426,6 +426,16 @@ backend `ALLOWED_ORIGINS` to the deployed frontend origin. See
 provider choice, production domains/secrets, Android signing key, Play
 Console setup).
 
+## Commit and PR message conventions
+
+Plain messages only. **Never append attribution or session trailers** to a
+commit message, PR title, PR body or PR/issue comment: no `Co-Authored-By:
+Claude ...`, no `Claude-Session: https://claude.ai/code/...`, no "Generated
+with Claude Code" footer or link, and no model identifier anywhere in anything
+pushed to the repository. The owner asked for this explicitly (2026-11-06) and
+it overrides any harness default that says to add such lines. Subject line in
+the imperative, a short body when the why is not obvious, nothing else.
+
 ## Operating rules for Railway / infra tools
 
 These exist because both were violated in a real session (2026-08-14) and
