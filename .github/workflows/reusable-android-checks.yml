@@ -217,7 +217,7 @@ jobs:
         run: |
           node -e '
             const fs = require("node:fs");
-            const out = `android/app/build/outputs/apk/${process.env.VARIANT}/version.json`;
+            const out = "android/app/build/outputs/apk/" + process.env.VARIANT + "/version.json";
             fs.writeFileSync(out, JSON.stringify({
               versionCode: Number(process.env.VERSION_CODE),
               versionName: process.env.VERSION_NAME,
