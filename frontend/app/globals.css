@@ -2233,6 +2233,16 @@ h3 {
     line-height: 1.75;
     color: var(--color-ink-2);
   }
+  /* The safeguard line under the steps: same ink as the steps (contrast on
+     the tint is already measured for it), one size down so it reads as an
+     aside rather than a fourth step. */
+  .key-guide-note {
+    margin: 0.5rem 0 0;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--color-ink-2);
+    overflow-wrap: anywhere;
+  }
   .key-guide-link {
     display: inline-flex;
     align-items: center;
