@@ -11,7 +11,7 @@ is never reused as a hosted deployment manifest.
 | --- | --- | --- | --- |
 | Local workspace | `scripts/workspace.ps1` and `docker-compose.yml` | Hardened frontend, API, worker, Redis, and MinIO on loopback/private networks | Nothing external |
 | Dev | `.github/workflows/development-environment.yml`, PRs into `dev` only | Only what the PR touches: backend and/or frontend checks, the Android build when `frontend/` changed, and an **advisory** security scan | Nothing. Railway deploys `dev` from the push |
-| Production | `.github/workflows/production-environment.yml`, PRs into `main` and pushes to `main` | PR: full application checks and an **enforced** security scan. Push: build once, scan that image (enforced), promote; Android build | amd64/arm64 images tagged `sha-<commit>` then `latest` in GHCR, plus the debug APK as a GitHub Release |
+| Production | `.github/workflows/production-environment.yml`, PRs into `main` and pushes to `main` | PR: full application checks and an **enforced** security scan. Push: build once, scan that image (enforced), promote; Android build | amd64/arm64 images tagged `sha-<commit>` then `latest` in GHCR, plus the APK (release-signed, or debug-signed until the key exists) as a GitHub Release |
 | Security | `.github/workflows/security-nightly-scan.yml`, nightly on `main` | Advisory scan of both images | A tracking issue while findings exist, closed after a clean run |
 
 Workflow filenames use lowercase kebab-case. Call-only building blocks follow
@@ -106,14 +106,25 @@ of the old 60-65.
 The Android build exists in exactly one place,
 `.github/workflows/reusable-android-checks.yml` (Capacitor sync, then `gradlew
 assembleDebug testDebugUnitTest`, or `assembleRelease testDebugUnitTest` when
-`upload_apk` is true). It is capped at `contents: read` and never creates a
-tag or a release. Since 2026-11-07 the production APK is the **release**
-variant, signed with the keystore in the `ANDROID_KEYSTORE_BASE64` /
-`ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`
-secrets, which `production-environment.yml` passes through explicitly; the
-job fails before Gradle runs if any is missing, and never falls back to the
-checked-in debug keystore (`DEPLOYMENT.md`, "Android release signing"). The
-dev lane keeps the debug variant. Version values reach Gradle through the
+`upload_apk` is true and the release key is configured). It is capped at
+`contents: read` and never creates a tag or a release. With `upload_apk`, a
+`Prepare release signing` step (id `signing`) checks the
+`ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` /
+`ANDROID_KEY_PASSWORD` secrets, which `production-environment.yml` passes
+through explicitly, for emptiness only and outputs the variant:
+all four set → `release` (`assembleRelease`, signed with that keystore);
+none set → `debug` (`assembleDebug` with the checked-in debug keystore and no
+`-PdevBuild`, i.e. what production shipped before 2026-11-07, plus a
+`::warning::` and a step-summary line); some set → the job fails before
+Gradle. The variant drives the Gradle task, the `apk/<variant>/` output
+directory, the artifact name suffix and the upload path; the tag,
+`version.json`, `versionCode` and the release job are the same either way.
+The debug fallback is temporary, to be removed once the key exists and the
+first release-signed APK has shipped, leaving production release-signed
+only. The release key is deferred, so production is currently on the debug
+fallback; adding the secrets switches the next `main` release and forces a
+one-time reinstall (`DEPLOYMENT.md`, "Android release signing"). The dev lane
+keeps the debug variant with `-PdevBuild=true`. Version values reach Gradle through the
 step environment rather than `${{ }}` interpolation into the command line,
 so a `package.json` version string cannot inject shell. Two callers:
 
@@ -793,5 +804,7 @@ jobs.
 - 2026-11-06 · claude (session ccr-ee9ca9d3) · dev lane keeps the Android APK as a 14-day workflow artifact (`dev_artifact` input on `reusable-android-checks.yml`: dev backend URL, `-PdevBuild=true` for the `.dev` application id suffix, never a release); CLAUDE.md now allows local mobile builds on a developer machine, still not in cloud sessions
 - 2026-11-07 · claude (session ccr-ee9ca9d3) · cleared all 14 open frontend Dependabot alerts with `overrides` (@xmldom/xmldom 0.9.12, brace-expansion 1.1.21 and 5.0.12 per major line, minimatch 10.x -> 11.0.5, postcss-selector-parser 6.1.5, rimraf 6.1.4 (pulls glob 14), zod 4.6.7); all build-time only (`dev: true`), `npm audit` 0, lint unchanged at 4+1. Backend `pip-audit` clean. Dependabot docker-compose entry now ignores minio/minio and minio/mc, which Docker Hub no longer serves anonymously; replacing the local MinIO image is an open decision
 - 2026-11-07 · security-check · production APK is `assembleRelease` signed from CI secrets (fails loudly without them; dev lane and local stay on the debug keystore); Android job passes version values via env, not command-line interpolation; `version.json` written by node from env
+- 2026-11-07 · general-purpose subagent (dispatched by videolens-9f) · production Android signing is now conditional: all four `ANDROID_*` secrets → signed `assembleRelease`; none → debug-signed `assembleDebug` (checked-in keystore, no `-PdevBuild`) with a `::warning::` and step-summary line; some → fail. Artifact name and upload path follow the chosen variant; tag, `version.json`, `versionCode` and release job unchanged
+- 2026-11-07 · general-purpose subagent (dispatched by videolens-9f) · marked the debug-signing fallback as temporary: it is removed after the first release-signed APK ships, leaving production release-signed only and failing without the secrets
 - 2026-11-07 · claude (session 01FVkcsidCXWo1CtwAtdwVHV) · added the Dependabot overseer: a daily scheduled task wakes a standing Claude session that merges green, up-to-date Dependabot PRs into `dev`, updates behind ones one at a time, and holds the rest with a diagnosis
 - 2026-11-07 · claude (session 01FVkcsidCXWo1CtwAtdwVHV) · added `dependabot-auto-merge.yml` (GitHub auto-merge for non-major Dependabot PRs into `dev`, fetch-metadata v3.1.0 pinned by SHA); the overseer now updates behind branches and reviews majors. Second `contents: write` job, by owner decision
