@@ -84,6 +84,21 @@ in that state it is the reason to act, and the prose is the explanation of how.
 The `Optional` label is deliberately left alone — relabelling it off backend
 state is a bigger claim than one notice line.
 
+## Key hardening (2026-11-07)
+
+The storage model is unchanged (`localStorage`, header on `createRun` only).
+What changed around it, all in `security-headers.md`: a CSP whose
+`connect-src`/`img-src` allow only this origin and the backend, with
+hash-locked inline scripts, on the web (headers + meta) and in the APK (meta);
+and Android backup rules that keep the WebView's Local Storage, i.e. this key,
+out of cloud backups and device transfers.
+
+The guide panel gained one line under the steps (`.key-guide-note`, ink-2 at
+0.875rem on the tint): "Use a key made only for VideoLens, with a spending
+limit set in Google AI Studio, so a leaked key costs little." It names no AI
+Studio menu, since those move. A "don't remember this key" toggle was
+deliberately **not** added; that is an owner decision.
+
 **Known issue**: none — this is intentionally minimal (no key format validation client-side; an invalid key just surfaces as a Gemini error on the resulting run).
 
 **Tests**: none (see `run-analysis-hook.md`).
@@ -104,3 +119,4 @@ light). Existing tokens only.
 - 2026-11-01 · frontend agent (Phase 4, boards) · rebuilt to design/phase4-boards/ApiKey*.png: lede and help copy per boards except two truth deviations (no "few free runs"; phone boards' "held briefly on the server" sentence on every size instead of desktop's "never store it on a server"), header name no longer printed, ExternalLink icon dropped from the AI Studio link, `.key-header` wrapper removed
 - 2026-11-01 · frontend agent (Phase 5b) · lede now the boards' "You get a few free runs" sentence; `ApiKeyStore` gained `subscribe()` so saving or removing a key updates the free-run banner at once; `X-Device-Token` now rides on `createRun` beside the key (see `free-runs.md`)
 - 2026-11-02 · frontend agent (refinement 6) · A11-07 AI Studio link uses --color-accent-strong (6.14:1 light, 10.1:1 dark)
+- 2026-11-07 · frontend agent · added the dedicated-key/spending-limit line to the guide panel; key now covered by the CSP and excluded from Android backups (see `security-headers.md`)

@@ -156,6 +156,15 @@ does lives in `components/`:
 `components/ui/` is gone — it held the animated-background system, deleted
 with the Terminal redesign (see `docs/frontend/design-direction-terminal.md`).
 
+## Build-time security (outside the layers)
+
+`security/csp.mjs` holds the Content-Security-Policy and the other security
+headers; `next.config.mjs` sends them on the web build and
+`scripts/inject-csp.mjs` writes a hash-based CSP `<meta>` into every
+prerendered document after `next build` (both builds, before `build-sw.mjs`).
+Not part of `domain/`…`components/`: it never reaches the browser bundle. See
+`docs/frontend/security-headers.md`.
+
 ## What used to be here
 
 `lib/api.ts`, `lib/types.ts`, `lib/versionLog.ts`, and `lib/updateCheck.ts`
@@ -189,3 +198,4 @@ still imported the old component.
 - 2026-11-02 · frontend agent (refinement 6) · `ActiveRunStore` port + `SessionStorageActiveRunStore` adapter; `app/not-found.tsx` in the routes table
 - 2026-11-02 · frontend agent (refinement 8) · routes table: installed app reaches the 404 via the head script
 - 2026-11-02 · frontend agent (refinement 9) · `UpdateDismissalStore` port + `LocalStorageUpdateDismissalStore` adapter (container `updateDismissalStore`); `NativeShell.onResume`; `UpdateInfo.versionCode`; pure `domain/platforms.ts` (platform display names, URL-host platform); `components/mediaTerms.ts` (terms flag + accept list shared by UploadForm and HomeScreen)
+- 2026-11-07 · frontend agent · build-time security section: `security/csp.mjs`, `scripts/inject-csp.mjs`
