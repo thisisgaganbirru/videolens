@@ -27,7 +27,7 @@ from typing import Iterable, Optional
 
 from ..config import Settings
 from .ffmpeg import _media_binary
-from .net import ValidatingRedirectHandler, validate_public_url
+from .net import build_public_opener, validate_public_url
 
 logger = logging.getLogger("videolens")
 
@@ -230,7 +230,7 @@ async def extract_frame(
 
 def _fetch_image_sync(url: str, max_bytes: int, timeout: float) -> bytes:
     validate_public_url(url)
-    opener = urllib.request.build_opener(ValidatingRedirectHandler)
+    opener = build_public_opener()
     request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     with opener.open(request, timeout=timeout) as response:
         declared = response.headers.get("Content-Length")

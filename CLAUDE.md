@@ -50,7 +50,16 @@ Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
 - Four spend limits gate Gemini: per-IP rate limit (429), per-device free
   runs (402, needs `DEVICE_TOKEN_SECRET` in distributed mode or the API
   refuses to start), `DAILY_RUN_CAP` (503), and the BYOK exemption from the
-  last two. `ALLOWED_ORIGINS` must never be `*` in production.
+  last two. The client IP behind them is the `X-Forwarded-For` entry the
+  deployment's own proxy wrote (`TRUSTED_PROXY_HOPS`, counted from the
+  right), never the client-supplied first entry. The API refuses to start
+  in distributed mode with `ALLOWED_ORIGINS=*`.
+- The production APK is a release build signed with a key that exists only
+  in CI secrets (since 2026-11-07). The checked-in `debug.keystore` is for
+  local builds and the dev lane's `.dev` APK only.
+- Both apps send security headers and the frontend ships a hash-based CSP
+  injected after `next build`; an inline script that is not in the pre-paint
+  set will be blocked. See `docs/frontend/security-headers.md`.
 - A BYOK key must never be an arq job argument (arq logs them). It travels
   through the single-use Redis vault in `infrastructure/byok/key_vault.py`.
 - Every outbound fetch for a URL run goes through `media/net.py`, the one

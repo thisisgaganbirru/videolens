@@ -73,7 +73,15 @@ are dev-only harnesses, never routed.
 
 **`scripts/`** — `build-sw.mjs` generates `public/sw.js` (gitignored) from
 `sw/sw.template.js` with the build's hashed assets; `fix-export-segments.mjs`
-repairs the static export's RSC segment paths on Windows.
+repairs the static export's RSC segment paths on Windows; `inject-csp.mjs`
+writes the hash-based CSP `<meta>` into every prerendered document, before
+`build-sw.mjs` so the cached shell carries it.
+
+**`security/csp.mjs`** — outside the layers, never in the browser bundle:
+the one source of the Content-Security-Policy and the other security
+headers. `next.config.mjs` sends them on the web build (as a function of
+`phase`, so `next dev` gets `'unsafe-eval'`); the static export gets the
+same policy from the injected meta. See `docs/frontend/security-headers.md`.
 
 **`android/`** — the Capacitor project plus three Java files the app owns:
 `MainActivity`, `NativeThemePlugin` (theme choice as AppCompat night mode,
@@ -97,6 +105,8 @@ scale into the WebView before first paint).
   `useFreeRuns` go quiet on failure; `serverReachability` turns that into one
   notice.
 - Capacitor adapters are no-ops off-device, so the same bundle runs in a tab.
+- Inline scripts are limited to the pre-paint set whose hashes the CSP
+  carries; a new one is blocked until `security/csp.mjs` knows it.
 
 ## Cross-cutting
 
@@ -128,4 +138,5 @@ scale into the WebView before first paint).
 - 2026-11-02 · frontend agent (refinement 6) · `ActiveRunStore` + `SessionStorageActiveRunStore`; `app/not-found.tsx` in the routes table
 - 2026-11-02 · frontend agent (refinement 8) · installed app reaches the 404 via the head script
 - 2026-11-02 · frontend agent (refinement 9) · `UpdateDismissalStore`; `NativeShell.onResume`; `UpdateInfo.versionCode`; `domain/platforms.ts`; `components/mediaTerms.ts`
+- 2026-11-07 · frontend agent · build-time security section: `security/csp.mjs`, `scripts/inject-csp.mjs`
 - 2026-11-07 · main session · rewritten as a codemap: port/adapter and route tables, the two shells, invariants, cross-cutting; removed the stale `useMediaQuery.ts` reference

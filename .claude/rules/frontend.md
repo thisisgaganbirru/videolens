@@ -12,6 +12,11 @@ paths:
   `sw/sw.template.js` after every build and is gitignored. Edit the template.
   `scripts/fix-export-segments.mjs` repairs the static export's RSC segment
   paths that Next 16.4 writes wrongly on Windows; keep it in `build:mobile`.
+- `security/csp.mjs` is the one source of the CSP and security headers.
+  `next.config.mjs` sends them on the web build; `scripts/inject-csp.mjs`
+  writes a hash-based CSP `<meta>` into every prerendered document after
+  `next build` and must run before `build-sw.mjs`. A new inline script needs
+  its hash added there or the browser blocks it. `docs/frontend/security-headers.md`.
 - `npm run lint` exits 1 on 4 errors + 1 warning that are deliberately left:
   `react-hooks/set-state-in-effect` in `useGeminiApiKey.ts` and
   `UploadForm.tsx` (the read-localStorage-after-hydration pattern a static
@@ -38,7 +43,10 @@ paths:
   before UI work; the Terminal doc it supersedes is history only.
 - Android: `versionName` comes from `package.json`; bump there for a release.
   `versionCode` is supplied by CI as the commit count and must never
-  decrease. `android/debug.keystore` is checked in on purpose so every debug
-  APK signs with one identity. Local `npm run android:sync` and Gradle builds
-  are fine on a developer machine, never in a cloud session, and a local APK
-  is never shipped.
+  decrease. `android/debug.keystore` is checked in on purpose so every
+  **debug** APK (local, dev lane) signs with one identity; the production
+  APK is `assembleRelease`, signed from CI secrets, never the debug key.
+  Local `npm run android:sync` and Gradle builds are fine on a developer
+  machine, never in a cloud session, and a local APK is never shipped.
+  `res/xml/backup_rules.xml` and `data_extraction_rules.xml` keep WebView
+  storage (the BYOK key) out of Android backups; keep them in sync.

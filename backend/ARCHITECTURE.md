@@ -20,7 +20,8 @@ constructor, which is what makes it testable with an explicit `Settings(...)`.
 `MediaVisuals`, capability and release models, free-run models, `Principal`),
 `errors.py` (every exception a use case may raise; `UserFacingError` carries a
 user message plus operator-only `log_detail`), `policies.py` (quota key,
-client-id validity, run staleness), `run_facts.py` (the media facts a history
+client IP from the proxy-written `X-Forwarded-For` entry, client-id
+validity, run staleness), `run_facts.py` (the media facts a history
 card shows, derived from a stored run), `ports.py` (the `Protocol`s below).
 
 **`application/`** — one use case per operation, orchestrating ports.
@@ -60,7 +61,10 @@ free-runs, runs), `api/schemas.py` (response DTOs; kept separate from
 `domain.entities.Run` so `owner_id` never leaks), `api/dependencies.py`
 (`get_principal`), `api/error_handlers.py` (exception → status, `Retry-After`),
 `api/rate_limiter.py` (slowapi; not behind a port, and the one import-time
-global), `worker/settings.py` (arq `WorkerSettings`; takes the BYOK key out of
+global; the client IP comes from `policies.client_ip_from_forwarded` with
+`TRUSTED_PROXY_HOPS`), `api/security_headers.py` (pure-ASGI middleware,
+added last so every response, preflights and refusals included, carries the
+hardening headers), `worker/settings.py` (arq `WorkerSettings`; takes the BYOK key out of
 the vault before calling the use case).
 
 **`container.py`** — composition root. Builds every adapter once, wires the
@@ -71,7 +75,11 @@ one-line shims so the Dockerfile, compose file and Railway configs reference
 ## Invariants
 
 - A BYOK key never becomes an arq job argument, a stored field, or a log line.
-- Every outbound fetch for a URL run goes through `media/net.py`.
+- Every outbound fetch for a URL run goes through `media/net.py`, which
+  resolves the host once and connects to the checked address (no DNS
+  rebinding between check and fetch).
+- The client IP is never the first `X-Forwarded-For` entry; a distributed
+  deployment refuses to start with `ALLOWED_ORIGINS=*`.
 - `VideoAnalysis` is Gemini's response schema; server-known facts
   (`AnalysisCompleteness`) live beside it on the run, not inside it.
 - A thumbnail, duration, metadata or refund failure never fails a healthy run.
@@ -86,8 +94,10 @@ one-line shims so the Dockerfile, compose file and Railway configs reference
 - **Errors**: domain exceptions map to HTTP in `error_handlers.py` (400
   validation, 401 device token, 402 free runs, 404, 429 rate limit, 503
   quota/scheduling/analysis). `docs/error-messaging.md` covers wording.
-- **Spend limits**: rate limit, free runs, daily cap, BYOK exemption;
+- **Spend limits**: rate limit, free runs, daily cap, BYOK exemption, plus
+  a looser per-IP limit on the read endpoints;
   `docs/backend/cost-abuse-protection.md` and `free-runs.md`.
+- **Response headers**: `docs/backend/security-headers.md`.
 - **Config**: `Settings` from the environment, defaults documented in
   `.env.example`. Distributed mode is `REDIS_URL` set, which also requires
   object storage and `DEVICE_TOKEN_SECRET`.
@@ -105,4 +115,4 @@ one-line shims so the Dockerfile, compose file and Railway configs reference
 
 ## Changelog
 
-- 2026-11-07 · main session · rewritten as a codemap: port/adapter table, invariants, cross-cutting; covers the resolver chain, captions, probes, releases, free runs and device tokens
+- 2026-11-07 · main session · rewritten as a codemap; merged the security pass (`security_headers.py`, trusted-proxy client IP, read-endpoint limit, startup refusal on a CORS wildcard): port/adapter table, invariants, cross-cutting; covers the resolver chain, captions, probes, releases, free runs and device tokens
