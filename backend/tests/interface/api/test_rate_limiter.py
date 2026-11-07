@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 
-from app.interface.api.rate_limiter import client_ip
+from app.interface.api.rate_limiter import client_ip, log_client_ip_probe
 
 
 class ClientIpTests(unittest.TestCase):
@@ -30,6 +30,23 @@ class ClientIpTests(unittest.TestCase):
     def test_handles_missing_client(self) -> None:
         request = SimpleNamespace(headers={}, client=None)
         self.assertEqual(client_ip(request), "")
+
+
+class ClientIpProbeTests(unittest.TestCase):  # TEMPORARY diagnostic, removed in the fix PR
+    def _request(self, headers: dict) -> SimpleNamespace:
+        return SimpleNamespace(headers=headers, client=SimpleNamespace(host="10.0.0.1"))
+
+    def test_silent_without_the_probe_header(self) -> None:
+        with self.assertNoLogs("app.interface.api.rate_limiter", level="DEBUG"):
+            log_client_ip_probe(self._request({"x-forwarded-for": "203.0.113.7"}))
+            log_client_ip_probe(self._request({"x-forwarded-for": "203.0.113.7", "x-videolens-probe": "0"}))
+
+    def test_logs_one_line_with_the_probe_header(self) -> None:
+        with self.assertLogs("app.interface.api.rate_limiter", level="INFO") as logs:
+            log_client_ip_probe(self._request({"x-forwarded-for": "203.0.113.7", "x-videolens-probe": "1"}))
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("client-ip-probe", logs.output[0])
+        self.assertIn("203.0.113.7", logs.output[0])
 
 
 if __name__ == "__main__":
