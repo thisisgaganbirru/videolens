@@ -83,7 +83,10 @@ jobs:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     uses: ./.github/workflows/reusable-android-checks.yml
     # The release signing key. Only this lane has it: the dev lane builds the
-    # debug variant with the checked-in keystore and never ships.
+    # debug variant with the checked-in keystore and never ships. Until all
+    # four secrets exist this lane ships the debug-signed APK with a warning
+    # (none set) or fails (some set); see DEPLOYMENT.md, "Android release
+    # signing".
     secrets:
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
