@@ -61,6 +61,15 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    ignore:
+      # minio/minio and minio/mc are no longer publicly pullable from Docker
+      # Hub (anonymous token -> 401 on tags/list, checked 2026-11-07), so every
+      # weekly job failed with private_source_authentication_failure and never
+      # got to redis. Ignored until the local MinIO service moves to a
+      # maintained image; that swap is a separate decision, see
+      # docs/container-workflows.md. redis keeps getting digest bumps.
+      - dependency-name: minio/minio
+      - dependency-name: minio/mc
   - package-ecosystem: github-actions
     directory: /
     target-branch: dev
