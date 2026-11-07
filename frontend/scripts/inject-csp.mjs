@@ -21,7 +21,7 @@
  * silently ships pages without the policy cannot happen.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,6 +47,28 @@ function die(message) {
   process.exit(1);
 }
 
+/* The hash policy only protects a document that was prerendered: a route Next
+   renders at request time has no .html here, gets no meta, and runs under the
+   header's 'unsafe-inline' alone. Nothing else would notice that, so the web
+   build refuses to finish if any page route is not in the prerender manifest.
+   (The export build cannot have dynamic routes; Next fails it itself.) */
+function assertEveryRouteIsPrerendered(nextDir) {
+  const read = (name) => JSON.parse(readFileSync(path.join(nextDir, name), "utf8"));
+  const appRoutes = read("app-path-routes-manifest.json");
+  const prerendered = new Set(Object.keys(read("prerender-manifest.json").routes ?? {}));
+  const dynamic = Object.entries(appRoutes)
+    .filter(([entry]) => entry.endsWith("/page"))
+    .map(([, route]) => route)
+    .filter((route) => !prerendered.has(route));
+  if (dynamic.length > 0) {
+    die(
+      `these routes are rendered at request time and would get no hash-based CSP: ${dynamic.join(", ")}. ` +
+        "Keep every route static, or move script-src to per-request nonces before adding a dynamic one.",
+    );
+  }
+  console.log(`inject-csp: ${prerendered.size} prerendered route(s), none dynamic`);
+}
+
 /* Web: the prerendered pages, and the standalone server's copy of them (the
    one the Docker image actually serves). Export: the whole `out/` tree. */
 const roots = isExport
@@ -65,6 +87,8 @@ async function htmlUnder(dir) {
   }
   return found;
 }
+
+if (!isExport) assertEveryRouteIsPrerendered(path.join(frontendDir, ".next"));
 
 let total = 0;
 for (const root of roots) {

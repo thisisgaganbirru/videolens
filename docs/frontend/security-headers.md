@@ -92,6 +92,8 @@ header keeps `'unsafe-inline'` so that a response Next renders at request time
 chunks are `'self'`. Client navigations fetch RSC data, never new inline
 scripts, so the first document's policy stays valid across navigations.
 
+**The build now refuses a dynamic route** (2026-11-07): `inject-csp.mjs` reads `.next/app-path-routes-manifest.json` and `.next/prerender-manifest.json` and exits 1 if any page route is not prerendered, naming it. Before, such a route silently lost the meta and ran under the header's `'unsafe-inline'` with nothing turning red. `@next/env`, which the script imports, is now a declared devDependency (pinned to the same major as `next`) rather than a transitive one.
+
 **If you add an inline script** (another pre-paint snippet, `next/script`
 inline content), nothing to do: the next build hashes it. **If a route becomes
 dynamic**, it loses the meta and runs under the header alone
@@ -144,3 +146,4 @@ those start fresh.
 ## Changelog
 
 - 2026-11-07 · frontend agent · created: security headers + CSP for the web build, hash-based meta CSP for both builds, Android backup rules excluding WebView Local Storage
+- 2026-11-07 · security-check · `inject-csp.mjs` fails the web build on any non-prerendered page route; `@next/env` declared in package.json
