@@ -1,201 +1,142 @@
 # Frontend architecture
 
-The frontend follows the same layering as the backend (see
-`backend/ARCHITECTURE.md`), adapted to what a Next.js app actually needs:
-domain types, application hooks that hold state/orchestration, infrastructure
-adapters that talk to the outside world, and framework-bound presentation
-(`app/` + `components/`). It's intentionally lighter than the backend's
-ports/DI setup — no per-adapter dependency injection ceremony, since a
-~3,000-line client app doesn't carry the same testability payoff a service
-does. The one place that *does* mirror the backend's `container.py` directly
-is `infrastructure/container.ts`, because hooks genuinely need one shared
-instance of each adapter (e.g. one `ApiKeyStore` backing both `useGeminiApiKey`
-and `FetchRunsGateway`'s request headers).
+Same layering as the backend, lighter: domain types, application hooks that
+hold state and orchestration, infrastructure adapters that touch the outside
+world, and framework-bound presentation in `app/` + `components/`. The one
+piece of DI is `infrastructure/container.ts`, which builds one instance of
+each adapter; hooks import from it and components never call an adapter.
 
-## Layers
+Next 16 App Router, React 19, Tailwind 3, Capacitor 8. Every route is
+prerendered and the Capacitor build is a static export (`output: "export"`),
+which decides most of what follows.
 
-**`domain/`** — pure types, no `fetch`/`localStorage`/React.
-- `entities.ts` — `RunStatus`, `VideoAnalysis`, `TranscriptSegment`,
-  `ScreenTextSegment`, `RunCreateResponse`, `RunStatusResponse`,
-  `RunSummary`, `RunListResponse`, `MediaSource`.
-- `platforms.ts` — platform display names (`platformName`, `knownPlatformName`,
-  `platformKey`) and the platform of a link judged from its host
-  (`platformFromUrl`, `linkHost`); shared by History and the result screen.
-- `errors.ts` — `ApiError` (optional HTTP `status`, plus the body's `code`/`limit`/`used`), `NetworkError`,
-  `StorageUnavailableError`.
-- `ports.ts` — the interfaces infrastructure adapters implement and hooks
-  depend on: `RunsGateway`, `ApiKeyStore`, `VersionLogGateway`,
-  `UpdateChecker`, `SharedUrlSource` (`take`, `subscribe`, `pending`),
-  `HistoryStore`, `FreeRunsGateway`, `DeviceTokenStore`, `FirstRunStore`, `ActiveRunStore`, `UpdateDismissalStore` (plus their associated
-  `VersionLogEntry`/`UpdateInfo` types). `entities.ts` also holds
-  `HistoryRecord`/`HistoryPatch`.
+## Codemap (`frontend/`)
 
-**`infrastructure/`** — concrete adapters, one per external system.
-- `runsGateway.ts` — `FetchRunsGateway`: talks to the backend's
-  `/api/runs` endpoints, builds the `X-Client-ID`/`X-Gemini-Api-Key`
-  headers. Implements `RunsGateway`.
-- `apiKeyStore.ts` — `LocalStorageApiKeyStore`: reads/writes the
-  bring-your-own-key value in `localStorage`. Implements `ApiKeyStore`.
-- `versionLogGateway.ts` — `FetchVersionLogGateway`: reads the backend's
-  `GET /api/releases` for the in-app "Releases" panel, mapping the endpoint's
-  snake_case rows to `VersionLogEntry`. Implements `VersionLogGateway`.
-- `updateCheck.ts` — `ApiUpdateChecker`: the native-Android-only update
-  check (`@capacitor/app` for the installed build number, `GET /api/releases`
-  for the newest one). Implements `UpdateChecker`.
-- `sharedUrlSource.ts` — `WebShareUrlSource`: the link handed to the app from
-  outside it, from either the Android share intent (`localStorage` +
-  the `videolens-share` event) or the manifest's `share_target` query params.
-  Consuming — see `docs/frontend/share-intake.md`. Implements
-  `SharedUrlSource`.
-- `historyStore.ts` — `IndexedDbHistoryStore`: this browser's run History
-  (IndexedDB `videolens`/`runs`, capped at 20, oldest dropped; asks
-  `navigator.storage.persist()` once; `BroadcastChannel` for other tabs).
-  Opens lazily, so constructing it during prerender is safe. Implements
-  `HistoryStore`. See `docs/frontend/run-history.md`.
-- `activeRunStore.ts` — `SessionStorageActiveRunStore`: the run this tab
-  is watching (`sessionStorage` `videolens-active-run`, try/catch on every
-  access), so a reload resumes it. Implements `ActiveRunStore`. See
-  `docs/frontend/run-analysis-hook.md`.
-- `freeRunsGateway.ts` — `FetchFreeRunsGateway`: `GET /api/free-runs`,
-  normalises the body and writes back a replaced device token. Implements
-  `FreeRunsGateway`. `deviceTokenStore.ts` — `LocalStorageDeviceTokenStore`
-  (`videolens-device-token`, try/catch-wrapped); one instance is shared with
-  `FetchRunsGateway`, which sends it as `X-Device-Token` on `createRun` only.
-  `clientId.ts` — `getClientId()`, shared by both. See
-  `docs/frontend/free-runs.md`.
-- `firstRunStore.ts` — `BrowserFirstRunStore`: the installed app's
-  first-run flags (`videolens-welcome-v1` in localStorage; the Welcome and
-  splash session flags in sessionStorage), every access try/catch'd, with an
-  in-memory fallback. Implements `FirstRunStore`. See
-  `docs/frontend/first-run.md`.
-- `container.ts` — builds one instance of each adapter above and exports
-  them; every hook imports from here instead of constructing an adapter
-  itself.
+**`domain/`** — pure types. `entities.ts` (run, analysis, history, capability
+and free-run shapes), `errors.ts` (`ApiError` with `status`/`code`,
+`NetworkError`, `StorageUnavailableError`), `platforms.ts` (platform names
+and host → platform), `ports.ts` (the interfaces below).
 
-**`application/`** — one hook per piece of state/orchestration a component
-needs. Each hook owns its `useState`/`useEffect` and calls out to
-`infrastructure/container.ts`; components never call an adapter directly.
-- `useAnalysisRun.ts` — the core state machine: submit a run, poll it,
-  open a past run from history, reset. This is what used to be inline in
-  `app/page.tsx`.
-- `useGeminiApiKey.ts` — the BYOK value/saved-state and save/clear actions.
-- `useFreeRuns.ts` — the free-run allowance: a module-level store (shared by
-  the banner and `useAnalysisRun`'s 401/402 handling), `useFreeRuns()` for
-  the banner and `blocked` state, and `refreshFreeRuns` / `markFreeRunsUsed` /
-  `noteRunAccepted`. Reads `apiKeyStore` through `useSyncExternalStore`.
-- `useRunHistory.ts` — reads History from `historyStore` (not the server),
-  re-reads on change, owns the poster object URLs; `useHistoryBoot()`.
-- `historySync.ts` — React-free History writes used by `useAnalysisRun` and
-  the boot: file on submit and on each status response, one-time import from
-  `GET /api/runs`, re-check of unfinished runs (404 → expired).
-- `useVersionLog.ts` — fetches the release list.
-- `useUpdateCheck.ts` — wraps the native update check for `UpdatePrompt` (was `UpdateBanner` until refinement 10).
-- `useSharedUrl.ts` — the latest URL shared into the app. Lives here rather
-  than in `UploadForm` because a share has to be handled whatever is on
-  screen, and the intake is mounted only while the run state is idle.
-- `useMainTab.ts` — which of the four shell destinations is showing, held
-  in the URL as `/app?view=…` (it was `/?view=…` until Phase 5c) rather than in a component's `useState`. Reading
-  and writing that URL is orchestration, so it sits here; `domain/` and
-  `infrastructure/` know nothing about routing. Exports `MAIN_TABS`,
-  `APP_PATH`, `isAppPath` (also accepts `/app.html`, the Capacitor
-  spelling), `mainTabHref`, `goToMainTab` (a plain function, so the Suspense
-  fallback can switch tabs without calling `useSearchParams`) and
-  `useMainTab`.
-- `landingRedirect.ts` — `LANDING_REDIRECT_SCRIPT`, the blocking inline
-  script on `/` that sends old tab URLs, share links and the installed shell
-  to `/app` before paint, and hops Capacitor's extensionless `/app` to
-  `/app.html`. A string, not a hook. See `docs/frontend/landing-page.md`.
-- `firstRunScripts.ts` — `SPLASH_INIT_SCRIPT`, the pre-paint script that
-  stamps `<html data-splash>` on an installed cold start. Not `"use client"`,
-  because a server component inlines it.
-- `useFirstRun.ts` — the splash hand-off and the one-time Welcome, as one
-  module store (`useSyncExternalStore`): `useSplashHandOff()`, `useWelcome()`.
-  See `docs/frontend/first-run.md`.
+**`infrastructure/`** — one adapter per external system.
 
-**`app/` + `components/`** — the framework-bound presentation layer
-(Next.js routing + React). `app/` holds only what Next.js requires to live
-there (route files: `page.tsx`, `layout.tsx`, `manifest.ts`, the legal
-pages, global CSS).
-
-Routes (Phase 5c):
-
-| Route | File | What it is |
+| Port | Adapter | Talks to |
 |---|---|---|
-| `/` | `app/page.tsx` | The landing page (`LandingScreen`), with `LANDING_REDIRECT_SCRIPT` |
-| `/app` | `app/app/page.tsx` | The tool: `RoutedHomeScreen` in a `<Suspense>`, plus `Splash` and `Welcome` (installed app only) |
-| `/privacy`, `/terms` | `app/privacy`, `app/terms` | Legal pages (`LegalShell`) |
-| `/offline` | `app/offline/page.tsx` | The service worker's offline fallback |
-| (unknown) | `app/not-found.tsx` | 404 with the shared chrome; exported as `out/404.html`. In the Capacitor app the head script sends unknown extensionless paths there (refinement 8) |
+| `RunsGateway` | `runsGateway.ts` | `/api/runs`; builds `X-Client-ID`, `X-Gemini-Api-Key`, `X-Device-Token` |
+| `CapabilitiesGateway` | `capabilitiesGateway.ts` | `/api/capabilities`, no caller identity |
+| `FreeRunsGateway`, `DeviceTokenStore` | `freeRunsGateway.ts`, `deviceTokenStore.ts` | `/api/free-runs`; `localStorage` |
+| `ApiKeyStore` | `apiKeyStore.ts` | `localStorage` (BYOK) |
+| `HistoryStore` | `historyStore.ts` | IndexedDB, capped at 20, `BroadcastChannel` across tabs |
+| `ActiveRunStore` | `activeRunStore.ts` | `sessionStorage`, so a reload resumes the run |
+| `VersionLogGateway`, `UpdateChecker`, `UpdateDismissalStore` | `versionLogGateway.ts`, `updateCheck.ts`, `updateDismissalStore.ts` | `/api/releases`; `@capacitor/app` for the installed build |
+| `SharedUrlSource` | `sharedUrlSource.ts` | Android share intent, web `share_target` |
+| `FirstRunStore` | `firstRunStore.ts` | splash and Welcome flags |
+| `NativeShell`, `SystemBarsStyler`, `NativeThemeMirror`, `DocumentExporter` | `nativeShell.ts`, `systemBars.ts`, `nativeTheme.ts`, `documentExporter.ts` | Capacitor only; no-ops in a browser |
 
-Everything about what the page actually looks like and
-does lives in `components/`:
-- `HomeScreen.tsx` — the real page body for one tab, taking that tab as a
-  prop and composing `useAnalysisRun()` with the presentational pieces
-  below. `RoutedHomeScreen` (same file) is the variant that reads the tab
-  from the URL; `app/app/page.tsx` renders it inside the `<Suspense>` boundary
-  `useSearchParams` requires on a statically rendered route, with a real
-  Analyze shell as the fallback.
-- `LandingScreen.tsx` (server) and `SampleResult.tsx` (client, the sample
-  card's ARIA tabs) — the landing page at `/`.
-- `Splash.tsx`, `Welcome.tsx` — the installed app's cold-start splash and
-  one-time Welcome dialog, driven by `useFirstRun`.
-- `AppNav.tsx` — the whole nav band (brand, the four tab links, the mobile
-  drawer, the theme toggle) as one component. `HomeScreen` and `LegalShell`
-  both render it, which only became possible once the tabs had addresses.
-- `theme.ts` — the light/dark constants and the `theme-color` sync, shared
-  by `ThemeToggle` and `app/layout.tsx`'s pre-paint script.
-- `panels/{ApiKeyPanel,HistoryPanel,VersionLogPanel}.tsx` — one component
-  per tab, each just rendering its matching hook's state.
-- `format.ts` — `formatDay` ("Oct 30, 2026"), used by the Releases list. (History formats its own dates in `history.ts`.)
-- `useMediaQuery.ts` — `useSyncExternalStore` over `matchMedia`; only for when React itself must know the width (History hides sort below 48rem and forces Newest).
-- `UploadForm.tsx`, `ResultsView.tsx`, `RunStatusView.tsx`,
-  `UpdatePrompt.tsx` (was `UpdateBanner.tsx`), `ServiceWorkerRegistration.tsx` — presentational
-  components, unchanged in behavior; only their imports moved to
-  `@/domain/entities` where they used to pull from the now-deleted `lib/`.
+`apiBase.ts` holds the one `NEXT_PUBLIC_API_BASE_URL` fallback; `clientId.ts`
+the persisted client id.
 
-`components/ui/` is gone — it held the animated-background system, deleted
-with the Terminal redesign (see `docs/frontend/design-direction-terminal.md`).
+**`application/`** — one hook or React-free module per concern.
+`useAnalysisRun` (submit, poll, open from history, reset; the 401 retry and
+402 block), `historySync` (every History write), `useRunHistory`,
+`useFreeRuns`, `useCapabilities`, `serverReachability` + `gatewayError`
+(classifying failed reads), `useGeminiApiKey`, `useVersionLog`,
+`useUpdateCheck`, `useSharedUrl`, `useMainTab` (the tab as a URL property,
+`/app?view=…`, switched with `pushState` so the shell is never unmounted),
+`backNavigation` + `useHardwareBack`, `useResultExport`, `useSoftKeyboard`,
+`useSystemBarsTheme`, `useFirstRun`. `landingRedirect.ts`, `firstRunScripts.ts`
+and `nativeFontScale.ts` export pre-paint inline scripts (strings), inlined by
+`app/layout.tsx`.
 
-## Build-time security (outside the layers)
+**`app/`** — only what Next requires: routes, `layout.tsx` (fonts, the
+pre-paint theme / shell / redirect / splash scripts), `manifest.ts`, CSS
+(`tokens.css` design tokens, `globals.css` shared classes, two one-off sheets).
 
-`security/csp.mjs` holds the Content-Security-Policy and the other security
-headers; `next.config.mjs` sends them on the web build and
-`scripts/inject-csp.mjs` writes a hash-based CSP `<meta>` into every
-prerendered document after `next build` (both builds, before `build-sw.mjs`).
-Not part of `domain/`…`components/`: it never reaches the browser bundle. See
-`docs/frontend/security-headers.md`.
+| Route | What it is |
+|---|---|
+| `/` | Landing page; the installed app and legacy `/?view=…` links are redirected to `/app` before paint |
+| `/app` | The tool, `RoutedHomeScreen` in a `<Suspense>` whose fallback is a real Analyze shell; plus `Splash` and `Welcome` when installed |
+| `/privacy`, `/terms` | `LegalShell` |
+| `/offline` | Service-worker fallback; plain `<a>` links on purpose |
+| not found | 404 with the shared chrome; the Capacitor head script sends unknown paths here |
 
-## What used to be here
+**`components/`** — the presentation. `HomeScreen.tsx` is the page body for
+one tab (and the sole caller of `useCapabilities`). The chrome is two shells
+picked before first paint by `<html data-shell>` (`shell.ts`): `web` is
+`AppNav` with four tabs plus `SiteFooter`; `app` (installed, phone width) is
+`AppNav` brand-only, `BottomTabBar` (Analyze, History, More) and `MoreSheet`
+(API key, Releases, Privacy, Terms, theme). Both are always rendered; CSS
+hides one. `panels/` holds one component per tab; `UploadForm`,
+`RunStatusView`, `ResultsView`, the notices and `UpdatePrompt` are
+presentational; `history.ts`, `releases.ts`, `takeaway.ts`, `format.ts`,
+`mediaTerms.ts`, `theme.ts`, `navClick.ts` are pure helpers. `*.preview.tsx`
+are dev-only harnesses, never routed.
 
-`lib/api.ts`, `lib/types.ts`, `lib/versionLog.ts`, and `lib/updateCheck.ts`
-are gone - their contents moved into `domain/`/`infrastructure/` above.
-`components/AppMenu.tsx` (a slide-over dialog menu) was deleted outright: an
-in-progress redesign had already replaced it with the tab-based navigation
-now in `HomeScreen.tsx`, duplicating all four of its panels, but nothing
-still imported the old component.
+**`scripts/`** — `build-sw.mjs` generates `public/sw.js` (gitignored) from
+`sw/sw.template.js` with the build's hashed assets; `fix-export-segments.mjs`
+repairs the static export's RSC segment paths on Windows; `inject-csp.mjs`
+writes the hash-based CSP `<meta>` into every prerendered document, before
+`build-sw.mjs` so the cached shell carries it.
+
+**`security/csp.mjs`** — outside the layers, never in the browser bundle:
+the one source of the Content-Security-Policy and the other security
+headers. `next.config.mjs` sends them on the web build (as a function of
+`phase`, so `next dev` gets `'unsafe-eval'`); the static export gets the
+same policy from the injected meta. See `docs/frontend/security-headers.md`.
+
+**`android/`** — the Capacitor project plus three Java files the app owns:
+`MainActivity`, `NativeThemePlugin` (theme choice as AppCompat night mode,
+reports OS night state), `FontScalePlugin`/`FontScaleScript` (system font
+scale into the WebView before first paint).
+
+## Invariants
+
+- Nothing reads `localStorage` or `window` during render; a static export
+  would mismatch on hydration. Pre-paint scripts stamp `<html>` attributes,
+  and hooks read storage in effects (which is why `npm run lint` reports the
+  four `set-state-in-effect` findings that are deliberately left).
+- Tabs are a query param, never route folders: one page, one shell copy,
+  survives the static export, and back walks the tabs on Android.
+- Shell mode and theme are never React state.
+- Every in-app destination is a real `<a href>`; only a plain left-click is
+  intercepted for in-place navigation (`navClick.ts`).
+- History is the browser's. The server is asked for `GET /api/runs` once, to
+  import runs made before History moved client-side.
+- Missing health information never blocks the app: `useCapabilities` and
+  `useFreeRuns` go quiet on failure; `serverReachability` turns that into one
+  notice.
+- Capacitor adapters are no-ops off-device, so the same bundle runs in a tab.
+- Inline scripts are limited to the pre-paint set whose hashes the CSP
+  carries; a new one is blocked until `security/csp.mjs` knows it.
+
+## Cross-cutting
+
+- **Errors**: `gatewayError.ts` maps `NetworkError`/`ApiError` to
+  `{ kind, message }`; wording in `docs/error-messaging.md`.
+- **Design system**: `docs/frontend/design-direction-editorial.md`; tokens in
+  `app/tokens.css`.
+- **Offline**: the generated service worker precaches the shell documents and
+  hashed assets, never API responses or media; `docs/frontend/legal-offline-routes.md`.
+- **Checks**: `npx tsc --noEmit`, `npm run build`, `npm run build:mobile`.
+  No test suite yet.
 
 ## Adding something new
 
-- **New piece of client state / a new API call** → add a hook in
-  `application/`, backed by a port in `domain/ports.ts` if it talks to an
-  external system, with the concrete adapter in `infrastructure/` and
+- Client state or an API call → hook in `application/`, port in
+  `domain/ports.ts` if it talks outside, adapter in `infrastructure/`,
   registered in `container.ts`.
-- **New tab/panel** → a component in `components/panels/`; add the id to
-  `MAIN_TABS` in `application/useMainTab.ts`, its label and icon to
-  `TAB_META` in `components/AppNav.tsx`, and its `<section className="tab-view">`
-  to `HomeScreen.tsx`. The `.tab-view` class is what gives it the same
-  label alignment as every other tab.
-- **Swap out an external system** (e.g. the backend URL scheme, or how
-  version info is sourced) → write a new adapter in `infrastructure/`
-  satisfying the existing port, point `container.ts` at it. Hooks and
-  components don't change.
+- Tab → `MAIN_TABS` (`useMainTab.ts`), `TAB_LABEL` (`AppNav.tsx`), a
+  `MoreSheet` row if the installed shell should reach it, a `.tab-view`
+  section in `HomeScreen.tsx`, a component in `panels/`.
+- Native capability → a port, a Capacitor adapter that is a no-op off-device,
+  and the Java side under `android/app/src/main/java/ai/videolens/app/`.
 
 ## Changelog
 
-- 2026-11-01 · frontend agent (Phase 5a) · added the `HistoryStore` port + `IndexedDbHistoryStore` adapter, `application/historySync.ts`, `StorageUnavailableError`, `ApiError.status`; `useRunHistory` now reads the browser store
-- 2026-11-01 · frontend agent (Phase 5b) · added `FreeRunsGateway` + `DeviceTokenStore` ports and their adapters, `clientId.ts`, `ApiKeyStore.subscribe`, `ApiError.code/limit/used`, `application/useFreeRuns.ts`, `components/FreeRunsBanner.tsx`
-- 2026-11-01 · frontend agent (Phase 5c/5d) · routes table (`/` landing, `/app` tool); landingRedirect, firstRunScripts, useFirstRun, firstRunStore, FirstRunStore port, SharedUrlSource.pending(); LandingScreen, SampleResult, Splash, Welcome
-- 2026-11-02 · frontend agent (refinement 6) · `ActiveRunStore` port + `SessionStorageActiveRunStore` adapter; `app/not-found.tsx` in the routes table
-- 2026-11-02 · frontend agent (refinement 8) · routes table: installed app reaches the 404 via the head script
-- 2026-11-02 · frontend agent (refinement 9) · `UpdateDismissalStore` port + `LocalStorageUpdateDismissalStore` adapter (container `updateDismissalStore`); `NativeShell.onResume`; `UpdateInfo.versionCode`; pure `domain/platforms.ts` (platform display names, URL-host platform); `components/mediaTerms.ts` (terms flag + accept list shared by UploadForm and HomeScreen)
+- 2026-11-01 · frontend agent (Phase 5a) · `HistoryStore` + `IndexedDbHistoryStore`, `historySync.ts`, `StorageUnavailableError`, `ApiError.status`; `useRunHistory` reads the browser store
+- 2026-11-01 · frontend agent (Phase 5b) · `FreeRunsGateway` + `DeviceTokenStore`, `clientId.ts`, `ApiKeyStore.subscribe`, `ApiError.code/limit/used`, `useFreeRuns.ts`, `FreeRunsBanner.tsx`
+- 2026-11-01 · frontend agent (Phase 5c/5d) · routes table (`/` landing, `/app` tool); landingRedirect, firstRunScripts, useFirstRun, firstRunStore, `SharedUrlSource.pending()`; LandingScreen, SampleResult, Splash, Welcome
+- 2026-11-02 · frontend agent (refinement 6) · `ActiveRunStore` + `SessionStorageActiveRunStore`; `app/not-found.tsx` in the routes table
+- 2026-11-02 · frontend agent (refinement 8) · installed app reaches the 404 via the head script
+- 2026-11-02 · frontend agent (refinement 9) · `UpdateDismissalStore`; `NativeShell.onResume`; `UpdateInfo.versionCode`; `domain/platforms.ts`; `components/mediaTerms.ts`
 - 2026-11-07 · frontend agent · build-time security section: `security/csp.mjs`, `scripts/inject-csp.mjs`
+- 2026-11-07 · main session · rewritten as a codemap: port/adapter and route tables, the two shells, invariants, cross-cutting; removed the stale `useMediaQuery.ts` reference
