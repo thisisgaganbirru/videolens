@@ -82,6 +82,16 @@ jobs:
   android:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     uses: ./.github/workflows/reusable-android-checks.yml
+    # The release signing key. Only this lane has it: the dev lane builds the
+    # debug variant with the checked-in keystore and never ships. Until all
+    # four secrets exist this lane ships the debug-signed APK with a warning
+    # (none set) or fails (some set); see DEPLOYMENT.md, "Android release
+    # signing".
+    secrets:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     with:
       upload_apk: true
       # The production backend, matching the image this same workflow publishes.
@@ -100,7 +110,8 @@ jobs:
     needs: [android, publish]
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # The only job in this repository holding contents: write. Keep it that
+    # One of only two jobs holding contents: write; the other is the
+    # Dependabot auto-merge job (owner's decision, 2026-11-07). Keep it that
     # way: everything else, including the Android build itself, is read-only.
     permissions:
       contents: write

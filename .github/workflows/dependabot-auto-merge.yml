@@ -1,0 +1,67 @@
+name: Dependabot auto-merge
+
+# Turns on GitHub auto-merge for Dependabot PRs into dev that are not a
+# semver-major. GitHub then merges by itself the moment branch protection is
+# satisfied: the `required` check green and the branch up to date with dev. A
+# red PR simply stays open. A PR that falls behind dev waits until its branch
+# is updated; the daily Claude overseer (a scheduled task, see
+# docs/container-workflows.md) does that, and auto-merge finishes the job.
+#
+# Majors are left alone on purpose. fetch-metadata's `update-type` is the
+# highest change in the PR, so one major inside a group keeps the whole group
+# out, and the overseer reads the breaking changes before merging those.
+# Docker digest bumps carry no semver change and are auto-merged.
+#
+# This job holds contents: write, the second one in the repository after the
+# release job. The owner chose that on 2026-11-07. It is scoped as tightly as
+# the feature allows: Dependabot's own PRs only, no checkout, no code from the
+# PR is run, and the only command is `gh pr merge --auto`.
+
+on:
+  pull_request:
+    branches: [dev]
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  auto-merge:
+    name: Enable auto-merge
+    # On `synchronize`, only react to Dependabot's own rebases. When the owner
+    # or the overseer updates the branch from dev, auto-merge is already on,
+    # and fetch-metadata would see a head commit that is not Dependabot's.
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      (github.event.action != 'synchronize' || github.actor == 'dependabot[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Read Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge
+        if: steps.meta.outputs.update-type != 'version-update:semver-major'
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+        run: |
+          echo "Update type: ${UPDATE_TYPE:-none (digest)}"
+          gh pr merge --auto --merge "$PR_URL"
+
+      - name: Leave majors for review
+        if: steps.meta.outputs.update-type == 'version-update:semver-major'
+        env:
+          DEPS: ${{ steps.meta.outputs.dependency-names }}
+        run: echo "::notice::Major update ($DEPS); not auto-merged. The daily overseer reviews it."

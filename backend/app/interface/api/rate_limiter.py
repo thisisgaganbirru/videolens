@@ -4,17 +4,21 @@ import time
 from slowapi import Limiter
 from starlette.requests import Request
 
-from ...domain.policies import quota_key_from_headers, seconds_until
+from ...domain.policies import client_ip_from_forwarded, quota_key_from_headers, seconds_until
 from ...infrastructure.config import settings
 
 
 def client_ip(request: Request) -> str:
     # Deployment targets (Railway/Render) front the app with a proxy that
-    # sets X-Forwarded-For; fall back to the socket peer for local/direct runs.
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else ""
+    # appends the caller to X-Forwarded-For. Only the entries the deployment's
+    # own proxies wrote are trusted (TRUSTED_PROXY_HOPS, counted from the
+    # right); the leftmost entry is client-supplied and used to be what this
+    # read, which let a forged header pick a fresh rate-limit bucket per
+    # request. Falls back to the socket peer for local/direct runs.
+    peer = request.client.host if request.client else ""
+    return client_ip_from_forwarded(
+        request.headers.get("x-forwarded-for", ""), peer, settings.trusted_proxy_hops
+    )
 
 
 def quota_key(request: Request) -> str:
