@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Auto Backup rules for Android 11 and lower (android:fullBackupContent).
+  Android 12+ reads data_extraction_rules.xml; keep the two in step.
+
+  Excludes the WebView's localStorage, which holds the bring-your-own Gemini
+  key; everything else (including the IndexedDB run History) is backed up as
+  before. An <exclude> alone keeps the default include-everything behaviour.
+-->
+<full-backup-content>
+    <exclude domain="root" path="app_webview/Default/Local Storage/" />
+</full-backup-content>

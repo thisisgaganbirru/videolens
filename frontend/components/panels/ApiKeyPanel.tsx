@@ -178,6 +178,14 @@ export default function ApiKeyPanel({
           <li>Choose Get API key, then Create API key.</li>
           <li>Paste it above and press Save key.</li>
         </ol>
+        {/* Damage limit, not a promise: the key stays readable to anything
+            running in this page, so the cheap protection is a key that can
+            only spend a little. Wording avoids naming an AI Studio menu that
+            may move. */}
+        <p className="key-guide-note">
+          Use a key made only for VideoLens, with a spending limit set in Google AI Studio, so a
+          leaked key costs little.
+        </p>
         <a href={AI_STUDIO_URL} target="_blank" rel="noopener noreferrer" className="key-guide-link">
           Open Google AI Studio
           <span className="sr-only"> (opens in a new tab)</span>
