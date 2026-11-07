@@ -270,8 +270,10 @@ RATE_LIMIT_PER_HOUR=20
 # Looser per-IP limit on the read endpoints (polling, run list, free-runs).
 READ_RATE_LIMIT_PER_MINUTE=120
 # Trailing X-Forwarded-For entries written by the platform's own proxy; the
-# client IP is that many from the end. 1 on Railway. 0 = use the socket peer.
-TRUSTED_PROXY_HOPS=1
+# client IP is that many from the end. 2 on Railway (default): its edge writes
+# "<client>, <edge hop>" and the edge hop varies per request, so 1 keys every
+# request differently and no per-IP limit trips. 0 = use the socket peer.
+TRUSTED_PROXY_HOPS=2
 MAX_FILE_SIZE_MB=200
 MAX_DURATION_SECONDS=180
 # Tallest video yt-dlp fetches for a URL run; FFmpeg re-encodes anyway.
