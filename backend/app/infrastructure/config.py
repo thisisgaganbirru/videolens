@@ -36,7 +36,24 @@ class Settings(BaseSettings):
     max_duration_seconds: int = 180
     rate_limit_per_hour: int = 20
     daily_run_cap: int = 200
-    run_ttl_seconds: int = 604800  # 7 days - drives both run TTL and history retention
+    # Free runs per device per UTC day for callers without their own Gemini
+    # key. <= 0 turns the free-run allowance off entirely (no device token
+    # needed, no limit beyond DAILY_RUN_CAP).
+    free_runs_per_device: int = 3
+    # Backstop for the above, per client IP per UTC day: clearing browser
+    # storage mints a new device, not a new IP. Set above the device limit
+    # because shared networks (offices, campuses, carrier NAT) put many
+    # people behind one IP. <= 0 disables the IP backstop only.
+    free_runs_per_ip: int = 10
+    # HMAC key for device tokens. Required in distributed mode (REDIS_URL
+    # set) while free runs are on, or replicas would reject each other's
+    # tokens; generated per process (with a warning) in local mode.
+    device_token_secret: str = ""
+    # 1 hour. The browser keeps History (IndexedDB) now; the server only holds
+    # a run until it has been delivered. Re-armed on every write, so the hour
+    # counts from completion. Also bounds what GET /api/runs (and the MCP
+    # server's list_recent_runs) can still see.
+    run_ttl_seconds: int = 3600
     worker_max_jobs: int = 2
     worker_job_timeout_seconds: int = 600
 
@@ -66,6 +83,13 @@ class Settings(BaseSettings):
 
     ytdlp_cookies_file: str = ""
     ytdlp_cookies_from_browser: str = ""
+    # Tallest video yt-dlp fetches for a URL run. A soft cap via yt-dlp's
+    # format_sort "res:N": the largest variant at or under N wins, and a source
+    # with nothing that small falls back to its smallest variant rather than
+    # failing. FFmpeg re-encodes everything anyway and Gemini doesn't need more
+    # than 720p, so a bigger download only costs time, memory and exposure to
+    # mid-download 403s. <= 0 removes the cap (yt-dlp's own "best").
+    ytdlp_max_height: int = 720
     ffmpeg_location: str = ""
 
     allowed_extensions: tuple[str, ...] = (".mp3", ".mp4", ".mov")

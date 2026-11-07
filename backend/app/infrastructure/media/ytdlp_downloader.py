@@ -3,13 +3,14 @@ import os
 import re
 
 from yt_dlp import YoutubeDL
-from yt_dlp.utils import DownloadError
+from yt_dlp.utils import DownloadError, GeoRestrictedError
 
 from ...domain.entities import SavedUpload, SourceMetadata
 from ...domain.errors import MediaValidationError
 from ..config import Settings
 from .ffmpeg import _media_binary
 from .net import validate_public_url
+from .thumbnails import dimensions_from_info, thumbnail_urls_from_info
 from .uploads import _cleanup_dir, create_run_dir
 
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -39,6 +40,30 @@ def _cookie_options(settings: Settings) -> dict:
     return {}
 
 
+# Separate video+audio first (how YouTube serves anything above 360p), then a
+# single progressive file (Instagram/TikTok mp4), then audio alone (podcast and
+# SoundCloud-style sources). The selector only says *which kind* of format; the
+# size cap lives in format_sort so it can never reject a source outright.
+_FORMAT_SELECTOR = "bestvideo*+bestaudio/best/bestaudio"
+
+
+def _format_options(settings: Settings) -> dict:
+    """yt-dlp format options, capped at YTDLP_MAX_HEIGHT.
+
+    `format_sort: ["res:N"]` rather than a `[height<=N]` filter in the
+    selector: the sort prefers the largest variant at or under N and, when a
+    source has none, the *smallest* one above it - whereas a filter with a
+    `/bv*+ba/b` fallback would jump straight to the source's best (4K) in that
+    case, and `[height<=N]` silently drops formats whose height yt-dlp doesn't
+    know (common on progressive social-media mp4s). Every other sort key keeps
+    yt-dlp's default order, so audio-only sources are untouched.
+    """
+    options: dict = {"format": _FORMAT_SELECTOR}
+    if settings.ytdlp_max_height > 0:
+        options["format_sort"] = [f"res:{settings.ytdlp_max_height}"]
+    return options
+
+
 def _source_metadata_from_info(info: dict, url: str) -> SourceMetadata:
     """Map yt-dlp's info dict onto the domain model.
 
@@ -60,6 +85,16 @@ def _source_metadata_from_info(info: dict, url: str) -> SourceMetadata:
     )
 
 
+# Cause plus timing only: the frontend's recoveryAdvice for the `downloading`
+# stage already offers "download the video and upload the file instead", so
+# repeating that here would print it twice (docs/error-messaging.md).
+_BLOCKED_DOWNLOAD = (
+    "The site blocked this download for now - the video itself is fine. Try again "
+    "in a few minutes."
+)
+
+_REGION_LOCKED = "This video isn't available in this server's region."
+
 # Matched against yt-dlp's own wording. Each entry turns one recognised failure
 # into a sentence that names the cause in the user's terms — the raw text goes
 # to the log instead, because it is written for whoever runs yt-dlp ("use
@@ -78,13 +113,34 @@ _KNOWN_DOWNLOAD_FAILURES = (
         "This video is private",
         "This video is private.",
     ),
+    # Geo-blocks, in yt-dlp's real wording (yt-dlp 2026.07.04). Ahead of "Video
+    # unavailable" and well ahead of the 403/429 entries: a geo-blocked video can
+    # also surface an HTTP 403, and the region is the true cause.
+    *(
+        (marker, _REGION_LOCKED)
+        for marker in (
+            # YouTube's subreason, passed to raise_geo_restricted
+            # (extractor/youtube/_video.py).
+            "available in your country",
+            # raise_geo_restricted's default message (extractor/common.py).
+            "not available from your location",
+            "due to geo restriction",
+            # Appended by YoutubeDL to every GeoRestrictedError it reports
+            # (YoutubeDL.py), whatever message the extractor chose.
+            "You might want to use a VPN or a proxy server",
+        )
+    ),
     (
         "Video unavailable",
         "This video is no longer available.",
     ),
-    (
-        "not available in your country",
-        "This video isn't available in this server's region.",
+    # Throttling / bot-blocking, typically partway through a public video's
+    # download. Checked after the private/deleted/region markers so a genuine
+    # one of those keeps its own sentence; before this entry existed a 403 fell
+    # through to the generic "may be private, deleted" text, which was untrue.
+    *(
+        (marker, _BLOCKED_DOWNLOAD)
+        for marker in ("HTTP Error 403", "HTTP Error 429", "Too Many Requests")
     ),
 )
 
@@ -96,6 +152,11 @@ _GENERIC_DOWNLOAD_FAILURE = (
 def _download_failure(exc: DownloadError) -> tuple[str, str]:
     """Split one yt-dlp failure into (what the user sees, what the log gets)."""
     detail = ANSI_ESCAPE.sub("", str(exc)).removeprefix("ERROR: ")
+    # yt-dlp keeps the original exception in exc_info; the type settles a
+    # geo-block even when an extractor words its message in its own way.
+    exc_info = getattr(exc, "exc_info", None) or (None, None, None)
+    if isinstance(exc_info[1], GeoRestrictedError):
+        return _REGION_LOCKED, detail
     for marker, message in _KNOWN_DOWNLOAD_FAILURES:
         if marker in detail:
             return message, detail
@@ -116,7 +177,7 @@ async def download_url(settings: Settings, run_id: str, url: str) -> SavedUpload
 
     def run_download() -> tuple[str, dict]:
         options = {
-            "format": "bestvideo*+bestaudio/best/bestaudio",
+            **_format_options(settings),
             "outtmpl": os.path.join(run_dir, "download.%(ext)s"),
             "noplaylist": True,
             "max_filesize": max_bytes,
@@ -149,7 +210,15 @@ async def download_url(settings: Settings, run_id: str, url: str) -> SavedUpload
                 f"Download exceeds the {settings.max_file_size_mb}MB size limit."
             )
         metadata = _source_metadata_from_info(info, url)
-        return SavedUpload(path=path, run_dir=run_dir, metadata=metadata)
+        width, height = dimensions_from_info(info)
+        return SavedUpload(
+            path=path,
+            run_dir=run_dir,
+            metadata=metadata,
+            thumbnail_urls=thumbnail_urls_from_info(info),
+            width=width,
+            height=height,
+        )
     except MediaValidationError:
         _cleanup_dir(run_dir)
         raise

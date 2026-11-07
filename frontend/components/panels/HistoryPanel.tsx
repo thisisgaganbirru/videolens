@@ -1,63 +1,88 @@
 "use client";
 
-import { Fragment } from "react";
-import { ArrowRight } from "lucide-react";
-import { useRunHistory } from "@/application/useRunHistory";
-import type { RunSummary } from "@/domain/entities";
+import { useId, useMemo, useState } from "react";
+import { AudioLines, ChevronDown, Play } from "lucide-react";
+import { useRunHistory, type HistoryEntry } from "@/application/useRunHistory";
+import type { RunSourceKind } from "@/domain/entities";
+import {
+  HISTORY_FILTERS,
+  buildHistory,
+  isAudio,
+  isLandscape,
+  platformLabel,
+  posterBadge,
+  posterDate,
+  posterLabel,
+  posterTint,
+  posterTitle,
+  type HistoryFilter,
+  type HistorySort,
+} from "@/components/history";
 
-/* Everything on a row is derived from what RunSummary actually carries —
-   run_id, status, title, created_at. There is deliberately no platform,
-   duration or thumbnail here: the API does not return them. */
+/* History — a poster grid (design/shots/HistoryA*.png, HistoryMobile.png,
+   HistoryWeb.png). Everything that decides *what* shows lives in the pure
+   components/history.ts; this file only renders. Filtering, search and sort
+   are client-side over the <=20 runs this browser keeps (IndexedDB, Phase
+   5a) — there is no paging to coordinate with. */
 
-const DAY_MS = 86_400_000;
-
-function startOfDay(date: Date): number {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+interface HistoryPanelProps {
+  onOpenRun: (runId: string, sourceKind?: RunSourceKind | null) => void;
+  /** Leaves History for the intake — the empty state's one action. */
+  onAnalyze: () => void;
 }
 
-/* Day bucket derived from created_at. Today/Yesterday read better than a date
-   for the two buckets people actually scan; everything older gets its real
-   day so the grouping stays honestly per-day. */
-function dayLabel(iso: string): string {
-  const then = new Date(iso);
-  if (Number.isNaN(then.getTime())) return "Undated";
-  const days = Math.round((startOfDay(new Date()) - startOfDay(then)) / DAY_MS);
-  if (days <= 0) return "Today";
-  if (days === 1) return "Yesterday";
-  return then.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-}
-
-/* The day header already carries the date, so the row's own stamp is the
-   time within that day rather than a repeat of it. */
-function timeLabel(iso: string): string {
-  const then = new Date(iso);
-  if (Number.isNaN(then.getTime())) return "";
-  return then.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-}
-
-function groupByDay(runs: RunSummary[]): { label: string; runs: RunSummary[] }[] {
-  const groups: { label: string; runs: RunSummary[] }[] = [];
-  for (const run of runs) {
-    const label = dayLabel(run.created_at);
-    const last = groups[groups.length - 1];
-    if (last && last.label === label) last.runs.push(run);
-    else groups.push({ label, runs: [run] });
-  }
-  return groups;
-}
-
-export default function HistoryPanel({ onOpenRun }: { onOpenRun: (runId: string) => void }) {
+export default function HistoryPanel({ onOpenRun, onAnalyze }: HistoryPanelProps) {
   const { runs, error, retrying, retry } = useRunHistory();
 
-  /* The pane drops its side padding for this view so row hover spans the full
-     panel — the flat states have to carry that inset themselves. */
-  if (error)
-    /* .error-inline, not .error-block: this is one condition inside a panel,
-       not the whole view having failed. The wording is the hook's — a server
-       that answered gets its own `detail`, a server that never answered gets
-       told so — and is never overwritten here. */
+  return (
+    <div className="history">
+      <header className="history-head">
+        <h1 className="history-title">History</h1>
+        <p className="history-lede">Your recent analyses. Open one to read its notes again.</p>
+      </header>
+      <HistoryBody
+        runs={runs}
+        error={error}
+        retrying={retrying}
+        retry={retry}
+        onOpenRun={onOpenRun}
+        onAnalyze={onAnalyze}
+      />
+    </div>
+  );
+}
+
+function HistoryBody({
+  runs,
+  error,
+  retrying,
+  retry,
+  onOpenRun,
+  onAnalyze,
+}: ReturnType<typeof useRunHistory> & HistoryPanelProps) {
+  /* The browser will not store anything (some private modes). Nothing is
+     broken and nothing can be retried, so this is the calm empty-state
+     voice, not the red failure ladder — and the way forward is the app,
+     which still works. */
+  if (error?.kind === "storage")
     return (
-      <div role="alert" className="error-inline">
+      <div className="history-empty" data-error-kind="storage" role="status">
+        <p className="history-empty-title">{error.message}</p>
+        <p className="history-empty-body">
+          This browser isn&apos;t letting VideoLens keep anything on this device, which private
+          browsing often does. You can still analyze videos; their results just won&apos;t wait
+          here afterwards.
+        </p>
+        <button type="button" className="btn btn-secondary" onClick={onAnalyze}>
+          Analyze a video
+        </button>
+      </div>
+    );
+  /* .error-inline, not .error-block: one condition inside a view, not the
+     whole app having failed. The wording is the hook's. */
+  if (error)
+    return (
+      <div role="alert" className="error-inline history-state" data-error-kind={error.kind}>
         <p>{error.message}</p>
         <button
           type="button"
@@ -71,53 +96,192 @@ export default function HistoryPanel({ onOpenRun }: { onOpenRun: (runId: string)
     );
   if (runs === null)
     return (
-      <p role="status" className="pending-note">
-        Loading…
+      <p role="status" className="pending-note history-state">
+        Loading your runs…
       </p>
     );
+  /* Nothing has been analyzed in this browser yet (or History was cleared).
+     Not an error, so no red and no retry: one way forward instead. */
   if (runs.length === 0)
-    return <p className="pending-note">No previous runs yet.</p>;
+    return (
+      <div className="history-empty">
+        <p className="history-empty-title">No runs yet.</p>
+        <p className="history-empty-body">
+          Analyze a link or a file and it will wait here, so you can read its notes again later.
+        </p>
+        <button type="button" className="btn btn-secondary" onClick={onAnalyze}>
+          Analyze a video
+        </button>
+      </div>
+    );
+
+  return <HistoryGrid runs={runs} onOpenRun={onOpenRun} />;
+}
+
+function HistoryGrid({
+  runs,
+  onOpenRun,
+}: {
+  runs: HistoryEntry[];
+  onOpenRun: HistoryPanelProps["onOpenRun"];
+}) {
+  const [filter, setFilter] = useState<HistoryFilter>("all");
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<HistorySort>("newest");
+  const searchId = useId();
+  const sortId = useId();
+
+  /* Sort is on every width since refinement 4 (HIS-03): the phone boards drew
+     none, so portrait had no way to see the oldest runs first while landscape
+     did. On a phone it shares the search row (globals.css, HISTORY block). */
+
+  /* "Today" is fixed for the life of this list rather than read on every
+     keystroke, so a run cannot hop groups mid-search at midnight. A fresh
+     visit to the tab remounts and reads it again. */
+  const now = useMemo(() => new Date(), []);
+  const groups = useMemo(
+    () => buildHistory(runs, { filter, query, sort, now }),
+    [runs, filter, query, sort, now]
+  );
+  const shown = groups.reduce((n, group) => n + group.runs.length, 0);
+  const narrowed = filter !== "all" || query.trim() !== "";
+
+  const clear = () => {
+    setFilter("all");
+    setQuery("");
+  };
 
   return (
-    <ul className="history-list">
-      {groupByDay(runs).map((group, index) => (
-        /* keyed by position as well as label: an unparseable created_at drops a
-           run into "Undated", which can legitimately appear more than once */
-        <Fragment key={`${index}-${group.label}`}>
-          <li>
-            <p className="history-group">{group.label}</p>
-          </li>
-          {group.runs.map((run) => {
-            const fallback = run.status === "failed" ? "Failed run" : "Untitled run";
-            return (
-              <li key={run.run_id}>
-                <button
-                  type="button"
-                  onClick={() => onOpenRun(run.run_id)}
-                  className="history-row min-h-12"
-                  data-run-status={run.status}
-                >
-                  <span className="h-left">
-                    <span className="h-dot" aria-hidden="true" />
-                    <span className="h-text">
-                      <span className="h-title" data-fallback={run.title ? undefined : ""}>
-                        {run.title || fallback}
-                      </span>
-                      <span className="h-sub">
-                        {run.status} &middot; {run.run_id.slice(0, 6)}
-                      </span>
-                    </span>
-                  </span>
-                  <span className="h-right">
-                    <span className="h-meta">{timeLabel(run.created_at)}</span>
-                    <ArrowRight className="h-go" aria-hidden="true" />
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </Fragment>
-      ))}
-    </ul>
+    <>
+      <div className="history-controls">
+        <div className="history-filters" role="group" aria-label="Show runs from">
+          {HISTORY_FILTERS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              className="filter-pill"
+              aria-pressed={filter === option.id}
+              onClick={() => setFilter(option.id)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        <div className="history-search">
+          <label htmlFor={searchId} className="sr-only">
+            Search your runs
+          </label>
+          <input
+            id={searchId}
+            type="search"
+            className="field field-pill"
+            placeholder="Search runs"
+            autoComplete="off"
+            spellCheck={false}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </div>
+        <div className="history-sort">
+          <label htmlFor={sortId} className="sr-only">
+            Sort
+          </label>
+          <select
+            id={sortId}
+            className="sort-select"
+            value={sort}
+            onChange={(event) => setSort(event.target.value as HistorySort)}
+          >
+            <option value="newest">Newest</option>
+            <option value="oldest">Oldest</option>
+          </select>
+          <ChevronDown className="sort-chevron" aria-hidden="true" />
+        </div>
+      </div>
+
+      {/* Announces the count only once something has narrowed the list — a
+          polite "9 runs" on first paint would be noise. */}
+      <p className="sr-only" role="status" aria-live="polite">
+        {narrowed ? `${shown} ${shown === 1 ? "run" : "runs"} shown` : ""}
+      </p>
+
+      {shown === 0 ? (
+        <div className="history-empty">
+          <p className="history-empty-title">No runs match.</p>
+          <p className="history-empty-body">
+            {query.trim()
+              ? "Nothing in your last 20 runs has that in its title or summary. Try a shorter word, or show every source."
+              : "None of your last 20 runs came from there."}
+          </p>
+          <button type="button" className="btn btn-secondary" onClick={clear}>
+            Show all runs
+          </button>
+        </div>
+      ) : (
+        <div className="history-groups">
+          {groups.map((group) => (
+            <section key={group.bucket} className="history-group">
+              <h2 className="history-group-label">{group.label}</h2>
+              <ul className="poster-grid">
+                {group.runs.map((run) => (
+                  <Poster key={run.run_id} run={run} now={now} onOpen={onOpenRun} />
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+function Poster({
+  run,
+  now,
+  onOpen,
+}: {
+  run: HistoryEntry;
+  now: Date;
+  onOpen: HistoryPanelProps["onOpenRun"];
+}) {
+  const chip = platformLabel(run);
+  const badge = posterBadge(run);
+  const date = posterDate(run.created_at, now);
+  const Glyph = isAudio(run) ? AudioLines : Play;
+
+  return (
+    <li className="poster-item" data-orientation={isLandscape(run) ? "landscape" : "portrait"}>
+      <button
+        type="button"
+        className="poster"
+        data-run-status={run.expired ? "expired" : run.status}
+        aria-label={posterLabel(run, now)}
+        onClick={() => onOpen(run.run_id, run.source_kind)}
+      >
+        <span className="poster-thumb" data-tint={posterTint(run.run_id)} aria-hidden="true">
+          {/* The stored poster, over the tint (which stays as the colour
+              behind it while it decodes). Empty alt: the button's label
+              already names the run. A plain <img>: the source is a blob:
+              URL from IndexedDB, which next/image cannot optimise. */}
+          {run.thumbnail_url && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img className="poster-img" src={run.thumbnail_url} alt="" decoding="async" draggable={false} />
+          )}
+          {chip && <span className="poster-chip">{chip}</span>}
+          <span className="poster-play">
+            <Glyph className="poster-glyph" data-glyph={isAudio(run) ? "audio" : "play"} />
+          </span>
+          {badge && (
+            <span className="poster-badge" data-kind={badge.kind}>
+              {badge.text}
+            </span>
+          )}
+        </span>
+        <span className="poster-title" data-fallback={run.title?.trim() ? undefined : ""}>
+          {posterTitle(run)}
+        </span>
+        {date && <span className="poster-date">{date}</span>}
+      </button>
+    </li>
   );
 }

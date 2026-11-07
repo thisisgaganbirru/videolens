@@ -13,10 +13,21 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <!-- Refinement 3, #3: the window behind the WebView follows the OS night
+             mode (@color/app_background is night-qualified), so nothing light
+             shows between the splash and the page's first paint in dark mode. -->
+        <item name="android:windowBackground">@color/app_background</item>
     </style>
 
 
+    <!-- Launch screen (refinement 1, #11): the brand mark on paper instead of
+         Capacitor's stock splash bitmap. Colours flip with the OS night mode
+         (values-night/splash.xml). BridgeActivity switches to
+         AppTheme.NoActionBar itself; postSplashScreenTheme names the same
+         theme for when installSplashScreen() is ever called. -->
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
-        <item name="android:background">@drawable/splash</item>
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_mark</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
     </style>
 </resources>

@@ -12,6 +12,7 @@ on goes to `log_detail`.
 
 import ipaddress
 import socket
+import urllib.request
 from urllib.parse import urlparse
 
 from ...domain.errors import MediaValidationError
@@ -50,3 +51,18 @@ def validate_public_url(url: str) -> None:
         ip = ipaddress.ip_address(address[4][0])
         if not ip.is_global:
             raise MediaValidationError("That link points to a private network address.")
+
+
+class ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Re-runs the public-address check on every redirect hop.
+
+    Validating only the URL the caller typed is not enough: a public host is
+    free to redirect to `http://169.254.169.254/`, and following that blindly
+    is the classic way an SSRF guard gets walked straight past. Shared by
+    every urllib fetch (the direct-HTTP resolver, the thumbnail fetch) for the
+    same one-copy reason as `validate_public_url`.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        validate_public_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)

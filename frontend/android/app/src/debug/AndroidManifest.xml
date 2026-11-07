@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only (refinement 1, #15). Gradle merges src/debug/ into the
+     debug variant and never into release, so release keeps Android's default
+     (no cleartext on target SDK 28+). Lets the bundled app (origin
+     https://localhost) reach a local backend at http://localhost:8000 through
+     `adb reverse`, which the default policy blocks with
+     ERR_CLEARTEXT_NOT_PERMITTED. src/main/AndroidManifest.xml declares no
+     networkSecurityConfig, so nothing needs tools:replace. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:networkSecurityConfig="@xml/network_security_config_debug" />
+</manifest>

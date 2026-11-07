@@ -19,6 +19,9 @@ x-backend-environment: &backend-environment
   S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-videolens}
   S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-videolens-development}
   ALLOWED_ORIGINS: http://localhost:3000,http://localhost:3005
+  # REDIS_URL makes this stack "distributed", where the API refuses to start
+  # without a device-token key. Local-only placeholder; never reuse it.
+  DEVICE_TOKEN_SECRET: ${DEVICE_TOKEN_SECRET:-videolens-local-compose-only}
 
 services:
   backend:

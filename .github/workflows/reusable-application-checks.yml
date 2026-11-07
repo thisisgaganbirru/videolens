@@ -47,6 +47,21 @@ jobs:
           done
           echo "Python pin agrees everywhere: ${want}"
       - uses: ./.github/actions/setup-backend
+      - name: Check requirements.txt kept its environment markers
+        # requirements.txt is `uv pip compile --universal` output: a single
+        # lock for every platform, with PEP 508 markers on the packages that
+        # differ (uvloop is Linux/macOS only, cffi/pycparser skip PyPy). A
+        # regeneration with plain pip-compile resolves for the runner's own
+        # platform and silently drops every marker; Linux CI and Docker never
+        # notice, but `pip install` on Windows then fails building uvloop.
+        # Dependabot's #95 (2026-11-06) did exactly that. Fail here so the next
+        # such PR goes red instead of shipping a Linux-only lock.
+        run: |
+          if ! grep -qE "^uvloop==.* ; .*sys_platform != 'win32'" requirements.txt; then
+            echo "::error::backend/requirements.txt has lost its environment markers (uvloop has no sys_platform marker). Regenerate with: uv pip compile requirements.in --generate-hashes --python-version 3.13 --universal --output-file requirements.txt"
+            exit 1
+          fi
+          echo "requirements.txt markers present"
       - run: python -m compileall -q app
       - run: python -m unittest discover -s tests
       - run: python -c "import app.main; import app.worker"

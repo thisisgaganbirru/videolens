@@ -7,6 +7,9 @@ from datetime import datetime, timezone
 from app.domain.entities import (
     AnalysisCompleteness,
     CaptionTrack,
+    FreeRunClaim,
+    FreeRunStatus,
+    MediaVisuals,
     Run,
     RunStatus,
     SavedUpload,
@@ -18,10 +21,29 @@ class FakeRunRepository:
     def __init__(self) -> None:
         self.runs: dict[str, Run] = {}
         self.created_ids: list[str] = []
+        self.set_visuals_error: Exception | None = None
+        self.visuals_written_while: list[RunStatus] = []
 
-    async def create(self, run_id: str, owner_id: str) -> Run:
+    async def create(
+        self,
+        run_id: str,
+        owner_id: str,
+        *,
+        source_kind: str | None = None,
+        platform: str | None = None,
+        duration_seconds: float | None = None,
+    ) -> Run:
         now = datetime.now(timezone.utc)
-        run = Run(run_id=run_id, owner_id=owner_id, status=RunStatus.QUEUED, created_at=now, updated_at=now)
+        run = Run(
+            run_id=run_id,
+            owner_id=owner_id,
+            status=RunStatus.QUEUED,
+            created_at=now,
+            updated_at=now,
+            source_kind=source_kind,
+            platform=platform,
+            duration_seconds=duration_seconds,
+        )
         self.runs[run_id] = run
         self.created_ids.append(run_id)
         return run
@@ -49,6 +71,19 @@ class FakeRunRepository:
     async def set_source_metadata(self, run_id: str, metadata: SourceMetadata) -> None:
         self.runs[run_id].source_metadata = metadata
 
+    async def set_duration(self, run_id: str, duration_seconds: float) -> None:
+        self.runs[run_id].duration_seconds = duration_seconds
+
+    async def set_visuals(self, run_id: str, visuals: MediaVisuals) -> None:
+        if self.set_visuals_error:
+            raise self.set_visuals_error
+        run = self.runs[run_id]
+        # Visuals land before the status flips: record what the run looked like.
+        self.visuals_written_while.append(run.status)
+        run.thumbnail = visuals.thumbnail
+        run.width = visuals.width
+        run.height = visuals.height
+
     async def set_error(self, run_id: str, error: str) -> None:
         self.runs[run_id].status = RunStatus.FAILED
         self.runs[run_id].error = error
@@ -67,13 +102,21 @@ class FakeMediaProcessor:
         self.enforced_duration: list[tuple[str, str]] = []
         self.download_calls: list[tuple[str, str]] = []
         self.normalize_calls: list[tuple[str, str]] = []
+        self.normalize_error: Exception | None = None
         self.save_upload_error: Exception | None = None
         self.enforce_duration_error: Exception | None = None
+        self.probed_duration: float = 42.5
+        self.upload_extension: str = ".mp4"
         self.download_error: Exception | None = None
         self.download_metadata: SourceMetadata | None = None
         self.captions: CaptionTrack | None = None
         self.caption_calls: list[str] = []
         self.captions_error: Exception | None = None
+        self.download_thumbnail_urls: tuple[str, ...] = ()
+        self.download_dims: tuple[int | None, int | None] = (None, None)
+        self.visuals = MediaVisuals(thumbnail="data:image/jpeg;base64,AAAA", width=1280, height=720)
+        self.visuals_error: BaseException | None = None
+        self.visuals_calls: list[dict] = []
 
     def validate_tools(self) -> None:
         self.validated = True
@@ -87,19 +130,27 @@ class FakeMediaProcessor:
     async def save_upload(self, run_id: str, upload) -> SavedUpload:
         if self.save_upload_error:
             raise self.save_upload_error
-        return SavedUpload(path=f"/tmp/{run_id}/upload.mp4", run_dir=f"/tmp/{run_id}")
+        return SavedUpload(
+            path=f"/tmp/{run_id}/upload{self.upload_extension}", run_dir=f"/tmp/{run_id}"
+        )
 
-    async def enforce_duration_cap(self, run_id: str, path: str) -> None:
+    async def enforce_duration_cap(self, run_id: str, path: str) -> float:
         self.enforced_duration.append((run_id, path))
         if self.enforce_duration_error:
             raise self.enforce_duration_error
+        return self.probed_duration
 
     async def download_url(self, run_id: str, url: str) -> SavedUpload:
         self.download_calls.append((run_id, url))
         if self.download_error:
             raise self.download_error
         return SavedUpload(
-            path=f"/tmp/{run_id}/download.mp4", run_dir=f"/tmp/{run_id}", metadata=self.download_metadata
+            path=f"/tmp/{run_id}/download.mp4",
+            run_dir=f"/tmp/{run_id}",
+            metadata=self.download_metadata,
+            thumbnail_urls=self.download_thumbnail_urls,
+            width=self.download_dims[0],
+            height=self.download_dims[1],
         )
 
     async def fetch_captions(self, url: str) -> CaptionTrack | None:
@@ -110,7 +161,15 @@ class FakeMediaProcessor:
 
     async def normalize_media(self, src_path: str, run_dir: str) -> str:
         self.normalize_calls.append((src_path, run_dir))
+        if self.normalize_error:
+            raise self.normalize_error
         return f"{run_dir}/normalized.mp4"
+
+    async def describe_visuals(self, **kwargs) -> MediaVisuals:
+        self.visuals_calls.append(kwargs)
+        if self.visuals_error:
+            raise self.visuals_error
+        return self.visuals
 
 
 class FakeObjectStore:
@@ -239,3 +298,75 @@ class FakeUploadedFile:
 
     async def close(self) -> None:
         self.closed = True
+
+
+class FakeDeviceTokens:
+    """Accepts "good:<device id>" tokens and nothing else."""
+
+    def __init__(self) -> None:
+        self.issued = 0
+
+    def issue(self) -> str:
+        self.issued += 1
+        return f"good:device-{self.issued}"
+
+    def verify(self, token: str) -> str | None:
+        return token.removeprefix("good:") if token.startswith("good:") else None
+
+
+class FakeFreeRunAllowance:
+    """Counts per device and per IP like the real adapter, minus the days."""
+
+    def __init__(self, *, enabled: bool = True, per_device: int = 3, per_ip: int = 10) -> None:
+        self._enabled = enabled
+        self.per_device = per_device
+        self.per_ip = per_ip
+        self.device_counts: dict[str, int] = {}
+        self.ip_counts: dict[str, int] = {}
+        self.consume_calls = 0
+        self.refunds: list[FreeRunClaim] = []
+        self.held: dict[str, FreeRunClaim] = {}
+        self.release_calls: list[tuple[str, bool]] = []
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    async def status(self, device_id: str) -> FreeRunStatus:
+        used = self.device_counts.get(device_id, 0)
+        return FreeRunStatus(
+            enabled=self._enabled,
+            limit=self.per_device,
+            used=used,
+            remaining=max(0, self.per_device - used),
+            resets_at=datetime(2026, 11, 2, tzinfo=timezone.utc),
+        )
+
+    async def try_consume(self, device_id: str, client_ip: str) -> FreeRunClaim | None:
+        self.consume_calls += 1
+        if self.device_counts.get(device_id, 0) >= self.per_device:
+            return None
+        if self.ip_counts.get(client_ip, 0) >= self.per_ip:
+            return None
+        self.device_counts[device_id] = self.device_counts.get(device_id, 0) + 1
+        self.ip_counts[client_ip] = self.ip_counts.get(client_ip, 0) + 1
+        return FreeRunClaim(device_id=device_id, client_ip=client_ip, day="2026-11-01")
+
+    async def refund(self, claim: FreeRunClaim) -> None:
+        self.refunds.append(claim)
+        self.device_counts[claim.device_id] -= 1
+        self.ip_counts[claim.client_ip] -= 1
+
+    async def hold(self, run_id: str, claim: FreeRunClaim) -> None:
+        self.held[run_id] = claim
+
+    async def release(self, run_id: str, *, refund: bool) -> bool:
+        self.release_calls.append((run_id, refund))
+        claim = self.held.pop(run_id, None)
+        if claim is None or not refund:
+            return False
+        await self.refund(claim)
+        return True
+
+    async def close(self) -> None:
+        pass

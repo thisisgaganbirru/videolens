@@ -1,38 +1,171 @@
 # Run history panel
 
-Shows the caller's own past runs (newest first, backend-capped at 20) and lets them reopen one.
+Shows this browser's own past runs (newest first, capped at 20) and lets them reopen one — **offline too**. Since Phase 5a (2026-11-01) History lives in the browser (IndexedDB), not on the server.
 
 **Files**
-- `frontend/application/useRunHistory.ts` — fetches on mount via `runsGateway.listRuns()`; classifies failures and owns the retry.
-- `frontend/infrastructure/runsGateway.ts` — `FetchRunsGateway`; the only place that knows whether a call failed in transport or in HTTP.
-- `frontend/domain/errors.ts` — `ApiError` and `NetworkError`, the two-case error contract every gateway method obeys.
-- `frontend/components/panels/HistoryPanel.tsx` — renders loading/error/empty/list states; each item shows title (or "Untitled run"/"Failed run" fallback) and `formatDate(created_at) · status`.
-- `frontend/components/format.ts` — the shared `formatDate` helper (also used by the release-notes panel).
+- `frontend/domain/entities.ts` — `HistoryRecord` (the stored shape, below), `HistoryPatch`, `RunSummary` (+ `width`/`height`), `RunStatusResponse` (+ `thumbnail`/`width`/`height`/`orientation`), `RunSourceKind`, `RunPlatform`, `RunOrientation`.
+- `frontend/domain/ports.ts` — `HistoryStore` (`list`, `get`, `upsert`, `subscribe`).
+- `frontend/domain/errors.ts` — `ApiError` (now carries the HTTP `status`), `NetworkError`, `StorageUnavailableError`.
+- `frontend/infrastructure/historyStore.ts` — `IndexedDbHistoryStore`, `HISTORY_LIMIT = 20`. Hand-written wrapper, no dependency. Registered in `infrastructure/container.ts` as `historyStore`.
+- `frontend/application/historySync.ts` — every History **write**, React-free: `recordSubmitted`, `recordRunResponse`, `bootHistory` (one-time import + re-check of unfinished runs), `patchFromRun`, `dataUrlToBlob`, `snippetOf`, `EXPIRED_MESSAGE`, `isRunGone`, `recordExpired` (refinement 3: the one expiry write, used by the startup reconcile and by `useAnalysisRun` on a 404 while the run is on screen).
+- `frontend/application/useRunHistory.ts` — reads the store, re-reads on `subscribe`, owns the poster object URLs (created per read, revoked on the next read and on unmount); exports `useHistoryBoot()` (mounted once in `HomeScreen`). Returns `HistoryEntry` = `RunSummary` + `thumbnail_url`.
+- `frontend/application/useAnalysisRun.ts` — writes on submit and on every applied status response; `openRun` reads the store first.
+- `frontend/infrastructure/runsGateway.ts` — `FetchRunsGateway`; `listRuns()` is now called **only** by the one-time import.
+- `frontend/components/history.ts` — **pure** helpers, no React: `posterTint` (FNV-1a of `run_id` → 1..5), `platformLabel`, `isAudio`, `isLandscape`, `formatDuration`, `posterBadge`, `posterTitle`, `dayBucket`, `posterDate`, `matchesFilter`, `matchesQuery`, `sortRuns`, `buildHistory`, `posterLabel`.
+- `frontend/components/panels/HistoryPanel.tsx` — renders the page header, the four states, the controls and the poster grid. Props: `onOpenRun(runId, sourceKind?)`, `onAnalyze()`.
+- `frontend/components/HomeScreen.tsx` — renders `<section data-view="history">` (no `.col-label`/`.surface`/`.pane` any more) and passes the summary's `source_kind` on to `openRun`.
+- `frontend/app/globals.css` — the HISTORY block (`.history*`, `.filter-pill`, `.sort-select`, `.poster*`), hover rules in `@media (hover: hover)`, and the History section scroller next to Analyze's.
 
-**Ownership**: history is scoped server-side by the caller's `Principal` (see `backend/docs/auth.md` — anonymous callers are scoped by `X-Client-ID`), not filtered client-side.
+**Ownership**: History is whatever this browser stored — per-browser by construction. The server still scopes `GET /api/runs/{id}` by the caller's `Principal` (`X-Client-ID` for anonymous callers). Filtering (pills, search, sort) is client-side over the stored ≤20.
 
-**Layout** (Terminal redesign — see `design-direction-terminal.md`): single
-column. Runs are bucketed by day into `.history-group` headers derived from
-`created_at`; status is a colour-coded `.h-dot` reading down the left edge
-rather than a word. History rows (`.history-row`), group headers (`.history-group`),
-and flat states align flush left with section headers.
+## Where History comes from (Phase 5a, 2026-11-01) — supersedes the fetch-on-mount model
 
-**Render only what `RunSummary` carries.** It is exactly `run_id`, `status`,
-`title`, `created_at` (`domain/entities.ts:53`) — **there is no platform,
-duration, or thumbnail, because the API doesn't return them.** A duration and a
-status pill were both drawn in an early mockup pass and removed once checked
-against source. The day label and the 6-char short-hash run ID are *derived*
-from real fields, not new data.
+The server keeps a run for `RUN_TTL_SECONDS` (default 3600) and then forgets
+it, so the browser files each run itself:
 
-State hooks: `.history-row[data-run-status]`, and `.h-title[data-fallback]`
-which mutes the "Untitled run" / "Failed run" fallbacks.
+| when | written by | what |
+| --- | --- | --- |
+| the server accepts a run (202) | `recordSubmitted` (from `useAnalysisRun.submit`) | `run_id`, `status: queued`, client `created_at`, `source_kind`; for uploads `platform` = `audio_file` (audio/* or .mp3) else `video_file` |
+| every status response the screen applies (poll, reconnect, reopen) | `recordRunResponse` → `patchFromRun` | status, platform, duration, width/height/orientation, `source_metadata` (+ its title), the server `thumbnail` (data URL → Blob); on `complete` the full `result`, `completeness`, title, `summary_snippet` (same 160-char word-boundary rule as the backend); on `failed` the `error` |
+| first app load ever (flag `videolens-history-imported` in localStorage) | `bootHistory` → `importOnce` | `GET /api/runs`, then `GET /api/runs/{id}` for each, so runs made before 5a are kept. The flag is set only once the list came back (an offline first load retries next time). Failures are silent. **After this the app never calls `GET /api/runs` again.** |
+| every app load | `bootHistory` → `reconcileUnfinished` | each stored `queued`/`processing` run is asked about **once**; a 404 (`ApiError.status`) marks it `failed` with `EXPIRED_MESSAGE` ("This run expired on the server before its result reached this browser."). Unreachable → left alone |
+| a 404 while the run is on screen (refinement 3) | `useAnalysisRun` → `recordExpired` | the live poll, a reconnect attempt, or reopening the row from History meets a 404: the row is marked expired at once, not on the next app load |
+
+Writes only include fields the response actually carries, so a later response
+without a field never erases an earlier one. A per-run signature
+(status/thumbnail/width/platform/result) skips identical 3-second poll writes.
+Every write swallows its own failure — History is never the reason an analysis
+does not show.
+
+**Thumbnails are the server's** (links and uploads alike). There is **no
+browser-side frame grab**: owner decision 2026-11-01 — the server cuts a poster
+from the normalised file for uploads too, and nothing on screen shows a poster
+before a run is done (`RunStatusView` draws none), so a client grab would be a
+second, throw-away thumbnail. Audio and failed runs have none (tint placeholder).
+
+**Reopening** (`useAnalysisRun.openRun`): the store first — a `complete` record
+with a `result`, or a `failed` record, is shown with no network at all. Anything
+else (still running, or no usable store) falls through to `GET /api/runs/{id}`
+and polls as before.
+
+**Cap**: `upsert` enforces it inside the same readwrite transaction — after the
+put, `count()`; if over 20, walk the `created_at` index oldest-first and delete
+the excess. Verified by importing 22 runs: 20 kept, the two oldest gone.
+
+**Persistence**: `navigator.storage.persist()` is asked once (feature-detected,
+not awaited) the first time History is written. Without it Safari can evict
+after 7 days without a visit, Chrome under storage pressure.
+
+**Cross-tab**: writes post on a `BroadcastChannel("videolens-history")`; the
+store's subscribers in other tabs re-read.
+
+### The stored record
+
+`HistoryRecord` in IndexedDB database `videolens` v1, store `runs`, keyPath
+`run_id`, index `created_at`:
+
+`run_id`, `created_at` (ISO), `status`, `title`, `source_kind`, `platform`,
+`duration_seconds`, `width`, `height`, `orientation`, `summary_snippet`,
+`thumbnail` (JPEG `Blob`, longest side ≤320px, ~10–14 KB, or null), `result`
+(`VideoAnalysis`), `source_metadata`, `completeness`, `error`, `updated_at`.
+Everything except `run_id`/`created_at`/`status`/`updated_at` is nullable.
+
+### Poster thumbnail
+
+`<img class="poster-img" alt="" decoding="async">` absolutely filling
+`.poster-thumb` with `object-fit: cover` (and `max-width: none` against the
+preflight `img` rule), under the chips, play disc and hover veil; the tint stays
+behind it. Plain `<img>` because the source is a `blob:` URL that `next/image`
+cannot optimise (one `eslint-disable-next-line @next/next/no-img-element`, with
+the reason inline). **Landscape** = `width > height` when both are known, else
+`orientation === "landscape"`, else portrait (`components/history.ts`
+`isLandscape`). `sortRuns`/`buildHistory`/`HistoryGroup` are generic over
+`T extends RunSummary` so the entries keep their `thumbnail_url`.
+
+### States, revised
+
+- Loading (`runs === null`), empty, populated and no-matches are unchanged.
+- **`storage`** — `StorageUnavailableError` (no `indexedDB`, or open refused/
+  blocked, e.g. some private modes). Rendered in the calm `.history-empty`
+  voice (`data-error-kind="storage"`, `role="status"`), not the red ladder:
+  "History can't be saved in this browser." + why + an "Analyze a video"
+  button. The app still works; verified a link run completes with `indexedDB`
+  removed.
+- **`unknown`** — any other read failure: the existing `.error-inline` + retry.
+- The `unreachable`/`server` kinds described further down no longer apply to
+  History (it makes no request to list); that text is kept for history.
+
+## Layout — poster grid (Phase 3, 2026-11-01)
+
+Source of truth: `design/shots/HistoryA.png`, `HistoryADark.png`,
+`HistoryMobile.png` (installed app), `HistoryWeb.png` (phone browser).
+
+- **Header**: `h1.history-title` "History" in Newsreader (36→48px; shares the `.view-title` rule with API key, Releases and the legal pages since Phase 4), lede
+  "Your recent analyses. Open one to read its notes again."
+- **Controls** (populated state only): filter pills All / Instagram / TikTok /
+  YouTube / Files (`button[aria-pressed]` in a `role="group"`; active = filled
+  ink pill), search (`input[type=search].field.field-pill`, matches title +
+  `summary_snippet`, every whitespace term must match), sort (native `<select>`
+  styled as a pill: Newest / Oldest). From 48rem: pills left, search (260px) +
+  sort right. Phone (below 48rem, Phase 4): search alone, full width, on its own
+  row, then the pill row, which scrolls sideways and bleeds off the right
+  edge; **sort is hidden** (`HistoryWeb.png`, `HistoryMobile.png`). A visually hidden polite
+  status announces "N runs shown" only once something has narrowed the list.
+- **Sort hidden ⇒ Newest.** `HistoryGrid` reads
+  `useMediaQuery("(min-width: 48rem)")` (`components/useMediaQuery.ts`, a
+  `useSyncExternalStore` wrapper — no set-state-in-effect) and orders by
+  `sortVisible ? sort : "newest"`. The CSS breakpoint that hides
+  `.history-sort` is the same 48rem, so the list can never be ordered by a
+  control the user cannot see. The desktop choice is kept in state, not reset:
+  narrow to a phone width and back, and "Oldest" returns (verified 1366 →
+  390 → 1366). The server snapshot is `false` (Newest), which is also the
+  default, so the static export hydrates without a mismatch.
+- **Groups**: `h2.history-group-label` eyebrows TODAY / EARLIER THIS WEEK /
+  EARLIER (+ UNDATED for an unparseable `created_at`, always last). "This
+  week" = the previous six calendar days, the window where a bare weekday
+  ("Thu") is unambiguous. Oldest-first reverses the group order too.
+- **Grid**: `ul.poster-grid`, 2 columns → 3 (40rem) → 4 (52rem) → 5 (64rem),
+  `grid-auto-flow: row dense`, `align-items: start`. Landscape runs
+  (`orientation === "landscape"`) `grid-column: span 2` with a 16:9 thumb;
+  everything else (including null orientation) is a 3:4 portrait.
+- **Poster**: the whole card is one `<button class="poster">` whose
+  accessible name starts with the title (`posterLabel`). Thumb = flat
+  `--poster-N` tint picked by a stable hash of `run_id`; platform chip top-left
+  (surface pill), round play disc centred (waveform `AudioLines` for
+  `audio_file`), badge bottom-right. Under it: title (600, wraps) and date
+  ("Today, 9:41 PM", "Yesterday, …", "Thu, 7:02 PM", "Oct 12, 7:02 PM", year
+  added outside the current one). Focus: 2px green ring, 4px offset, around the
+  whole card. Hover: 4% ink veil + play disc scale 1.06 (opacity/transform
+  only; the global reduced-motion rule collapses them).
+- **Fallbacks for legacy rows** (every new field is optional and nullable):
+  no platform → "Link"/"File" chip from `source_kind`, else no chip; no
+  duration → no badge; no orientation → portrait; no title → muted "Untitled
+  run". **Run state outranks duration** in the badge slot: `failed` → "Failed"
+  (danger-soft fill, danger text, danger-border hairline — muted, red only
+  because it is an error), `queued`/`processing` → "Processing" (surface
+  pill). Failed and in-progress runs still count toward the backend's 20.
+- **Files filter** = `source_kind === "file"` or platform `audio_file` /
+  `video_file`.
+- **Scrolling**: like Analyze, from 32rem the History section (`section.view-scroll`, Phase 4) is the
+  scroller between the fixed nav and footer (full-bleed so its scrollbar is at
+  the window edge); below 32rem `.viewport` scrolls. In the installed-app shell
+  the dock's footprint is already reserved by `.shell`'s bottom padding —
+  measured at 390×844 scrolled to the end: last poster bottom 700, dock top 764.
+
+**Retired**: `.history-list`, `.history-row`, `.h-*` (status dot list from the
+Terminal redesign) and the "Render only what `RunSummary` carries" rule — the
+backend now sends platform, duration, snippet and orientation.
 
 ## The four states, and how a failure is worded
 
-Three of them are unchanged: `runs === null` → a muted `.pending-note`
-"Loading…" (`role="status"`), `runs.length === 0` → a muted `.pending-note`
-"No previous runs yet." — **the empty case is a 200 with `{"runs": []}` and is
-not an error**, and a populated response → the day-grouped list.
+Three of them keep their semantics, restyled in Phase 3: `runs === null` →
+a muted `.pending-note` "Loading your runs…" (`role="status"`),
+`runs.length === 0` → `.history-empty` (serif "No runs yet.", one line, and an
+"Analyze a video" secondary button that goes to the intake) — **the empty case
+is a 200 with `{"runs": []}` and is not an error**, and a populated response →
+the poster grid. A fifth, client-side state: filters/search that match nothing
+→ `.history-empty` "No runs match." with a "Show all runs" button that resets
+the filter and the query (the sort is kept).
 
 The fourth used to collapse every failure into one red box reading "Could not
 load history." That string was reachable *only* when the request never reached
@@ -146,8 +279,100 @@ painting 66.8px buttons (44 content + 20.8 padding + 2 border) instead of the
 `.history-row` already did for exactly this reason. Every `.btn` in the app is
 44px tall on touch as intended; verified on the analyze intake as well as here.
 
+## Sort on every width (refinement 4, HIS-03)
+
+Supersedes "sort is hidden" / "Sort hidden => Newest" above. Portrait had no
+sort while landscape (48rem and up) showed "Newest", so the same app offered
+different controls by rotation. `.history-sort` is no longer `display: none`
+below 48rem: the phone grid is `minmax(0, 1fr) auto` with areas
+`search sort / filters filters`, so the select shares the search row and no
+row is added. `HistoryGrid` dropped the `useMediaQuery` gate and orders by the
+`sort` state directly (`components/useMediaQuery.ts` is now unused; left in
+place). Measured with four seeded IndexedDB runs (today, 1, 3, 10 days ago) at
+360x640, 390x844 light/dark, 844x390 dark, 1280x800: Newest = Alpha, Bravo,
+Charlie, Delta with groups Today / Earlier this week / Earlier; Oldest =
+reversed, groups reversed; YouTube + Oldest = Alpha only; no page or section
+horizontal scroll (the pill row still scrolls sideways inside itself, as drawn).
+
+## Refinement 6 (2026-11-02)
+
+**RUN-13, Expired rows.** A run that expired on the server is stored as
+`status: "failed"` with `error === EXPIRED_MESSAGE`. `useRunHistory`'s
+`HistoryEntry` now carries `expired` (that test), `posterBadge` returns
+`{ kind: "expired" }` before the failed check, and the row renders an
+"Expired" badge in the neutral (processing) style rather than red "Failed".
+The poster's accessible name says "Expired" and the row has
+`data-run-status="expired"`. Reopening it still lands on the expired view.
+
+## Refinement 9 (2026-11-02) — naming a link run that failed early
+
+`components/history.ts`'s `PLATFORM_LABELS` is gone. The chip uses
+`knownPlatformName` from `domain/platforms.ts`, the same names as the result
+screen. Before, a link run that failed before any metadata arrived (an
+Instagram download refusal, for example) showed "Untitled run" under a bare
+"Link" chip, even though this browser stored the link. `useRunHistory`'s
+`toEntry` now falls back, for display only:
+- platform: the server's, else `platformFromUrl(source_url)` (youtube.com and
+  youtu.be → YouTube, instagram.com → Instagram, tiktok.com → TikTok, other
+  hosts → `other`, which the chip shows as "Link");
+- title: the server's, else the upload's file name, else "<Platform> link",
+  else the link's host (`linkHost`, without `www.`/`m.`).
+The stored record is unchanged, and real metadata replaces these when it
+arrives. The Failed badge is kept. Verified: an instagram.com reel shows
+"Instagram" / "Instagram link" / Failed, and example.org shows
+"Link" / "example.org" / Failed.
+
+## Refinement 11 (2026-11-02) — search row at large text
+
+Device QA: at 320 px with font scale 1.3 the search placeholder clipped to
+"Search your". The placeholder is now "Search runs" (the field's label stays
+"Search your runs" for screen readers), and the phone toolbar is a wrapping
+flex row instead of the two-row grid: search (`flex: 1 1 8.5rem`, a floor that
+scales with the text), sort (`flex: 0 0 auto`), then the pills
+(`order: 1; flex-basis: 100%`). When the field and the sort cannot both fit,
+the sort drops under the field; at normal sizes the row is unchanged. From
+48rem the toolbar is the same one-row grid as before (`display: grid` is now
+set there explicitly). Verified at 320/360/390 at 130% and 390/1280 at 100%:
+placeholder fits, no overlap, no page scroll.
+
+## Refinement 12 (2026-11-02) — search floor from the placeholder, not rem
+
+Device QA: at 320 px with Android font scale 1.5 the placeholder clipped to
+"Search ru" while the sort still sat beside the field (it wrapped only by
+2.0). The 8.5rem floor did not track the field's text there. The floor on
+`.history-search` is now **`flex: 1 1 calc(12ch + 2rem)`**: "Search runs" is
+11 characters, `ch` follows the field's own font size (the wrapper sets
+`font-size: 1rem`, the same as `.field`, so its `ch` is the field's), and
+2rem is the pill's 1rem + 1rem inline padding. If the field and the sort
+cannot both meet their content widths, flex-wrap drops the sort under the
+field; alone on its row the field takes the full width. No breakpoint.
+
+At 100% text the floor is ~140px, so the phone row is unchanged (search and
+sort share a row at 320, 360 and 390); from 48rem the grid takes over as
+before. If the placeholder copy changes, change the `12ch` with it.
+
+Verified in `scratchpad\refine12\verify.py`: "Search runs" fits fully at 320
+and 360 with 100/115/130/150/200% root font (light, plus dark at 150/200),
+no overlap, no page scroll; 390 and 1280 at 100% (light and dark) produce
+identical search/sort/pill boxes to the refinement 11 rule re-injected for
+comparison. A text-only zoom emulation (font sizes scaled, rem lengths not,
+the way WebView text zoom can behave) also passes at 115–200%; with the old
+rule the same emulation clips at 360/2.0 and is 1.4px from clipping at
+320/1.3. The exact device case (sort beside a clipped field at 1.5) did not
+reproduce in desktop Chromium, so it needs a device recheck.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported HistoryPanel to day-grouped rows with status dots; fixed duplicate React keys on non-adjacent "Undated" groups
 - 2026-08-15 · frontend agent (history error handling) · split transport from server failures (`NetworkError`), added a keyboard-reachable retry, replaced the panel's `.error-block` with a new `.error-inline`, added `.error-note`, and fixed `.btn`'s `content-box` touch targets (66.8px → 44px)
 - 2026-08-15 · doc-accuracy agent · corrected two stale claims against live code: `VersionLogPanel` has moved to `.error-inline` with a real retry (was recorded as not-yet-done), and `useAnalysisRun.ts` now classifies via the shared `application/gatewayError.ts` (`classifyGatewayError`) and exposes `errorKind` (was recorded as an open follow-up); documented the shared classifier itself
+- 2026-11-01 · frontend agent (Phase 3) · replaced the day-grouped row list with the editorial poster grid (filters, search, sort, day buckets, landscape spans, tint hash, legacy fallbacks, Failed/Processing badges); pure helpers in components/history.ts; History section is now its own scroller; empty + no-matches states restyled
+- 2026-11-01 · frontend agent (Phase 4) · phone controls: search full width on its own row above the pills, sort hidden below 48rem and ordering forced to Newest there via `useMediaQuery` (desktop choice preserved); scroller selector is now `.view-scroll`
+- 2026-11-01 · frontend agent (Phase 4, boards) · title size follows the shared `.view-title`/`.history-title` change to clamp(2.25rem, 1.75rem + 1.6vw, 3rem) made for the Phase 4 boards (36px phone, 48px at 1280); no other History change
+- 2026-11-01 · frontend agent (Phase 5a) · History moved into the browser: `HistoryStore` port + `IndexedDbHistoryStore` (cap 20, oldest dropped, persist() once, cross-tab), writes from `useAnalysisRun` via `application/historySync.ts`, one-time import from `GET /api/runs`, unfinished runs re-checked once per load (404 → expired), reopen from IndexedDB offline, server thumbnails as Blobs in the poster grid (landscape by width>height), calm storage-unavailable state; no client-side frame grab (owner decision)
+- 2026-11-02 · frontend agent (refinement 3) · `isRunGone` + `recordExpired` shared by the startup reconcile and the live/reopen paths, so a row never stays "Processing" after a 404 on screen
+- 2026-11-02 · frontend agent (refinement 4) · sort select shown on phones too, sharing the search row; removed the 48rem Newest-only gate (HIS-03)
+- 2026-11-02 · frontend agent (refinement 6) · RUN-13 expired runs badge "Expired" (neutral), data-run-status="expired"
+- 2026-11-02 · frontend agent (refinement 9) · platform chip uses the shared domain/platforms.ts names; link runs that failed before metadata show a platform from the URL host and a title like "Instagram link" or the host
+- 2026-11-02 · frontend agent (refinement 11) · History placeholder "Search runs"; phone toolbar wraps the sort under the search when large text leaves no room (device QA)
+- 2026-11-02 · frontend agent (refinement 12) · search field floor is now `calc(12ch + 2rem)` (the placeholder's own width) instead of 8.5rem, so the sort wraps under the field before "Search runs" can clip at large text (device QA, 320 / font scale 1.5)
