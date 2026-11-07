@@ -28,7 +28,17 @@ def quota_key(request: Request) -> str:
 # Redis-backed so the limit holds across worker processes/replicas, not just
 # in one process's memory. Falls back to in-memory storage when no Redis is
 # configured (single-process local/dev runs).
-limiter = Limiter(key_func=quota_key, storage_uri=settings.redis_url or "memory://", default_limits=[])
+#
+# key_style="endpoint": one bucket per route function, not per URL. slowapi's
+# default ("url") buckets by request path, so GET /api/runs/{run_id} got a
+# fresh bucket for every run id and READ_RATE_LIMIT_PER_MINUTE never tripped
+# for a caller cycling ids (measured on Railway, 2026-11-07).
+limiter = Limiter(
+    key_func=quota_key,
+    storage_uri=settings.redis_url or "memory://",
+    default_limits=[],
+    key_style="endpoint",
+)
 
 
 logger = logging.getLogger(__name__)
