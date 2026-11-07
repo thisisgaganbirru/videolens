@@ -127,9 +127,11 @@ Complete these items before making the application publicly available.
       client IP taken only from the proxy-written `X-Forwarded-For` entry;
       read endpoints rate-limited (2026-11-07 security pass, tracked in
       `VideoLens-Security-Assessment-2026-11-07.xlsx`).
-- [ ] Set the four `ANDROID_*` release-signing secrets before the next push
-      to `main`; the production lane fails without them (see "Android
-      release signing" below).
+- [ ] Set the four `ANDROID_*` release-signing secrets (deferred until the
+      project has its own accounts). Until then the production lane ships a
+      debug-signed APK with a warning; setting all four switches the next
+      `main` release to release signing, which forces a one-time reinstall
+      (see "Android release signing" below).
 
 ### Operational Constraints
 
@@ -458,8 +460,9 @@ a native Android container and native APIs to an existing web application:
 - [x] In-app update check against `GET /api/releases`, with a dismissable
       prompt linking to the release.
 - [x] Release APKs published from `main` with a strictly increasing
-      `versionCode` (commit count), signed with the CI-held release key
-      since 2026-11-07 (the debug keystore stays for local and dev builds).
+      `versionCode` (commit count). Release-signed with the CI-held key once
+      its secrets exist; debug-signed with the checked-in keystore until then
+      (currently debug: the key is deferred).
 - [ ] Build and sign an Android App Bundle (`.aab`).
 - [ ] Test on physical phones, tablets, small screens, and recent Android
       versions (manual suites: `docs/qa/android-app-test-cases.md`,
@@ -473,16 +476,38 @@ server-side outside the single-use vault described in Phase 1.
 
 ### Android release signing
 
-Since 2026-11-07 the production APK (every push to `main`,
-`production-environment.yml` → `reusable-android-checks.yml` with
-`upload_apk: true`) is a **release** build signed with a key that exists only
-in GitHub Actions secrets. Before that it was the debug build signed with the
-checked-in `frontend/android/debug.keystore` (password `android`), which meant
-anyone with the repository could build an APK that installs as an update over
-the real one, and the shipped app was debuggable. The debug keystore is still
-used, on purpose, for local builds and the dev lane's `.dev` testing APK.
+The production APK (every push to `main`, `production-environment.yml` →
+`reusable-android-checks.yml` with `upload_apk: true`) is meant to be a
+**release** build signed with a key that exists only in GitHub Actions
+secrets. The debug build signed with the checked-in
+`frontend/android/debug.keystore` (password `android`) lets anyone with the
+repository build an APK that installs as an update over the real one, and it
+ships debuggable. The debug keystore is still used, on purpose, for local
+builds and the dev lane's `.dev` testing APK.
 
-The production lane **fails** until these four repository secrets exist:
+Creating the release key is deferred until the project has its own accounts
+(domain, email, password manager). Until then the production lane picks the
+signing from which of the four secrets below exist:
+
+| Secrets set | Production APK |
+|---|---|
+| all four | `assembleRelease`, signed with the release key |
+| none (today) | `assembleDebug` signed with the checked-in debug keystore, no `.dev` suffix: the same build production shipped up to v2.2.0-build350. The run stays green but logs `::warning::Production APK is debug-signed: release keystore not configured` and adds the same line to the run summary |
+| some, not all | the Android job fails: a misconfiguration |
+
+Either way the artifact and release asset names
+(`videolens-ai-v<version>-code<code>-<sha>-<debug|release>`), `version.json`,
+the `versionCode` (commit count) and the `v<version>-build<code>` tag have
+the same shape, so the in-app update check keeps finding new releases; it
+matches on the tag only. While the fallback is active, debug-signed installs
+take each new release as a normal update.
+
+**Adding all four secrets switches the next `main` release to release
+signing.** That release cannot install over a debug-signed one (see the
+migration note at the end of this section), so set them deliberately, right
+before a release whose notes carry the reinstall warning.
+
+The four repository secrets:
 
 | Secret | Value |
 |---|---|
@@ -531,11 +556,13 @@ cd android
 ```
 
 **One-time migration for existing installs.** The first release-signed build
-has a different signing identity from every APK published before it, so
-Android will refuse to install it over an existing debug-signed install, and
-the in-app update prompt will lead to an install error. Users have to
-uninstall the old app once (History lives on the device and is lost; the
-BYOK key too) and install the new one. Say so in that release's notes.
+(the first `main` push after all four secrets exist) has a different signing
+identity from every APK published before it, so Android will refuse to
+install it over an existing debug-signed install, and the in-app update
+prompt will lead to an install error. Users have to uninstall the old app
+once (History lives on the device and is lost; the saved BYOK key too) and
+install the new one. That release's notes must say so; `generate_release_notes`
+will not, so edit the release body by hand.
 
 ### Android Target
 

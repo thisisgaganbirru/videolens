@@ -13,7 +13,12 @@ on:
   workflow_call:
     inputs:
       upload_apk:
-        description: Build the RELEASE APK, signed with the keystore in the ANDROID_* secrets, and upload it with the version manifest as a workflow artifact for a downstream release job
+        description: >-
+          Build the production APK and upload it with the version manifest as
+          a workflow artifact for a downstream release job. Release-signed
+          (assembleRelease) when all four ANDROID_* secrets are set;
+          debug-signed with the checked-in keystore, with a warning, when none
+          are; fails when only some are.
         required: false
         default: false
         type: boolean
@@ -46,9 +51,10 @@ on:
         default: "v"
         type: string
     secrets:
-      # Release signing, used only when upload_apk is true. The production
-      # APK is signed with this key; the checked-in debug keystore is for
-      # local and dev builds only. All four must be set together.
+      # Release signing, used only when upload_apk is true. All four set:
+      # the production APK is release-signed with this key. None set: it
+      # falls back to the debug build signed with the checked-in keystore
+      # (the pre-2026-11-07 behaviour) and warns. Some set: the job fails.
       ANDROID_KEYSTORE_BASE64:
         description: The release keystore (.jks / .keystore), base64-encoded
         required: false
@@ -121,13 +127,20 @@ jobs:
               exit 1
             }
           fi
-      # The production APK is a release build signed with a key that lives
-      # only in CI secrets. Until 2026-11-07 it was the debug build signed
-      # with the checked-in debug keystore (password "android"), which let
-      # anyone with the repository build an APK that installs as an update
-      # over the real one, and shipped debuggable. Fails loudly when the
-      # secrets are missing rather than falling back to the debug key.
+      # Picks how the production APK is signed. Release signing with a key that
+      # lives only in CI secrets is the goal: the checked-in debug keystore
+      # (password "android") lets anyone with the repository build an APK that
+      # installs as an update over the real one, and the debug build ships
+      # debuggable. The owner deferred creating that key (2026-11-07), so:
+      #   all four secrets set -> variant=release, assembleRelease, signed
+      #   none set             -> variant=debug, assembleDebug with the
+      #                           checked-in keystore and no -PdevBuild, i.e.
+      #                           what production shipped before 2026-11-07;
+      #                           warns in the log and the step summary
+      #   some set             -> fail: that is a misconfiguration
+      # Values are only tested for emptiness here, never printed.
       - name: Prepare release signing
+        id: signing
         if: inputs.upload_apk
         shell: bash
         working-directory: .
@@ -137,14 +150,25 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
+          present=()
+          missing=()
           for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
-            if [ -z "${!name}" ]; then
-              echo "::error::Release signing secret ANDROID_${name} is not set. The production APK must be signed with the release key; see DEPLOYMENT.md, 'Android release signing'." >&2
-              exit 1
-            fi
+            if [ -n "${!name}" ]; then present+=("ANDROID_${name}"); else missing+=("ANDROID_${name}"); fi
           done
+          if [ "${#present[@]}" -eq 0 ]; then
+            msg="Production APK is debug-signed: release keystore not configured (DEPLOYMENT.md → Android release signing)"
+            echo "::warning::${msg}"
+            echo "- :warning: ${msg}" >> "$GITHUB_STEP_SUMMARY"
+            echo "variant=debug" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Release signing is partly configured. Set: ${present[*]}. Missing: ${missing[*]}. Set all four or none; see DEPLOYMENT.md, 'Android release signing'." >&2
+            exit 1
+          fi
           printf '%s' "$KEYSTORE_BASE64" | base64 -d > "${RUNNER_TEMP}/release.keystore"
           test -s "${RUNNER_TEMP}/release.keystore" || { echo "::error::ANDROID_KEYSTORE_BASE64 did not decode to a keystore." >&2; exit 1; }
+          echo "variant=release" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # versionCode is the commit count below, which is 1 at the default
@@ -162,9 +186,11 @@ jobs:
       - id: version
         env:
           TAG_PREFIX: ${{ inputs.tag_prefix }}
-          # release for the production APK, debug for the dev artifact and
-          # the plain gate. Drives the Gradle task and the output directory.
-          VARIANT: ${{ inputs.upload_apk && 'release' || 'debug' }}
+          # release for a release-signed production APK; debug for the
+          # debug-signed production fallback, the dev artifact and the plain
+          # gate (the signing step is skipped there, so its output is empty).
+          # Drives the Gradle task, the output directory and the artifact name.
+          VARIANT: ${{ steps.signing.outputs.variant || 'debug' }}
         run: |
           name="$(node -p "require('./package.json').version")"
           sha="$(git rev-parse --short HEAD)"
@@ -179,19 +205,19 @@ jobs:
           } >> "$GITHUB_OUTPUT"
       # Values reach Gradle through the environment, never interpolated into
       # the command line, so a version string with shell metacharacters cannot
-      # run anything. The signing variables are empty unless upload_apk
-      # prepared them above; build.gradle configures release signing only
-      # when all four are present.
+      # run anything. The signing variables are empty unless the signing step
+      # chose the release variant; build.gradle configures release signing
+      # only when all four are present, and the debug build never reads them.
       - env:
           APP_VERSION_NAME: ${{ steps.version.outputs.name }}
           APP_VERSION_CODE: ${{ steps.version.outputs.code }}
           BUILD_REF: ${{ steps.version.outputs.sha }}
           VARIANT: ${{ steps.version.outputs.variant }}
           DEV_BUILD: ${{ inputs.dev_artifact }}
-          ANDROID_KEYSTORE_PATH: ${{ inputs.upload_apk && format('{0}/release.keystore', runner.temp) || '' }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ inputs.upload_apk && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
-          ANDROID_KEY_ALIAS: ${{ inputs.upload_apk && secrets.ANDROID_KEY_ALIAS || '' }}
-          ANDROID_KEY_PASSWORD: ${{ inputs.upload_apk && secrets.ANDROID_KEY_PASSWORD || '' }}
+          ANDROID_KEYSTORE_PATH: ${{ steps.version.outputs.variant == 'release' && format('{0}/release.keystore', runner.temp) || '' }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ steps.version.outputs.variant == 'release' && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
+          ANDROID_KEY_ALIAS: ${{ steps.version.outputs.variant == 'release' && secrets.ANDROID_KEY_ALIAS || '' }}
+          ANDROID_KEY_PASSWORD: ${{ steps.version.outputs.variant == 'release' && secrets.ANDROID_KEY_PASSWORD || '' }}
         run: |
           case "$VARIANT" in
             release) assemble=assembleRelease ;;
@@ -229,9 +255,10 @@ jobs:
         if: inputs.upload_apk
         with:
           name: ${{ steps.version.outputs.artifact }}
+          # release/ or debug/, whichever variant the signing step chose.
           path: |
-            frontend/android/app/build/outputs/apk/release/*.apk
-            frontend/android/app/build/outputs/apk/release/version.json
+            frontend/android/app/build/outputs/apk/${{ steps.version.outputs.variant }}/*.apk
+            frontend/android/app/build/outputs/apk/${{ steps.version.outputs.variant }}/version.json
           if-no-files-found: error
           retention-days: 30
       # The dev/testing APK. Short retention, no manifest, never a release:

@@ -29,8 +29,9 @@ Also:
 - The production APK is `assembleRelease` signed with the keystore in the
   `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS`
   / `ANDROID_KEY_PASSWORD` secrets, passed explicitly by
-  `production-environment.yml`. The job fails before Gradle if any is
-  missing and never falls back to the debug keystore. Version values reach
+  `production-environment.yml`, when all four exist. With none it falls back
+  to `assembleDebug` with the checked-in keystore (no `-PdevBuild`) and a
+  `::warning::`; with only some it fails before Gradle. Never print them. Version values reach
   Gradle through the step environment, never `${{ }}` on the command line.
 - Advisory scans (dev PRs, nightly) must finish green; Railway's Wait for CI
   skips a deploy while any workflow on the commit is red.
