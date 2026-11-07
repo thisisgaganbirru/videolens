@@ -65,4 +65,4 @@ The purpose is to stop casual overuse of the shared key, not to authenticate any
 - 2026-11-02 · backend agent (free-run download refund) · a link run whose download fails now gets its free run back: `FreeRunAllowance.hold`/`release`, held at intake, released in `ProcessRunUseCase`; other processing failures stay unrefunded
 - 2026-11-02 · backend agent (duration-cap refund) · a link run that downloads but fails the duration cap now also gets its free run back; flag renamed `download_failed` → `rejected_before_analysis`; normalize, Gemini and upload failures stay unrefunded
 - 2026-11-07 · security-check · IP backstop keyed on the proxy-appended X-Forwarded-For entry, not the client-supplied one; `GET /api/free-runs` rate-limited
-2026-11-07 · general-purpose subagent (dispatched by videolens-9f) · IP backstop now holds on Railway: `TRUSTED_PROXY_HOPS` default 2 (Railway's edge writes `<client>, <edge hop>`)
+- 2026-11-07 · general-purpose subagent (dispatched by videolens-9f) · IP backstop now holds on Railway: `TRUSTED_PROXY_HOPS` default 2 (Railway's edge writes `<client>, <edge hop>`)
