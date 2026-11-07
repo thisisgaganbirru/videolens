@@ -52,7 +52,8 @@ Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
   refuses to start), `DAILY_RUN_CAP` (503), and the BYOK exemption from the
   last two. The client IP behind them is the `X-Forwarded-For` entry the
   deployment's own proxy wrote (`TRUSTED_PROXY_HOPS`, counted from the
-  right), never the client-supplied first entry. The API refuses to start
+  right; 2 on Railway, whose edge writes `<client>, <edge hop>` with a
+  varying hop), never the client-supplied first entry. The API refuses to start
   in distributed mode with `ALLOWED_ORIGINS=*`.
 - The production APK is release-signed with a key held only in CI secrets
   when the four `ANDROID_*` signing secrets exist, and falls back to the
