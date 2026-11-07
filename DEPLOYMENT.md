@@ -132,6 +132,9 @@ Complete these items before making the application publicly available.
       debug-signed APK with a warning; setting all four switches the next
       `main` release to release signing, which forces a one-time reinstall
       (see "Android release signing" below).
+- [ ] After the first release-signed APK ships, remove the debug fallback
+      from `reusable-android-checks.yml` so production is release-signed
+      only and fails without the secrets.
 
 ### Operational Constraints
 
@@ -494,6 +497,12 @@ signing from which of the four secrets below exist:
 | all four | `assembleRelease`, signed with the release key |
 | none (today) | `assembleDebug` signed with the checked-in debug keystore, no `.dev` suffix: the same build production shipped up to v2.2.0-build350. The run stays green but logs `::warning::Production APK is debug-signed: release keystore not configured` and adds the same line to the run summary |
 | some, not all | the Android job fails: a misconfiguration |
+
+**Temporary.** The debug fallback exists only until the release key does.
+After the first release-signed APK ships, remove it from
+`reusable-android-checks.yml` so production has one signing path:
+release-signed only, failing when the secrets are missing (the 2026-11-07
+#110 behaviour).
 
 Either way the artifact and release asset names
 (`videolens-ai-v<version>-code<code>-<sha>-<debug|release>`), `version.json`,

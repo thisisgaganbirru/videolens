@@ -127,6 +127,9 @@ jobs:
               exit 1
             }
           fi
+      # TEMPORARY: remove the debug fallback once the release key exists
+      # (DEPLOYMENT.md, "Android release signing"); production then has one
+      # path, release-signed only, failing without the secrets.
       # Picks how the production APK is signed. Release signing with a key that
       # lives only in CI secrets is the goal: the checked-in debug keystore
       # (password "android") lets anyone with the repository build an APK that

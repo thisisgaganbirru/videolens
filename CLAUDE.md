@@ -57,7 +57,8 @@ Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
 - The production APK is release-signed with a key held only in CI secrets
   when the four `ANDROID_*` signing secrets exist, and falls back to the
   debug build signed with the checked-in `debug.keystore` (with a CI
-  warning) when none do. Currently debug: the owner deferred the key.
+  warning) when none do (temporary: the fallback is removed once the first
+  release-signed APK ships). Currently debug: the owner deferred the key.
   Adding the secrets forces a one-time reinstall for every user; see
   `DEPLOYMENT.md`, "Android release signing".
 - Both apps send security headers and the frontend ships a hash-based CSP

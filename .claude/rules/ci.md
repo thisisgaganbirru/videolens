@@ -30,7 +30,7 @@ Also:
   `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS`
   / `ANDROID_KEY_PASSWORD` secrets, passed explicitly by
   `production-environment.yml`, when all four exist. With none it falls back
-  to `assembleDebug` with the checked-in keystore (no `-PdevBuild`) and a
+  (temporary, removed once the release key exists) to `assembleDebug` with the checked-in keystore (no `-PdevBuild`) and a
   `::warning::`; with only some it fails before Gradle. Never print them. Version values reach
   Gradle through the step environment, never `${{ }}` on the command line.
 - Advisory scans (dev PRs, nightly) must finish green; Railway's Wait for CI
