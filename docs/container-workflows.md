@@ -481,6 +481,33 @@ Resolve digests from the registry, never from documentation or memory. A
 useful check on the method: resolve the tag you are replacing at the same
 time and confirm it returns the digest already pinned in the file.
 
+#### Dependabot overseer
+
+Dependabot PRs into `dev` are merged by Claude, not by a GitHub auto-merge
+workflow. The owner asked for it on 2026-11-07: merge a bump when it is green
+and mergeable, and have Claude watch over the process.
+
+A daily scheduled task (11:23 UTC, "Dependabot PR overseer (videolens dev)")
+wakes one standing Claude Code session that has this repository attached. For
+each open Dependabot PR into `dev` it:
+
+- **merges** (merge commit, the repo convention) when the `required` check on
+  the head SHA is green, the PR is up to date with `dev`, nothing asks to wait,
+  the advisory security job reports no new High/Critical, and, for a major, the
+  release notes show no breaking change CI would miss;
+- **updates the branch** (merge from `dev`, never a rebase) when it is green
+  but `behind`, one PR at a time because every merge puts the rest behind again,
+  and checks back 20 minutes later;
+- **holds** anything red, conflicted or doubtful, reads the failing log, and
+  says why in its report. It never pushes to Dependabot's branch, comments,
+  closes PRs, or touches `main`.
+
+Why a Claude session and not `gh pr merge --auto` in a workflow: that workflow
+needs `contents: write`, and the release job is meant to be the only job in
+the set that holds it (see the CLAUDE.md CI section). The session merges with
+the owner's own GitHub access and respects branch protection like any other
+merge. To pause it, disable the scheduled task, or put a `hold` label on one PR.
+
 #### Dependabot coverage
 
 Dependabot's Dockerfile parser matches literal `FROM image:tag@sha256:...`
@@ -757,3 +784,4 @@ jobs.
 - 2026-11-06 · claude (session ccr-ee9ca9d3) · dev lane keeps the Android APK as a 14-day workflow artifact (`dev_artifact` input on `reusable-android-checks.yml`: dev backend URL, `-PdevBuild=true` for the `.dev` application id suffix, never a release); CLAUDE.md now allows local mobile builds on a developer machine, still not in cloud sessions
 - 2026-11-07 · claude (session ccr-ee9ca9d3) · cleared all 14 open frontend Dependabot alerts with `overrides` (@xmldom/xmldom 0.9.12, brace-expansion 1.1.21 and 5.0.12 per major line, minimatch 10.x -> 11.0.5, postcss-selector-parser 6.1.5, rimraf 6.1.4 (pulls glob 14), zod 4.6.7); all build-time only (`dev: true`), `npm audit` 0, lint unchanged at 4+1. Backend `pip-audit` clean. Dependabot docker-compose entry now ignores minio/minio and minio/mc, which Docker Hub no longer serves anonymously; replacing the local MinIO image is an open decision
 - 2026-11-07 · security-check · production APK is `assembleRelease` signed from CI secrets (fails loudly without them; dev lane and local stay on the debug keystore); Android job passes version values via env, not command-line interpolation; `version.json` written by node from env
+- 2026-11-07 · claude (session 01FVkcsidCXWo1CtwAtdwVHV) · added the Dependabot overseer: a daily scheduled task wakes a standing Claude session that merges green, up-to-date Dependabot PRs into `dev`, updates behind ones one at a time, and holds the rest with a diagnosis
