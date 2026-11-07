@@ -119,17 +119,23 @@ cd android && ./gradlew assembleDebug testDebugUnitTest
 
 `frontend/android/app/build.gradle` reads `versionName` from
 `frontend/package.json`'s `version` — bump it there for releases.
-`versionCode` is supplied at build time (CI passes the GitHub Actions run
-number); local builds default to `1`. `frontend/android/debug.keystore` is
-checked into the repo intentionally (not a secret) so every debug build —
-local or CI — signs with the same identity, letting a freshly downloaded
-APK install as an update over an existing one.
+`versionCode` is supplied at build time (CI passes the commit count); local
+builds default to `1`. `frontend/android/debug.keystore` is checked into the
+repo intentionally (not a secret) so every **debug** build — local or the dev
+lane — signs with the same identity, letting a freshly downloaded test APK
+install as an update over the previous one. The **production** APK is a
+release build signed with a key held only in CI secrets
+(`ANDROID_KEYSTORE_BASE64` and friends; `DEPLOYMENT.md`, "Android release
+signing"); it was debug-signed until 2026-11-07, which let anyone with the
+repository build an APK that installed over the real one.
 
 **Where APKs come from.** Three places, each for a different purpose:
 
-- **Production**: every push to `main` builds the APK against the production
-  backend and publishes it to GitHub Releases. That is the only APK anyone
-  installs for real, and the only one the in-app update check offers.
+- **Production**: every push to `main` builds the **release** APK against the
+  production backend, signed with the CI-held release key, and publishes it
+  to GitHub Releases. That is the only APK anyone installs for real, and the
+  only one the in-app update check offers. The lane fails if the signing
+  secrets are missing; it never falls back to the debug key.
 - **Dev / testing**: every PR into `dev` that touches `frontend/` builds the
   APK against the dev backend (`videolens-backend-dev.up.railway.app`) and
   keeps it as a workflow artifact for 14 days (`videolens-ai-dev-v<version>-
@@ -208,7 +214,8 @@ released.
 The reusables: `reusable-application-checks.yml` (backend compileall +
 unittest discover + import check; frontend `tsc --noEmit` + `build` +
 `build:mobile`; `backend`/`frontend` inputs), `reusable-android-checks.yml`
-(gradle `assembleDebug` + `testDebugUnitTest`), `reusable-security-scan.yml`
+(gradle `assembleDebug` or, for the production APK, `assembleRelease` with
+the CI-held signing key, plus `testDebugUnitTest`), `reusable-security-scan.yml`
 (Dockerfile lint, image build, Grype; `enforce` input),
 `reusable-container-publish.yml` (multi-arch push to GHCR under `sha-<commit>`,
 scan of that digest, `imagetools` promotion to `latest`, in-registry SBOM and
@@ -414,16 +421,21 @@ No accounts, no paid tier — server-side limits are the only thing gating
 Gemini spend. Two independent caps: `RATE_LIMIT_PER_HOUR` (per-IP or
 per-token, Redis-backed across replicas when `REDIS_URL` is set) and
 `DAILY_RUN_CAP` (global backstop across all callers, UTC day). Both are
-checked before any download/FFmpeg work happens. `ALLOWED_ORIGINS` must
-never be `*` in production — the backend logs a startup warning if it
-detects a distributed deployment still running with `*`.
+checked before any download/FFmpeg work happens. The client IP behind them
+is the `X-Forwarded-For` entry the deployment's own proxy appended
+(`TRUSTED_PROXY_HOPS`, counted from the right), never the client-supplied
+first entry. The read endpoints have their own looser per-IP limit
+(`READ_RATE_LIMIT_PER_MINUTE`). `ALLOWED_ORIGINS` must never be `*` in
+production — the backend refuses to start if it detects a distributed
+deployment configured with `*`.
 
 ## Configuration
 
 See `backend/.env.example` and `frontend/.env.example`. Key backend
 settings: `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL` (optional;
 retry tuning via `GEMINI_RETRY_*`), `MAX_FILE_SIZE_MB`,
-`MAX_DURATION_SECONDS`, `RATE_LIMIT_PER_HOUR`, `DAILY_RUN_CAP`,
+`MAX_DURATION_SECONDS`, `RATE_LIMIT_PER_HOUR`, `READ_RATE_LIMIT_PER_MINUTE`,
+`TRUSTED_PROXY_HOPS`, `DAILY_RUN_CAP`,
 `RUN_TTL_SECONDS`, `FFMPEG_LOCATION`, `REDIS_URL`, `S3_*`, optional
 `AUTH_*` OIDC settings, `ALLOWED_ORIGINS`. Login-gated URL sources (some
 Instagram links etc.) need either `YTDLP_COOKIES_FROM_BROWSER` (local) or
