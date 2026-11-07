@@ -14,4 +14,9 @@ Otherwise, falls back to anonymous: requires `allow_anonymous` (default true) an
 
 **Status**: OIDC verification is implemented but not enabled by default (`allow_anonymous: true`). Per root `README.md`, going fully non-anonymous requires actually configuring an identity provider first — not something flip a flag alone accomplishes.
 
-**Tests**: none directly for `get_principal` or `JwtVerifier` (would need a mock JWKS endpoint). `is_valid_client_id`'s underlying pattern has no dedicated test either, though it's simple enough to read at a glance.
+**JWKS caching (2026-11-07)**: `JwtVerifier` keeps one `PyJWKClient(cache_keys=True, lifespan=600)` for its lifetime. It used to build a new client per `decode`, which fetched the JWKS on every authenticated request - a round trip of latency each and a way for anyone with a token to make this service hammer the identity provider. PyJWT still refetches on an unknown `kid`, so key rotation is unaffected.
+
+**Tests**: `backend/tests/infrastructure/auth/test_jwt_verifier.py` (unconfigured auth is `AuthNotConfiguredError`; one caching JWKS client across calls; only RS256/ES256 with audience and issuer). None for `get_principal` itself. `is_valid_client_id`'s underlying pattern has no dedicated test either, though it's simple enough to read at a glance.
+
+## Changelog
+- 2026-11-07 · security-check · `JwtVerifier` reuses one caching `PyJWKClient`; first tests for the verifier
