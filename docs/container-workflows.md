@@ -481,6 +481,42 @@ Resolve digests from the registry, never from documentation or memory. A
 useful check on the method: resolve the tag you are replacing at the same
 time and confirm it returns the digest already pinned in the file.
 
+#### Dependabot auto-merge and the overseer
+
+Dependabot PRs into `dev` merge themselves when they are green. Two pieces do
+this, chosen by the owner on 2026-11-07.
+
+**`dependabot-auto-merge.yml`** runs when Dependabot opens (or rebases) a PR.
+It reads the update type with `dependabot/fetch-metadata` and, for anything
+that is not a semver-major, turns on GitHub auto-merge (`gh pr merge --auto
+--merge`). GitHub then merges the moment branch protection is satisfied: the
+`required` check green and the branch up to date. A red PR stays open. Majors
+are skipped; `update-type` is the highest change in the PR, so one major in a
+group keeps the group out. Digest bumps carry no semver change and go through.
+It needs the repository setting "Allow auto-merge" turned on.
+
+**The overseer** is a daily scheduled task (11:23 UTC, "Dependabot PR overseer
+(videolens dev)") that wakes the Claude Code session where the owner asked for
+this. It has to be that session: a separate session treats a scheduled prompt
+or another session's message as information, not as the owner's
+authorization, and will only report. It covers what auto-merge cannot:
+
+- **updates behind branches** (merge from `dev`, never a rebase), one PR at a
+  time, because every merge puts the rest behind and GitHub auto-merge never
+  updates a branch itself. Its update uses the owner's GitHub access, so CI
+  re-runs and auto-merge completes; it checks back 20 minutes later;
+- **reviews majors** against their release notes and merges them only when no
+  breaking change touches this code in a way CI would miss;
+- **holds** anything red, conflicted or doubtful, reads the failing log, and
+  says why in its report. It never pushes to Dependabot's branch, comments,
+  closes PRs, or touches `main`.
+
+The auto-merge job holds `contents: write`, the second job in the repository
+to do so after the release job. That was a deliberate exception by the owner;
+it is scoped to Dependabot's own PRs, checks nothing out and runs no PR code.
+To pause everything, disable the scheduled task and turn off "Allow
+auto-merge"; to hold one PR, disable auto-merge on it and add a `hold` label.
+
 #### Dependabot coverage
 
 Dependabot's Dockerfile parser matches literal `FROM image:tag@sha256:...`
@@ -757,3 +793,5 @@ jobs.
 - 2026-11-06 · claude (session ccr-ee9ca9d3) · dev lane keeps the Android APK as a 14-day workflow artifact (`dev_artifact` input on `reusable-android-checks.yml`: dev backend URL, `-PdevBuild=true` for the `.dev` application id suffix, never a release); CLAUDE.md now allows local mobile builds on a developer machine, still not in cloud sessions
 - 2026-11-07 · claude (session ccr-ee9ca9d3) · cleared all 14 open frontend Dependabot alerts with `overrides` (@xmldom/xmldom 0.9.12, brace-expansion 1.1.21 and 5.0.12 per major line, minimatch 10.x -> 11.0.5, postcss-selector-parser 6.1.5, rimraf 6.1.4 (pulls glob 14), zod 4.6.7); all build-time only (`dev: true`), `npm audit` 0, lint unchanged at 4+1. Backend `pip-audit` clean. Dependabot docker-compose entry now ignores minio/minio and minio/mc, which Docker Hub no longer serves anonymously; replacing the local MinIO image is an open decision
 - 2026-11-07 · security-check · production APK is `assembleRelease` signed from CI secrets (fails loudly without them; dev lane and local stay on the debug keystore); Android job passes version values via env, not command-line interpolation; `version.json` written by node from env
+- 2026-11-07 · claude (session 01FVkcsidCXWo1CtwAtdwVHV) · added the Dependabot overseer: a daily scheduled task wakes a standing Claude session that merges green, up-to-date Dependabot PRs into `dev`, updates behind ones one at a time, and holds the rest with a diagnosis
+- 2026-11-07 · claude (session 01FVkcsidCXWo1CtwAtdwVHV) · added `dependabot-auto-merge.yml` (GitHub auto-merge for non-major Dependabot PRs into `dev`, fetch-metadata v3.1.0 pinned by SHA); the overseer now updates behind branches and reviews majors. Second `contents: write` job, by owner decision

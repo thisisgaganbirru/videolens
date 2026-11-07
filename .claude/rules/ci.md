@@ -12,10 +12,12 @@ paths:
 Read `docs/container-workflows.md` before editing a workflow. Three
 properties to preserve:
 
-- Exactly one job holds `contents: write`: the release job in
-  `production-environment.yml`. Everything else stays `contents: read`; the
-  Android steps live in a reusable so the dev gate and the release build share
-  them without a write token.
+- Two jobs hold `contents: write`: the release job in
+  `production-environment.yml`, and the auto-merge job in
+  `dependabot-auto-merge.yml` (owner's decision, 2026-11-07; Dependabot PRs
+  only, no checkout). Everything else stays `contents: read`; the Android
+  steps live in a reusable so the dev gate and the release build share them
+  without a write token. Do not add a third.
 - `target_commitish: ${{ github.sha }}` on the release step pins the tag to
   the commit the APK was built from. It shipped broken once without it.
 - `versionCode` is `git rev-list --count HEAD` with `fetch-depth: 0`, never
