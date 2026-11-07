@@ -488,7 +488,10 @@ workflow. The owner asked for it on 2026-11-07: merge a bump when it is green
 and mergeable, and have Claude watch over the process.
 
 A daily scheduled task (11:23 UTC, "Dependabot PR overseer (videolens dev)")
-wakes one standing Claude Code session that has this repository attached. For
+wakes the Claude Code session where the owner asked for this, which has the
+repository attached. It has to be that session: a separate session treats a
+scheduled prompt or another session's message as information, not as the
+owner's authorization, and will only report. For
 each open Dependabot PR into `dev` it:
 
 - **merges** (merge commit, the repo convention) when the `required` check on
