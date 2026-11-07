@@ -15,6 +15,7 @@ from ...infrastructure.logging_config import configure_logging
 from .error_handlers import register_error_handlers, retry_after_headers
 from .rate_limiter import limiter, retry_after_seconds
 from .routes import router
+from .security_headers import SecurityHeadersMiddleware
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -33,12 +34,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await container.run_repository.ping()
         if not container.object_store.enabled:
             raise RuntimeError("S3-compatible object storage is required when Redis queueing is enabled.")
-        if settings.allowed_origins.strip() == "*":
-            logger.warning(
-                "ALLOWED_ORIGINS is \"*\" in a distributed deployment (REDIS_URL is set). "
-                "Any website can call this API from a browser. Set ALLOWED_ORIGINS to your "
-                "real frontend origin(s) before going live."
-            )
+        origin_error = settings.distributed_origin_error()
+        if origin_error:
+            # Refused, not warned: a deployed API with a CORS wildcard is open
+            # to every website, and a warning in a platform log reaches nobody.
+            raise RuntimeError(origin_error)
     try:
         yield
     finally:
@@ -74,5 +74,8 @@ app.add_middleware(
     # fetch (the web app and the Android WebView both are) reads it as null.
     expose_headers=["Retry-After"],
 )
+# Outermost (added last), so preflights, rate-limit refusals and error
+# responses carry the headers too.
+app.add_middleware(SecurityHeadersMiddleware)
 register_error_handlers(app)
 app.include_router(router)

@@ -13,7 +13,7 @@ on:
   workflow_call:
     inputs:
       upload_apk:
-        description: Upload the debug APK and version manifest as a workflow artifact for a downstream release job
+        description: Build the RELEASE APK, signed with the keystore in the ANDROID_* secrets, and upload it with the version manifest as a workflow artifact for a downstream release job
         required: false
         default: false
         type: boolean
@@ -45,6 +45,19 @@ on:
         required: false
         default: "v"
         type: string
+    secrets:
+      # Release signing, used only when upload_apk is true. The production
+      # APK is signed with this key; the checked-in debug keystore is for
+      # local and dev builds only. All four must be set together.
+      ANDROID_KEYSTORE_BASE64:
+        description: The release keystore (.jks / .keystore), base64-encoded
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        required: false
+      ANDROID_KEY_ALIAS:
+        required: false
+      ANDROID_KEY_PASSWORD:
+        required: false
     outputs:
       version_name:
         description: Application version name read from frontend/package.json
@@ -108,6 +121,30 @@ jobs:
               exit 1
             }
           fi
+      # The production APK is a release build signed with a key that lives
+      # only in CI secrets. Until 2026-11-07 it was the debug build signed
+      # with the checked-in debug keystore (password "android"), which let
+      # anyone with the repository build an APK that installs as an update
+      # over the real one, and shipped debuggable. Fails loudly when the
+      # secrets are missing rather than falling back to the debug key.
+      - name: Prepare release signing
+        if: inputs.upload_apk
+        shell: bash
+        working-directory: .
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Release signing secret ANDROID_${name} is not set. The production APK must be signed with the release key; see DEPLOYMENT.md, 'Android release signing'." >&2
+              exit 1
+            fi
+          done
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "${RUNNER_TEMP}/release.keystore"
+          test -s "${RUNNER_TEMP}/release.keystore" || { echo "::error::ANDROID_KEYSTORE_BASE64 did not decode to a keystore." >&2; exit 1; }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # versionCode is the commit count below, which is 1 at the default
@@ -125,61 +162,76 @@ jobs:
       - id: version
         env:
           TAG_PREFIX: ${{ inputs.tag_prefix }}
+          # release for the production APK, debug for the dev artifact and
+          # the plain gate. Drives the Gradle task and the output directory.
+          VARIANT: ${{ inputs.upload_apk && 'release' || 'debug' }}
         run: |
           name="$(node -p "require('./package.json').version")"
           sha="$(git rev-parse --short HEAD)"
-          # versionCode must never go backwards. Android refuses to install an
-          # APK whose code is below the installed one, and updateCheck.ts
-          # compares these numbers to decide a newer build exists - so a code
-          # that drops silently strands every device on the build it already
-          # has. github.run_number is per-workflow and starts near zero, so it
-          # resets the moment a different workflow takes over publishing, which
-          # is exactly what moving releases from dev to main does. Commit count
-          # is a property of the history rather than of the workflow, so it
-          # carries across that move and keeps climbing.
           code="$(git rev-list --count HEAD)"
           {
             echo "name=${name}"
             echo "sha=${sha}"
             echo "code=${code}"
+            echo "variant=${VARIANT}"
             echo "tag=${TAG_PREFIX}${name}-build${code}"
-            echo "artifact=videolens-ai-v${name}-code${code}-${sha}-debug"
+            echo "artifact=videolens-ai-v${name}-code${code}-${sha}-${VARIANT}"
           } >> "$GITHUB_OUTPUT"
-      # -PdevBuild=true is read by frontend/android/app/build.gradle, which
-      # then adds applicationIdSuffix ".dev" and versionNameSuffix "-dev" to
-      # the debug build type. Without the suffix a dev APK would install OVER
-      # the production app (same signing key), and because versionCode is the
-      # commit count, a PR branch can out-number main and then block the next
-      # production update until the app is uninstalled.
-      - run: |
-          ./gradlew assembleDebug testDebugUnitTest \
-            -PappVersionName=${{ steps.version.outputs.name }} \
-            -PappVersionCode=${{ steps.version.outputs.code }} \
-            -PbuildRef=${{ steps.version.outputs.sha }} \
-            ${{ inputs.dev_artifact && '-PdevBuild=true' || '' }}
+      # Values reach Gradle through the environment, never interpolated into
+      # the command line, so a version string with shell metacharacters cannot
+      # run anything. The signing variables are empty unless upload_apk
+      # prepared them above; build.gradle configures release signing only
+      # when all four are present.
+      - env:
+          APP_VERSION_NAME: ${{ steps.version.outputs.name }}
+          APP_VERSION_CODE: ${{ steps.version.outputs.code }}
+          BUILD_REF: ${{ steps.version.outputs.sha }}
+          VARIANT: ${{ steps.version.outputs.variant }}
+          DEV_BUILD: ${{ inputs.dev_artifact }}
+          ANDROID_KEYSTORE_PATH: ${{ inputs.upload_apk && format('{0}/release.keystore', runner.temp) || '' }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ inputs.upload_apk && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
+          ANDROID_KEY_ALIAS: ${{ inputs.upload_apk && secrets.ANDROID_KEY_ALIAS || '' }}
+          ANDROID_KEY_PASSWORD: ${{ inputs.upload_apk && secrets.ANDROID_KEY_PASSWORD || '' }}
+        run: |
+          case "$VARIANT" in
+            release) assemble=assembleRelease ;;
+            *) assemble=assembleDebug ;;
+          esac
+          dev_flag=""
+          if [ "$DEV_BUILD" = "true" ]; then dev_flag="-PdevBuild=true"; fi
+          # shellcheck disable=SC2086 # dev_flag is empty or one fixed flag
+          ./gradlew "$assemble" testDebugUnitTest \
+            "-PappVersionName=${APP_VERSION_NAME}" \
+            "-PappVersionCode=${APP_VERSION_CODE}" \
+            "-PbuildRef=${BUILD_REF}" \
+            $dev_flag
         working-directory: frontend/android
       - name: Write version manifest
-        # Read by the app's in-app update check
-        # (frontend/infrastructure/updateCheck.ts). A separate JSON asset
-        # instead of parsing the release tag string, so the app doesn't depend
-        # on the tag naming scheme staying stable.
         if: inputs.upload_apk
+        env:
+          VERSION_CODE: ${{ steps.version.outputs.code }}
+          VERSION_NAME: ${{ steps.version.outputs.name }}
+          COMMIT: ${{ steps.version.outputs.sha }}
+          RELEASE_URL: https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.tag }}
+          VARIANT: ${{ steps.version.outputs.variant }}
         run: |
-          cat > android/app/build/outputs/apk/debug/version.json <<JSON
-          {
-            "versionCode": ${{ steps.version.outputs.code }},
-            "versionName": "${{ steps.version.outputs.name }}",
-            "commit": "${{ steps.version.outputs.sha }}",
-            "releaseUrl": "https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.tag }}"
-          }
-          JSON
+          node -e '
+            const fs = require("node:fs");
+            const out = "android/app/build/outputs/apk/" + process.env.VARIANT + "/version.json";
+            fs.writeFileSync(out, JSON.stringify({
+              versionCode: Number(process.env.VERSION_CODE),
+              versionName: process.env.VERSION_NAME,
+              commit: process.env.COMMIT,
+              releaseUrl: process.env.RELEASE_URL,
+            }, null, 2) + "\n");
+          '
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: inputs.upload_apk
         with:
           name: ${{ steps.version.outputs.artifact }}
           path: |
-            frontend/android/app/build/outputs/apk/debug/*.apk
-            frontend/android/app/build/outputs/apk/debug/version.json
+            frontend/android/app/build/outputs/apk/release/*.apk
+            frontend/android/app/build/outputs/apk/release/version.json
           if-no-files-found: error
           retention-days: 30
       # The dev/testing APK. Short retention, no manifest, never a release:

@@ -369,17 +369,71 @@ Android package. BYOK keys entered on-device are sent only as a request
 header to the hosted API, same as on web — never bundled or stored
 server-side outside the single-use vault described in Phase 1.
 
-Release signing is configured through `ANDROID_KEYSTORE_PATH`,
-`ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and
-`ANDROID_KEY_PASSWORD`. The keystore and values must be stored outside Git.
-With those values set, run:
+### Android release signing
+
+Since 2026-11-07 the production APK (every push to `main`,
+`production-environment.yml` → `reusable-android-checks.yml` with
+`upload_apk: true`) is a **release** build signed with a key that exists only
+in GitHub Actions secrets. Before that it was the debug build signed with the
+checked-in `frontend/android/debug.keystore` (password `android`), which meant
+anyone with the repository could build an APK that installs as an update over
+the real one, and the shipped app was debuggable. The debug keystore is still
+used, on purpose, for local builds and the dev lane's `.dev` testing APK.
+
+The production lane **fails** until these four repository secrets exist:
+
+| Secret | Value |
+|---|---|
+| `ANDROID_KEYSTORE_BASE64` | the release keystore file, base64-encoded (one line) |
+| `ANDROID_KEYSTORE_PASSWORD` | the keystore password |
+| `ANDROID_KEY_ALIAS` | the key alias inside it |
+| `ANDROID_KEY_PASSWORD` | that key's password |
+
+Create the keystore once, off the repository, and keep a backup somewhere
+safe: losing it means every installed app has to be uninstalled and
+reinstalled, since Android refuses an update signed with a different key.
+
+```bash
+keytool -genkeypair -v -keystore videolens-release.jks -alias videolens \
+  -keyalg RSA -keysize 4096 -validity 10000
+```
+
+```bash
+base64 -w0 videolens-release.jks | gh secret set ANDROID_KEYSTORE_BASE64
+```
+
+```bash
+gh secret set ANDROID_KEYSTORE_PASSWORD
+```
+
+```bash
+gh secret set ANDROID_KEY_ALIAS --body videolens
+```
+
+```bash
+gh secret set ANDROID_KEY_PASSWORD
+```
+
+`frontend/android/app/build.gradle` reads `ANDROID_KEYSTORE_PATH`,
+`ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`
+from the environment and configures release signing only when all four are
+present; the workflow decodes the secret to `$RUNNER_TEMP/release.keystore`
+and sets them for the Gradle step. Locally, export the same four variables
+and run:
 
 ```powershell
 cd frontend
 npm run android:sync
 cd android
-.\gradlew.bat bundleRelease
+.\gradlew.bat assembleRelease
 ```
+
+**One-time migration for existing installs.** The first release-signed build
+has a different signing identity from every APK published before it, so
+Android will refuse to install it over an existing debug-signed install, and
+the in-app update prompt will lead to an install error. Users have to
+uninstall the old app once (History lives on the device and is lost; the
+BYOK key too) and install the new one. Say so in that release's notes.
 
 ### Android Target
 

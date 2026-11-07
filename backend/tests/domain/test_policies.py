@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from app.domain.policies import quota_key_from_headers, seconds_until, seconds_until_next_utc_day
+from app.domain.policies import client_ip_from_forwarded, quota_key_from_headers, seconds_until, seconds_until_next_utc_day
 
 
 class QuotaIdentityTests(unittest.TestCase):
@@ -20,6 +20,36 @@ class QuotaIdentityTests(unittest.TestCase):
 
     def test_falls_back_to_anonymous_without_ip(self) -> None:
         self.assertEqual(quota_key_from_headers("", ""), "anonymous")
+
+
+class ForwardedClientIpTests(unittest.TestCase):
+    """Which X-Forwarded-For entry is the caller, given how many proxies we
+    own appended one. Pure, so every shape of header is cheap to pin down."""
+
+    def test_one_trusted_hop_takes_the_last_entry(self) -> None:
+        self.assertEqual(client_ip_from_forwarded("9.9.9.9, 203.0.113.7", "10.0.0.1", 1), "203.0.113.7")
+
+    def test_forged_entries_on_the_left_are_ignored(self) -> None:
+        self.assertEqual(
+            client_ip_from_forwarded("evil-1, evil-2, evil-3, 203.0.113.7", "10.0.0.1", 1), "203.0.113.7"
+        )
+
+    def test_two_trusted_hops_take_the_second_from_the_end(self) -> None:
+        # Client -> CDN -> edge: the edge appended the CDN's address last.
+        self.assertEqual(client_ip_from_forwarded("203.0.113.7, 198.51.100.2", "10.0.0.1", 2), "203.0.113.7")
+
+    def test_fewer_entries_than_hops_falls_back_to_the_first(self) -> None:
+        self.assertEqual(client_ip_from_forwarded("203.0.113.7", "10.0.0.1", 2), "203.0.113.7")
+
+    def test_zero_hops_ignores_the_header(self) -> None:
+        self.assertEqual(client_ip_from_forwarded("203.0.113.7", "198.51.100.9", 0), "198.51.100.9")
+
+    def test_empty_header_uses_the_peer(self) -> None:
+        self.assertEqual(client_ip_from_forwarded("", "198.51.100.9", 1), "198.51.100.9")
+        self.assertEqual(client_ip_from_forwarded(" , ", "198.51.100.9", 1), "198.51.100.9")
+
+    def test_whitespace_is_trimmed(self) -> None:
+        self.assertEqual(client_ip_from_forwarded("  1.1.1.1 ,  203.0.113.7  ", "x", 1), "203.0.113.7")
 
 
 class RetryAfterPolicyTests(unittest.TestCase):
