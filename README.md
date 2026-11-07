@@ -80,6 +80,7 @@ frontend/android/    Android API 36 native project
 docs/                Per-feature reference docs (index in docs/README.md)
 scripts/             workspace.ps1, the Docker Compose local-workspace lifecycle
 .github/             CI lanes, composite actions, Dependabot
+VideoLens-Security-Assessment-2026-11-07.xlsx   Security assessment tracker
 ```
 
 Both apps follow the same clean-architecture layering; `backend/ARCHITECTURE.md`
@@ -134,7 +135,9 @@ never a deployment manifest. See `docs/container-workflows.md`.
   `X-Client-ID` (scopes which runs a browser can see, not quota). Checked
   before any download or FFmpeg work, in this order:
   - per source IP, or per token when signed in (`RATE_LIMIT_PER_HOUR`,
-    default 20): `429` with `Retry-After`;
+    default 20): `429` with `Retry-After`. The IP is taken from the
+    `X-Forwarded-For` entry the deployment's own proxy wrote
+    (`TRUSTED_PROXY_HOPS`), so a forged header cannot pick a fresh bucket;
   - without a Gemini key of their own, callers need `X-Device-Token` and get
     `FREE_RUNS_PER_DEVICE` (3) runs per UTC day, `FREE_RUNS_PER_IP` (10) as a
     backstop: `401 {"code": "device_token_invalid"}` or
@@ -154,7 +157,9 @@ never a deployment manifest. See `docs/container-workflows.md`.
   capped at 20.
 - `GET /api/capabilities` — which parts of this deployment work right now,
   always `200`. `GET /api/releases` — the app's release index, read from
-  GitHub server-side. `GET /api/health`, `GET /api/readiness`.
+  GitHub server-side. `GET /api/health`, `GET /api/readiness`. The read
+  endpoints share a looser per-IP limit (`READ_RATE_LIMIT_PER_MINUTE`, 120),
+  and every response carries security headers (`docs/backend/security-headers.md`).
 
 Run access is owner-bound. Optional OIDC bearer tokens are verified when
 `AUTH_*` is configured; anonymous access stays on unless
@@ -183,8 +188,9 @@ that branch's `mcp/README.md` covers building it.
 
 See `backend/.env.example` and `frontend/.env.example`. Every backend setting
 is documented there; the ones to set before going live are `GEMINI_API_KEY`,
-`ALLOWED_ORIGINS` (never `*`), `DEVICE_TOKEN_SECRET`, `REDIS_URL`, the `S3_*`
-variables, and `GITHUB_TOKEN` for the Releases tab. The frontend has one,
+`ALLOWED_ORIGINS` (the API refuses to start in distributed mode with `*`),
+`DEVICE_TOKEN_SECRET`, `TRUSTED_PROXY_HOPS` (1 on Railway), `REDIS_URL`, the
+`S3_*` variables, and `GITHUB_TOKEN` for the Releases tab. The frontend has one,
 `NEXT_PUBLIC_API_BASE_URL`, inlined at build time. Set a hard budget alert on
 the Gemini key itself; it is the only limit enforced outside this code.
 
@@ -214,8 +220,9 @@ cd android && ./gradlew assembleDebug testDebugUnitTest
 
 The Android app targets API 36, accepts shared links, uses the native media
 picker, follows the system theme and font scale, and shares or saves results
-through the system share sheet. Every push to `main` publishes a debug APK as
-a GitHub Release (`v<version>-build<code>`); every PR into `dev` keeps a
+through the system share sheet. Every push to `main` publishes a release
+APK, signed with a key held only in CI secrets, as a GitHub Release
+(`v<version>-build<code>`); every PR into `dev` keeps a debug-signed,
 `.dev`-suffixed test APK as a 14-day artifact. The installed app checks for a
 newer release on launch. Versioning, signing and the release pipeline are in
 `docs/container-workflows.md`; the update check in

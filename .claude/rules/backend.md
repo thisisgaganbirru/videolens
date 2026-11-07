@@ -25,6 +25,10 @@ paths:
   chain in `MediaService.__init__`, fetching through `media/net.py`. New
   dependency worth reporting: a `CapabilityProbe` in `health/probes.py`,
   appended in `container.py`.
+- `interface/api/security_headers.py` is pure ASGI and added last so it is
+  outermost; never swap it for `BaseHTTPMiddleware` (it buffers streaming
+  bodies). The client IP is `policies.client_ip_from_forwarded` with
+  `TRUSTED_PROXY_HOPS`; do not read the first `X-Forwarded-For` entry.
 - A thumbnail, duration, source-metadata or free-run-refund failure must
   never fail an otherwise healthy run; log and swallow, as the existing code
   does.

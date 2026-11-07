@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 from app.domain.entities import MediaVisuals
 from app.infrastructure.config import Settings
-from app.infrastructure.media import thumbnails
+from app.infrastructure.media import net, thumbnails
 from app.infrastructure.media.service import MediaService
 from app.infrastructure.media.thumbnails import (
     MAX_SIDE,
@@ -172,7 +172,11 @@ class FetchImageTests(unittest.TestCase):
             thumbnails.urllib.request, "build_opener", return_value=_FakeOpener(_FakeResponse(b"1"))
         ) as build:
             _fetch_image_sync("https://cdn.test/t.jpg", 10, 1)
-        build.assert_called_once_with(thumbnails.ValidatingRedirectHandler)
+        # The shared public-only opener: address checked and pinned on every
+        # request, redirects re-checked (net.py).
+        build.assert_called_once_with(
+            net.PublicHTTPHandler, net.PublicHTTPSHandler, net.ValidatingRedirectHandler
+        )
 
     def test_async_wrapper_turns_failures_into_none(self) -> None:
         result = asyncio.run(thumbnails.fetch_image("http://127.0.0.1/t.jpg"))

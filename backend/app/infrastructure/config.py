@@ -35,6 +35,15 @@ class Settings(BaseSettings):
     max_file_size_mb: int = 200
     max_duration_seconds: int = 180
     rate_limit_per_hour: int = 20
+    # Per-IP limit on the read endpoints (run polling, run list, free-run
+    # status). Generous: the web app polls one run every 3 s. <= 0 disables.
+    read_rate_limit_per_minute: int = 120
+    # How many trailing X-Forwarded-For entries the deployment's own proxies
+    # append. The client IP is the entry that many from the END of the header;
+    # anything further left was supplied by the client and is not trusted.
+    # 1 for Railway and most single-edge platforms; 0 = ignore the header and
+    # use the socket peer (service reached directly, no proxy).
+    trusted_proxy_hops: int = 1
     daily_run_cap: int = 200
     # Free runs per device per UTC day for callers without their own Gemini
     # key. <= 0 turns the free-run allowance off entirely (no device token
@@ -98,6 +107,24 @@ class Settings(BaseSettings):
     def allowed_origin_list(self) -> list[str]:
         configured = [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
         return configured + [o for o in NATIVE_APP_ORIGINS if o not in configured]
+
+    def distributed_origin_error(self) -> str | None:
+        """Why this configuration must not start, or None.
+
+        A distributed deployment (REDIS_URL set) is a deployed one, and a CORS
+        wildcard there lets any website call the API from a browser. Refused
+        at startup rather than warned about: a warning in a platform log is
+        read by nobody until it matters.
+        """
+        if not self.queue_enabled:
+            return None
+        if any(origin.strip() == "*" for origin in self.allowed_origins.split(",")):
+            return (
+                "ALLOWED_ORIGINS is \"*\" in a distributed deployment (REDIS_URL is set). "
+                "Any website could call this API from a browser. Set ALLOWED_ORIGINS to the "
+                "real frontend origin(s)."
+            )
+        return None
 
     @property
     def queue_enabled(self) -> bool:

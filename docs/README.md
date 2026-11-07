@@ -24,6 +24,7 @@ Every new feature or component should get (or update) a doc here. Scope is stric
 | `cors.md` | `ALLOWED_ORIGINS` and the native WebView origins |
 | `capabilities.md` | `GET /api/capabilities` and the probes |
 | `releases.md` | `GET /api/releases`, read from GitHub server-side |
+| `security-headers.md` | The hardening headers every API response carries |
 
 ### Frontend (`frontend/`)
 
@@ -47,6 +48,7 @@ Every new feature or component should get (or update) a doc here. Scope is stric
 | `share-intake.md` | A link handed to the app from outside it (Android share intent, web share target) |
 | `legal-offline-routes.md` | `/privacy`, `/terms`, `/offline` |
 | `web-manifest.md` | `manifest.ts` |
+| `security-headers.md` | The CSP (web header, hash-based meta in both builds), the other security headers, Android backup rules |
 
 ### Cross-cutting
 
@@ -112,4 +114,5 @@ someone else's entry.
 - 2026-11-01 · frontend agent (Phase 5c/5d) · indexed `frontend/landing-page.md` and `frontend/first-run.md`
 - 2026-11-02 · frontend-43 · indexed `qa/web-app-test-cases.md` next to the Android suite
 - 2026-11-07 · main session · replaced the quick-links sections with a full index of every backend and frontend doc
-- 2026-11-07 · main session · added `images/` (README screenshots) and the script that regenerates them
+- 2026-11-07 · frontend agent · indexed `frontend/security-headers.md`
+- 2026-11-07 · main session · added `images/` (README screenshots) and the script that regenerates them; indexed both `security-headers.md` docs

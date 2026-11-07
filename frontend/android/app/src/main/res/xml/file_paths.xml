@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Paths the app's FileProvider may hand out as content URIs. Only the notes
+  exporter uses it (infrastructure/documentExporter.ts writes
+  <cache>/exports/<slug>.md and shares that file), so only that folder is
+  mapped. The Capacitor template's "whole cache" and "whole external storage"
+  entries were removed on 2026-11-07: a provider path is the ceiling on what
+  a mis-granted URI could expose, and nothing here needs more than this.
+-->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <external-path name="my_images" path="." />
-    <cache-path name="my_cache_images" path="." />
+    <cache-path name="exports" path="exports/" />
 </paths>

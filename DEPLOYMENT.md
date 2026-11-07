@@ -122,6 +122,14 @@ Complete these items before making the application publicly available.
       platform health check.
 - [x] `GET /api/releases` serves the release index server-side
       (`GITHUB_TOKEN`), so no workflow commits to the repository.
+- [x] Security headers on every API response and a hash-based CSP on the
+      web and Android builds; WebView storage excluded from Android backups;
+      client IP taken only from the proxy-written `X-Forwarded-For` entry;
+      read endpoints rate-limited (2026-11-07 security pass, tracked in
+      `VideoLens-Security-Assessment-2026-11-07.xlsx`).
+- [ ] Set the four `ANDROID_*` release-signing secrets before the next push
+      to `main`; the production lane fails without them (see "Android
+      release signing" below).
 
 ### Operational Constraints
 
@@ -140,7 +148,7 @@ Complete these items before making the application publicly available.
   safely, and every replica must share `DEVICE_TOKEN_SECRET` or they reject
   each other's device tokens.
 - `ALLOWED_ORIGINS` must never be `*` in a distributed (`REDIS_URL` set)
-  deployment; the backend logs a startup warning if it detects this. The
+  deployment; since 2026-11-07 the backend refuses to start if it is. The
   Capacitor WebView's `https://localhost` origin is allowed in code and does
   not belong in this variable.
 - Free runs are easy to bypass by design (clearing storage mints a new
@@ -254,6 +262,11 @@ GEMINI_MODEL=gemini-3.6-flash
 # retries (GEMINI_RETRY_ATTEMPTS=6, GEMINI_RETRY_MAX_DELAY_SECONDS=20).
 GEMINI_FALLBACK_MODEL=
 RATE_LIMIT_PER_HOUR=20
+# Looser per-IP limit on the read endpoints (polling, run list, free-runs).
+READ_RATE_LIMIT_PER_MINUTE=120
+# Trailing X-Forwarded-For entries written by the platform's own proxy; the
+# client IP is that many from the end. 1 on Railway. 0 = use the socket peer.
+TRUSTED_PROXY_HOPS=1
 MAX_FILE_SIZE_MB=200
 MAX_DURATION_SECONDS=180
 # Tallest video yt-dlp fetches for a URL run; FFmpeg re-encodes anyway.
@@ -445,7 +458,8 @@ a native Android container and native APIs to an existing web application:
 - [x] In-app update check against `GET /api/releases`, with a dismissable
       prompt linking to the release.
 - [x] Release APKs published from `main` with a strictly increasing
-      `versionCode` (commit count) and a stable debug signing identity.
+      `versionCode` (commit count), signed with the CI-held release key
+      since 2026-11-07 (the debug keystore stays for local and dev builds).
 - [ ] Build and sign an Android App Bundle (`.aab`).
 - [ ] Test on physical phones, tablets, small screens, and recent Android
       versions (manual suites: `docs/qa/android-app-test-cases.md`,
@@ -457,17 +471,71 @@ Android package. BYOK keys entered on-device are sent only as a request
 header to the hosted API, same as on web — never bundled or stored
 server-side outside the single-use vault described in Phase 1.
 
-Release signing is configured through `ANDROID_KEYSTORE_PATH`,
-`ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and
-`ANDROID_KEY_PASSWORD`. The keystore and values must be stored outside Git.
-With those values set, run:
+### Android release signing
+
+Since 2026-11-07 the production APK (every push to `main`,
+`production-environment.yml` → `reusable-android-checks.yml` with
+`upload_apk: true`) is a **release** build signed with a key that exists only
+in GitHub Actions secrets. Before that it was the debug build signed with the
+checked-in `frontend/android/debug.keystore` (password `android`), which meant
+anyone with the repository could build an APK that installs as an update over
+the real one, and the shipped app was debuggable. The debug keystore is still
+used, on purpose, for local builds and the dev lane's `.dev` testing APK.
+
+The production lane **fails** until these four repository secrets exist:
+
+| Secret | Value |
+|---|---|
+| `ANDROID_KEYSTORE_BASE64` | the release keystore file, base64-encoded (one line) |
+| `ANDROID_KEYSTORE_PASSWORD` | the keystore password |
+| `ANDROID_KEY_ALIAS` | the key alias inside it |
+| `ANDROID_KEY_PASSWORD` | that key's password |
+
+Create the keystore once, off the repository, and keep a backup somewhere
+safe: losing it means every installed app has to be uninstalled and
+reinstalled, since Android refuses an update signed with a different key.
+
+```bash
+keytool -genkeypair -v -keystore videolens-release.jks -alias videolens \
+  -keyalg RSA -keysize 4096 -validity 10000
+```
+
+```bash
+base64 -w0 videolens-release.jks | gh secret set ANDROID_KEYSTORE_BASE64
+```
+
+```bash
+gh secret set ANDROID_KEYSTORE_PASSWORD
+```
+
+```bash
+gh secret set ANDROID_KEY_ALIAS --body videolens
+```
+
+```bash
+gh secret set ANDROID_KEY_PASSWORD
+```
+
+`frontend/android/app/build.gradle` reads `ANDROID_KEYSTORE_PATH`,
+`ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`
+from the environment and configures release signing only when all four are
+present; the workflow decodes the secret to `$RUNNER_TEMP/release.keystore`
+and sets them for the Gradle step. Locally, export the same four variables
+and run:
 
 ```powershell
 cd frontend
 npm run android:sync
 cd android
-.\gradlew.bat bundleRelease
+.\gradlew.bat assembleRelease
 ```
+
+**One-time migration for existing installs.** The first release-signed build
+has a different signing identity from every APK published before it, so
+Android will refuse to install it over an existing debug-signed install, and
+the in-app update prompt will lead to an install error. Users have to
+uninstall the old app once (History lives on the device and is lost; the
+BYOK key too) and install the new one. Say so in that release's notes.
 
 ### Android Target
 

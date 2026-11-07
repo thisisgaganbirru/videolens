@@ -20,6 +20,10 @@ The accepted request headers are `Authorization`, `Content-Type`,
 `X-Client-ID`, and `X-Gemini-Api-Key`; the accepted methods are `GET`, `POST`,
 and `OPTIONS`.
 
+## A wildcard refuses to start in a deployment
+
+`Settings.distributed_origin_error()` (checked in `app.py`'s lifespan) raises at startup when `REDIS_URL` is set and any entry of `ALLOWED_ORIGINS` is `*`. A distributed deployment is a deployed one, and a wildcard there lets every website call the API from a browser. Until 2026-11-07 this was a log warning, which nobody reads until it matters. Local, in-process runs (no `REDIS_URL`) still tolerate `*`.
+
 ## The Android app's origin is not configurable
 
 `Settings.allowed_origin_list` always appends `NATIVE_APP_ORIGINS`
@@ -80,3 +84,4 @@ here too.
 
 - 2026-08-20 · main session · always allow the Capacitor Android WebView origins in code; documented why the APK's `Origin` is `https://localhost` and how to spot a rejected preflight in the Railway HTTP logs
 - 2026-11-02 · frontend agent (refinement 7) · expose_headers=["Retry-After"] so the client can read the 429 wait
+- 2026-11-07 · security-check · `ALLOWED_ORIGINS=*` with `REDIS_URL` set is refused at startup (`Settings.distributed_origin_error`), not warned about

@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 from ....domain.entities import SavedUpload
 from ....domain.errors import MediaValidationError
 from ...config import Settings
-from ..net import ValidatingRedirectHandler, validate_public_url
+from ..net import ValidatingRedirectHandler, build_public_opener, validate_public_url
 from ..uploads import _cleanup_dir, create_run_dir
 
 _TIMEOUT_SECONDS = 30
@@ -73,7 +73,8 @@ class DirectHttpResolver:
         extension = os.path.splitext(urlparse(url).path)[1].lower()
         destination = os.path.join(run_dir, f"download{extension}")
 
-        opener = urllib.request.build_opener(_ValidatingRedirectHandler)
+        # Checks and pins the address on the first request and on every redirect.
+        opener = build_public_opener()
         request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
 
         try:

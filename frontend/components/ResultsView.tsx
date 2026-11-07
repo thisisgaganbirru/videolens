@@ -6,6 +6,7 @@ import type { MarkdownDocument } from "@/domain/ports";
 import { ArrowUpRight, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Share2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { safeHttpUrl } from "./safeUrl";
 import { splitTakeaway } from "./takeaway";
 import { formatDuration } from "./history";
 import { platformKey, platformName } from "@/domain/platforms";
@@ -310,8 +311,8 @@ function buildMarkdownReport(
       sourceMetadata.title && `- **Source title:** ${singleLine(sourceMetadata.title)}`,
       sourceMetadata.uploader &&
         `- **Creator:** ${
-          sourceMetadata.uploader_url
-            ? `[${singleLine(sourceMetadata.uploader)}](<${sourceMetadata.uploader_url}>)`
+          safeHttpUrl(sourceMetadata.uploader_url)
+            ? `[${singleLine(sourceMetadata.uploader)}](<${safeHttpUrl(sourceMetadata.uploader_url)}>)`
             : singleLine(sourceMetadata.uploader)
         }`,
       sourceMetadata.upload_date && `- **Published:** ${singleLine(sourceMetadata.upload_date)}`,
@@ -319,7 +320,7 @@ function buildMarkdownReport(
       sourceMetadata.like_count != null && `- **Likes:** ${sourceMetadata.like_count.toLocaleString("en-US")}`,
       sourceMetadata.comment_count != null &&
         `- **Comments:** ${sourceMetadata.comment_count.toLocaleString("en-US")}`,
-      `- **Original post:** <${sourceMetadata.source_url}>`,
+      safeHttpUrl(sourceMetadata.source_url) && `- **Original post:** <${safeHttpUrl(sourceMetadata.source_url)}>`,
     ].filter((line): line is string => Boolean(line));
 
     if (sourceMetadata.description) {
@@ -415,6 +416,10 @@ const PLATFORM_ICONS: Record<string, string> = {
  * is in words, and the glyph beside it was a second label for the same fact.
  */
 export function SourceCard({ metadata }: { metadata: SourceMetadata }) {
+  /* Third-party strings (yt-dlp read them off the fetched page): linked only
+     when they are plain http(s) addresses. */
+  const sourceHref = safeHttpUrl(metadata.source_url);
+  const uploaderHref = safeHttpUrl(metadata.uploader_url);
   const [expanded, setExpanded] = useState(false);
   const stats = [
     { label: "views", value: metadata.view_count },
@@ -438,10 +443,12 @@ export function SourceCard({ metadata }: { metadata: SourceMetadata }) {
           )}
           {platformName(metadata.platform)}
         </span>
-        <a href={metadata.source_url} target="_blank" rel="noreferrer" className="source-card__action">
-          Original post
-          <ArrowUpRight aria-hidden="true" />
-        </a>
+        {sourceHref && (
+          <a href={sourceHref} target="_blank" rel="noreferrer" className="source-card__action">
+            Original post
+            <ArrowUpRight aria-hidden="true" />
+          </a>
+        )}
       </div>
 
       {metadata.uploader && (
@@ -450,9 +457,9 @@ export function SourceCard({ metadata }: { metadata: SourceMetadata }) {
             {creatorInitials(metadata.uploader)}
           </span>
           <div className="min-w-0">
-            {metadata.uploader_url ? (
+            {uploaderHref ? (
               <a
-                href={metadata.uploader_url}
+                href={uploaderHref}
                 target="_blank"
                 rel="noreferrer"
                 className="source-card__creator-link"
