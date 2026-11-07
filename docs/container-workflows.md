@@ -104,9 +104,18 @@ of the old 60-65.
 ### Android gating
 
 The Android build exists in exactly one place,
-`.github/workflows/reusable-android-checks.yml` (Capacitor sync, `gradlew
-assembleDebug testDebugUnitTest`). It is capped at `contents: read` and never
-creates a tag or a release. Two callers:
+`.github/workflows/reusable-android-checks.yml` (Capacitor sync, then `gradlew
+assembleDebug testDebugUnitTest`, or `assembleRelease testDebugUnitTest` when
+`upload_apk` is true). It is capped at `contents: read` and never creates a
+tag or a release. Since 2026-11-07 the production APK is the **release**
+variant, signed with the keystore in the `ANDROID_KEYSTORE_BASE64` /
+`ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`
+secrets, which `production-environment.yml` passes through explicitly; the
+job fails before Gradle runs if any is missing, and never falls back to the
+checked-in debug keystore (`DEPLOYMENT.md`, "Android release signing"). The
+dev lane keeps the debug variant. Version values reach Gradle through the
+step environment rather than `${{ }}` interpolation into the command line,
+so a `package.json` version string cannot inject shell. Two callers:
 
 - `development-environment.yml` — pre-merge gate on PRs into `dev` that touch
   `frontend/` (which includes `frontend/android/`). Nobody builds Android
@@ -747,3 +756,4 @@ jobs.
 - 2026-11-06 · claude (session ccr-ee9ca9d3) · regenerated `backend/requirements.txt` with the documented uv `--universal` command after Dependabot #95 rewrote it without environment markers (same versions, markers back on cffi/pycparser/uvloop); backend job now fails if the uvloop marker is missing
 - 2026-11-06 · claude (session ccr-ee9ca9d3) · dev lane keeps the Android APK as a 14-day workflow artifact (`dev_artifact` input on `reusable-android-checks.yml`: dev backend URL, `-PdevBuild=true` for the `.dev` application id suffix, never a release); CLAUDE.md now allows local mobile builds on a developer machine, still not in cloud sessions
 - 2026-11-07 · claude (session ccr-ee9ca9d3) · cleared all 14 open frontend Dependabot alerts with `overrides` (@xmldom/xmldom 0.9.12, brace-expansion 1.1.21 and 5.0.12 per major line, minimatch 10.x -> 11.0.5, postcss-selector-parser 6.1.5, rimraf 6.1.4 (pulls glob 14), zod 4.6.7); all build-time only (`dev: true`), `npm audit` 0, lint unchanged at 4+1. Backend `pip-audit` clean. Dependabot docker-compose entry now ignores minio/minio and minio/mc, which Docker Hub no longer serves anonymously; replacing the local MinIO image is an open decision
+- 2026-11-07 · security-check · production APK is `assembleRelease` signed from CI secrets (fails loudly without them; dev lane and local stay on the debug keystore); Android job passes version values via env, not command-line interpolation; `version.json` written by node from env
