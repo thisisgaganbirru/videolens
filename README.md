@@ -189,7 +189,7 @@ that branch's `mcp/README.md` covers building it.
 See `backend/.env.example` and `frontend/.env.example`. Every backend setting
 is documented there; the ones to set before going live are `GEMINI_API_KEY`,
 `ALLOWED_ORIGINS` (the API refuses to start in distributed mode with `*`),
-`DEVICE_TOKEN_SECRET`, `TRUSTED_PROXY_HOPS` (1 on Railway), `REDIS_URL`, the
+`DEVICE_TOKEN_SECRET`, `TRUSTED_PROXY_HOPS` (2 on Railway, the default), `REDIS_URL`, the
 `S3_*` variables, and `GITHUB_TOKEN` for the Releases tab. The frontend has one,
 `NEXT_PUBLIC_API_BASE_URL`, inlined at build time. Set a hard budget alert on
 the Gemini key itself; it is the only limit enforced outside this code.
