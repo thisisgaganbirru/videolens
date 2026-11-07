@@ -1,11 +1,11 @@
 {
   "name": "videolens-frontend",
-  "version": "2.1.2",
+  "version": "2.2.0",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3005",
     "build": "next build && node scripts/build-sw.mjs",
-    "build:mobile": "cross-env CAPACITOR_BUILD=true next build && node scripts/build-sw.mjs --export",
+    "build:mobile": "cross-env CAPACITOR_BUILD=true next build && node scripts/fix-export-segments.mjs && node scripts/build-sw.mjs --export",
     "android:sync": "npm run build:mobile && cap sync android",
     "android:open": "cap open android",
     "start": "next start",
@@ -15,6 +15,7 @@
     "@capacitor/android": "^8.6.0",
     "@capacitor/app": "^8.1.2",
     "@capacitor/core": "^8.5.0",
+    "@capacitor/filesystem": "^8.1.5",
     "@capacitor/share": "^8.0.2",
     "lucide-react": "^1.66.0",
     "next": "^16.4.4",
@@ -39,6 +40,13 @@
   "overrides": {
     "postcss": "8.5.32",
     "sharp": "0.35.5",
-    "uuid": "11.1.1"
+    "uuid": "11.1.1",
+    "@xmldom/xmldom": "0.9.12",
+    "brace-expansion@^1": "1.1.21",
+    "brace-expansion@^5": "5.0.12",
+    "minimatch@^10": "11.0.5",
+    "postcss-selector-parser": "6.1.5",
+    "rimraf": "6.1.4",
+    "zod": "4.6.7"
   }
 }

@@ -4,6 +4,7 @@ only place that is allowed to know about every layer at once - domain and
 application code never import from here."""
 
 from .application.create_run import CreateRunUseCase
+from .application.get_free_runs import GetFreeRunsUseCase
 from .application.get_capabilities import GetCapabilitiesUseCase
 from .application.get_releases import GetReleasesUseCase
 from .application.get_run import GetRunUseCase
@@ -26,6 +27,8 @@ from .infrastructure.persistence.run_repository import RunStore
 from .infrastructure.releases.github_releases import GithubReleaseCatalog
 from .infrastructure.queue.job_queue import RunQueue
 from .infrastructure.quota.daily_budget import DailyBudget
+from .infrastructure.quota.device_tokens import HmacDeviceTokens
+from .infrastructure.quota.free_run_allowance import FreeRunAllowanceStore
 from .infrastructure.storage.s3_object_store import S3ObjectStore
 
 
@@ -41,6 +44,8 @@ class Container:
         self.analysis_engine = GeminiEngine(settings)
         self.object_store = S3ObjectStore(settings)
         self.spend_cap = DailyBudget(settings)
+        self.free_runs = FreeRunAllowanceStore(settings)
+        self.device_tokens = HmacDeviceTokens(settings)
         self.key_vault = ByokKeyStore(settings)
         self.jwt_verifier = JwtVerifier(settings)
         self.release_catalog = GithubReleaseCatalog(settings)
@@ -51,6 +56,7 @@ class Container:
             media=self.media,
             storage=self.object_store,
             analysis=self.analysis_engine,
+            free_runs=self.free_runs,
         )
         self.job_queue = RunQueue(
             settings, local_runner=self.process_run_use_case.execute, key_vault=self.key_vault
@@ -61,7 +67,12 @@ class Container:
             storage=self.object_store,
             queue=self.job_queue,
             spend_cap=self.spend_cap,
+            free_runs=self.free_runs,
+            device_tokens=self.device_tokens,
             distributed=settings.queue_enabled,
+        )
+        self.get_free_runs_use_case = GetFreeRunsUseCase(
+            free_runs=self.free_runs, device_tokens=self.device_tokens
         )
         # A run that has not been touched in longer than a whole job could
         # take is treated as abandoned. Margin over the worker timeout so a
@@ -91,6 +102,7 @@ class Container:
         await self.key_vault.close()
         await self.run_repository.close()
         await self.spend_cap.close()
+        await self.free_runs.close()
 
 
 container = Container(settings)

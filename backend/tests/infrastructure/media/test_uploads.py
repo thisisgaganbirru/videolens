@@ -15,6 +15,10 @@ class ValidateTempDirTests(unittest.TestCase):
     an output path as a protocol scheme. These assert the startup check that
     now rejects it outright."""
 
+    @unittest.skipIf(
+        os.name == "nt",
+        "On Windows `C:/...` is a genuinely absolute path; the check targets the Linux container.",
+    )
     def test_rejects_a_windows_path(self) -> None:
         # The literal value that broke the dev deployment.
         settings = Settings(temp_dir="C:/Users/birru/AppData/Local/Temp/videolens")
@@ -31,6 +35,10 @@ class ValidateTempDirTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             validate_temp_dir(settings)
 
+    @unittest.skipIf(
+        os.name == "nt",
+        "On Windows `C:/...` is a genuinely absolute path; the check targets the Linux container.",
+    )
     def test_does_not_create_a_directory_for_a_rejected_path(self) -> None:
         """The bug was `os.makedirs` running before any validation, which is
         what silently created `./C:/Users/...`. Rejection must come first."""

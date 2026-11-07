@@ -1,21 +1,16 @@
-import { Suspense } from "react";
-import HomeScreen, { RoutedHomeScreen } from "@/components/HomeScreen";
+import LandingScreen from "@/components/LandingScreen";
+import "./landing.css";
 
-/* The Suspense boundary is a Next.js requirement, not a design choice, which is
-   why it lives in `app/`: the active tab is a search param, and on a statically
-   rendered route (every route here — the Capacitor build is `output: "export"`)
-   Next resolves search params on the client and renders the nearest fallback
-   into the prerendered HTML. Without a boundary `next build` fails.
+/* `/` — the landing page (Phase 5c). The tool is at `/app` (app/app/page.tsx).
 
-   The fallback is a real Analyze shell rather than a spinner or `null`, so the
-   prerendered HTML is the finished page for `/` — the overwhelmingly common
-   entry point — instead of a placeholder that swaps in after hydration. The one
-   honest cost: a deep link to `/?view=history` paints Analyze for the frame
-   before hydration, because no static file can know the query string. */
+   The redirect that sends the installed app, old `/?view=…` links and
+   share-target launches on to `/app` (and, in the Capacitor export, `/app`
+   itself on to `/app.html`) runs from the root layout's <head>, before this
+   page is parsed; see application/landingRedirect.ts for the rules and for
+   why it no longer lives in this file. A plain browser visit to `/` falls
+   through it and gets the page below. */
 export default function Page() {
   return (
-    <Suspense fallback={<HomeScreen activeTab="analyze" />}>
-      <RoutedHomeScreen />
-    </Suspense>
+    <LandingScreen />
   );
 }

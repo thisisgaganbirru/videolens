@@ -1,42 +1,85 @@
-/* Hallmark · genre: atmospheric · macrostructure: Feature Stack (adapted, UI) · theme: Terminal
- * enrichment: none · nav: N5 floating pill · footer: Ft5 compact bar
- * source of truth: docs/frontend/mockups/terminal-redesign.html (lines 21-89)
+/* Hallmark · genre: editorial · theme: custom (owner handoff — docs/frontend/design-direction-editorial.md)
+ * vibe: calm editorial — warm paper, near-black ink, one green accent
+ * paper #F6F4EE · accent #1A7F37 (green) · Newsreader (headlines, notes) + Hanken Grotesk (UI)
+ * axes: light / roman-serif / chromatic-other · nav: top bar (web) or bottom tab bar (app)
+ * reference: docs/frontend/design-direction-editorial.md — dark values and their
+ * contrast ratios are recorded there, measured, not eyeballed.
  *
- * THE RULE THAT MATTERS: every ink and paper token is near-neutral (chroma
- * below ~0.015). Green is spent on --color-accent alone. Tinting the ink
- * tokens green is what turns a "terminal" palette into the monochrome
- * hacker-terminal cliche — an earlier pass did exactly that and it read as
- * generated slop. Do not regress this.
+ * THE RULE THAT MATTERS: one accent. Green is the only chromatic token that may
+ * carry meaning in normal use; red (--color-danger*) is reserved for errors and
+ * never decorates. The poster tints are placeholder thumbnails, not a palette.
  *
- * pre-emit critique: P5 H5 E5 S5 R5 V4
+ * Hex, not OKLCH, on purpose: these are the owner's handoff values verbatim, so
+ * a diff against the handoff values listed in
+ * docs/frontend/design-direction-editorial.md stays readable.
+ *
+ * pre-emit critique: P5 H5 E4 S5 R5 V4
  */
 
 :root {
-  /* ---- paper + ink (near-neutral; chroma < 0.015) ---- */
-  --color-paper:      oklch(98.5% 0.003 145);
-  --color-paper-2:    oklch(96.5% 0.005 145);
-  --color-paper-3:    oklch(93% 0.007 145);
-  --color-nav-bg:     oklch(95.5% 0.025 142);
-  --color-rule:       oklch(88% 0.008 140);
-  --color-rule-2:     oklch(72% 0.012 140);
-  --color-muted:      oklch(52% 0.012 140);
-  --color-ink-2:      oklch(35% 0.010 140);
-  --color-ink:        oklch(18% 0.008 140);
+  /* ---- surfaces ---- */
+  --color-paper:   #F6F4EE; /* page background */
+  --color-surface: #FFFFFF; /* cards, inputs, bars */
+  --color-tint:    #EDEAE0; /* quiet panels, chips */
 
-  /* ---- the only chromatic tokens in the system ---- */
-  --color-accent:     oklch(42% 0.150 142);
-  --color-accent-ink: oklch(98% 0.015 145);
-  --color-focus:      oklch(38% 0.160 142);
-  --color-danger:     oklch(48% 0.200 25);
-  --color-danger-ink: oklch(98% 0.010 25);
+  /* ---- text ---- */
+  --color-ink:   #15161A;
+  --color-ink-2: #3A3B42; /* body copy */
+  --color-muted: #5E5F68; /* meta, captions */
 
-  /* ---- type: Terminal is a single-face theme on purpose. Mono everywhere
-     is the design, not a missing pairing. Reading sizes run a notch smaller
-     than a serif would need because mono sets wider per character. ---- */
-  --font-display: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", "Roboto Mono", Menlo, Consolas, monospace;
-  --font-body:    ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", "Roboto Mono", Menlo, Consolas, monospace;
-  /* No --font-mono alias: in a single-face theme it would just be a third name
-     for --font-body, and a token nothing calls is a token that drifts. */
+  /* ---- lines ---- */
+  --color-rule:          #E3DFD5; /* dividers, card borders */
+  --color-border-strong: #CFCABD; /* icon buttons, secondary buttons */
+  --color-input-border:  #8C877A; /* text inputs, outlined buttons */
+
+  /* ---- accent (green) ---- */
+  --color-accent:        #1A7F37;
+  --color-accent-strong: #116329; /* text on soft green */
+  --color-accent-soft:   #DAFBE1; /* pills, done steps, key takeaway */
+  --color-on-accent:     #FFFFFF;
+  /* The focus ring IS the accent: 2px solid, 2px offset, everywhere. */
+  --color-focus: var(--color-accent);
+
+  /* ---- error (red) — errors only ---- */
+  --color-danger:        #B42318;
+  --color-danger-ink:    #FFFFFF; /* text on a solid danger fill */
+  --color-danger-soft:   #FEE4E2;
+  --color-danger-border: #F1B8B2;
+
+  /* ---- filmstrip (progress) ---- */
+  --color-strip:              #15161A;
+  --color-strip-hole:         #F6F4EE;
+  --color-strip-waiting:      #2A2B31;
+  --color-strip-waiting-text: #B4B1A8;
+  --color-strip-skipped-edge: #5E5F66; /* dashed edge of a skipped frame */
+
+  /* ---- bottom tab bar (installed-app shell). A dark dock in light mode, as
+     drawn on the App boards; a raised tint in dark mode, where a light dock
+     would be the brightest thing on the screen. ---- */
+  --color-dock:        #15161A;
+  --color-dock-active: #2A2B31;
+  --color-dock-ink:    #FFFFFF;
+  --color-dock-muted:  #B4B1A8;
+  --color-dock-accent: #3FB950;
+
+  /* ---- dark band (Phase 5c: the landing page's closing call to action,
+     LandingWeb.png). Near-black in light mode; in dark mode the same raised
+     tint as the dock, for the same reason. ---- */
+  --color-band:     #15161A;
+  --color-band-ink: #FFFFFF;
+
+  /* ---- poster tints (History placeholders until real thumbnails exist) ---- */
+  --poster-1: #D9E6DA;
+  --poster-2: #EADFCB;
+  --poster-3: #D8DEE9;
+  --poster-4: #E7D6D2;
+  --poster-5: #E3DFD5;
+
+  /* ---- type. `--font-hanken` / `--font-newsreader` are the CSS variables
+     next/font sets on <html> (app/layout.tsx); the fallbacks only show if the
+     self-hosted files fail to load. ---- */
+  --font-ui:    var(--font-hanken, "Hanken Grotesk"), system-ui, sans-serif;
+  --font-serif: var(--font-newsreader, "Newsreader"), Georgia, serif;
 
   /* ---- space ---- */
   --space-2xs: 0.5rem;
@@ -46,22 +89,16 @@
   --space-lg:  2rem;
   --space-xl:  3rem;
 
-  /* ---- shape: Terminal has square corners; two exceptions, both named ----
-     --radius-card is 0 because surfaces in this theme are defined by rules and
-     alignment, not by rounded boxes. --radius-pill is the floating nav band and
-     the round icon buttons inside it. --radius-control is the third and last:
-     a small, discrete control that has to read as a *button* rather than as a
-     surface or as a pill — currently only the legal routes' crumb back button.
-     8px against that control's 28px box. Stated as a ratio because that is what
-     actually governs how round it reads: 8/28 is 57% of the way to a circle
-     (a circle at 28px is a 14px radius). 4-6px reads as an anti-aliasing
-     artifact at this size; past ~10px it reads as a squircle and by 12px it is
-     hard to tell from the circle this control deliberately is not. If the box
-     size changes, re-derive this against the new box rather than keeping 8px. */
-  --radius-card: 0;
-  --radius-control: 8px;
-  --radius-pill: 999px;
+  /* ---- shape ---- */
+  --radius-card:    20px;
+  --radius-poster:  16px;
+  --radius-control: 12px;
+  --radius-pill:    999px;
   --rule-w: 1px;
+
+  /* ---- shadow ---- */
+  --shadow-card:     0 1px 2px rgba(21, 22, 26, 0.04), 0 8px 24px rgba(21, 22, 26, 0.05);
+  --shadow-floating: 0 8px 24px rgba(21, 22, 26, 0.22);
 
   /* ---- motion ---- */
   --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
@@ -71,14 +108,22 @@
   --dur-short:   200ms;
   --dur-mid:     280ms;
 
-  /* ---- layout ---- */
-  --shell-width: 68rem;
-  /* The reading measure, in one place. Mono sets wide, so 40rem at 0.86rem is
-     already ~75 characters — the top of the comfortable range, not the middle.
-     Every rule and every paragraph in a document view shares this edge; that
-     alignment is the structure in a theme with no boxes to provide it. */
+  /* ---- layout ----
+     The page gutter is 16px on a phone and 48px at desktop, as drawn on the
+     Web and Desktop boards. --shell-width is the content measure (74rem, i.e.
+     1184px between the two 48px gutters on the 1280 board) plus those gutters,
+     because .shell is border-box and carries the gutter as padding. */
+  --page-gutter: clamp(1rem, 4vw, 3rem);
+  --shell-width: calc(74rem + 2 * 3rem);
   --measure: 40rem;
-  --page-gutter: clamp(1rem, 4vw, 2rem);
+  /* The serif reading measure (Notes, TL;DR, transcript). Newsreader sets
+     narrower per character than Hanken, so it gets its own token; the width
+     was checked in the browser for ~65-75 characters per line at the 19px
+     reading size (results-view.md records the measurement). */
+  --measure-serif: 36rem;
+  /* The bottom tab bar's own height — a property of that component, declared
+     once, which the shell reads to keep content from sitting under it. */
+  --tabbar-height: 4rem;
   --safe-top:    var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
   --safe-right:  var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
   --safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
@@ -89,33 +134,71 @@
   --z-banner: 30;
   --z-overlay: 50;
 
-  /* Scrim behind the mobile nav drawer. Deliberately a flat black wash rather
-     than a paper tint — an overlay painted in --color-paper was invisible
-     against the page it was meant to dim. */
-  --color-backdrop: color-mix(in oklch, oklch(0% 0 0) 55%, transparent);
+  /* Scrim behind the More sheet. A flat black wash rather than a paper tint —
+     an overlay painted in --color-paper is invisible against the page it is
+     meant to dim. */
+  --color-backdrop: rgba(0, 0, 0, 0.45);
 
   color-scheme: light;
 }
 
-/* Dark theme. Same discipline inverted: near-neutral inks on near-neutral
-   dark paper, accent alone carries the phosphor. Stamped on <html> by the
-   blocking script in app/layout.tsx before first paint. */
-:root[data-theme="dark"] {
-  --color-paper:      oklch(13% 0.005 145);
-  --color-paper-2:    oklch(16.5% 0.007 145);
-  --color-paper-3:    oklch(21% 0.009 145);
-  --color-nav-bg:     oklch(16.5% 0.007 145);
-  --color-rule:       oklch(29% 0.010 140);
-  --color-rule-2:     oklch(44% 0.014 140);
-  --color-muted:      oklch(62% 0.014 140);
-  --color-ink-2:      oklch(80% 0.012 140);
-  --color-ink:        oklch(94% 0.008 140);
+/* Dark theme. Stamped on <html> by the blocking script in app/layout.tsx before
+   first paint; light is the default regardless of OS (product decision), so
+   there is deliberately no prefers-color-scheme block anywhere.
 
-  --color-accent:     oklch(78% 0.190 138);
-  --color-accent-ink: oklch(14% 0.03 145);
-  --color-focus:      oklch(86% 0.190 138);
-  --color-danger:     oklch(70% 0.17 25);
-  --color-danger-ink: oklch(14% 0.020 25);
+   The handoff drew no dark values for danger*, strip* or the dock; the ones
+   below are proposed here and their contrast ratios are recorded in
+   docs/frontend/design-direction-editorial.md. */
+:root[data-theme="dark"] {
+  --color-paper:   #0E100F;
+  --color-surface: #171A18;
+  --color-tint:    #212522;
+
+  --color-ink:   #ECEDE8;
+  --color-ink-2: #C6C9C2;
+  --color-muted: #9A9E97;
+
+  --color-rule:          #2A2E2B;
+  --color-border-strong: #3A3F3B;
+  --color-input-border:  #6C726B;
+
+  --color-accent:        #3FB950;
+  --color-accent-strong: #7EE787;
+  --color-accent-soft:   #12301A;
+  --color-on-accent:     #171A18; /* dark text on bright green */
+
+  /* proposed — 6.85:1 on paper, 6.29:1 on surface */
+  --color-danger:        #F97066;
+  --color-danger-ink:    #1A0A08; /* dark text on the light-red fill, 6.91:1 */
+  --color-danger-soft:   #3A1714;
+  --color-danger-border: #7A2E27;
+
+  /* proposed — the strip sits a step above paper so the paper-coloured
+     sprocket holes still read as holes */
+  --color-strip:              #1E2220;
+  --color-strip-hole:         #0E100F;
+  --color-strip-waiting:      #2C312E;
+  --color-strip-waiting-text: #B4B1A8;
+  --color-strip-skipped-edge: #5A615C;
+
+  --color-dock:        #212522;
+  --color-dock-active: #2C312E;
+  --color-dock-ink:    #ECEDE8;
+  --color-dock-muted:  #9A9E97;
+  --color-dock-accent: #3FB950;
+
+  --color-band:     #212522;
+  --color-band-ink: #ECEDE8;
+
+  --poster-1: #243228;
+  --poster-2: #352F22;
+  --poster-3: #262C38;
+  --poster-4: #382B28;
+  --poster-5: #2A2E2B;
+
+  --shadow-card:     0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.25);
+  --shadow-floating: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --color-backdrop:  rgba(0, 0, 0, 0.6);
 
   color-scheme: dark;
 }

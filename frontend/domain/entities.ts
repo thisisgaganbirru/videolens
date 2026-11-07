@@ -57,17 +57,39 @@ export interface SourceMetadata {
  *  quiet, safe default with no type-level licence needed. */
 export type AnalysisCompleteness = "full" | "captions_only";
 
+/** How a run's media arrived. The server's word on it, recorded at create
+ *  time — the authority wherever it is present. Absent on runs stored before
+ *  the field existed. */
+export type RunSourceKind = "link" | "file";
+
+/** Where a run's media came from, as the backend classifies it. `other` is a
+ *  link to a site with no dedicated label. */
+export type RunPlatform = "youtube" | "instagram" | "tiktok" | "audio_file" | "video_file" | "other";
+
+export type RunOrientation = "landscape" | "portrait";
+
 export interface RunStatusResponse {
   run_id: string;
   status: RunStatus;
   stage: string | null;
   result: VideoAnalysis | null;
+  /* Optional: older stored runs (and older backends) omit all three. */
+  source_kind?: RunSourceKind | null;
+  platform?: RunPlatform | null;
+  duration_seconds?: number | null;
   source_metadata?: SourceMetadata | null;
   /** Optional on the wire: a backend older than the caption fallback omits it
    *  entirely, and the gateway casts rather than validates. Absent means
    *  `full`. */
   completeness?: AnalysisCompleteness;
   error: string | null;
+  /** Phase 5a. A `data:image/jpeg;base64,...` poster (<= ~20 KB) and the
+   *  display size with rotation applied. All optional: audio runs, older runs
+   *  and older backends have none. The browser files them into its History. */
+  thumbnail?: string | null;
+  width?: number | null;
+  height?: number | null;
+  orientation?: RunOrientation | null;
 }
 
 /** Deliberately has no `completeness`: `GET /api/runs` does not return one, and
@@ -79,7 +101,66 @@ export interface RunSummary {
   status: RunStatus;
   title: string | null;
   created_at: string;
+  /* Phase 3 (History poster grid). Every one is optional AND nullable: runs
+     stored before these fields existed come back without them, and the
+     gateway casts rather than validates. The poster renders each piece only
+     when it is actually present — see components/history.ts. */
+  source_kind?: RunSourceKind | null;
+  platform?: RunPlatform | null;
+  duration_seconds?: number | null;
+  /** The first lines of the summary, for client-side search only. */
+  summary_snippet?: string | null;
+  /** Absent means portrait: most runs are short vertical clips. */
+  orientation?: RunOrientation | null;
+  /** Display size, when the backend measured it. Wider than tall = landscape. */
+  width?: number | null;
+  height?: number | null;
 }
+
+/** One run as this browser's History keeps it (IndexedDB, newest 20).
+ *
+ *  Everything needed to list it AND to reopen it with no network: the summary
+ *  fields the poster grid reads, the poster itself as a Blob, and the full
+ *  delivered result. The server forgets a run about an hour after it is
+ *  created; this record is what survives that. Nullable throughout because a
+ *  run is written the moment the server accepts it, long before most of these
+ *  are known. */
+export interface HistoryRecord {
+  run_id: string;
+  /** ISO timestamp. Client clock for runs started here, the server's for
+   *  runs imported from it. The cap drops the oldest by this. */
+  created_at: string;
+  status: RunStatus;
+  title: string | null;
+  source_kind: RunSourceKind | null;
+  platform: RunPlatform | null;
+  duration_seconds: number | null;
+  width: number | null;
+  height: number | null;
+  orientation: RunOrientation | null;
+  summary_snippet: string | null;
+  /** The server's JPEG poster (longest side <= 320px, <= ~20 KB), stored as
+   *  a Blob. Null for audio, failed runs, and until the server has one. */
+  thumbnail: Blob | null;
+  result: VideoAnalysis | null;
+  source_metadata: SourceMetadata | null;
+  completeness: AnalysisCompleteness | null;
+  error: string | null;
+  /** The link as submitted from this browser (refinement 1, #7), so a run the
+   *  server forgot can be offered again with the field filled. Null for
+   *  uploads and imported runs; absent on records written before it existed.
+   *  Stays in IndexedDB — never sent anywhere new. */
+  source_url?: string | null;
+  /** The uploaded file's name as picked in this browser (refinement 2, #6),
+   *  for the result's Source card. The server never keeps it. Null for links
+   *  and imported runs; absent on records written before it existed. */
+  file_name?: string | null;
+  updated_at: string;
+}
+
+/** A partial write: `run_id` plus whichever fields are now known. Fields left
+ *  `undefined` keep their stored value. */
+export type HistoryPatch = Partial<HistoryRecord> & { run_id: string };
 
 export interface RunListResponse {
   runs: RunSummary[];
@@ -118,4 +199,20 @@ export interface CapabilityReport {
   state: CapabilityState | (string & {});
   mode: "local" | "distributed" | (string & {});
   capabilities: Capability[];
+}
+
+/** This device's free-run allowance for the current UTC day, from
+ *  `GET /api/free-runs`. Only meaningful without a bring-your-own key: a
+ *  caller with their own Gemini key has no limit and never sees it. */
+export interface FreeRunsStatus {
+  /** The random, server-issued token that counts this device's runs. Not tied
+   *  to a person. Replaced whenever the server answers with a different one. */
+  deviceToken: string;
+  limit: number;
+  used: number;
+  remaining: number;
+  /** ISO 8601 UTC instant the count resets (next UTC midnight). */
+  resetsAt: string;
+  /** `false`: the deployment has no free-run limit — show nothing. */
+  enabled: boolean;
 }

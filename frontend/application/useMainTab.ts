@@ -1,6 +1,8 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
+import { IN_APP_ENTRY_KEY } from "@/application/backNavigation";
+import { nativeShell } from "@/infrastructure/container";
 
 /* Which of the shell's four destinations is showing is a property of the URL,
    not of a component. It lives here because reading and writing that URL is
@@ -8,8 +10,9 @@ import { useSearchParams } from "next/navigation";
    and because two different route families (the app shell and the legal
    documents) both need to address the tabs without sharing a component tree.
 
-   The address is a query param (`/?view=history`) rather than a route folder
-   (`/history`) on purpose: one page component, one copy of the shell, and it
+   The tool lives at `/app` since Phase 5c (`/` is the landing page). The
+   address is a query param (`/app?view=history`) rather than a route folder
+   (`/app/history`) on purpose: one page component, one copy of the shell, and it
    survives `output: "export"`, which is what the Capacitor build ships. Route
    folders would mean four prerendered pages each carrying the whole shell, and
    a real document navigation on every tab switch. */
@@ -19,10 +22,23 @@ export const MAIN_TABS = ["analyze", "history", "api-key", "releases"] as const;
 
 export type MainTab = (typeof MAIN_TABS)[number];
 
-/** The tab a bare `/` shows, and the one that needs no param to address it. */
+/** The tab a bare `/app` shows, and the one that needs no param to address it. */
 export const DEFAULT_MAIN_TAB: MainTab = "analyze";
 
+/** Where the tool lives. `/` is the landing page (Phase 5c). */
+export const APP_PATH = "/app";
+
 const VIEW_PARAM = "view";
+
+/**
+ * Whether a pathname is the tool's own document. Three spellings, one page:
+ * `next start` serves `/app`, a static host may add the slash, and the
+ * Capacitor export can only reach the file as `/app.html` (its asset server
+ * answers an extensionless path with `index.html`; see app/page.tsx).
+ */
+export function isAppPath(pathname: string): boolean {
+  return pathname === APP_PATH || pathname === `${APP_PATH}/` || pathname === `${APP_PATH}.html`;
+}
 
 export function isMainTab(value: string | null | undefined): value is MainTab {
   return value != null && (MAIN_TABS as readonly string[]).includes(value);
@@ -30,11 +46,11 @@ export function isMainTab(value: string | null | undefined): value is MainTab {
 
 /**
  * The address of a tab. Analyze is the bare route rather than
- * `/?view=analyze` — a default that has to name itself isn't a default, and
- * the shared/bookmarked URL for "the app" should be `/`.
+ * `/app?view=analyze` — a default that has to name itself isn't a default, and
+ * the shared/bookmarked URL for "the app" should be `/app`.
  */
-export function mainTabHref(tab: MainTab): string {
-  return tab === DEFAULT_MAIN_TAB ? "/" : `/?${VIEW_PARAM}=${tab}`;
+export function mainTabHref(tab: MainTab, base: string = APP_PATH): string {
+  return tab === DEFAULT_MAIN_TAB ? base : `${base}?${VIEW_PARAM}=${tab}`;
 }
 
 /** The tab the current browser URL names. Client-only; reads `location`. */
@@ -59,9 +75,72 @@ function tabFromLocation(): MainTab {
  * entry — which is also what makes "open a run from history, press back" land
  * on the history list instead of dropping the user out of the app.
  */
-export function goToMainTab(tab: MainTab): void {
+export function goToMainTab(tab: MainTab, options: { push?: boolean } = {}): void {
   if (tabFromLocation() === tab) return;
-  window.history.pushState(null, "", mainTabHref(tab));
+  /* The marker says "the entry under this one is an app view", which is what
+     the installed app's Back link asks on browsers without the Navigation API
+     (older iOS standalone). Next's patched pushState copies its own router
+     state in beside it. */
+  /* Keep whichever spelling of the app document we are on (`/app.html` in the
+     Capacitor export), so the pushed entry still reloads to this page. */
+  const { pathname } = window.location;
+  const base = isAppPath(pathname) ? pathname : APP_PATH;
+  const href = mainTabHref(tab, base);
+
+  /* Android shell (refinement 1, #4): a tab switch replaces the entry. The
+     hardware back button there means "back out of what I opened", not "undo
+     my last tab tap" — otherwise five taps between Analyze and History cost
+     five presses to leave. `decideBack` sends a non-Analyze tab with nothing
+     under it to Analyze, then exits. Opening a run from History passes
+     `push`, so back from that run still returns to the list.
+
+     A fresh state object, never `history.state` itself: Next's patched
+     replaceState skips its URL sync when handed its own state (`__NA`). The
+     in-app marker is carried over only if this entry already had one. */
+  if (nativeShell.isNative() && !options.push) {
+    const current: unknown = window.history.state;
+    const marked =
+      !!current && typeof current === "object" && !!(current as Record<string, unknown>)[IN_APP_ENTRY_KEY];
+    window.history.replaceState(marked ? { [IN_APP_ENTRY_KEY]: true } : {}, "", href);
+    return;
+  }
+  window.history.pushState({ [IN_APP_ENTRY_KEY]: true }, "", href);
+}
+
+/**
+ * Whether this page is served by Capacitor's Android asset server (native,
+ * `localhost`, no port) — the same test the landing page's head script uses
+ * before its `.html` hop. Live reload (`localhost:3005`) and every browser
+ * answer false.
+ */
+export function isCapacitorAssetServer(): boolean {
+  if (typeof window === "undefined") return false;
+  const { hostname, port } = window.location;
+  return nativeShell.isNative() && hostname === "localhost" && !port;
+}
+
+/**
+ * Refinement 9: one spelling of the tool's address in the installed app.
+ *
+ * On the asset server the real document is `/app.html` (`/app` only works by
+ * way of `index.html` and the head script's hop), and a cold start, a reload
+ * and the legal pages' Back (a history step back) all land there. But the
+ * dock and the legal pages' links are client-side navigations to `/app`, so
+ * the same screen answered to two addresses depending on how it was reached.
+ * This rewrites `/app` to `/app.html` in place, keeping the query, the hash
+ * and the in-app marker — the same replaceState `goToMainTab` already does on
+ * that shell. No navigation, no reload. Everywhere else it does nothing: the
+ * web keeps `/app`, which is the right spelling for `next start` and static
+ * hosts.
+ */
+export function canonicalizeAppPath(): void {
+  if (!isCapacitorAssetServer()) return;
+  const { pathname, search, hash } = window.location;
+  if (pathname !== APP_PATH && pathname !== `${APP_PATH}/`) return;
+  const current: unknown = window.history.state;
+  const marked =
+    !!current && typeof current === "object" && !!(current as Record<string, unknown>)[IN_APP_ENTRY_KEY];
+  window.history.replaceState(marked ? { [IN_APP_ENTRY_KEY]: true } : {}, "", `${APP_PATH}.html${search}${hash}`);
 }
 
 /**

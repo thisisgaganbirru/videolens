@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The web BrandMark (components/AppNav.tsx: ring r=11.25, stroke 2.25, dot
+     r=5 on a 26-unit box), scaled x3.692 onto the 288dp splash-icon canvas and
+     centred. Its 96dp outer diameter sits well inside the 192dp circle the
+     system keeps (two thirds of the canvas). Refinement 1, #11. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="288dp"
+    android:height="288dp"
+    android:viewportWidth="288"
+    android:viewportHeight="288">
+    <path
+        android:pathData="M144,102.46a41.54,41.54 0,1 1,0 83.08a41.54,41.54 0,1 1,0 -83.08z"
+        android:fillColor="#00000000"
+        android:strokeColor="@color/splash_ring"
+        android:strokeWidth="8.31" />
+    <path
+        android:pathData="M144,125.54a18.46,18.46 0,1 1,0 36.92a18.46,18.46 0,1 1,0 -36.92z"
+        android:fillColor="@color/splash_dot" />
+</vector>

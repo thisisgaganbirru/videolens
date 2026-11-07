@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 from ....domain.entities import SavedUpload
 from ....domain.errors import MediaValidationError
 from ...config import Settings
-from ..net import validate_public_url
+from ..net import ValidatingRedirectHandler, validate_public_url
 from ..uploads import _cleanup_dir, create_run_dir
 
 _TIMEOUT_SECONDS = 30
@@ -27,17 +27,9 @@ _CHUNK_SIZE = 1024 * 1024
 _USER_AGENT = "VideoLens/1.0 (+https://github.com/thisisgaganbirru/videolens)"
 
 
-class _ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Re-runs the public-address check on every redirect hop.
-
-    Validating only the URL the caller typed is not enough: a public host is
-    free to redirect to `http://169.254.169.254/`, and following that blindly
-    is the classic way an SSRF guard gets walked straight past.
-    """
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        validate_public_url(newurl)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+# Kept under its old name: the handler moved to net.py so the thumbnail
+# fetch shares the one copy.
+_ValidatingRedirectHandler = ValidatingRedirectHandler
 
 
 class DirectHttpResolver:

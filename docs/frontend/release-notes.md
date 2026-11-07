@@ -39,18 +39,49 @@ consumers used to read two separate CI-written static files
 `releases[]` is the changelog this panel renders, `latest` is the single build
 number an installed APK compares itself against.
 
-**Design status — extrapolated, needs review.** The Terminal mockup never drew
-this panel, so `VersionLogPanel` was ported by analogy to the history list:
-hairline-separated rows, square, no fill, no shadow. Two deliberate divergences
-from history worth a look: the releases pane *keeps* its side padding (the
-`padding-inline: 0` rule is scoped to `[data-view="history"]`), so rows read as
-text lines rather than full-bleed bands; and consequently hover recolours the
-title to `--color-accent` instead of painting an inset fill, which looked wrong
-inside a padded pane. It reuses `.h-text`/`.h-sub` but deliberately *not*
-`.h-go`, which is hidden by default outside a hovered `.history-row` and would
-be permanently invisible on desktop — a lucide `ExternalLink` is used instead.
-The sub-line is `tag · formatDate(publishedAt)`, both genuinely on
-`VersionLogEntry` (`domain/ports.ts:18`).
+**Design status — superseded the same day by the boards (next section); kept for history.** *(Historical:)* No shot draws
+this page, so it is built in the ApiKey board's language: the same centred
+43.5rem column (`.releases`), serif `.view-title` "Releases" and the lede "What
+changed in each version of VideoLens. Each one opens on GitHub.", then
+`ul.release-list` of hairline-ruled rows. Each row is one `<a.release-row>`
+(new tab, sr-only "(opens on GitHub in a new tab)", min-height 4rem): name
+(600, wraps), `tag · <time>` meta via `formatDay` (`components/format.ts`,
+"Oct 30, 2026"), and a lucide `ArrowUpRight`. Hover (pointer devices only)
+recolours the name to the accent and nudges the arrow 2px up-right. There is
+**no "Latest" badge**: `/api/releases` does not promise an order, and a badge
+on the wrong row is worse than none. The Terminal-era `.h-text`/`.h-sub`/
+`.surface`/`.pane` vocabulary is gone; loading/empty are `.pending-note`
+lines in `.view-state`, the error keeps `.error-inline` with its retry.
+
+## Layout — `design/phase4-boards/Releases*.png` (2026-11-01, current)
+
+Lede: "What changed in each version. You are on version X." — X is
+`NEXT_PUBLIC_APP_VERSION`, inlined by `next.config.mjs` from `package.json`'s
+`version` (the field Android's versionName also reads); if it is ever absent the
+second sentence is dropped rather than guessed. Then `ol.release-list` of
+white `.release-card`s (16px apart; 28px padding from 40rem, 20px on phones):
+`h2.release-title` "Version X.Y.Z" in Newsreader 26px, a **Latest** pill
+(`.release-latest`, accent-strong on accent-soft) on the first card, and the
+date (`formatDay`, muted 14px).
+
+- **Order and Latest are decided client-side** in `components/releases.ts`
+  (`orderReleases`): publish date newest first, semver as the tie-break, API
+  order last; undated rows sink. The backend passes GitHub's order through
+  without promising it, so the badge is only placed after this sort.
+- **Version** comes from the tag (`v2.1.1-build412`, `dev-` prefix allowed,
+  bare `v2.1.1`), else from a version in the name; with neither, the card
+  title is the release name.
+- **Deviation: no bullet notes.** The boards draw each release's changes as
+  bullets; `/api/releases` returns name, tag, date and url only — no body —
+  and the backend is out of scope for this pass. Each card instead shows the
+  release name when it says more than the version (`releaseSubtitle`) and a
+  "Read the notes on GitHub" link (`.release-link`, ArrowUpRight, new tab,
+  sr-only note). Adding `body` to the endpoint would let the cards render
+  the boards' bullets.
+- The boards' "Sample entries, for layout only." caption is a board
+  annotation and is not rendered.
+- The earlier hairline-row classes (`.release-row/.release-item/.release-name/
+  .release-arrow/.release-meta/.release-text`) are deleted.
 
 ## The error state — `.error-inline` with a retry
 
@@ -178,3 +209,5 @@ harness.
 - 2026-08-15 · main session · updated release-manifest ownership after the Android dev workflow was split from monolithic CI
 - 2026-08-15 · main session · updated the release-manifest workflow path to the descriptive naming convention
 - 2026-08-29 · frontend agent · repointed the panel's gateway from the CI-committed `/releases.json` onto `GET /api/releases`; `StaticVersionLogGateway` → `FetchVersionLogGateway`, snake_case→camelCase mapped at the adapter boundary
+- 2026-11-01 · frontend agent (Phase 4) · restyled as the editorial Releases page (view-title + lede, hairline release rows with ArrowUpRight, `formatDay` dates replacing `formatDate`); no board, built in the ApiKey board's language; no Latest badge (endpoint order not guaranteed)
+- 2026-11-01 · frontend agent (Phase 4, boards) · rebuilt as per-release cards to design/phase4-boards/Releases*.png: "Version X.Y.Z" serif title, Latest pill on the newest, date; client-side newest-first sort (components/releases.ts) because the endpoint does not guarantee order (supersedes the earlier "no Latest badge" call); lede names the running version via NEXT_PUBLIC_APP_VERSION from next.config.mjs; no bullet notes (endpoint has no body) — release name + GitHub link instead
