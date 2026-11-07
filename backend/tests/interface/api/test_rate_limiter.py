@@ -1,4 +1,5 @@
 import unittest
+import uuid
 from types import SimpleNamespace
 from unittest import mock
 
@@ -79,6 +80,46 @@ class ClientIpTests(unittest.TestCase):
     def test_handles_missing_client(self) -> None:
         request = SimpleNamespace(headers={}, client=None)
         self.assertEqual(client_ip(request), "")
+
+
+class ReadLimitAcrossRunIdsTests(unittest.TestCase):
+    """GET /api/runs/{run_id} shares one bucket per caller across run ids.
+
+    slowapi's default key_style ("url") bucketed by path, so polling a fresh
+    random id per request never tripped READ_RATE_LIMIT_PER_MINUTE. On Railway
+    that hid behind the X-Forwarded-For bug above; both were measured there.
+    """
+
+    def setUp(self) -> None:
+        from starlette.testclient import TestClient
+
+        from app.interface.api.app import app
+
+        rate_limiter.limiter.reset()
+        self.addCleanup(rate_limiter.limiter.reset)
+        patcher = mock.patch.object(rate_limiter.settings, "trusted_proxy_hops", 2)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.client = TestClient(app)
+
+    def test_cycling_run_ids_and_edge_hops_still_trips_the_limit(self) -> None:
+        from app.interface.api.routes import container
+
+        limit = container.settings.read_rate_limit_per_minute
+        codes = []
+        for i in range(limit + 1):
+            response = self.client.get(
+                f"/api/runs/{uuid.uuid4().hex}",
+                headers={
+                    "X-Client-ID": "test-client-0123456789",
+                    # Railway's shape: varying edge hop, client entry stable.
+                    "X-Forwarded-For": f"{CLIENT}, 152.233.40.{i % 5 + 1}",
+                    "X-Real-IP": CLIENT,
+                },
+            )
+            codes.append(response.status_code)
+        self.assertNotIn(429, codes[:limit])
+        self.assertEqual(codes[limit], 429)
 
 
 if __name__ == "__main__":
