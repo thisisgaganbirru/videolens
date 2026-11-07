@@ -54,7 +54,15 @@ async def releases() -> ReleaseIndex:
     return await container.get_releases_use_case.execute()
 
 
+# The read endpoints get their own, looser limit: they spend no Gemini budget,
+# but each is a Redis round trip, and GET /api/free-runs also mints a device
+# token for any caller that sends none. Per IP (same key as run creation).
+_READ_LIMIT = f"{container.settings.read_rate_limit_per_minute}/minute"
+_READS_LIMITED = container.settings.read_rate_limit_per_minute > 0
+
+
 @router.get("/api/free-runs", response_model=FreeRunsResponse)
+@limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
 async def free_runs(request: Request) -> FreeRunsResponse:
     """Today's free-run standing for this device. Never spends a run, and
     needs no X-Client-ID: it is the first call a fresh install makes."""
@@ -92,7 +100,9 @@ async def create_run(
 
 
 @router.get("/api/runs", response_model=RunListResponse)
+@limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
 async def list_runs(
+    request: Request,
     principal: Principal = Depends(get_principal),
 ) -> RunListResponse:
     runs = await container.list_runs_use_case.execute(principal)
@@ -117,7 +127,9 @@ def _summary(run: Run) -> RunSummary:
 
 
 @router.get("/api/runs/{run_id}", response_model=RunStatusResponse)
+@limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
 async def get_run(
+    request: Request,
     run_id: str,
     principal: Principal = Depends(get_principal),
 ) -> RunStatusResponse:

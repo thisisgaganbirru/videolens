@@ -1,148 +1,118 @@
 # Backend architecture
 
-The backend is layered as clean architecture: each layer only depends on the
-layers below it, and the direction of dependency always points *inward*,
-toward the domain. Nothing in `domain/` or `application/` imports FastAPI,
-Redis, boto3, or any other framework/driver — those only appear in
-`infrastructure/` and `interface/`.
+Clean architecture, dependencies pointing inward. Nothing in `domain/` or
+`application/` imports FastAPI, Redis, boto3, or any other driver.
 
 ```
-domain          <- application    <- infrastructure
-                <- application    <- interface (api, worker)
+domain  <-  application  <-  infrastructure
+                         <-  interface (api, worker)
 ```
 
-`interface/` and `infrastructure/` both depend on `domain/` and
-`application/`, but never on each other directly — they're wired together
-only in `container.py`.
+`interface/` and `infrastructure/` never import each other; `container.py`
+wires them. (Three known violations are recorded in
+`docs/engineering-standards.md`.) Every adapter takes `Settings` in its
+constructor, which is what makes it testable with an explicit `Settings(...)`.
 
-## Layers
+## Codemap (`backend/app/`)
 
-**`domain/`** — pure business types and rules, no I/O.
-- `entities.py` — `Run`, `VideoAnalysis`, `TranscriptSegment`,
-  `ScreenTextSegment`, `RunStatus`, `Principal`, `SavedUpload`.
-- `errors.py` — the exceptions a use case can raise: `MediaValidationError`,
-  `TermsNotAcceptedError`, `InvalidSourceError`, `QuotaExceededError`,
-  `RunSchedulingError`, `RunNotFoundError`, `GeminiConfigurationError`.
-- `policies.py` — pure functions/constants that encode a business rule
-  without needing any infrastructure: `quota_key_from_headers`,
-  `is_valid_client_id`.
-- `run_facts.py` — pure derivations of the media facts the history grid
-  shows (`describe_run` → source kind, normalized platform, duration,
-  orientation, summary snippet). Routes call it and only map the result.
-- `ports.py` — `Protocol` interfaces the application layer depends on:
-  `RunRepository`, `MediaProcessor`, `AnalysisEngine`, `ObjectStore`,
-  `JobQueue`, `SpendCap`, `KeyVault`, `TokenVerifier`, `UploadedFile`.
-  Phase 5b added `DeviceTokenSigner` and `FreeRunAllowance` (the anonymous
-  per-device free-run allowance; entities `FreeRunStatus`/`FreeRunClaim`).
-  Phase 5a added `MediaProcessor.describe_visuals` (history poster +
-  display size, never raises; returns `entities.MediaVisuals`) and
-  `RunRepository.set_visuals`.
-  These are structural (duck-typed) — an adapter satisfies a port just by
-  having the right methods, no inheritance required.
+**`domain/`** — pure types and rules, no I/O.
+`entities.py` (`Run`, `VideoAnalysis`, `SourceMetadata`, `CaptionTrack`,
+`MediaVisuals`, capability and release models, free-run models, `Principal`),
+`errors.py` (every exception a use case may raise; `UserFacingError` carries a
+user message plus operator-only `log_detail`), `policies.py` (quota key,
+client IP from the proxy-written `X-Forwarded-For` entry, client-id
+validity, run staleness), `run_facts.py` (the media facts a history
+card shows, derived from a stored run), `ports.py` (the `Protocol`s below).
 
-**`application/`** — use cases: one class per user-facing operation,
-orchestrating ports to do the work. This is where the business rules that
-used to live inline in `main.py`/`pipeline.py` now live.
-- `create_run.py` — `CreateRunUseCase`: validates terms accepted and
-  exactly-one-source, admits the caller (`_admit`: BYOK, or a free run
-  against a signed device token; the seam for future plan checks), spends
-  the daily budget, saves/enqueues the run, and owns its own cleanup,
-  including refunding the free run, if something fails partway through.
-- `get_free_runs.py`: `GetFreeRunsUseCase`, a device's standing for today,
-  issuing a token when needed. Read-only.
-- `get_run.py` — `GetRunUseCase`: fetch + ownership check.
-- `list_runs.py` — `ListRunsUseCase`.
-- `process_run.py` — `ProcessRunUseCase`: download/validate → normalize →
-  analyze → persist, then releases the run's held free run (refunding it
-  only when a link run was rejected before analysis: the download failed,
-  or the downloaded file failed the duration cap). Run by both the in-process local
-  runner and the arq worker — it doesn't know or care which.
+**`application/`** — one use case per operation, orchestrating ports.
+`create_run` (validate, admit via BYOK or a free run, spend the daily budget,
+save, enqueue, clean up and refund on partial failure), `process_run` (the
+pipeline: fetch → normalize → analyze → persist, with the caption-only fallback
+and the concurrent poster capture; identical under the local runner and the
+arq worker), `get_run` (ownership plus the abandoned-run backstop),
+`list_runs`, `get_free_runs`, `get_capabilities`, `get_releases`.
 
-**`infrastructure/`** — concrete adapters implementing the ports above.
-Every adapter takes `Settings` in its constructor instead of importing a
-global (this is what makes them independently testable — see
-`backend/tests/`).
-- `persistence/run_repository.py` — `RunStore`: Redis-backed in distributed
-  mode, an in-process dict otherwise. Implements `RunRepository`.
-- `media/{ffmpeg,ytdlp_downloader,uploads,thumbnails}.py` — FFmpeg probing/normalizing,
-  yt-dlp downloading, upload/run-dir handling, and the history thumbnail. `media/service.py`'s
-  `MediaService` composes all three into one `MediaProcessor` adapter,
-  since `ProcessRunUseCase` always uses them together in sequence.
-- `ai/gemini_engine.py` — `GeminiEngine`, implements `AnalysisEngine`.
-- `storage/s3_object_store.py` — `S3ObjectStore`, implements `ObjectStore`.
-- `queue/job_queue.py` — `RunQueue`: dispatches to arq/Redis in distributed
-  mode, or an in-process `asyncio` task otherwise. Implements `JobQueue`.
-- `quota/daily_budget.py` — `DailyBudget`, implements `SpendCap`.
-- `quota/device_tokens.py`: `HmacDeviceTokens`, implements `DeviceTokenSigner`.
-- `quota/free_run_allowance.py`: `FreeRunAllowanceStore`, implements
-  `FreeRunAllowance` (Redis Lua or an in-process dict).
-- `byok/key_vault.py` — `ByokKeyStore`, implements `KeyVault`.
-- `auth/jwt_verifier.py` — `JwtVerifier`, implements `TokenVerifier`.
-- `config.py`, `logging_config.py` — settings and log formatting, unchanged
-  from before the refactor except for their new location.
+**`infrastructure/`** — one adapter per port.
 
-**`interface/`** — the only layer allowed to know about FastAPI/arq
-directly.
-- `api/app.py` — FastAPI app factory: lifespan (tool validation, startup
-  checks, shutdown), CORS, rate-limit middleware, error handler
-  registration, router mount.
-- `api/routes.py` — thin route handlers. Each one extracts what it needs
-  from the request, calls exactly one use case via `container`, and returns
-  a response — no business logic lives here anymore.
-- `api/schemas.py` — API response DTOs (`RunCreateResponse`,
-  `RunStatusResponse`, `RunSummary`, `RunListResponse`). Deliberately *not*
-  merged with `domain.entities.Run` — the API response never exposes
-  `owner_id`.
-- `api/dependencies.py` — `get_principal`: the one place that turns request
-  headers into a `Principal`, using the injected `TokenVerifier` port for
-  bearer tokens.
-- `api/error_handlers.py` — maps each domain exception to its HTTP status
-  code, registered once via `app.add_exception_handler`.
-- `api/rate_limiter.py` — slowapi `Limiter` setup. Not behind a port: there
-  is only one implementation and no business rule to protect from framework
-  leakage, so a port here would be pure ceremony.
-- `worker/settings.py` — the arq `WorkerSettings` plus its `startup`/
-  `shutdown`/`process_run` job function, all backed by `container`.
+| Port | Adapter | Notes |
+|---|---|---|
+| `RunRepository` | `persistence/run_repository.py` | Redis or in-process dict; entries expire `RUN_TTL_SECONDS` after the last write |
+| `MediaProcessor` | `media/service.py` | Composes `ffmpeg.py`, `uploads.py`, the resolver chain, `captions.py`, `thumbnails.py` |
+| `SourceResolver` | `media/resolvers/` | Ordered chain, set in `MediaService`: `YtDlpResolver` (primary, wraps `ytdlp_downloader.py`) then `DirectHttpResolver` |
+| — | `media/net.py` | `validate_public_url` and the shared fetch rules: the single SSRF guard every outbound request uses |
+| `AnalysisEngine` | `ai/gemini_engine.py` | Upload, structured output, jittered retries, optional fallback model, caption-only analysis; `ai/source_context.py` fences publisher metadata as untrusted text |
+| `ObjectStore` | `storage/s3_object_store.py` | |
+| `JobQueue` | `queue/job_queue.py` | arq/Redis, or an in-process task it keeps a reference to |
+| `SpendCap` | `quota/daily_budget.py` | |
+| `DeviceTokenSigner` | `quota/device_tokens.py` | Stateless HMAC tokens; refuses to start distributed without a secret |
+| `FreeRunAllowance` | `quota/free_run_allowance.py` | Per-device and per-IP counters, hold/release for refunds |
+| `KeyVault` | `byok/key_vault.py` | Single-use, deleted on read, 15-minute TTL |
+| `TokenVerifier` | `auth/jwt_verifier.py` | |
+| `CapabilityProbe` | `health/probes.py` | One per dependency; `probed=False` where a check would cost money |
+| `ReleaseCatalog` | `releases/github_releases.py` | Server-side GitHub read; parses `v<version>-build<code>` tags |
 
-**`container.py`** — the composition root. Builds every adapter once and
-wires them into the use cases. It's the only file allowed to import from
-every layer at once; nothing in `domain/` or `application/` ever imports
-from it. `app/main.py` and `app/worker.py` are one-line re-export shims
-(`from .interface.api.app import app` / `from .interface.worker.settings
-import WorkerSettings`) so `Dockerfile`, `docker-compose.yml`, and
-`railway.worker.json` — which reference `app.main:app` and
-`app.worker.WorkerSettings` — needed no changes.
+Plus `config.py` (`Settings`; `NATIVE_APP_ORIGINS` is the Capacitor WebView
+origin allowed in code) and `logging_config.py`.
 
-## Two things kept intentionally simple
+**`interface/`** — the only layer that knows FastAPI and arq.
+`api/app.py` (factory, lifespan checks, CORS, rate-limit middleware),
+`api/routes.py` (thin handlers: health, readiness, capabilities, releases,
+free-runs, runs), `api/schemas.py` (response DTOs; kept separate from
+`domain.entities.Run` so `owner_id` never leaks), `api/dependencies.py`
+(`get_principal`), `api/error_handlers.py` (exception → status, `Retry-After`),
+`api/rate_limiter.py` (slowapi; not behind a port, and the one import-time
+global; the client IP comes from `policies.client_ip_from_forwarded` with
+`TRUSTED_PROXY_HOPS`), `api/security_headers.py` (pure-ASGI middleware,
+added last so every response, preflights and refusals included, carries the
+hardening headers), `worker/settings.py` (arq `WorkerSettings`; takes the BYOK key out of
+the vault before calling the use case).
 
-- **`VideoAnalysis`/`TranscriptSegment`/`ScreenTextSegment`/`RunStatus`
-  live in `domain/entities.py`, not duplicated as separate API DTOs.**
-  They're already framework-agnostic Pydantic models used identically by
-  Gemini's structured-output schema, Redis persistence, and the API
-  response — a parallel DTO would be pure duplication.
-- **One `MediaProcessor` port, not three.** `ffmpeg.py`, `ytdlp_downloader.py`,
-  and `uploads.py` stay as separate modules (each owns one concern), but
-  `ProcessRunUseCase` and `CreateRunUseCase` only ever need them together in
-  sequence, so `MediaService` composes them into a single adapter rather
-  than forcing three separate constructor dependencies everywhere.
+**`container.py`** — composition root. Builds every adapter once, wires the
+use cases, fixes the probe order. `app/main.py` and `app/worker.py` are
+one-line shims so the Dockerfile, compose file and Railway configs reference
+`app.main:app` / `app.worker.WorkerSettings`.
+
+## Invariants
+
+- A BYOK key never becomes an arq job argument, a stored field, or a log line.
+- Every outbound fetch for a URL run goes through `media/net.py`, which
+  resolves the host once and connects to the checked address (no DNS
+  rebinding between check and fetch).
+- The client IP is never the first `X-Forwarded-For` entry; a distributed
+  deployment refuses to start with `ALLOWED_ORIGINS=*`.
+- `VideoAnalysis` is Gemini's response schema; server-known facts
+  (`AnalysisCompleteness`) live beside it on the run, not inside it.
+- A thumbnail, duration, metadata or refund failure never fails a healthy run.
+- Unexpected pipeline exceptions are stored as one fixed message; the real
+  cause goes to the worker log only.
+- The run store is a delivery buffer, not a system of record; history is the
+  browser's.
+- `ListRunsUseCase` never writes; the staleness check lives in `get_run` only.
+
+## Cross-cutting
+
+- **Errors**: domain exceptions map to HTTP in `error_handlers.py` (400
+  validation, 401 device token, 402 free runs, 404, 429 rate limit, 503
+  quota/scheduling/analysis). `docs/error-messaging.md` covers wording.
+- **Spend limits**: rate limit, free runs, daily cap, BYOK exemption, plus
+  a looser per-IP limit on the read endpoints;
+  `docs/backend/cost-abuse-protection.md` and `free-runs.md`.
+- **Response headers**: `docs/backend/security-headers.md`.
+- **Config**: `Settings` from the environment, defaults documented in
+  `.env.example`. Distributed mode is `REDIS_URL` set, which also requires
+  object storage and `DEVICE_TOKEN_SECRET`.
+- **Tests**: `tests/` mirrors `app/`; use-case tests use the fakes in
+  `tests/application/fakes.py`. All unit tests; no end-to-end run test yet.
 
 ## Adding something new
 
-- **New business rule for creating/reading runs** → edit the relevant
-  `application/*.py` use case. It only sees ports, so nothing there needs
-  to know whether run storage is Redis or in-memory.
-- **New storage backend / swap Gemini for another model** → write a new
-  adapter in `infrastructure/` that satisfies the matching `domain.ports`
-  Protocol, then point `container.py` at it. Nothing in `application/` or
-  `interface/` changes.
-- **New HTTP endpoint** → add a route in `interface/api/routes.py` that
-  calls a use case (new or existing) and returns a schema from
-  `interface/api/schemas.py`.
+- Business rule → the `application/` use case; it only sees ports.
+- Storage backend or model swap → a new adapter satisfying the port, pointed
+  at from `container.py`.
+- URL source → a `SourceResolver` in `media/resolvers/`, added to the chain.
+- Dependency worth reporting → a `CapabilityProbe`, appended in `container.py`.
+- Endpoint → a route in `routes.py` calling a use case, returning a schema.
 
-## Tests
+## Changelog
 
-`backend/tests/` mirrors `backend/app/`: `tests/domain/`,
-`tests/infrastructure/<adapter>/`, `tests/interface/api/`. Each adapter
-test constructs its class directly with an explicit `Settings(...)` instead
-of monkeypatching a module-level global, since every adapter now takes its
-config as a constructor argument.
+- 2026-11-07 · main session · rewritten as a codemap; merged the security pass (`security_headers.py`, trusted-proxy client IP, read-endpoint limit, startup refusal on a CORS wildcard): port/adapter table, invariants, cross-cutting; covers the resolver chain, captions, probes, releases, free runs and device tokens
