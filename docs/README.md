@@ -64,6 +64,9 @@ Every new feature or component should get (or update) a doc here. Scope is stric
 - `railway-environments.md` — the two Railway environments, which branch
   feeds each, how `Wait for CI` gates deploys, and the three ways a deploy
   silently does not happen. Read before changing a trigger branch.
+- `images/` — the README screenshots. Regenerate with
+  `scripts/readme-screenshots.js` (mocked API, fixture data) after a visual
+  change, so the README never shows a design the app no longer has.
 - `engineering-standards.md` — cross-cutting, not a per-feature reference. A
   repo-wide engineering-hygiene register audited 2026-08-15, with resolution
   notes where work has landed. Also records the decision to keep the MCP
@@ -109,3 +112,4 @@ someone else's entry.
 - 2026-11-01 · frontend agent (Phase 5c/5d) · indexed `frontend/landing-page.md` and `frontend/first-run.md`
 - 2026-11-02 · frontend-43 · indexed `qa/web-app-test-cases.md` next to the Android suite
 - 2026-11-07 · main session · replaced the quick-links sections with a full index of every backend and frontend doc
+- 2026-11-07 · main session · added `images/` (README screenshots) and the script that regenerates them

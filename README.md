@@ -1,5 +1,9 @@
 # VideoLens AI
 
+[![Production](https://github.com/thisisgaganbirru/videolens/actions/workflows/production-environment.yml/badge.svg?branch=main)](https://github.com/thisisgaganbirru/videolens/actions/workflows/production-environment.yml)
+[![Release](https://img.shields.io/github/v/release/thisisgaganbirru/videolens?label=release)](https://github.com/thisisgaganbirru/videolens/releases/latest)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+
 Upload short audio/video or paste a public media URL and get a transcript,
 on-screen text extraction, a natural language summary, and formatted markdown
 notes — powered by Gemini's multimodal video understanding, so it captures
@@ -14,7 +18,41 @@ its subtitles, the run completes from the caption track and says so.
 It runs as a web app, an installable PWA, and an Android app (Capacitor), all
 against the same backend.
 
+<p align="center">
+  <img src="docs/images/readme-results.png" alt="A finished run: the source card on the left, the result with TL;DR, Notes, Transcript and On-screen tabs on the right" width="100%">
+</p>
+
 ## How it works
+
+```mermaid
+flowchart LR
+    subgraph client["Browser · PWA · Android"]
+        UI[Next.js app]
+        H[(History<br/>IndexedDB)]
+    end
+    subgraph backend["Backend"]
+        API[FastAPI]
+        Q[(Redis<br/>queue + run state)]
+        W[arq worker]
+        S3[(S3 temp storage)]
+    end
+    G[Gemini]
+    SRC[yt-dlp / direct HTTP]
+
+    UI -- "POST /api/runs" --> API
+    API --> Q
+    Q --> W
+    API -. upload .-> S3
+    S3 -. download .-> W
+    W --> SRC
+    W -- "FFmpeg, then analyze" --> G
+    G --> W
+    W -- result --> Q
+    UI -- "GET /api/runs/{id}" --> API
+    API --> Q
+    UI --> H
+```
+
 
 1. A fresh anonymous client calls `GET /api/free-runs` once for a signed
    device token and today's free-run allowance.
@@ -151,6 +189,17 @@ variables, and `GITHUB_TOKEN` for the Releases tab. The frontend has one,
 the Gemini key itself; it is the only limit enforced outside this code.
 
 ## PWA and Android
+
+<table>
+  <tr>
+    <td width="66%"><img src="docs/images/readme-landing.png" alt="The landing page in a browser tab: top nav, headline, sample result card"></td>
+    <td width="34%"><img src="docs/images/readme-phone.png" alt="The installed app on a phone: the same result with the bottom tab bar"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Browser tab</sub></td>
+    <td align="center"><sub>Installed app (PWA or Android)</sub></td>
+  </tr>
+</table>
 
 The frontend is an installable PWA with an offline fallback, launcher icons,
 and share-target support; the service worker never caches API responses or
