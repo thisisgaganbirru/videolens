@@ -38,6 +38,14 @@ class ForwardedClientIpTests(unittest.TestCase):
         # Client -> CDN -> edge: the edge appended the CDN's address last.
         self.assertEqual(client_ip_from_forwarded("203.0.113.7, 198.51.100.2", "10.0.0.1", 2), "203.0.113.7")
 
+    def test_railway_shape_resolves_to_the_client_whatever_the_edge_hop(self) -> None:
+        # Railway (measured 2026-11-07): "<client>, <edge hop>", the edge hop
+        # varies per request. Two hops lands on the client every time; one hop
+        # landed on the edge hop, a new rate-limit bucket per request.
+        for edge_hop in ("152.233.40.1", "152.233.40.2"):
+            self.assertEqual(client_ip_from_forwarded(f"203.0.113.50, {edge_hop}", "100.64.0.2", 2), "203.0.113.50")
+            self.assertEqual(client_ip_from_forwarded(f"203.0.113.50, {edge_hop}", "100.64.0.2", 1), edge_hop)
+
     def test_fewer_entries_than_hops_falls_back_to_the_first(self) -> None:
         self.assertEqual(client_ip_from_forwarded("203.0.113.7", "10.0.0.1", 2), "203.0.113.7")
 
