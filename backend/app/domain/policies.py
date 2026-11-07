@@ -26,8 +26,10 @@ def client_ip_from_forwarded(forwarded: str, peer: str, trusted_hops: int) -> st
     request from, so the *rightmost* entries are the ones written by proxies
     we control and the leftmost is whatever the client sent - which it is free
     to make up. `trusted_hops` is how many trailing entries the deployment's
-    own proxies add (one on Railway and most single-edge platforms); the client
-    is the entry that many from the end. A header with fewer entries than that
+    own proxies add, counting the client entry they write; the client is the
+    entry that many from the end. On Railway it is 2: the edge rewrites the
+    header to `<client>, <edge hop>` and the edge hop changes from request to
+    request, so the last entry is never the client. A header with fewer entries than that
     did not pass through the expected proxies, and its first entry is used
     rather than trusting nothing (the peer, behind a proxy, is the proxy).
     `trusted_hops <= 0` ignores the header entirely and uses the peer, for a

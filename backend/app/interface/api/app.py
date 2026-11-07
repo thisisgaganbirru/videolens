@@ -13,7 +13,7 @@ from ...container import container
 from ...domain.errors import RateLimitedError
 from ...infrastructure.logging_config import configure_logging
 from .error_handlers import register_error_handlers, retry_after_headers
-from .rate_limiter import ClientIpProbeMiddleware, limiter, retry_after_seconds
+from .rate_limiter import limiter, retry_after_seconds
 from .routes import router
 from .security_headers import SecurityHeadersMiddleware
 
@@ -77,6 +77,5 @@ app.add_middleware(
 # Outermost (added last), so preflights, rate-limit refusals and error
 # responses carry the headers too.
 app.add_middleware(SecurityHeadersMiddleware)
-app.add_middleware(ClientIpProbeMiddleware)  # TEMPORARY diagnostic, removed in the fix PR
 register_error_handlers(app)
 app.include_router(router)
