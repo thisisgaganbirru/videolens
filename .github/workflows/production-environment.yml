@@ -107,7 +107,8 @@ jobs:
     needs: [android, publish]
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # The only job in this repository holding contents: write. Keep it that
+    # One of only two jobs holding contents: write; the other is the
+    # Dependabot auto-merge job (owner's decision, 2026-11-07). Keep it that
     # way: everything else, including the Android build itself, is read-only.
     permissions:
       contents: write
