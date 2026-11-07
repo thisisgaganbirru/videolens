@@ -69,6 +69,10 @@ Every new feature or component should get (or update) a doc here. Scope is stric
 - `images/` — the README screenshots. Regenerate with
   `scripts/readme-screenshots.js` (mocked API, fixture data) after a visual
   change, so the README never shows a design the app no longer has.
+- `auth-plan.md` — the design for Supabase-backed sign-in, API keys for
+  agents, and the authorization seam the paid tier will use. A plan, not a
+  reference: nothing in it is implemented yet. Read before touching
+  `backend/auth.md` or starting any account work.
 - `engineering-standards.md` — cross-cutting, not a per-feature reference. A
   repo-wide engineering-hygiene register audited 2026-08-15, with resolution
   notes where work has landed. Also records the decision to keep the MCP
@@ -116,3 +120,4 @@ someone else's entry.
 - 2026-11-07 · main session · replaced the quick-links sections with a full index of every backend and frontend doc
 - 2026-11-07 · frontend agent · indexed `frontend/security-headers.md`
 - 2026-11-07 · main session · added `images/` (README screenshots) and the script that regenerates them; indexed both `security-headers.md` docs
+- 2026-11-07 · main session · indexed `auth-plan.md`
