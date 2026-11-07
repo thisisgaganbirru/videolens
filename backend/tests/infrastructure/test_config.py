@@ -48,5 +48,29 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.allowed_origin_list, list(NATIVE_APP_ORIGINS))
 
 
+
+
+class DistributedOriginTests(unittest.TestCase):
+    """A CORS wildcard on a deployed (Redis-backed) API is refused at startup."""
+
+    def test_wildcard_with_redis_is_refused(self) -> None:
+        settings = Settings(_env_file=None, redis_url="redis://r:6379/0", allowed_origins="*")
+        self.assertIn("ALLOWED_ORIGINS", settings.distributed_origin_error() or "")
+
+    def test_wildcard_among_other_origins_is_still_refused(self) -> None:
+        settings = Settings(
+            _env_file=None, redis_url="redis://r:6379/0", allowed_origins="https://app.example.com, *"
+        )
+        self.assertIsNotNone(settings.distributed_origin_error())
+
+    def test_real_origins_with_redis_are_fine(self) -> None:
+        settings = Settings(_env_file=None, redis_url="redis://r:6379/0", allowed_origins="https://app.example.com")
+        self.assertIsNone(settings.distributed_origin_error())
+
+    def test_wildcard_without_redis_is_tolerated_for_local_runs(self) -> None:
+        settings = Settings(_env_file=None, redis_url="", allowed_origins="*")
+        self.assertIsNone(settings.distributed_origin_error())
+
+
 if __name__ == "__main__":
     unittest.main()
