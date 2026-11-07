@@ -54,9 +54,12 @@ Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
   deployment's own proxy wrote (`TRUSTED_PROXY_HOPS`, counted from the
   right), never the client-supplied first entry. The API refuses to start
   in distributed mode with `ALLOWED_ORIGINS=*`.
-- The production APK is a release build signed with a key that exists only
-  in CI secrets (since 2026-11-07). The checked-in `debug.keystore` is for
-  local builds and the dev lane's `.dev` APK only.
+- The production APK is release-signed with a key held only in CI secrets
+  when the four `ANDROID_*` signing secrets exist, and falls back to the
+  debug build signed with the checked-in `debug.keystore` (with a CI
+  warning) when none do. Currently debug: the owner deferred the key.
+  Adding the secrets forces a one-time reinstall for every user; see
+  `DEPLOYMENT.md`, "Android release signing".
 - Both apps send security headers and the frontend ships a hash-based CSP
   injected after `next build`; an inline script that is not in the pre-paint
   set will be blocked. See `docs/frontend/security-headers.md`.

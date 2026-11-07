@@ -220,8 +220,9 @@ cd android && ./gradlew assembleDebug testDebugUnitTest
 
 The Android app targets API 36, accepts shared links, uses the native media
 picker, follows the system theme and font scale, and shares or saves results
-through the system share sheet. Every push to `main` publishes a release
-APK, signed with a key held only in CI secrets, as a GitHub Release
+through the system share sheet. Every push to `main` publishes an APK
+(release-signed once the CI signing secrets exist, debug-signed until then)
+as a GitHub Release
 (`v<version>-build<code>`); every PR into `dev` keeps a debug-signed,
 `.dev`-suffixed test APK as a 14-day artifact. The installed app checks for a
 newer release on launch. Versioning, signing and the release pipeline are in

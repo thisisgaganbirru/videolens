@@ -44,8 +44,10 @@ paths:
 - Android: `versionName` comes from `package.json`; bump there for a release.
   `versionCode` is supplied by CI as the commit count and must never
   decrease. `android/debug.keystore` is checked in on purpose so every
-  **debug** APK (local, dev lane) signs with one identity; the production
-  APK is `assembleRelease`, signed from CI secrets, never the debug key.
+  **debug** APK (local, dev lane) signs with one identity. The production
+  APK is `assembleRelease` signed from CI secrets when all four exist, and
+  the debug build signed with that same checked-in key (no `.dev` suffix)
+  until then; currently debug, the release key is deferred.
   Local `npm run android:sync` and Gradle builds are fine on a developer
   machine, never in a cloud session, and a local APK is never shipped.
   `res/xml/backup_rules.xml` and `data_extraction_rules.xml` keep WebView
