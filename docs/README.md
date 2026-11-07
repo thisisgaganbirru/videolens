@@ -37,6 +37,12 @@ exception, listed so it isn't mistaken for a stray file:
 - `frontend/landing-page.md`: the landing page at `/`, the tool's move to `/app`, the pre-paint redirects, and the Capacitor `.html` hop.
 - `frontend/first-run.md`: the installed app's cold-start splash and one-time Welcome.
 
+## Security headers quick link
+
+- `frontend/security-headers.md`: the CSP (web header + hash-based meta in
+  both builds), the other security headers, and the Android backup rules that
+  keep the BYOK key out of backups.
+
 ## Current design direction
 
 - `frontend/design-direction-editorial.md` — the live visual system (tokens,
@@ -82,3 +88,4 @@ someone else's entry.
 - 2026-11-01 · frontend agent (Phase 5b) · indexed `frontend/free-runs.md`; renamed the quick-links heading to cover both halves
 - 2026-11-01 · frontend agent (Phase 5c/5d) · indexed `frontend/landing-page.md` and `frontend/first-run.md`
 - 2026-11-02 · frontend-43 · indexed `qa/web-app-test-cases.md` next to the Android suite
+- 2026-11-07 · frontend agent · indexed `frontend/security-headers.md`
