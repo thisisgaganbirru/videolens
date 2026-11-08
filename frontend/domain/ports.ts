@@ -3,6 +3,10 @@
    they go through a hook, which goes through the shared container. */
 
 import type {
+  AccountResponse,
+  ApiKeyCreated,
+  ApiKeyListResponse,
+  AuthUser,
   CapabilityReport,
   FreeRunsStatus,
   HistoryPatch,
@@ -234,4 +238,73 @@ export interface DocumentExporter {
   savesViaShareSheet(): boolean;
   share(doc: MarkdownDocument): Promise<void>;
   save(doc: MarkdownDocument): Promise<void>;
+}
+
+/**
+ * Who is signed in, behind the identity provider (auth phase 2).
+ *
+ * Optional by design: with no provider configured the container builds a
+ * session whose `enabled` is false, every request goes out anonymous, and the
+ * Account tab is not offered. Sign-in is an emailed one-time code, the one
+ * method that works the same in a browser tab and inside the Capacitor
+ * WebView (no redirect, no deep link). Google sign-in is phase 4 and is not on
+ * this port yet.
+ *
+ * Failures of `requestEmailCode` and `verifyEmailCode` reject with
+ * `AuthFlowError` (domain/errors.ts), whose `reason` the hook words.
+ */
+export interface AuthSession {
+  /** False when the deployment has no identity provider configured. */
+  readonly enabled: boolean;
+  /** Loads the provider and restores a stored session. Idempotent. */
+  load(): Promise<void>;
+  /** The signed-in person, or null. Synchronous: reads the loaded state. */
+  user(): AuthUser | null;
+  /** True when a session exists, in memory or stored on this device, even
+   *  before the provider has loaded. Synchronous; no network. */
+  hasSession(): boolean;
+  /** A current access token for the API, refreshed when needed. Null only
+   *  when nobody is signed in (or sign-in is unconfigured). When a session
+   *  exists but no token can be had right now (the provider is slow to load,
+   *  a refresh failed on the network) it **throws**: sending that request
+   *  anonymously would reach runs owned by the person as someone else. */
+  getToken(): Promise<string | null>;
+  /** Emails a one-time code. Creates the account on first use. */
+  requestEmailCode(email: string): Promise<void>;
+  /** Exchanges the emailed code for a session. */
+  verifyEmailCode(email: string, code: string): Promise<void>;
+  signOut(): Promise<void>;
+  /** Called whenever the session changes (sign-in, sign-out, a token
+   *  refresh, another tab). Returns unsubscribe. */
+  subscribe(listener: () => void): () => void;
+}
+
+/** Whether *this server* verifies sign-in tokens: its `auth` capability.
+ *  `unknown` until the capability report arrives. The bearer goes out only
+ *  on `ok`, because the backend reads a bearer *instead of* `X-Client-ID`: a
+ *  server without a matching verifier would answer 401/503 to every caller
+ *  route (auth phase 2). Fed by the capabilities adapter, read by the API
+ *  client. */
+export type ServerAuthState = "unknown" | "ok" | "off";
+
+export interface ServerAuthStatus {
+  current(): ServerAuthState;
+  report(state: Exclude<ServerAuthState, "unknown">): void;
+  /** Resolves with the state once known, or with `unknown` after `maxMs`. */
+  settled(maxMs: number): Promise<ServerAuthState>;
+}
+
+/** Which identity the app's requests are going out as, so a History record
+ *  can remember who owns its run: `user:<id>` when the bearer is sent,
+ *  `anonymous` otherwise; null before the first request. */
+export interface CallerIdentity {
+  lastOwner(): string | null;
+}
+
+/** `/api/me` and `/api/keys`, sent as the signed-in person. */
+export interface AccountGateway {
+  fetchAccount(): Promise<AccountResponse>;
+  listKeys(): Promise<ApiKeyListResponse>;
+  createKey(name: string): Promise<ApiKeyCreated>;
+  revokeKey(keyId: string): Promise<void>;
 }
