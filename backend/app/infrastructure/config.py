@@ -38,12 +38,16 @@ class Settings(BaseSettings):
     # Per-IP limit on the read endpoints (run polling, run list, free-run
     # status). Generous: the web app polls one run every 3 s. <= 0 disables.
     read_rate_limit_per_minute: int = 120
-    # How many trailing X-Forwarded-For entries the deployment's own proxies
-    # append. The client IP is the entry that many from the END of the header;
-    # anything further left was supplied by the client and is not trusted.
-    # 1 for Railway and most single-edge platforms; 0 = ignore the header and
-    # use the socket peer (service reached directly, no proxy).
-    trusted_proxy_hops: int = 1
+    # Where the client sits in X-Forwarded-For, counted from the END: the
+    # client IP is the entry this many from the right, i.e. the number of
+    # trailing entries the deployment's own proxies write. Anything further
+    # left came from the client and is not trusted. 2 for Railway: its edge
+    # replaces the header with "<client>, <edge hop>", and the edge hop varies
+    # per request (measured 2026-11-07), so 1 keyed every request on a
+    # different address. 1 for a platform whose proxy appends just the client;
+    # 0 = ignore the header and use the socket peer (no proxy). Without the
+    # header (local, docker compose, direct) the socket peer is used anyway.
+    trusted_proxy_hops: int = 2
     daily_run_cap: int = 200
     # Free runs per device per UTC day for callers without their own Gemini
     # key. <= 0 turns the free-run allowance off entirely (no device token
