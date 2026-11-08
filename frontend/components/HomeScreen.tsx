@@ -17,9 +17,11 @@ import ResultsView, { FileSourceCard, SourceCard, creatorInitials } from "@/comp
 import ApiKeyPanel from "@/components/panels/ApiKeyPanel";
 import HistoryPanel from "@/components/panels/HistoryPanel";
 import VersionLogPanel from "@/components/panels/VersionLogPanel";
+import AccountPanel from "@/components/panels/AccountPanel";
 import { useAnalysisRun } from "@/application/useAnalysisRun";
 import { useHistoryBoot } from "@/application/useRunHistory";
 import { useCapabilities } from "@/application/useCapabilities";
+import { useAuthUser } from "@/application/useAuthSession";
 import { useSharedUrl, type SharedUrl } from "@/application/useSharedUrl";
 import { canonicalizeAppPath, goToMainTab, useMainTab, type MainTab } from "@/application/useMainTab";
 import type { RunSourceKind } from "@/domain/entities";
@@ -85,7 +87,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      calls in three conditionally-rendered children would be one request per
      tab visit. The two contextual notices therefore take props instead of
      reaching for the hook themselves. */
-  const { notice, urlDownload, dailyBudget } = useCapabilities();
+  const { notice, urlDownload, dailyBudget, auth: authCapability } = useCapabilities();
 
   const sharedUrl = useSharedUrl();
 
@@ -111,7 +113,16 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   /* Once per app load: seed History from the server the first time, and
      re-check runs this browser last saw unfinished. Here, not in the History
      panel, because it has to happen whichever tab the app opens on. */
-  useHistoryBoot();
+  /* Auth phase 2: who is signed in. History re-imports the server's runs
+     when a person signs in (useHistoryBoot), and the Account tab is offered
+     only where sign-in actually works: a provider is configured in this
+     build *and* the server says it verifies tokens. */
+  const authUser = useAuthUser();
+  useHistoryBoot({ ready: authUser.ready, userId: authUser.user?.id ?? null });
+  const showAccount = authUser.enabled && authCapability?.state === "ok";
+  /* Signing in or out changes who owns runs on the server, so a run being
+     watched would stop answering. The Account panel holds both meanwhile. */
+  const runInProgress = submitting || status === "queued" || status === "processing";
 
   /* A link shared into the app is a request to analyze *that*, so it takes the
      screen over: whatever tab is showing, and whatever run is on it, gives way
@@ -232,7 +243,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      only on the standalone routes that still opt into it. */
   return (
     <div className="shell" data-view={activeTab}>
-      <AppNav activeTab={activeTab} onSelectTab={goToMainTab} />
+      <AppNav activeTab={activeTab} onSelectTab={goToMainTab} showAccount={showAccount} />
 
       {activeTab === "analyze" && (
         <main ref={analyzeRef} className="view-scroll" data-view="analyze" aria-label="Analyze">
@@ -462,11 +473,17 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
         </main>
       )}
 
+      {activeTab === "account" && (
+        <main className="view-scroll" data-view="account" aria-label="Account">
+          <AccountPanel authCapability={authCapability} runInProgress={runInProgress} />
+        </main>
+      )}
+
       {/* Both shells' chrome is always rendered; `<html data-shell>` decides
           which shows (footer in a browser tab and a wide installed window,
           dock in a phone-width installed app). */}
       <SiteFooter />
-      <BottomTabBar activeTab={activeTab} onSelectTab={goToMainTab} />
+      <BottomTabBar activeTab={activeTab} onSelectTab={goToMainTab} showAccount={showAccount} />
 
       {/* The expired view's picker (item 7, above). Out of the tab order and
           the accessibility tree: the visible control is the button. */}

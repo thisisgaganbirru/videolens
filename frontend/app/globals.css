@@ -2282,6 +2282,227 @@ h3 {
     }
   }
 
+  /* ---- Account (auth phase 2, docs/frontend/auth-sign-in.md) ----
+     The API key page's anatomy (.key-page, .key-card, .key-label) with a
+     few additions: a card title, the code field, quiet text links, the
+     one-time secret and the key list. Tokens only. */
+  .acct-gap {
+    margin-top: var(--space-md);
+  }
+  .acct-gap-sm {
+    margin-top: 1rem;
+  }
+  .acct-card-title {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-weight: 400;
+    font-size: 1.5rem;
+    line-height: 1.2;
+    color: var(--color-ink);
+  }
+  .acct-help-top {
+    margin: 0 0 0.75rem;
+  }
+  .acct-card-title + .key-help {
+    margin-top: 0.5rem;
+  }
+  .acct-strong {
+    font-weight: 600;
+    color: var(--color-ink);
+    overflow-wrap: anywhere;
+  }
+  .acct-field {
+    flex: 1 1 auto;
+    height: 3rem;
+  }
+  input.acct-code {
+    max-width: 14rem;
+    font-size: 1.25rem;
+    letter-spacing: 0.18em;
+    font-variant-numeric: tabular-nums;
+  }
+  .acct-guard {
+    margin: 0.75rem 0 0;
+  }
+  .acct-links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 1.25rem;
+    margin-top: 0.75rem;
+    font-size: 0.875rem;
+  }
+  .acct-quiet {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    color: var(--color-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .acct-link {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    font-weight: 600;
+    color: var(--color-accent-strong);
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+    text-decoration-thickness: 1px;
+    transition: color var(--dur-short) var(--ease-out);
+  }
+  .acct-link:hover {
+    color: var(--color-ink);
+  }
+  .acct-link[aria-disabled="true"] {
+    cursor: default;
+    color: var(--color-muted);
+  }
+  .acct-link:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  .acct-email {
+    margin: 0;
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--color-ink);
+    overflow-wrap: anywhere;
+  }
+  .acct-inline-code {
+    font-family: var(--font-mono);
+    font-size: 0.875em;
+    padding: 0.0625rem 0.3125rem;
+    border-radius: 4px;
+    background: var(--color-tint);
+    color: var(--color-ink-2);
+  }
+  .acct-create {
+    margin-top: 1.25rem;
+  }
+  .acct-create-btn {
+    flex: 0 0 auto;
+    min-height: 3rem;
+    padding-inline: 1.25rem;
+  }
+
+  /* The one-time secret: the soft-green panel the app uses for "this is
+     the thing to take away", the value itself in mono on the surface. */
+  .acct-secret {
+    margin-top: 1.25rem;
+    padding: 1.25rem;
+    border-radius: var(--radius-card);
+    background: var(--color-accent-soft);
+    color: var(--color-accent-strong);
+  }
+  .acct-secret-lede {
+    margin: 0;
+    font-size: 0.9375rem;
+    line-height: 1.5;
+  }
+  .acct-secret .acct-strong {
+    color: inherit;
+  }
+  .acct-secret-value {
+    display: block;
+    margin-top: 0.75rem;
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius-control);
+    border: var(--rule-w) solid var(--color-rule);
+    background: var(--color-surface);
+    color: var(--color-ink);
+    font-family: var(--font-mono);
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+    word-break: break-all;
+    user-select: all;
+  }
+  .acct-secret .pending-note {
+    margin: 0.5rem 0 0;
+  }
+  .acct-secret-actions {
+    margin-top: 1rem;
+  }
+
+  .acct-key-list {
+    margin: 1.25rem 0 0;
+    padding: 0;
+    list-style: none;
+    border-top: var(--rule-w) solid var(--color-rule);
+  }
+  .acct-key {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem 1rem;
+    padding: 0.875rem 0;
+    border-bottom: var(--rule-w) solid var(--color-rule);
+  }
+  .acct-key-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+    flex: 1 1 14rem;
+  }
+  .acct-key-name {
+    font-weight: 600;
+    color: var(--color-ink);
+    overflow-wrap: anywhere;
+  }
+  .acct-key-meta {
+    font-size: 0.8125rem;
+    color: var(--color-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .acct-key[data-revoked="true"] .acct-key-name {
+    color: var(--color-muted);
+    font-weight: 500;
+  }
+  .acct-key .btn {
+    min-height: 2.75rem;
+    padding-inline: 1.125rem;
+  }
+  .acct-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.75rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-tint);
+    color: var(--color-muted);
+    font-size: 0.8125rem;
+    font-weight: 600;
+  }
+  .acct-confirm {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.75rem;
+  }
+  .acct-confirm-q {
+    font-size: 0.875rem;
+    color: var(--color-ink-2);
+  }
+  .acct-danger {
+    background: var(--color-danger);
+    border-color: var(--color-danger);
+    color: var(--color-danger-ink);
+  }
+  .acct-danger:hover {
+    background: color-mix(in srgb, var(--color-danger) 88%, var(--color-ink));
+  }
+
+  @media (min-width: 40rem) {
+    .acct-secret {
+      padding: 1.5rem 1.75rem;
+    }
+  }
+
   /* ---- Releases ----
      One white card per release (Releases*.png): serif version title, the
      Latest pill on the newest, the date, then what the API can say — the

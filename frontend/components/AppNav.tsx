@@ -5,16 +5,18 @@ import Link from "next/link";
 import { ChevronRight, Menu, X } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import { isPlainLeftClick } from "@/components/navClick";
-import { MAIN_TABS, mainTabHref, type MainTab } from "@/application/useMainTab";
+import { mainTabHref, navTabs, type MainTab } from "@/application/useMainTab";
 
 /* Hallmark · theme: editorial (app/tokens.css) · nav: flat top bar
  *
  * The top bar every route renders, in both shells. What it carries depends on
  * the display mode `<html data-shell>` names (see components/shell.ts):
  *
- *  - web, 48rem and up: brand · four destinations · theme toggle (Desktop boards)
+ *  - web, 48rem and up: brand · the destinations · theme toggle (Desktop boards)
  *  - web, below 48rem:  brand · theme toggle · menu toggle, and the four
  *                       destinations in a full-screen menu (Web "Menu" board)
+ *
+ * Account (auth phase 2) is a fifth destination, drawn only when `showAccount`.
  *  - app:               brand · theme toggle; the destinations live in the
  *                       bottom tab bar instead (BottomTabBar)
  *
@@ -28,6 +30,7 @@ export const TAB_LABEL: Record<MainTab, string> = {
   history: "History",
   "api-key": "API key",
   releases: "Releases",
+  account: "Account",
 };
 
 type AppNavProps = {
@@ -42,6 +45,9 @@ type AppNavProps = {
   onSelectTab?: (tab: MainTab) => void;
   /** True only on the landing page, where the brand link is the current page. */
   landing?: boolean;
+  /** Draw the Account tab (auth phase 2). Only `/app` knows whether sign-in
+   *  is available, so every other route leaves it off. */
+  showAccount?: boolean;
 };
 
 /** The ring-and-dot mark from the boards. Decorative: the word beside it is the
@@ -56,7 +62,8 @@ export function BrandMark({ className = "brand-mark" }: { className?: string }) 
   );
 }
 
-export default function AppNav({ activeTab, onSelectTab, landing = false }: AppNavProps) {
+export default function AppNav({ activeTab, onSelectTab, landing = false, showAccount = false }: AppNavProps) {
+  const tabs = navTabs(showAccount);
   const [menuOpen, setMenuOpen] = useState(false);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
@@ -106,7 +113,7 @@ export default function AppNav({ activeTab, onSelectTab, landing = false }: AppN
 
           <div className="nav-actions">
             <nav className="nav-links" aria-label="Main">
-              {MAIN_TABS.map((tab) => (
+              {tabs.map((tab) => (
                 <Link
                   key={tab}
                   className="nav-tab"
@@ -141,7 +148,7 @@ export default function AppNav({ activeTab, onSelectTab, landing = false }: AppN
           Labelled "Main" like the inline links: below 48rem it is the main
           navigation, and the two are never on screen together. */}
       <nav id="site-menu" className="menu-panel" aria-label="Main">
-        {MAIN_TABS.map((tab) => (
+        {tabs.map((tab) => (
           <Link
             key={tab}
             className="menu-item"
