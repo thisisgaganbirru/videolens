@@ -7,7 +7,7 @@ here and get their own document when that work starts. Cross-cutting
 (backend, frontend, Android, agents, infra), so it is filed at the top of
 `docs/` like `railway-environments.md`.
 
-Status: phase 1 implemented on feat/auth-supabase (pending PR). Phases 2 and 3 are not started. The implemented reference, with the deviations from this plan, is `docs/backend/auth.md`.
+Status: phases 1 and 2 implemented on feat/auth-supabase (pending PR). Phase 2 also shipped the API keys UI from phase 3; account deletion and the `database` capability remain phase 3. Google sign-in is deferred to phase 4. Frontend reference: `docs/frontend/auth-sign-in.md`. The implemented reference, with the deviations from this plan, is `docs/backend/auth.md`.
 
 ## The situation this plan starts from
 
@@ -401,7 +401,8 @@ Per `frontend/ARCHITECTURE.md`; nothing in `components/` touches
 
 Sign-in methods, in order:
 
-1. Email one-time code (6 digits). Identical on web and inside the Capacitor
+1. Email one-time code (6 to 8 digits; `videolens-dev` sends 8, so the field
+   accepts the whole range). Identical on web and inside the Capacitor
    WebView: no redirect, no deep link, no browser hand-off. Primary for that
    reason.
 2. Google OAuth. On web, a PKCE redirect back to the app origin. On Android
@@ -600,3 +601,4 @@ Alembic release step), `CLAUDE.md` (Product direction, the lint count, the
 - 2026-11-08 · main session · phase 0 database step done on `videolens-dev`: `videolens_api` role created and `0001_identity` applied through the connector, role login verified via the `aws-0-us-east-2` pooler; Railway variables still to set
 - 2026-11-08 · main session · tooling decision: no Supabase CLI (install removed); project administration via the connector, Auth settings via the dashboard; `supabase link` and the local stack dropped from phase 0 and the environment table
 - 2026-11-08 · main session · phase 0 finished: dashboard Auth settings set on `videolens-dev` (OTP expiry 600 s, site URL, redirect allowlist, OTP-only templates for magic link and confirm sign up); Railway `dev` backend variables set without redeploy; branch pushed. `/health` check deferred to the merge into `dev`
+- 2026-11-08 · frontend subagent (auth phase 2) · phase 2 implemented on `feat/auth-supabase`: `SupabaseAuthSession` (supabase-js 2.118.0, dynamic import, PKCE), OTP sign-in, bearer on every caller request, history re-import on sign-in, Account tab (hidden unless the `auth` capability is `ok`), privacy paragraph, auth origin in the CSP. Corrections: OTP is 6 to 8 digits (8 on `videolens-dev`), not 6; Google deferred to phase 4 with no button; the API keys UI moved forward from phase 3. Not yet verified on the `dev` frontend (needs the two `NEXT_PUBLIC_SUPABASE_*` variables and a merge)

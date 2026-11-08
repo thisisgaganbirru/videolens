@@ -342,7 +342,16 @@ Do not configure `YTDLP_COOKIES_FROM_BROWSER` on a hosted server.
 
 ```env
 NEXT_PUBLIC_API_BASE_URL=https://api.example.com
+# Optional sign-in (auth phase 2). Blank either one to disable sign-in.
+NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 ```
+
+The two Supabase values are public (the publishable key is meant for the
+browser) and are also inlined at build time; the URL's origin is added to the
+CSP `connect-src`. The Account tab appears only when both are set *and* the
+backend reports the `auth` capability as `ok`. See
+`docs/frontend/auth-sign-in.md`.
 
 Because this value is inlined into the browser bundle at build time, configure
 it before building the frontend image. A frontend image or APK is therefore
