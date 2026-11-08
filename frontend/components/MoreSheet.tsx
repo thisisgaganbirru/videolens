@@ -2,7 +2,7 @@
 
 import type { MouseEvent, Ref } from "react";
 import Link from "next/link";
-import { ChevronRight, FileText, KeyRound, Shield, SunMoon, Tag, type LucideIcon } from "lucide-react";
+import { ChevronRight, CircleUserRound, FileText, KeyRound, Shield, SunMoon, Tag, type LucideIcon } from "lucide-react";
 import { isPlainLeftClick } from "@/components/navClick";
 import { mainTabHref, type MainTab } from "@/application/useMainTab";
 import type { ThemePreference } from "@/components/theme";
@@ -46,6 +46,7 @@ export const MORE_SHEET_GROUPS: MoreSheetRow[][] = [
   [
     { kind: "tab", tab: "api-key", label: "API key", icon: KeyRound },
     { kind: "tab", tab: "releases", label: "Releases", icon: Tag },
+    { kind: "tab", tab: "account", label: "Account", icon: CircleUserRound },
     { kind: "theme", label: "Theme", icon: SunMoon },
   ],
   [
@@ -73,6 +74,9 @@ type MoreSheetProps = {
   onChooseTheme: (preference: ThemePreference) => void;
   /** Fired by the dialog's own `close` event, however it closed. */
   onClose: () => void;
+  /** Show the Account row (auth phase 2); off unless `/app` says sign-in is
+   *  available. */
+  showAccount?: boolean;
 };
 
 export default function MoreSheet({
@@ -83,6 +87,7 @@ export default function MoreSheet({
   themePreference,
   onChooseTheme,
   onClose,
+  showAccount = false,
 }: MoreSheetProps) {
   /* The dialog has no padding of its own (it is on `.sheet-body`), so the only
      click whose target is the <dialog> element itself is one on ::backdrop. */
@@ -190,9 +195,11 @@ export default function MoreSheet({
         </h2>
         {MORE_SHEET_GROUPS.map((group, index) => (
           <ul key={index} className="sheet-list">
-            {group.map((row) => (
-              <li key={row.label}>{renderRow(row)}</li>
-            ))}
+            {group
+              .filter((row) => showAccount || row.kind !== "tab" || row.tab !== "account")
+              .map((row) => (
+                <li key={row.label}>{renderRow(row)}</li>
+              ))}
           </ul>
         ))}
       </div>
