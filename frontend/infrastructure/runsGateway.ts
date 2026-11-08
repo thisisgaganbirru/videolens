@@ -1,17 +1,11 @@
 import type { MediaSource, RunCreateResponse, RunListResponse, RunStatusResponse } from "@/domain/entities";
-import { ApiError, NetworkError } from "@/domain/errors";
-import type { ApiKeyStore, DeviceTokenStore, RunsGateway } from "@/domain/ports";
-import { API_BASE_URL } from "./apiBase";
-import { getClientId } from "./clientId";
+import { ApiError } from "@/domain/errors";
+import type { ApiKeyStore, RunsGateway } from "@/domain/ports";
+import type { ApiClient } from "./apiClient";
+import { UNREADABLE } from "./apiClient";
 
-/* The one place in the app that knows the difference between "the server said
-   no" and "there was no server to say anything". `fetch` rejects (with a
-   TypeError, but that detail stops here) when the connection is refused, DNS
-   fails, the device is offline, or a CORS preflight is blocked; it resolves
-   for every HTTP status, including 4xx/5xx. Classifying it here is what lets
-   hooks and components stay out of the business of guessing. */
-const UNREACHABLE = "Can't reach the server. It may be offline, or your connection dropped.";
-const UNREADABLE = "The server replied with something this app could not read.";
+/* Transport failures (no response at all) are classified in `ApiClient`,
+   the one place that calls `fetch` for the caller's own requests. */
 
 /* An error body's `code` and a 402's `limit`/`used`, carried onto the
    `ApiError` so the hook can branch on `code` (`free_runs_used`,
@@ -91,47 +85,26 @@ function createRunFailureMessage(status: number, body: unknown, retryAfter: stri
 
 export class FetchRunsGateway implements RunsGateway {
   constructor(
-    private readonly apiKeyStore: ApiKeyStore,
-    private readonly deviceTokenStore: DeviceTokenStore
+    private readonly client: ApiClient,
+    private readonly apiKeyStore: ApiKeyStore
   ) {}
 
   /* BYOK: the Gemini key travels ONLY on run creation (POST /api/runs), the
      one endpoint that reads it (backend interface/api/routes.py create_run).
      Polling a run and listing history never needed it, and before 2026-11-01
      it rode along on every one of those requests too — dozens per run, each a
-     fresh copy of the secret on the wire for no reason. `X-Client-ID` still
-     goes everywhere: it scopes which runs a caller can see.
+     fresh copy of the secret on the wire for no reason.
 
-     `X-Device-Token` (Phase 5b) rides on run creation too, and only there — it
-     is what the server counts a free run against. Sent alongside a key as
-     well; the server simply does not count bring-your-own-key runs. */
-  private requestHeaders({ withGeminiKey }: { withGeminiKey: boolean }): HeadersInit {
-    const headers: Record<string, string> = { "X-Client-ID": getClientId() };
+     Everything else about who is calling (`X-Client-ID`, `X-Device-Token`,
+     and since auth phase 2 the bearer token when someone is signed in) comes
+     from `ApiClient`, on every request. */
+  private send(path: string, init: RequestInit = {}, { withGeminiKey = false }: { withGeminiKey?: boolean } = {}) {
+    const extra: Record<string, string> = {};
     if (withGeminiKey) {
       const geminiApiKey = this.apiKeyStore.get();
-      if (geminiApiKey) headers["X-Gemini-Api-Key"] = geminiApiKey;
-      const deviceToken = this.deviceTokenStore.get();
-      if (deviceToken) headers["X-Device-Token"] = deviceToken;
+      if (geminiApiKey) extra["X-Gemini-Api-Key"] = geminiApiKey;
     }
-    return headers;
-  }
-
-  /** Transport layer only: resolves with whatever HTTP response came back
-   *  (status untouched), throws `NetworkError` when none came back at all.
-   *  `withGeminiKey` defaults to false; only `createRun` passes true. */
-  private async send(
-    path: string,
-    init: RequestInit = {},
-    { withGeminiKey = false }: { withGeminiKey?: boolean } = {}
-  ): Promise<Response> {
-    try {
-      return await fetch(`${API_BASE_URL}${path}`, {
-        ...init,
-        headers: this.requestHeaders({ withGeminiKey }),
-      });
-    } catch {
-      throw new NetworkError(UNREACHABLE);
-    }
+    return this.client.send(path, init, extra);
   }
 
   /** A 2xx whose body will not parse is still a server-side problem — we

@@ -2,13 +2,18 @@
    together, mirroring the backend's container.py. Hooks in application/
    import instances from here - they never construct an adapter directly. */
 
+import type { CallerIdentity } from "@/domain/ports";
 import { SessionStorageActiveRunStore } from "./activeRunStore";
+import { FetchAccountGateway } from "./accountGateway";
+import { ApiClient } from "./apiClient";
+import { buildAuthSession } from "./authSession";
 import { LocalStorageApiKeyStore } from "./apiKeyStore";
 import { FetchCapabilitiesGateway } from "./capabilitiesGateway";
 import { LocalStorageDeviceTokenStore } from "./deviceTokenStore";
 import { FetchFreeRunsGateway } from "./freeRunsGateway";
 import { IndexedDbHistoryStore } from "./historyStore";
 import { FetchRunsGateway } from "./runsGateway";
+import { MemoryServerAuthStatus } from "./serverAuthStatus";
 import { ApiUpdateChecker } from "./updateCheck";
 import { LocalStorageUpdateDismissalStore } from "./updateDismissalStore";
 import { WebShareUrlSource } from "./sharedUrlSource";
@@ -24,9 +29,21 @@ export const apiKeyStore = new LocalStorageApiKeyStore();
    token) and run creation (which sends it), so a refreshed token is the one
    the next submit carries. */
 export const deviceTokenStore = new LocalStorageDeviceTokenStore();
-export const runsGateway = new FetchRunsGateway(apiKeyStore, deviceTokenStore);
-export const freeRunsGateway = new FetchFreeRunsGateway(deviceTokenStore);
-export const capabilitiesGateway = new FetchCapabilitiesGateway();
+/* Supabase when both NEXT_PUBLIC_SUPABASE_* variables are set, otherwise a
+   session that is never signed in (auth phase 2). */
+export const authSession = buildAuthSession();
+/* The caller's identity on every request that speaks for them: client id,
+   device token, and the bearer token when signed in. */
+/* Whether this server verifies sign-in tokens, heard from the capability
+   report; the bearer goes out only when it does. */
+export const serverAuthStatus = new MemoryServerAuthStatus();
+export const apiClient = new ApiClient(authSession, deviceTokenStore, serverAuthStatus);
+/* The identity the last caller request went out as (History run ownership). */
+export const callerIdentity: CallerIdentity = apiClient;
+export const runsGateway = new FetchRunsGateway(apiClient, apiKeyStore);
+export const freeRunsGateway = new FetchFreeRunsGateway(apiClient, deviceTokenStore);
+export const accountGateway = new FetchAccountGateway(apiClient);
+export const capabilitiesGateway = new FetchCapabilitiesGateway(serverAuthStatus);
 export const versionLogGateway = new FetchVersionLogGateway();
 export const updateChecker = new ApiUpdateChecker();
 export const updateDismissalStore = new LocalStorageUpdateDismissalStore();

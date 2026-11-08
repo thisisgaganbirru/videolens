@@ -43,3 +43,24 @@ export class NetworkError extends Error {}
  *  failure of the app: History simply cannot be saved here, and everything
  *  else still works. */
 export class StorageUnavailableError extends Error {}
+
+/** Why a sign-in step failed, as the identity adapter can tell it. The hook
+ *  turns this into the sentence; the adapter never writes copy. */
+export type AuthFailureReason =
+  | "invalid_email"
+  | "invalid_code"
+  | "rate_limited"
+  | "unreachable"
+  | "unavailable"
+  | "unknown";
+
+/** A sign-in step (send code, verify code) was refused or could not be
+ *  attempted. `message` is the provider's own text, for logs only. */
+export class AuthFlowError extends Error {
+  constructor(
+    readonly reason: AuthFailureReason,
+    message: string
+  ) {
+    super(message);
+  }
+}
