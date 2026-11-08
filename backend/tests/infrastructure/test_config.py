@@ -72,5 +72,26 @@ class DistributedOriginTests(unittest.TestCase):
         self.assertIsNone(settings.distributed_origin_error())
 
 
+class DistributedDatabaseTests(unittest.TestCase):
+    """A SQLite identity store on a deployed (Redis-backed) API is refused at
+    startup: per-replica files would break API keys across replicas."""
+
+    def test_sqlite_with_redis_is_refused(self) -> None:
+        for url in ("sqlite:///./ids.sqlite3", "sqlite+aiosqlite:///./ids.sqlite3", "SQLite://"):
+            with self.subTest(url=url):
+                settings = Settings(_env_file=None, redis_url="redis://r:6379/0", database_url=url)
+                self.assertIn("DATABASE_URL", settings.distributed_database_error() or "")
+
+    def test_postgres_or_blank_with_redis_is_fine(self) -> None:
+        for url in ("", "postgresql://u:p@h:6543/postgres", "postgres://u:p@h/db"):
+            with self.subTest(url=url):
+                settings = Settings(_env_file=None, redis_url="redis://r:6379/0", database_url=url)
+                self.assertIsNone(settings.distributed_database_error())
+
+    def test_sqlite_without_redis_is_tolerated_for_local_runs(self) -> None:
+        settings = Settings(_env_file=None, redis_url="", database_url="sqlite:///./ids.sqlite3")
+        self.assertIsNone(settings.distributed_database_error())
+
+
 if __name__ == "__main__":
     unittest.main()
