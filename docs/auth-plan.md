@@ -57,7 +57,9 @@ environment variable. That is the whole reason the Supabase switch is cheap.
 1. Identity provider is Supabase Auth, one project per Railway environment:
    `videolens-dev` (branch `dev`, Railway `dev`) now, and `videolens-prod`
    (`main`, Railway `production`) when billing is close (resolved question
-   5). The owner creates them and links the CLI. No project credentials in
+   5). The owner creates them; project administration goes through the
+   Supabase connector (MCP) and the dashboard, not the Supabase CLI
+   (decided 2026-11-08, see "Tooling" below). No project credentials in
    the repo. Production keeps the variables blank until then, which is the
    anonymous-only behaviour it has today.
 2. The backend stays provider-agnostic: JWKS verification only, no Supabase
@@ -258,10 +260,20 @@ updated when phase 1 lands so the two statements do not contradict.
 
 Migrations stay Alembic (`backend/migrations/`, already written) rather than
 `supabase/migrations/`: the backend owns this schema, SQLite tests need it
-driver-neutral, and the Supabase CLI is still used for project linking,
-auth settings and the optional local stack (`supabase start`). The one
+driver-neutral, and there is no second migration owner. The one
 Supabase-specific statement (the `auth.users` grant) is raw SQL in the
 Alembic migration guarded by dialect.
+
+Tooling (decided 2026-11-08): **no Supabase CLI**. The owner tried it, it
+needs its own login, a `supabase/` folder and a linked project for anything
+useful, and all of that duplicated what the connector already does. The
+connector runs SQL as `postgres` (role, grants, the rendered Alembic
+script, read-only checks), inspects the project and advisors, and reads the
+project URL and publishable key. What the connector cannot do is change
+Auth settings (email OTP, redirect allowlist, site URL, providers); those
+are done in the dashboard, with the agent driving the browser when asked.
+Local development runs against `videolens-dev` or with the variables blank;
+there is no local Supabase stack.
 
 `DATABASE_URL` blank → in-memory `AccountDirectory` and `ApiKeyRepository`
 (the branch has these), so local `uvicorn` with no Supabase still boots and
@@ -422,8 +434,8 @@ handles it and the session lands outside the app.
 
 | | Railway `dev` | Railway `production` | Local |
 |---|---|---|---|
-| Supabase project | `videolens-dev` | `videolens-prod` | `supabase start`, or none |
-| `AUTH_JWKS_URL` / `AUTH_ISSUER` | dev project | prod project | blank, or the local stack |
+| Supabase project | `videolens-dev` | `videolens-prod` | `videolens-dev`, or none |
+| `AUTH_JWKS_URL` / `AUTH_ISSUER` | dev project | prod project | blank, or the dev project |
 | `AUTH_AUDIENCE` | `authenticated` | `authenticated` | same |
 | `DATABASE_URL` | dev pooler, `videolens_api` | prod pooler, `videolens_api` | blank (in-memory) or `sqlite+aiosqlite:///...` |
 | `NEXT_PUBLIC_SUPABASE_URL` / `_PUBLISHABLE_KEY` | dev project | prod project | blank (`NullAuthSession`) or local |
@@ -488,8 +500,8 @@ confirm or rotate to an ES256 signing key in both; enable email OTP, set
 expiry to 10 minutes, disable magic links; enable the Google provider (one
 Google Cloud OAuth client per project); set redirect allowlists; create the
 `videolens_api` role and its grants, mint the pooler `DATABASE_URL` per
-project; `supabase link` the dev project locally; place backend and frontend
-variables on the matching Railway environments.
+project (connector); set the Auth settings (dashboard); place backend and
+frontend variables on the matching Railway environments.
 
 Phase 0 state on 2026-11-08 (`videolens-dev`, ref `pjekwwiaocywdbwqgtgl`,
 `us-east-2`, Postgres 17.11, org `gagan-dev` on Pro): project exists (created
@@ -570,3 +582,4 @@ Alembic release step), `CLAUDE.md` (Product direction, the lint count, the
 - 2026-11-08 · main session · phase 0 check via the Supabase connector: `videolens-dev` exists, ES256 key confirmed, org on Pro (question 5 reasoning corrected), `auth.users` DELETE not grantable so phase 3 switches to a `SECURITY DEFINER` helper; recorded the Railway variable values
 - 2026-11-08 · backend subagent (auth phase 1) · status flipped to phase 1 implemented on `feat/auth-supabase` (pending PR). Deviations: run `owner_id` stays the subject this phase; `/api/me` needs authentication; audience optional; RLS gets a per-role policy; slowapi checks the limit after dependencies, so the limiter reads the resolved principal; distributed without `DATABASE_URL` disables the account store. Details in `backend/auth.md` and the session log
 - 2026-11-08 · main session · phase 0 database step done on `videolens-dev`: `videolens_api` role created and `0001_identity` applied through the connector, role login verified via the `aws-0-us-east-2` pooler; Railway variables still to set
+- 2026-11-08 · main session · tooling decision: no Supabase CLI (install removed); project administration via the connector, Auth settings via the dashboard; `supabase link` and the local stack dropped from phase 0 and the environment table
