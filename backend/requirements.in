@@ -11,3 +11,10 @@ arq>=0.26.3
 boto3>=1.43.124
 PyJWT[crypto]>=2.9
 redis>=5.2
+# Identity tables (accounts, workspaces, members, API keys): SQLAlchemy async
+# Core over asyncpg (Supabase Postgres via the Supavisor pooler), aiosqlite for
+# tests and single-machine use, Alembic for the schema (a release step).
+sqlalchemy[asyncio]>=2.0.54
+asyncpg>=0.31.0
+aiosqlite>=0.22.1
+alembic>=1.20.0

@@ -3,19 +3,26 @@ the use cases the interface layer (API routes, worker) calls. This is the
 only place that is allowed to know about every layer at once - domain and
 application code never import from here."""
 
+from .application.create_api_key import CreateApiKeyUseCase
 from .application.create_run import CreateRunUseCase
+from .application.entitlements import EntitlementResolver
+from .application.get_account import GetAccountUseCase
 from .application.get_free_runs import GetFreeRunsUseCase
 from .application.get_capabilities import GetCapabilitiesUseCase
 from .application.get_releases import GetReleasesUseCase
 from .application.get_run import GetRunUseCase
+from .application.identify_caller import IdentifyCallerUseCase
+from .application.list_api_keys import ListApiKeysUseCase
 from .application.list_runs import ListRunsUseCase
 from .application.process_run import ProcessRunUseCase
+from .application.revoke_api_key import RevokeApiKeyUseCase
 from .infrastructure.ai.gemini_engine import GeminiEngine
 from .infrastructure.auth.jwt_verifier import JwtVerifier
 from .infrastructure.byok.key_vault import ByokKeyStore
 from .infrastructure.config import Settings, settings
 from .infrastructure.health.probes import (
     AnalysisEngineProbe,
+    AuthProbe,
     DailyBudgetProbe,
     MediaToolsProbe,
     ObjectStoreProbe,
@@ -23,6 +30,9 @@ from .infrastructure.health.probes import (
     UrlDownloadProbe,
 )
 from .infrastructure.media.service import MediaService
+from .infrastructure.persistence.account_directory import InMemoryAccountDirectory, SqlAccountDirectory
+from .infrastructure.persistence.api_key_repository import InMemoryApiKeyRepository, SqlApiKeyRepository
+from .infrastructure.persistence.database import Database
 from .infrastructure.persistence.run_repository import RunStore
 from .infrastructure.releases.github_releases import GithubReleaseCatalog
 from .infrastructure.queue.job_queue import RunQueue
@@ -50,7 +60,38 @@ class Container:
         self.jwt_verifier = JwtVerifier(settings)
         self.release_catalog = GithubReleaseCatalog(settings)
 
+        # Identity store. One engine shared by both SQL adapters; nothing
+        # connects until the first query. With no DATABASE_URL, a local API
+        # keeps accounts and keys in process memory (lost on restart, fine
+        # for a laptop), while a distributed one runs with no account store
+        # at all: replicas would each hold different keys. Signed-in callers
+        # are then bare `user:<sub>` principals, as before accounts existed.
+        self.database = Database(settings)
+        if self.database.enabled:
+            self.accounts = SqlAccountDirectory(self.database)
+            self.api_keys = SqlApiKeyRepository(self.database)
+        else:
+            in_process = not settings.queue_enabled
+            self.accounts = InMemoryAccountDirectory(enabled=in_process)
+            self.api_keys = InMemoryApiKeyRepository(enabled=in_process)
+
         # Use cases.
+        self.identify_caller_use_case = IdentifyCallerUseCase(
+            accounts=self.accounts,
+            api_keys=self.api_keys,
+            verifier=self.jwt_verifier,
+            allow_anonymous=settings.allow_anonymous,
+        )
+        self.entitlements = EntitlementResolver(
+            max_duration_seconds=settings.max_duration_seconds,
+            max_file_size_mb=settings.max_file_size_mb,
+        )
+        self.get_account_use_case = GetAccountUseCase(accounts=self.accounts, entitlements=self.entitlements)
+        self.create_api_key_use_case = CreateApiKeyUseCase(
+            api_keys=self.api_keys, accounts=self.accounts, max_active=settings.api_keys_per_workspace
+        )
+        self.list_api_keys_use_case = ListApiKeysUseCase(api_keys=self.api_keys, accounts=self.accounts)
+        self.revoke_api_key_use_case = RevokeApiKeyUseCase(api_keys=self.api_keys, accounts=self.accounts)
         self.process_run_use_case = ProcessRunUseCase(
             runs=self.run_repository,
             media=self.media,
@@ -93,6 +134,7 @@ class Container:
                 RunStoreProbe(self.run_repository, distributed=settings.queue_enabled),
                 ObjectStoreProbe(self.object_store),
                 DailyBudgetProbe(self.spend_cap),
+                AuthProbe(self.jwt_verifier),
             ],
             mode="distributed" if settings.queue_enabled else "local",
         )
@@ -103,6 +145,7 @@ class Container:
         await self.run_repository.close()
         await self.spend_cap.close()
         await self.free_runs.close()
+        await self.database.close()
 
 
 container = Container(settings)
