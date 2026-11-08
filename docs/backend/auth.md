@@ -114,9 +114,11 @@ Two details on the URL:
 
 ```bash
 cd backend
-DATABASE_URL=postgresql://postgres.<ref>:<pw>@aws-0-<region>.pooler.supabase.com:6543/postgres \
+DATABASE_URL=postgresql://postgres.<ref>:<pw>@aws-<n>-<region>.pooler.supabase.com:6543/postgres \
   alembic upgrade head
 ```
+
+The pooler host is per project (`aws-0-…` or `aws-1-…`; both resolve in `us-east-2` but only one knows a given tenant; the other answers `tenant/user … not found`). Copy it from the dashboard's Connect panel, Transaction pooler tab, rather than guessing. For `videolens-dev` it is `aws-0-us-east-2.pooler.supabase.com`, and the pooler user is `videolens_api.pjekwwiaocywdbwqgtgl` (role dot project ref). When there is no shell with the `postgres` password to hand, `alembic upgrade head --sql` renders the same script and it can be run through the Supabase connector's `execute_sql` or pasted into the dashboard SQL editor; that is how `videolens-dev` was migrated on 2026-11-08 (role first, then the rendered script, then `alembic_version` inserted by the script itself). Verified afterwards by logging in as `videolens_api` through the pooler: the four tables are readable, `alembic_version` and `auth.users` are refused. Supabase also turned on RLS for `alembic_version`, which the migration does not do itself; harmless, since only `postgres` (the owner) touches it.
 
 Run it as `postgres`, after creating the backend's own role. The role name is `DATABASE_APP_ROLE`, default `videolens_api`. **On Postgres the migration fails before creating anything if that role does not exist**, naming `DATABASE_APP_ROLE`; create the role and run it again:
 
@@ -128,7 +130,7 @@ On Postgres, `0001_identity` also does the following:
 
 - It enables RLS on all four tables, so Supabase's `anon`/`authenticated` REST roles see nothing.
 - It grants that role `USAGE` on `public`, CRUD on each table, and a `FOR ALL TO videolens_api USING (true)` policy per table. Without the policy, RLS would block the backend's own non-owner role too. (It used to skip these with a NOTICE when the role was missing. asyncpg drops notices unless a listener is registered, so the skip was silent, Alembic recorded head anyway, and every signed-in request would later have failed with permission denied. Hence the hard failure.)
-- It grants `USAGE ON SCHEMA auth` plus `SELECT (id), DELETE ON auth.users` for phase 3 account deletion. A refusal does not fail the migration (phase 3 can grant it from the dashboard), but afterwards `has_table_privilege(role, 'auth.users', 'DELETE')` is checked and a missing privilege is reported at WARNING in the log and on Alembic's stdout, with the SQL to run. That also catches a GRANT that "succeeds" with only a server WARNING (no grant option). **Unverified:** whether Supabase lets `postgres` grant on `auth.users` has not been tested against a real project.
+- It grants `USAGE ON SCHEMA auth` plus `SELECT (id), DELETE ON auth.users` for phase 3 account deletion. A refusal does not fail the migration, but afterwards `has_table_privilege(role, 'auth.users', 'DELETE')` is checked and a missing privilege is reported at WARNING in the log and on Alembic's stdout. **Verified 2026-11-08 against `videolens-dev`: the grant does not take.** Supabase's `postgres` holds `DELETE` on `auth.users` with `is_grantable = NO` (only `SELECT` is grantable), so the statement "succeeds" with a server WARNING and `videolens_api` ends up without `DELETE`. Phase 3 therefore cannot delete `auth.users` rows through the backend role directly; the idiomatic route is a `SECURITY DEFINER` function owned by `postgres` in a non-exposed schema (e.g. `private.delete_auth_user(uuid)`), with `EXECUTE` granted only to `videolens_api`, so the backend still holds no Supabase API key. The alternative is the Admin API with the service-role key on Railway, which the plan's decision 2 avoids.
 - `migrations/env.py` registers an asyncpg log listener, so server NOTICEs and WARNINGs raised during a migration are printed rather than dropped.
 - `alembic upgrade head --sql` (offline) renders the script without the role and privilege checks, since there is no connection to ask.
 
@@ -179,5 +181,7 @@ Nothing here has run against a real Supabase project or Postgres. The SQL is exe
 
 ## Changelog
 - 2026-11-07 · security-check · `JwtVerifier` reuses one caching `PyJWKClient`; first tests for the verifier
+- 2026-11-08 · main session · phase 0 check against `videolens-dev` (ref `pjekwwiaocywdbwqgtgl`, `us-east-2`, Postgres 17.11): signing key already ES256; `auth.users` DELETE is not grantable by `postgres`, so phase 3 needs a `SECURITY DEFINER` helper; pooler host and SQL-editor migration path documented
+- 2026-11-08 · main session · `videolens_api` role created and `0001_identity` applied on `videolens-dev` through the connector; verified role login via `aws-0-us-east-2` pooler, grants, RLS and policies; `auth.users` grant confirmed not taken
 - 2026-11-08 · backend subagent (auth phase 1) · rewritten as the implemented reference. Covers `IdentifyCallerUseCase` (API key, then bearer, then client id); accounts, workspaces and API keys in Postgres via SQLAlchemy and Alembic, with in-memory or disabled fallbacks; `/api/me` and `/api/keys`; `require_person`; the stricter JWT rules (leeway, required claims, optional audience); account-keyed quota; the `auth` capability. Absorbs the parked branch's accounts-workspaces and api-keys docs
 - 2026-11-08 · backend subagent (auth phase 1, review fixes) · JWT header screened before key lookup and unknown-kid JWKS refetches throttled to one per 60 s (5 s fetch timeout); `role: authenticated` required and `is_anonymous` refused; case-insensitive `Bearer`; distributed mode refuses a SQLite `DATABASE_URL`; the migration fails on a missing backend role instead of a silent NOTICE, checks the `auth.users` DELETE privilege and warns loudly, and `env.py` surfaces server notices; Known issues section added
