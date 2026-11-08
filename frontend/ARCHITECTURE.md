@@ -21,7 +21,10 @@ and host → platform), `ports.ts` (the interfaces below).
 
 | Port | Adapter | Talks to |
 |---|---|---|
-| `RunsGateway` | `runsGateway.ts` | `/api/runs`; builds `X-Client-ID`, `X-Gemini-Api-Key`, `X-Device-Token` |
+| `RunsGateway` | `runsGateway.ts` | `/api/runs`; adds `X-Gemini-Api-Key` on create, the rest from `ApiClient` |
+| `AuthSession` | `authSession.ts` | Supabase Auth (dynamic import), or `NullAuthSession` when unconfigured |
+| `AccountGateway` | `accountGateway.ts` | `/api/me`, `/api/keys` |
+| `ServerAuthStatus`, `CallerIdentity` | `serverAuthStatus.ts`, `apiClient.ts` | the server's `auth` capability (fed by the capabilities adapter, gates the bearer); the identity requests go out as (History `owner`) |
 | `CapabilitiesGateway` | `capabilitiesGateway.ts` | `/api/capabilities`, no caller identity |
 | `FreeRunsGateway`, `DeviceTokenStore` | `freeRunsGateway.ts`, `deviceTokenStore.ts` | `/api/free-runs`; `localStorage` |
 | `ApiKeyStore` | `apiKeyStore.ts` | `localStorage` (BYOK) |
@@ -33,7 +36,9 @@ and host → platform), `ports.ts` (the interfaces below).
 | `NativeShell`, `SystemBarsStyler`, `NativeThemeMirror`, `DocumentExporter` | `nativeShell.ts`, `systemBars.ts`, `nativeTheme.ts`, `documentExporter.ts` | Capacitor only; no-ops in a browser |
 
 `apiBase.ts` holds the one `NEXT_PUBLIC_API_BASE_URL` fallback; `clientId.ts`
-the persisted client id.
+the persisted client id. `apiClient.ts` is the shared caller transport every
+caller-scoped gateway (runs, free runs, account) uses: `X-Client-ID` always,
+`X-Device-Token` when held, `Authorization: Bearer` when signed in.
 
 **`application/`** — one hook or React-free module per concern.
 `useAnalysisRun` (submit, poll, open from history, reset; the 401 retry and
@@ -43,7 +48,8 @@ the persisted client id.
 `useUpdateCheck`, `useSharedUrl`, `useMainTab` (the tab as a URL property,
 `/app?view=…`, switched with `pushState` so the shell is never unmounted),
 `backNavigation` + `useHardwareBack`, `useResultExport`, `useSoftKeyboard`,
-`useSystemBarsTheme`, `useFirstRun`. `landingRedirect.ts`, `firstRunScripts.ts`
+`useSystemBarsTheme`, `useFirstRun`, `useAuthSession` (`useAuthUser`,
+`useEmailCodeSignIn`), `useAccount`, `useApiKeys`. `landingRedirect.ts`, `firstRunScripts.ts`
 and `nativeFontScale.ts` export pre-paint inline scripts (strings), inlined by
 `app/layout.tsx`.
 
@@ -140,3 +146,5 @@ scale into the WebView before first paint).
 - 2026-11-02 · frontend agent (refinement 9) · `UpdateDismissalStore`; `NativeShell.onResume`; `UpdateInfo.versionCode`; `domain/platforms.ts`; `components/mediaTerms.ts`
 - 2026-11-07 · frontend agent · build-time security section: `security/csp.mjs`, `scripts/inject-csp.mjs`
 - 2026-11-07 · main session · rewritten as a codemap: port/adapter and route tables, the two shells, invariants, cross-cutting; removed the stale `useMediaQuery.ts` reference
+- 2026-11-08 · frontend subagent (auth phase 2) · `AuthSession` + `SupabaseAuthSession`/`NullAuthSession`, `AccountGateway`, shared `ApiClient` (runs and free-runs gateways now take it), hooks `useAuthSession`/`useAccount`/`useApiKeys`, `account` tab and `AccountPanel`; see docs/frontend/auth-sign-in.md
+- 2026-11-08 · frontend subagent (auth phase 2, review fixes) · `ServerAuthStatus` + `MemoryServerAuthStatus`, `CallerIdentity` on `ApiClient`, `HistoryRecord.owner` and `recordGone`; see docs/frontend/auth-sign-in.md

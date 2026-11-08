@@ -42,6 +42,7 @@ Every new feature or component should get (or update) a doc here. Scope is stric
 | `run-history.md` | History in IndexedDB, the poster grid, filters and sort |
 | `free-runs.md` | The client half of free runs: device token, banner, 401 retry and 402 handling |
 | `byok-api-key.md` | The API key tab |
+| `auth-sign-in.md` | Optional sign-in (emailed code), the Account tab, VideoLens API keys, the bearer on every request |
 | `capability-reporting.md` | The capability notice and callouts |
 | `release-notes.md` | The Releases tab |
 | `android-update-check.md` | The native update check and `UpdatePrompt` |
@@ -123,3 +124,4 @@ someone else's entry.
 - 2026-11-07 · main session · added `images/` (README screenshots) and the script that regenerates them; indexed both `security-headers.md` docs
 - 2026-11-07 · main session · indexed `auth-plan.md`
 - 2026-11-08 · backend subagent (auth phase 1) · widened the `auth.md` row to cover accounts, API keys and the identity database
+- 2026-11-08 · frontend subagent (auth phase 2) · indexed `frontend/auth-sign-in.md`
