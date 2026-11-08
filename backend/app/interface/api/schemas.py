@@ -68,3 +68,60 @@ class FreeRunsResponse(BaseModel):
 
 class RunListResponse(BaseModel):
     runs: list[RunSummary]
+
+
+class WorkspaceResponse(BaseModel):
+    workspace_id: str
+    name: str
+
+
+class EntitlementResponse(BaseModel):
+    """What the caller may do. One plan (`free`) in this phase; the numbers
+    are the deployment's own limits."""
+
+    plan: str
+    max_duration_seconds: int
+    max_file_size_mb: int
+    metered: bool
+    api_access: bool
+    library: bool
+
+
+class AccountResponse(BaseModel):
+    """`GET /api/me`. Identity and entitlement, no usage. Kept separate from
+    the domain entities so nothing internal (key hashes, other members)
+    can leak through a new field."""
+
+    subject: str
+    method: str
+    email: Optional[str] = None
+    account_id: Optional[str] = None
+    workspace: Optional[WorkspaceResponse] = None
+    entitlement: EntitlementResponse
+    # False on a deployment with no account store: sign-in still works, but
+    # there is nowhere to keep API keys.
+    accounts_enabled: bool
+
+
+class ApiKeyCreateRequest(BaseModel):
+    name: str = ""
+
+
+class ApiKeyResponse(BaseModel):
+    key_id: str
+    name: str
+    prefix: str
+    scopes: list[str]
+    active: bool
+    last_used_at: Optional[datetime] = None
+    revoked_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class ApiKeyCreatedResponse(ApiKeyResponse):
+    # Shown once. The server keeps only its hash.
+    secret: str
+
+
+class ApiKeyListResponse(BaseModel):
+    keys: list[ApiKeyResponse]
