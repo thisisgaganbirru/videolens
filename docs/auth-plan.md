@@ -218,8 +218,13 @@ subscription work decides is what signing in buys there. Until then,
   `workspaces` and `accounts` rows, then the Supabase user. The last step
   needs one of two things on Railway: the service-role key (to call the
   Admin API) or a Postgres role with `DELETE` on `auth.users`. The plan
-  takes the role: it keeps decision 2 intact and the grant is one line in the
-  first migration. The frontend signs out and clears `localStorage` after.
+  takes the role to keep decision 2 intact. Checked 2026-11-08 on
+  `videolens-dev`: `postgres` holds `DELETE` on `auth.users` without grant
+  option, so the direct grant in migration 0001 does not take. Phase 3 will
+  instead add a `SECURITY DEFINER` function owned by `postgres` in a
+  non-exposed schema, executable only by `videolens_api`, which still keeps
+  Supabase keys off Railway. The frontend signs out and clears
+  `localStorage` after.
 - Anonymous history is not migrated on sign-in. Server-side runs live one
   hour (`RUN_TTL_SECONDS`); the durable history is the browser's IndexedDB,
   which does not move either. A `POST /api/me/claim` that re-keys runs owned
@@ -486,6 +491,26 @@ Google Cloud OAuth client per project); set redirect allowlists; create the
 project; `supabase link` the dev project locally; place backend and frontend
 variables on the matching Railway environments.
 
+Phase 0 state on 2026-11-08 (`videolens-dev`, ref `pjekwwiaocywdbwqgtgl`,
+`us-east-2`, Postgres 17.11, org `gagan-dev` on Pro): project exists (created
+2026-11-07); signing key is ES256 already; `public` was empty. **Done the
+same day:** the `videolens_api` login role (no superuser, no bypass-RLS, no
+inherit) was created and migration `0001_identity` applied through the
+Supabase connector using the offline Alembic render; `alembic_version` is at
+`0001_identity`, the four tables have RLS on with the `videolens_api_all`
+policy, and the role was verified to log in through the transaction pooler
+(`aws-0-us-east-2.pooler.supabase.com:6543`, user
+`videolens_api.pjekwwiaocywdbwqgtgl`) and to be refused `auth.users`, as
+expected (see `docs/backend/auth.md`, migrations). Still to do in the
+dashboard: email OTP settings, magic links off, redirect allowlist; Google
+provider waits for phase 4. Railway `dev` variables, not yet set:
+`AUTH_JWKS_URL=https://pjekwwiaocywdbwqgtgl.supabase.co/auth/v1/.well-known/jwks.json`,
+`AUTH_ISSUER=https://pjekwwiaocywdbwqgtgl.supabase.co/auth/v1`,
+`AUTH_AUDIENCE=authenticated`, `DATABASE_URL` (the pooler URL above with the
+role password, held outside the repo); frontend
+`NEXT_PUBLIC_SUPABASE_URL=https://pjekwwiaocywdbwqgtgl.supabase.co` and the
+`sb_publishable_` key from the dashboard API settings.
+
 Phase 1, backend identity: lift the files listed above onto a branch from
 `dev`, with the changes marked. Enable `AUTH_*` and `DATABASE_URL` on
 Railway `dev` only. The web app does nothing new yet; verify with a token
@@ -521,9 +546,10 @@ old branch, and decides what signing in buys at `_admit`. Nothing in phases
    Railway dashboard before creating the project.
 4. Workspaces: keep the table, hidden. It is already written on the old
    branch and saves a migration later.
-5. Project count: dev only. `videolens-dev` is created in phase 0;
+5. Project count: dev only for now. `videolens-dev` already exists;
    `videolens-prod` waits until billing is close, since nothing in phases 1
-   to 3 needs it. The account's two existing free projects are unrelated.
+   to 3 needs it. The free-tier worry was wrong: the org is on Pro, so a
+   third project is a cost question, not a limit.
 6. Old branch: tag it `archive/paid-tier-clerk` and delete it after phase 5,
    so the subscription work can still read the billing parts.
 
@@ -541,4 +567,6 @@ Alembic release step), `CLAUDE.md` (Product direction, the lint count, the
 
 - 2026-11-07 · main session · first draft after the Supabase decision; rewritten the same day once `feat/paid-tier-integration` was found, to lift its identity slice instead of redesigning
 - 2026-11-08 · main session · corrected run TTL (1 hour, not 7 days) and the local dev port (3005); noted the `CLAUDE.md` persistence rule; recorded the owner's answers to the six open questions (dev project only for now)
+- 2026-11-08 · main session · phase 0 check via the Supabase connector: `videolens-dev` exists, ES256 key confirmed, org on Pro (question 5 reasoning corrected), `auth.users` DELETE not grantable so phase 3 switches to a `SECURITY DEFINER` helper; recorded the Railway variable values
 - 2026-11-08 · backend subagent (auth phase 1) · status flipped to phase 1 implemented on `feat/auth-supabase` (pending PR). Deviations: run `owner_id` stays the subject this phase; `/api/me` needs authentication; audience optional; RLS gets a per-role policy; slowapi checks the limit after dependencies, so the limiter reads the resolved principal; distributed without `DATABASE_URL` disables the account store. Details in `backend/auth.md` and the session log
+- 2026-11-08 · main session · phase 0 database step done on `videolens-dev`: `videolens_api` role created and `0001_identity` applied through the connector, role login verified via the `aws-0-us-east-2` pooler; Railway variables still to set
