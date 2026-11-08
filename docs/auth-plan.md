@@ -513,15 +513,31 @@ Supabase connector using the offline Alembic render; `alembic_version` is at
 policy, and the role was verified to log in through the transaction pooler
 (`aws-0-us-east-2.pooler.supabase.com:6543`, user
 `videolens_api.pjekwwiaocywdbwqgtgl`) and to be refused `auth.users`, as
-expected (see `docs/backend/auth.md`, migrations). Still to do in the
-dashboard: email OTP settings, magic links off, redirect allowlist; Google
-provider waits for phase 4. Railway `dev` variables, not yet set:
+expected (see `docs/backend/auth.md`, migrations). **Dashboard settings,
+also done 2026-11-08** (agent-driven browser, each save confirmed by the
+dashboard): Email provider on with *Confirm email* and *Secure email
+change* on, OTP expiry 3600 → **600 s** (OTP length 8 digits, dashboard
+default); Site URL `https://videolens-frontend-dev.up.railway.app`;
+redirect allowlist `https://videolens-frontend-dev.up.railway.app` and
+`http://localhost:3005` (`http://localhost:3000` for compose not added yet;
+add it when someone needs it). Magic links are off by template, not by a
+switch: the *Magic link or OTP* **and** *Confirm sign up* templates (the
+latter is what a first-time `signInWithOtp` user receives) now carry
+`{{ .Token }}` and no `{{ .ConfirmationURL }}`, subject "Your VideoLens
+sign-in code". The project is still on Supabase's built-in SMTP (rate
+limited, fine for dev; custom SMTP is a prod-project task). Google provider
+waits for phase 4. **Railway `dev` variables set the same day** on the
+`videolens-backend` service only, without a redeploy (the deployed `dev`
+code ignores unknown settings, so they take effect on the first deploy of
+this branch):
 `AUTH_JWKS_URL=https://pjekwwiaocywdbwqgtgl.supabase.co/auth/v1/.well-known/jwks.json`,
 `AUTH_ISSUER=https://pjekwwiaocywdbwqgtgl.supabase.co/auth/v1`,
 `AUTH_AUDIENCE=authenticated`, `DATABASE_URL` (the pooler URL above with the
-role password, held outside the repo); frontend
+role password, held outside the repo). Not yet set, frontend:
 `NEXT_PUBLIC_SUPABASE_URL=https://pjekwwiaocywdbwqgtgl.supabase.co` and the
-`sb_publishable_` key from the dashboard API settings.
+`sb_publishable_` key from the dashboard API settings (phase 2). The `auth`
+capability on dev `/health` cannot be checked until this branch is merged
+into `dev`; `dev` deploys from the `dev` branch, not from feature branches.
 
 Phase 1, backend identity: lift the files listed above onto a branch from
 `dev`, with the changes marked. Enable `AUTH_*` and `DATABASE_URL` on
@@ -583,3 +599,4 @@ Alembic release step), `CLAUDE.md` (Product direction, the lint count, the
 - 2026-11-08 · backend subagent (auth phase 1) · status flipped to phase 1 implemented on `feat/auth-supabase` (pending PR). Deviations: run `owner_id` stays the subject this phase; `/api/me` needs authentication; audience optional; RLS gets a per-role policy; slowapi checks the limit after dependencies, so the limiter reads the resolved principal; distributed without `DATABASE_URL` disables the account store. Details in `backend/auth.md` and the session log
 - 2026-11-08 · main session · phase 0 database step done on `videolens-dev`: `videolens_api` role created and `0001_identity` applied through the connector, role login verified via the `aws-0-us-east-2` pooler; Railway variables still to set
 - 2026-11-08 · main session · tooling decision: no Supabase CLI (install removed); project administration via the connector, Auth settings via the dashboard; `supabase link` and the local stack dropped from phase 0 and the environment table
+- 2026-11-08 · main session · phase 0 finished: dashboard Auth settings set on `videolens-dev` (OTP expiry 600 s, site URL, redirect allowlist, OTP-only templates for magic link and confirm sign up); Railway `dev` backend variables set without redeploy; branch pushed. `/health` check deferred to the merge into `dev`
