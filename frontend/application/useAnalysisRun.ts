@@ -15,7 +15,8 @@ import { classifyGatewayError } from "@/application/gatewayError";
 import {
   EXPIRED_MESSAGE,
   isRunGone,
-  recordExpired,
+  OTHER_OWNER_MESSAGE,
+  recordGone,
   recordRunResponse,
   recordSubmitted,
 } from "@/application/historySync";
@@ -309,18 +310,26 @@ export function useAnalysisRun() {
      History row as expired, and show the expired view with its normal
      actions. `knownUrl` is the link when the caller already has it; otherwise
      the one History stored is used once the write lands. */
+  /* Auth phase 2: a 404 for a run History filed under a different identity
+     (signed in as someone else, or signed out) is not an expiry. The server
+     holds it for that caller; the screen says so and History is not
+     touched, so switching back finds the run again (`recordGone`). */
   const expireRun = useCallback(
     async (runId: string, generation: number, knownUrl: string | null) => {
       stopTimers();
       clearReconnect();
       activeRunStore.clear();
+      const outcome = await recordGone(runId);
+      if (generationRef.current !== generation) return;
       setStatus("failed");
       setStage(null);
+      if (outcome.kind === "other-owner") {
+        setError(OTHER_OWNER_MESSAGE);
+        setExpired(null);
+        return;
+      }
       setError(EXPIRED_MESSAGE);
-      setExpired({ againUrl: knownUrl });
-      const storedUrl = await recordExpired(runId);
-      if (generationRef.current !== generation) return;
-      if (!knownUrl && storedUrl) setExpired({ againUrl: storedUrl });
+      setExpired({ againUrl: knownUrl ?? outcome.againUrl });
     },
     [clearReconnect, stopTimers]
   );
