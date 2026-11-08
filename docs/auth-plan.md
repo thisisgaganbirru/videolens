@@ -7,7 +7,7 @@ here and get their own document when that work starts. Cross-cutting
 (backend, frontend, Android, agents, infra), so it is filed at the top of
 `docs/` like `railway-environments.md`.
 
-Status: proposed, not implemented. Nothing in this document is live on `dev`.
+Status: phase 1 implemented on feat/auth-supabase (pending PR). Phases 2 and 3 are not started. The implemented reference, with the deviations from this plan, is `docs/backend/auth.md`.
 
 ## The situation this plan starts from
 
@@ -541,3 +541,4 @@ Alembic release step), `CLAUDE.md` (Product direction, the lint count, the
 
 - 2026-11-07 · main session · first draft after the Supabase decision; rewritten the same day once `feat/paid-tier-integration` was found, to lift its identity slice instead of redesigning
 - 2026-11-08 · main session · corrected run TTL (1 hour, not 7 days) and the local dev port (3005); noted the `CLAUDE.md` persistence rule; recorded the owner's answers to the six open questions (dev project only for now)
+- 2026-11-08 · backend subagent (auth phase 1) · status flipped to phase 1 implemented on `feat/auth-supabase` (pending PR). Deviations: run `owner_id` stays the subject this phase; `/api/me` needs authentication; audience optional; RLS gets a per-role policy; slowapi checks the limit after dependencies, so the limiter reads the resolved principal; distributed without `DATABASE_URL` disables the account store. Details in `backend/auth.md` and the session log
