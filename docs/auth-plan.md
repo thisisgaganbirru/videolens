@@ -55,9 +55,11 @@ environment variable. That is the whole reason the Supabase switch is cheap.
 ## Decisions
 
 1. Identity provider is Supabase Auth, one project per Railway environment:
-   `videolens-dev` (branch `dev`, Railway `dev`) and `videolens-prod`
-   (`main`, Railway `production`). The owner creates both and links the CLI.
-   No project credentials in the repo.
+   `videolens-dev` (branch `dev`, Railway `dev`) now, and `videolens-prod`
+   (`main`, Railway `production`) when billing is close (resolved question
+   5). The owner creates them and links the CLI. No project credentials in
+   the repo. Production keeps the variables blank until then, which is the
+   anonymous-only behaviour it has today.
 2. The backend stays provider-agnostic: JWKS verification only, no Supabase
    SDK, no Supabase REST keys on Railway. Supabase is the token issuer and
    the host of a Postgres the backend owns through its own migrations.
@@ -98,7 +100,7 @@ plan-shaped parts are stubbed to one tier.
 
 | Kind | Credential | `Principal` | Owns |
 |---|---|---|---|
-| Anonymous | `X-Client-ID` (+ `X-Device-Token` for free runs) | `subject=client:<id>`, `method=ANONYMOUS` | Their Redis runs, 7-day TTL |
+| Anonymous | `X-Client-ID` (+ `X-Device-Token` for free runs) | `subject=client:<id>`, `method=ANONYMOUS` | Their Redis runs, `RUN_TTL_SECONDS` (1 hour) after the last write |
 | Signed-in person | `Authorization: Bearer <Supabase JWT>` | `subject=user:<sub>`, `method=TOKEN`, `account_id`, `workspace_id`, `email` | The workspace's runs |
 | Agent / script | `Authorization: Bearer vl_live_<key>` or `X-Api-Key` | `subject=key:<id>`, `method=API_KEY`, `workspace_id` | The same workspace's runs |
 
@@ -218,9 +220,11 @@ subscription work decides is what signing in buys there. Until then,
   Admin API) or a Postgres role with `DELETE` on `auth.users`. The plan
   takes the role: it keeps decision 2 intact and the grant is one line in the
   first migration. The frontend signs out and clears `localStorage` after.
-- Anonymous history is not migrated on sign-in. The runs are 7-day Redis
-  entries. A `POST /api/me/claim` that re-keys runs owned by the presented
-  `X-Client-ID` is a small follow-up if people miss them (open question 2).
+- Anonymous history is not migrated on sign-in. Server-side runs live one
+  hour (`RUN_TTL_SECONDS`); the durable history is the browser's IndexedDB,
+  which does not move either. A `POST /api/me/claim` that re-keys runs owned
+  by the presented `X-Client-ID` is a small follow-up if people miss them
+  (open question 2). Decided 2026-11-08: not in this phase.
 
 ### Where data lives
 
@@ -240,6 +244,12 @@ on `auth.users`; the `postgres` superuser URL is never placed on Railway.
 Row level security on with no policies on the four tables, so nothing but
 the backend role touches them. The anon and service-role REST keys are not
 used by the backend at all.
+
+This is the first server-side persistence in the project. `CLAUDE.md`'s
+"do not add server-side persistence" rule is about runs and history, which
+stay in Redis and the browser; the four identity tables are the exception
+it anticipated ("the paid tier that would need it"). The rule's wording is
+updated when phase 1 lands so the two statements do not contradict.
 
 Migrations stay Alembic (`backend/migrations/`, already written) rather than
 `supabase/migrations/`: the backend owns this schema, SQLite tests need it
@@ -412,7 +422,7 @@ handles it and the session lands outside the app.
 | `AUTH_AUDIENCE` | `authenticated` | `authenticated` | same |
 | `DATABASE_URL` | dev pooler, `videolens_api` | prod pooler, `videolens_api` | blank (in-memory) or `sqlite+aiosqlite:///...` |
 | `NEXT_PUBLIC_SUPABASE_URL` / `_PUBLISHABLE_KEY` | dev project | prod project | blank (`NullAuthSession`) or local |
-| Supabase redirect allowlist | `https://videolens-frontend-dev.up.railway.app`, custom scheme | prod frontend origin, custom scheme | `http://localhost:3000` |
+| Supabase redirect allowlist | `https://videolens-frontend-dev.up.railway.app`, custom scheme | prod frontend origin, custom scheme | `http://localhost:3005` (`npm run dev`), `http://localhost:3000` (compose) |
 
 Two cautions from `railway-environments.md`: the frontend variables are
 baked into the build, so a value fixed on Railway needs a redeploy; and
@@ -501,23 +511,21 @@ Then, separately: subscriptions. That work re-adds the `Plan` values,
 old branch, and decides what signing in buys at `_admit`. Nothing in phases
 1 to 5 needs to change for it.
 
-## Open questions for the owner
+## Open questions, resolved 2026-11-08
 
-1. Sign-in methods: email code plus Google, as proposed? Apple becomes
+1. Sign-in methods: email code first, Google in phase 4. Apple becomes
    mandatory the day there is an iOS build, not before.
-2. Claim anonymous history on sign-in (`POST /api/me/claim`)? Cheap, mildly
-   surprising on a shared device. Proposed: not in this phase.
-3. Supabase region for both projects: nearest to the Railway region.
-4. Workspaces: keep the table (hidden) as proposed, or drop to a flat
-   account model and re-add later? Keeping it costs nothing now and saves a
-   migration; dropping it is simpler to read.
-5. Free-tier project count: the account already runs two free projects, so
-   `videolens-prod` needs a Pro organisation or a second free one. Decide
-   before phase 0. A reasonable alternative is dev only until billing is
-   close.
-6. Does the old branch get deleted once its identity slice and `mcp/` are on
-   `dev`, with the billing parts preserved as a tag (`archive/paid-tier-
-   clerk`) for the subscription work to read from?
+2. Claim anonymous history on sign-in (`POST /api/me/claim`): not in this
+   phase. Server-side runs last an hour, so there is little to claim.
+3. Supabase region: the Railway region. Confirm the exact region from the
+   Railway dashboard before creating the project.
+4. Workspaces: keep the table, hidden. It is already written on the old
+   branch and saves a migration later.
+5. Project count: dev only. `videolens-dev` is created in phase 0;
+   `videolens-prod` waits until billing is close, since nothing in phases 1
+   to 3 needs it. The account's two existing free projects are unrelated.
+6. Old branch: tag it `archive/paid-tier-clerk` and delete it after phase 5,
+   so the subscription work can still read the billing parts.
 
 ## Documents to update when this lands
 
@@ -532,3 +540,4 @@ Alembic release step), `CLAUDE.md` (Product direction, the lint count, the
 ## Changelog
 
 - 2026-11-07 · main session · first draft after the Supabase decision; rewritten the same day once `feat/paid-tier-integration` was found, to lift its identity slice instead of redesigning
+- 2026-11-08 · main session · corrected run TTL (1 hour, not 7 days) and the local dev port (3005); noted the `CLAUDE.md` persistence rule; recorded the owner's answers to the six open questions (dev project only for now)
