@@ -5,7 +5,10 @@ required) so use cases never import a framework or a driver library."""
 from typing import Awaitable, Callable, Optional, Protocol
 
 from .entities import (
+    Account,
     AnalysisCompleteness,
+    ApiKey,
+    ApiKeyCreated,
     Capability,
     CaptionTrack,
     FreeRunClaim,
@@ -17,6 +20,7 @@ from .entities import (
     SavedUpload,
     SourceMetadata,
     VideoAnalysis,
+    Workspace,
 )
 
 StageCallback = Callable[[str], Awaitable[None]]
@@ -228,7 +232,58 @@ class KeyVault(Protocol):
 
 
 class TokenVerifier(Protocol):
-    def decode(self, token: str) -> dict: ...
+    def decode(self, token: str) -> dict:
+        """Verified claims, or raises. `AuthNotConfiguredError` (domain) when
+        no identity provider is configured; anything else means the token is
+        not acceptable. Synchronous: a JWKS cache miss is a network call, so
+        callers run it off the event loop."""
+        ...
+
+
+class AccountDirectory(Protocol):
+    """Accounts and workspaces: who is signed in and which workspace they
+    act in. `enabled` is False on a deployment with no account store, where
+    a signed-in caller is a bare `user:<sub>` principal as before accounts
+    existed."""
+
+    @property
+    def enabled(self) -> bool: ...
+
+    async def resolve_account(self, external_id: str, email: str | None = None) -> Account:
+        """The account for an identity-provider subject, created (with its
+        default workspace) on first sight. Keeps `email` current."""
+        ...
+
+    async def get_workspace(self, workspace_id: str) -> Optional[Workspace]: ...
+
+    async def member_role(self, workspace_id: str, account_id: str) -> Optional[str]: ...
+
+    async def close(self) -> None: ...
+
+
+class ApiKeyRepository(Protocol):
+    """A workspace's API keys. Stores a hash of each secret, never the
+    secret, so a database read never yields a usable credential."""
+
+    async def issue(
+        self, workspace_id: str, name: str, scopes: list[str], *, max_active: int
+    ) -> ApiKeyCreated:
+        """Mint a key. Raises `ApiKeyLimitError` when the workspace already
+        holds `max_active` live keys (checked in the same transaction)."""
+        ...
+
+    async def authenticate(self, secret: str) -> Optional[ApiKey]:
+        """The live key this secret belongs to, or None. Records
+        `last_used_at`, at most once a minute per key."""
+        ...
+
+    async def list_for_workspace(self, workspace_id: str) -> list[ApiKey]: ...
+
+    async def revoke(self, workspace_id: str, key_id: str) -> bool:
+        """True when a live key in that workspace was revoked."""
+        ...
+
+    async def close(self) -> None: ...
 
 
 class CapabilityProbe(Protocol):
