@@ -370,3 +370,19 @@ class FakeFreeRunAllowance:
 
     async def close(self) -> None:
         pass
+
+
+class FakeTokenVerifier:
+    """Returns fixed claims, or raises `error` (an AuthNotConfiguredError, or
+    anything else for a token that does not verify)."""
+
+    def __init__(self, claims: dict | None = None, error: Exception | None = None) -> None:
+        self.claims = claims if claims is not None else {"sub": "user-123", "role": "authenticated"}
+        self.error = error
+        self.tokens: list[str] = []
+
+    def decode(self, token: str) -> dict:
+        self.tokens.append(token)
+        if self.error is not None:
+            raise self.error
+        return dict(self.claims)

@@ -7,6 +7,7 @@ from app.domain.entities import CapabilityState
 from app.infrastructure.config import Settings
 from app.infrastructure.health.probes import (
     AnalysisEngineProbe,
+    AuthProbe,
     DailyBudgetProbe,
     ObjectStoreProbe,
     RunStoreProbe,
@@ -221,6 +222,43 @@ class DailyBudgetProbeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(capability.state, CapabilityState.DISABLED)
 
+
+
+class FakeVerifier:
+    def __init__(self, *, configured: bool, keys: int = 1, error: Exception | None = None) -> None:
+        self.configured = configured
+        self.keys = keys
+        self.error = error
+        self.fetches = 0
+
+    def fetch_key_count(self) -> int:
+        self.fetches += 1
+        if self.error:
+            raise self.error
+        return self.keys
+
+
+class AuthProbeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unconfigured_is_disabled_without_a_fetch(self) -> None:
+        verifier = FakeVerifier(configured=False)
+        capability = await AuthProbe(verifier).check()
+        self.assertEqual(capability.name, "auth")
+        self.assertEqual(capability.state, CapabilityState.DISABLED)
+        self.assertFalse(capability.probed)
+        self.assertEqual(verifier.fetches, 0)
+
+    async def test_reachable_key_set_is_ok(self) -> None:
+        capability = await AuthProbe(FakeVerifier(configured=True, keys=2)).check()
+        self.assertEqual(capability.state, CapabilityState.OK)
+        self.assertTrue(capability.probed)
+
+    async def test_unreachable_or_empty_key_set_is_degraded(self) -> None:
+        for verifier in (FakeVerifier(configured=True, error=OSError("boom")), FakeVerifier(configured=True, keys=0)):
+            with self.subTest(keys=verifier.keys, error=verifier.error):
+                capability = await AuthProbe(verifier).check()
+                self.assertEqual(capability.state, CapabilityState.DEGRADED)
+                self.assertTrue(capability.probed)
+                self.assertNotIn("boom", capability.detail)
 
 if __name__ == "__main__":
     unittest.main()
