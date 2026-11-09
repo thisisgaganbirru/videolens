@@ -2493,13 +2493,241 @@ h3 {
     border-color: var(--color-danger);
     color: var(--color-danger-ink);
   }
-  .acct-danger:hover {
+  .acct-danger:hover:not([aria-disabled="true"]) {
     background: color-mix(in srgb, var(--color-danger) 88%, var(--color-ink));
+  }
+
+  /* Delete account (auth phase 3). Last on the page, collapsed behind a
+     secondary pill. Opened, two short lists split by a hairline (what goes,
+     what stays), the typed email, then the one solid-danger control on the
+     page: red is reserved for errors and for this, never for a primary. */
+  .acct-delete-body {
+    margin-top: 1.25rem;
+    padding-top: 1.25rem;
+    border-top: var(--rule-w) solid var(--color-rule);
+  }
+  .acct-delete-lists {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+  .acct-delete-head {
+    margin: 0 0 0.5rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  .acct-delete-list {
+    margin: 0;
+    padding-inline-start: 1.125rem;
+    /* Tailwind's preflight strips markers; as on .key-steps, restore them */
+    list-style: disc;
+    font-size: 0.9375rem;
+    line-height: 1.55;
+    color: var(--color-ink-2);
+  }
+  .acct-delete-list li + li {
+    margin-top: 0.25rem;
+  }
+  .acct-delete-list li::marker {
+    color: var(--color-muted);
+  }
+  .acct-delete-note {
+    margin-top: 0.5rem;
+  }
+  .acct-delete-label {
+    margin-bottom: 0.25rem;
+  }
+  .acct-delete .error-inline:focus {
+    outline: none;
+  }
+  .acct-delete .error-inline:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  .acct-focus-title:focus {
+    outline: none;
   }
 
   @media (min-width: 40rem) {
     .acct-secret {
       padding: 1.5rem 1.75rem;
+    }
+    .acct-delete-lists {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1.5rem 2rem;
+    }
+  }
+
+  /* Account-only refinement; retains the editorial tokens and shared controls. */
+  .acct-page .view-lede {
+    max-width: 36rem;
+  }
+  .acct-page .acct-identity-details {
+    min-width: 0;
+  }
+  .acct-page .acct-create {
+    padding-top: var(--space-md);
+    border-top: var(--rule-w) solid var(--color-rule);
+  }
+  .acct-page .acct-empty {
+    margin: var(--space-md) 0 0;
+    padding-top: var(--space-sm);
+    border-top: var(--rule-w) solid var(--color-rule);
+  }
+  .acct-page .acct-key-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.25rem;
+    overflow-wrap: anywhere;
+  }
+  .acct-page .acct-delete {
+    background: transparent;
+  }
+  .acct-page .acct-card-title {
+    overflow-wrap: anywhere;
+  }
+  .acct-page .acct-field {
+    min-width: 0;
+  }
+  .acct-page .btn,
+  .acct-page .acct-link {
+    white-space: nowrap;
+  }
+  @media (max-width: 30rem) {
+    .acct-page .acct-create .key-row {
+      flex-direction: column;
+      gap: var(--space-xs);
+    }
+    .acct-page .acct-create-btn {
+      align-self: flex-start;
+    }
+    .acct-page .acct-confirm-q {
+      flex-basis: 100%;
+    }
+  }
+  @media (min-width: 40rem) {
+    .acct-page .acct-identity {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: var(--space-sm) var(--space-md);
+    }
+    .acct-page .acct-identity > .key-actions {
+      grid-column: 2;
+      grid-row: 1;
+      margin-top: 0;
+    }
+    .acct-page .acct-identity > .acct-guard {
+      grid-column: 1 / -1;
+      margin: 0;
+    }
+  }
+
+  /* Account form states reuse the page's existing type and spacing scale. */
+  .acct-page .acct-form-intro {
+    margin: var(--space-2xs) 0 var(--space-md);
+  }
+  .acct-page .acct-field[readonly] {
+    background: var(--color-tint);
+    color: var(--color-muted);
+  }
+  .acct-page .acct-link:active:not([aria-disabled="true"]) {
+    color: var(--color-ink);
+  }
+
+  /* Compact Account overview: native disclosures keep detail off the first
+     screen while retaining keyboard and expanded-state semantics. */
+  .acct-page .acct-disclosure {
+    padding: 0;
+  }
+  .acct-page .acct-disclosure-toggle,
+  .acct-page .acct-settings-link {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    min-height: 2.75rem;
+    color: var(--color-ink);
+    text-decoration: none;
+    cursor: pointer;
+    border-radius: var(--radius-control);
+  }
+  .acct-page .acct-disclosure-toggle {
+    padding: 1.25rem;
+    list-style: none;
+    border-radius: var(--radius-card);
+  }
+  .acct-page .acct-disclosure-toggle::-webkit-details-marker {
+    display: none;
+  }
+  .acct-page .acct-row-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+  }
+  .acct-page .acct-row-title {
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+  .acct-page .acct-row-description {
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--color-muted);
+    overflow-wrap: anywhere;
+  }
+  .acct-page .acct-disclosure-toggle > svg,
+  .acct-page .acct-settings-link > svg {
+    width: 1.125rem;
+    height: 1.125rem;
+    flex: 0 0 auto;
+    color: var(--color-muted);
+  }
+  .acct-page .acct-disclosure[open] > summary > svg {
+    transform: rotate(90deg);
+  }
+  .acct-page .acct-details-body {
+    margin: 0 1.25rem;
+    padding: var(--space-md) 0;
+    border-top: var(--rule-w) solid var(--color-rule);
+    min-width: 0;
+  }
+  .acct-page .acct-settings-link {
+    padding-block: var(--space-xs);
+  }
+  .acct-page .acct-settings-link + .acct-settings-link {
+    border-top: var(--rule-w) solid var(--color-rule);
+    border-radius: 0;
+  }
+  .acct-page .acct-resource-note {
+    margin: 0 0 var(--space-xs);
+  }
+  .acct-page .acct-disclosure-toggle:focus-visible,
+  .acct-page .acct-settings-link:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  .acct-page .acct-disclosure-toggle:active,
+  .acct-page .acct-settings-link:active {
+    background: var(--color-tint);
+  }
+  @media (hover: hover) {
+    .acct-page .acct-disclosure-toggle:hover,
+    .acct-page .acct-settings-link:hover {
+      background: var(--color-tint);
+    }
+  }
+  @media (min-width: 40rem) {
+    .acct-page .acct-disclosure-toggle {
+      padding: var(--space-md) 1.75rem;
+    }
+    .acct-page .acct-details-body {
+      margin-inline: 1.75rem;
     }
   }
 

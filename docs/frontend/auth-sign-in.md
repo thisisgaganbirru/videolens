@@ -107,10 +107,22 @@ session.
   there, even with the tab hidden.
 - **Signed out:** the optional lede, email, Send code, then the code step
   (Verify, resend, change email).
-- **Signed in:** the email and Sign out; API keys (create with a name, the
-  secret shown once with Copy and Done, the list with prefix, created, last
-  used, revoked, and an inline "Revoke? / Keep" confirm); one sentence that
-  account deletion is coming (phase 3). No delete control.
+- **Signed in:** a compact identity card (email, email sign-in, Sign out),
+  followed by Manage API keys, Data on this device, and Help & privacy.
+  Each of those three sections is a native disclosure, initially collapsed.
+  The existing, unfinished Phase 3 delete-account control remains last.
+- **Manage API keys:** opening it first mounts `ApiKeysSection` and loads
+  keys. It stays mounted when collapsed so a freshly created secret is not
+  lost by closing and reopening. It resets on leaving the page, signing out,
+  or changing users. Inside: create, Copy/Done for the one-time secret, and
+  the list with inline revoke confirmation. Technical copy stays inside.
+- **Data on this device:** links to History and the Gemini API key tab,
+  explaining that these are browser-local and separate from the account.
+- **Help & privacy:** existing Privacy, Terms, and Releases destinations.
+  No unsupported support endpoint or new account feature is added. These
+  resources also remain accessible in signed-out and unavailable states.
+- Tab links use `mainTabHref` and `goToMainTab` for plain clicks, following
+  existing web/native navigation; modified clicks keep normal link behavior.
 - **Run ownership across identities.** The server holds a run for the
   identity that created it. Each History record stores that identity
   (`owner`). On a 404, `recordGone` compares it with the identity the 404
@@ -129,6 +141,112 @@ session.
 - Busy controls use `aria-disabled` and handler guards, never `disabled`,
   so focus is not lost (the app-wide rule).
 
+## Account presentation refinement (2026-11-08)
+
+The Account panel keeps the existing editorial theme: Newsreader headings,
+Hanken Grotesk controls, paper/surface colors, green accent, card radii and
+pill buttons. Presentation changes are limited to `AccountPanel.tsx` and
+selectors beneath `.acct-page` in `globals.css`; shared styles and tokens
+are unchanged.
+
+- A shorter introduction explains optional sign-in and local History.
+- On wide screens the identity details and Sign out share a row; narrow
+  screens keep the stacked layout. Long emails can wrap.
+- A hairline separates API-key creation from the explanatory text. The
+  create control stacks below the input at widths up to 30rem, and key
+  metadata wraps independently.
+- The empty key list explains the next action, above a hairline. The
+  Phase 3 delete card has a transparent background (the page paper shows
+  through) so it stays visually secondary.
+- Email and code forms have explicit serif headings and separate explanatory
+  text from field labels. While sending or verifying, relevant inputs are
+  read-only (still focusable), live status text describes progress, and the
+  secondary links expose their existing busy guards with `aria-disabled`.
+- The overview uses concise setting rows with chevrons, existing card shapes
+  and tokens, native disclosure semantics and explicit focus styles. The
+  first Codex pass added an active-key count; the second removed it, and
+  the panel shows no count now.
+- Deletion copy describes local data retention without claiming the Gemini
+  key never leaves the device.
+
+Authentication, requests and deletion behavior are unchanged. Phase 3 is
+still unfinished; these presentation edits do not validate its behavior.
+Browser visual QA (main session, 2026-11-09, Chrome at 1536 px, signed in
+against the local backend): signed-in overview, the three disclosures
+opened, the empty key list, the delete confirmation form (opened and
+cancelled, not submitted) all render correctly in both themes; no console
+errors. Not verified: phone width (the Chrome window would not resize and
+`frame-ancestors 'none'` blocks an iframe or popup), the signed-out form,
+and the API keys list with keys in it. Phone width is checked on the
+bundled Android APK, as always.
+The compact overview passed TypeScript, targeted component ESLint, and a
+mocked React server-render check for signed-in, signed-out, account-unavailable
+and auth-unavailable states. The render check verifies resource links, no
+duplicate resource groups, and no key-hook mount while initially collapsed;
+it does not exercise browser disclosure interaction or real authentication.
+
+## Phase 3 state and remaining work (2026-11-09)
+
+Phase 3 on the frontend is **in the working tree, uncommitted**: the
+`deleteAccount()` port and adapter method, `useAccountDeletion`
+(`useAccount.ts`), `DeleteAccountSection` and `DeletedCard` in
+`AccountPanel.tsx`, the `.acct-delete-*` styles, and the deletion sentence
+on `/privacy`. Codex's presentation pass (section above) landed on top of
+those edits in the same files, so the two cannot be committed separately.
+Done (frontend agent, 2026-11-09):
+
+- **Code hygiene.** Removed the unused `.acct-page .acct-section-head` rule
+  and its `+ .key-help` sibling and the tooling comment from `globals.css`.
+  `.acct-delete-list` now shows disc markers (`--color-muted`), the same
+  way `.key-steps` restores the markers Tailwind's preflight strips.
+  Reverted `frontend/next-env.d.ts`. The rest of the account code checks
+  out: every `.acct-*` class in `globals.css` is used. `acct-sign-in` and
+  `acct-revoke` are hook classes with no CSS, which is harmless.
+  `AccountResources` renders once per state, because the outer render
+  covers deleted / unavailable / signed out, and `SignedIn` either returns
+  early or renders it once. The deletion hook matches the contract: 204
+  succeeds, 401 is `rejected`, 503 is `unavailable`, and
+  403/404/405/other are `failed`.
+- **Review fix: sign-out race and 401 copy.** `useAccountDeletion` used to
+  call `onDeleted()` and only then await `signOut()`. supabase-js clears the
+  stored session only after its `/logout` request returns, so pressing "Back
+  to sign in" during that wait mounted the signed-in view on the old token,
+  and `GET /api/me` re-created the account. Now the hook starts `signOut()`
+  and passes the settling promise to `onDeleted(signedOut)`. The panel shows
+  `DeletedCard` at once in a `"signing-out"` state: "Back to sign in" is
+  `aria-disabled` with a click guard, and a `role="status"` line reads
+  "Finishing sign-out on this device…". When the promise settles the state
+  becomes `"done"` and the button works. The backend is being changed so that a
+  deleted user's token gets 401, so both layers hold. A 401 from `DELETE
+  /api/me` can now also mean the account is already gone (a retry whose
+  204 was lost), so the `rejected` message no longer says "nothing was
+  deleted". It now reads: "This server did not accept your sign-in. If you
+  already deleted your account, it is gone. If not, sign out, sign in again
+  and try once more." Checks rerun: tsc clean, build and build:mobile pass,
+  lint 5 known findings only.
+- **Checks on this tree.** `tsc --noEmit` is clean. `npm run build` and
+  `npm run build:mobile` pass (7 static routes, CSP injected, `sw.js`
+  written). `npm run lint` shows only the 5 known findings (4 errors, 1
+  warning). The build ran alongside the dev server on 3005 without
+  conflict.
+
+Still to do before this ships, in order:
+
+1. **Backend half** (`DELETE /api/me`, migration `0002_auth_user_deleter`,
+   `database` probe) is also partial and uncommitted; the UI's `rejected`
+   / `unavailable` / `failed` branches cannot be exercised until it is
+   finished and the migration is applied on `videolens-dev`. The UI treats a
+   404/405 from a server without the route as `failed`, so it is safe
+   against the current backend.
+2. **Behaviour QA** once the backend exists: delete the account on the
+   local in-memory backend (the Supabase user row is the only durable thing
+   removed), confirm the `DeletedCard`, sign back in; create, copy and
+   revoke an API key through the collapsed `Manage API keys` disclosure.
+3. **Review, commit, push** (plain messages). No PR into `dev` until the
+   owner asks.
+4. **Phone width** on the bundled APK; signed-out form after a deliberate
+   sign-out by the owner.
+
 ## Known limits
 
 - Legal and offline routes render `AppNav` without `showAccount`, so the
@@ -146,3 +264,9 @@ session.
 
 - 2026-11-08 · frontend subagent (auth phase 2) · created: Supabase adapter (dynamic import, PKCE, 4 s token wait), `ApiClient` with bearer/client-id/device-token on every caller request, `AccountGateway`, the three hooks, history re-import on sign-in, the Account tab and panel (OTP 6 to 8 digits, resend after 60 s, run guard, API keys with one-time secret and revoke confirm), the auth origin in the CSP. Verified: validation, unreachable error and hidden tab in a browser; `signInWithOtp` fires `POST /auth/v1/otp`, blocked by the running dev server's pre-change CSP until it restarts. Code step and signed-in view not exercised (no inbox)
 - 2026-11-08 · frontend subagent (auth phase 2, review fixes) · `getToken` throws when a session exists but no token is available (load timeout, unrecovered stored session, failed refresh) and `ApiClient` turns it into a retryable `NetworkError`; bearer sent only when the server's `auth` capability is `ok` (`ServerAuthStatus`, fed by the capabilities adapter, bounded 4 s wait); History records `owner` and a 404 under a different identity is `other-owner` (screen message, History untouched) instead of expired; panel uses the same capability gate and keeps Sign out reachable when unavailable; one-time secret stripped from the key list; field errors are `role="alert"`. Signed-in view and key list confirmed rendering in the owner's signed-in browser profile
+- 2026-11-08 · Codex · refined Account-only hierarchy, identity alignment, API-key form spacing and mobile wrapping using existing tokens; browser visual QA blocked by computer-access timeout
+- 2026-11-08 · Codex · Account essentials pass: clearer email/code steps, read-only busy inputs and live progress, active-key count, signed-in introduction and corrected local-retention copy; typecheck and component lint passed
+- 2026-11-08 · Codex · simplified Account into identity plus collapsed API-key, device-data and help/privacy sections; existing navigation and theme reused; typecheck, lint and mocked render checks passed
+- 2026-11-09 · main session · reviewed Codex's diff and the panel in Chrome (desktop, both themes, disclosures, delete form opened and cancelled): renders correctly, no console errors; found dead `.acct-section-head` CSS, a tooling comment in `globals.css`, bullet-less delete lists and `next-env.d.ts` noise; phone width not verifiable from this Chrome window. Added the "Phase 3 state and remaining work" section
+- 2026-11-09 · frontend subagent (auth phase 3) · hygiene: removed dead `.acct-section-head` CSS and the tooling comment, disc markers on `.acct-delete-list`, reverted `next-env.d.ts`; verified class usage, single `AccountResources` render and the `DELETE /api/me` status mapping; tsc clean, build and build:mobile pass, lint 5 known findings only; changelog put in date order (the `?`-separator duplicate was already gone), refinement section corrected on the key count and delete-card background
+- 2026-11-09 · frontend subagent (auth phase 3, review fix) · "Back to sign in" on the deleted card is held (`aria-disabled`, guard, status line) until `signOut()` settles, via a promise passed to `onDeleted`, so the old session cannot re-create the account; `rejected` deletion copy reworded to stay true when a lost-204 retry gets 401; tsc clean, build and build:mobile pass, lint 5 known only
