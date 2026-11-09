@@ -224,6 +224,14 @@ Done (frontend agent, 2026-11-09):
   already deleted your account, it is gone. If not, sign out, sign in again
   and try once more." Checks rerun: tsc clean, build and build:mobile pass,
   lint 5 known findings only.
+- **Privacy deletion sentence corrected (owner-approved wording).** The
+  `/privacy` "Signing in" sentence now says deletion *immediately* removes
+  the account record, workspace, API keys, held runs and the provider
+  sign-in, and that copies of the email can remain up to about 7 days in
+  the provider's daily database backups and sign-in logs, and the hosting
+  provider keeps server logs for at least 7 days until they expire. The
+  earlier text implied nothing remained. The "Effective" date on the page is
+  not a "last updated" date and was left as is (same call as Phase 5a).
 - **Checks on this tree.** `tsc --noEmit` is clean. `npm run build` and
   `npm run build:mobile` pass (7 static routes, CSP injected, `sw.js`
   written). `npm run lint` shows only the 5 known findings (4 errors, 1
@@ -270,3 +278,4 @@ Still to do before this ships, in order:
 - 2026-11-09 · main session · reviewed Codex's diff and the panel in Chrome (desktop, both themes, disclosures, delete form opened and cancelled): renders correctly, no console errors; found dead `.acct-section-head` CSS, a tooling comment in `globals.css`, bullet-less delete lists and `next-env.d.ts` noise; phone width not verifiable from this Chrome window. Added the "Phase 3 state and remaining work" section
 - 2026-11-09 · frontend subagent (auth phase 3) · hygiene: removed dead `.acct-section-head` CSS and the tooling comment, disc markers on `.acct-delete-list`, reverted `next-env.d.ts`; verified class usage, single `AccountResources` render and the `DELETE /api/me` status mapping; tsc clean, build and build:mobile pass, lint 5 known findings only; changelog put in date order (the `?`-separator duplicate was already gone), refinement section corrected on the key count and delete-card background
 - 2026-11-09 · frontend subagent (auth phase 3, review fix) · "Back to sign in" on the deleted card is held (`aria-disabled`, guard, status line) until `signOut()` settles, via a promise passed to `onDeleted`, so the old session cannot re-create the account; `rejected` deletion copy reworded to stay true when a lost-204 retry gets 401; tsc clean, build and build:mobile pass, lint 5 known only
+- 2026-11-09 · frontend agent · privacy page deletion sentence corrected (backups and logs ~7 days)
