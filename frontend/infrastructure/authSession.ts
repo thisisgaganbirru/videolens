@@ -56,6 +56,8 @@ export class NullAuthSession implements AuthSession {
 
   async signOut(): Promise<void> {}
 
+  async signOutEverywhere(): Promise<void> {}
+
   subscribe(): () => void {
     return () => {};
   }
@@ -266,6 +268,24 @@ export class SupabaseAuthSession implements AuthSession {
     }
     this.session = null;
     this.notify();
+  }
+
+  async signOutEverywhere(): Promise<void> {
+    /* Two steps, not `scope: "global"`: supabase-js removes the local session
+       even when a global sign-out request fails, which would sign this device
+       out while every other device stayed in. `others` revokes every other
+       session and leaves this one untouched on failure, so a refusal or a
+       dropped connection keeps the person signed in here with an error to
+       read. Only then is this device signed out, the ordinary way. */
+    const client = await this.ready();
+    let error: unknown;
+    try {
+      ({ error } = await client.auth.signOut({ scope: "others" }));
+    } catch (err) {
+      error = err;
+    }
+    if (error) throw classify(error, "request");
+    await this.signOut();
   }
 
   subscribe(listener: () => void): () => void {
