@@ -24,6 +24,7 @@ from .infrastructure.health.probes import (
     AnalysisEngineProbe,
     AuthProbe,
     DailyBudgetProbe,
+    DatabaseProbe,
     MediaToolsProbe,
     ObjectStoreProbe,
     RunStoreProbe,
@@ -135,6 +136,7 @@ class Container:
                 ObjectStoreProbe(self.object_store),
                 DailyBudgetProbe(self.spend_cap),
                 AuthProbe(self.jwt_verifier),
+                DatabaseProbe(self.database, distributed=settings.queue_enabled),
             ],
             mode="distributed" if settings.queue_enabled else "local",
         )

@@ -9,6 +9,7 @@ from app.infrastructure.health.probes import (
     AnalysisEngineProbe,
     AuthProbe,
     DailyBudgetProbe,
+    DatabaseProbe,
     ObjectStoreProbe,
     RunStoreProbe,
     UrlDownloadProbe,
@@ -259,6 +260,49 @@ class AuthProbeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(capability.state, CapabilityState.DEGRADED)
                 self.assertTrue(capability.probed)
                 self.assertNotIn("boom", capability.detail)
+
+
+class FakeDatabase:
+    def __init__(self, *, enabled: bool, error: Exception | None = None) -> None:
+        self.enabled = enabled
+        self.error = error
+        self.pings = 0
+
+    async def ping(self) -> bool:
+        self.pings += 1
+        if self.error:
+            raise self.error
+        return True
+
+
+class DatabaseProbeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_no_database_url_is_disabled_without_a_query(self) -> None:
+        for distributed in (True, False):
+            with self.subTest(distributed=distributed):
+                database = FakeDatabase(enabled=False)
+                capability = await DatabaseProbe(database, distributed=distributed).check()
+                self.assertEqual(capability.name, "database")
+                self.assertEqual(capability.state, CapabilityState.DISABLED)
+                self.assertFalse(capability.probed)
+                self.assertEqual(database.pings, 0)
+
+    async def test_select_one_answering_is_ok(self) -> None:
+        database = FakeDatabase(enabled=True)
+        capability = await DatabaseProbe(database, distributed=True).check()
+        self.assertEqual(capability.state, CapabilityState.OK)
+        self.assertTrue(capability.probed)
+        self.assertEqual(database.pings, 1)
+
+    async def test_a_failed_query_is_degraded_and_leaks_nothing(self) -> None:
+        database = FakeDatabase(enabled=True, error=OSError("db.abc.supabase.co refused"))
+        with self.assertLogs("videolens", level="WARNING"):
+            capability = await DatabaseProbe(database, distributed=True).check()
+        # Degraded, like auth: anonymous use still works.
+        self.assertEqual(capability.state, CapabilityState.DEGRADED)
+        self.assertTrue(capability.probed)
+        self.assertNotIn("supabase.co", capability.detail)
+        self.assertEqual(capability.log_detail, "SELECT 1 failed: OSError")
+
 
 if __name__ == "__main__":
     unittest.main()
