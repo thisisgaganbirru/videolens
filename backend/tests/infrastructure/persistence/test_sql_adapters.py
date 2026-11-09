@@ -44,6 +44,22 @@ class NormalizeUrlTests(unittest.TestCase):
             database.engine()
 
 
+class HiddenParameterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_database_error_text_omits_bound_values(self) -> None:
+        from sqlalchemy import text
+        from sqlalchemy.exc import DBAPIError
+
+        database = Database(Settings(_env_file=None, gemini_api_key="k", database_url="sqlite://"))
+        self.addAsyncCleanup(database.close)
+        with self.assertRaises(DBAPIError) as caught:
+            async with database.connect() as conn:
+                await conn.execute(text("SELECT * FROM no_such_table WHERE email = :email"), {"email": "person@example.com"})
+
+        message = str(caught.exception)
+        self.assertNotIn("person@example.com", message)
+        self.assertIn("hidden", message)
+
+
 class _IdentityBehaviour:
     """Mixed into a TestCase whose asyncSetUp sets self.accounts and self.keys."""
 
