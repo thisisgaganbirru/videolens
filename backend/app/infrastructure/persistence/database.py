@@ -65,13 +65,18 @@ class Database:
         if not self.enabled:
             raise RuntimeError("DATABASE_URL is not configured.")
         if self._engine is None:
+            # `hide_parameters`: a database error's text would otherwise carry
+            # the bound values (an email, a Supabase user id) into the logs.
             if self.dialect == "sqlite":
                 # An in-memory SQLite database exists only on its one
                 # connection, so there must be exactly one.
                 from sqlalchemy.pool import StaticPool
 
                 self._engine = create_async_engine(
-                    self._url, poolclass=StaticPool, connect_args={"check_same_thread": False}
+                    self._url,
+                    poolclass=StaticPool,
+                    connect_args={"check_same_thread": False},
+                    hide_parameters=True,
                 )
             else:
                 # Supabase's Supavisor transaction pooler (port 6543) hands
@@ -82,6 +87,7 @@ class Database:
                 self._engine = create_async_engine(
                     self._url,
                     pool_pre_ping=True,
+                    hide_parameters=True,
                     connect_args={
                         "statement_cache_size": 0,
                         "prepared_statement_name_func": lambda: f"__vl_{uuid.uuid4().hex}__",

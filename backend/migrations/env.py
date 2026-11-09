@@ -75,6 +75,7 @@ async def run_migrations_online() -> None:
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
         connect_args=connect_args,
+        hide_parameters=True,
     )
     async with connectable.connect() as connection:
         if connectable.dialect.driver == "asyncpg":
