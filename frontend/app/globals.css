@@ -2638,27 +2638,38 @@ h3 {
     color: var(--color-ink);
   }
 
-  /* Compact Account overview: native disclosures keep detail off the first
-     screen while retaining keyboard and expanded-state semantics. */
-  .acct-page .acct-disclosure {
-    padding: 0;
+  /* Option A, grouped list (owner's pick, 2026-11-09). Small uppercase group
+     labels (History's .history-group-label) over white grouped cards of
+     hairline rows. Keys is the only disclosure (chevron down, turns on
+     open); every other row is a link (chevron right). The page ends on two
+     quiet text controls: Sign out everywhere, then Delete account. */
+  .acct-page .acct-group {
+    margin-top: var(--space-lg);
   }
-  .acct-page .acct-disclosure-toggle,
-  .acct-page .acct-settings-link {
+  .acct-page .acct-group-label {
+    margin: 0 0 var(--space-2xs);
+  }
+  .acct-page .acct-card {
+    margin-top: 0;
+    padding: 0;
+    overflow: clip;
+  }
+  .acct-page .acct-row {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: var(--space-sm);
-    min-height: 2.75rem;
+    min-height: 3.5rem;
+    padding: var(--space-xs) 1.25rem;
     color: var(--color-ink);
     text-decoration: none;
     cursor: pointer;
-    border-radius: var(--radius-control);
+    transition: background-color var(--dur-short) var(--ease-out);
+  }
+  .acct-page .acct-card > .acct-row + .acct-row {
+    border-top: var(--rule-w) solid var(--color-rule);
   }
   .acct-page .acct-disclosure-toggle {
-    padding: 1.25rem;
     list-style: none;
-    border-radius: var(--radius-card);
   }
   .acct-page .acct-disclosure-toggle::-webkit-details-marker {
     display: none;
@@ -2666,8 +2677,12 @@ h3 {
   .acct-page .acct-row-text {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.125rem;
+    flex: 1 1 auto;
     min-width: 0;
+  }
+  .acct-page .acct-row > .acct-row-title {
+    flex: 1 1 auto;
   }
   .acct-page .acct-row-title {
     font-size: 1rem;
@@ -2681,15 +2696,25 @@ h3 {
     color: var(--color-muted);
     overflow-wrap: anywhere;
   }
-  .acct-page .acct-disclosure-toggle > svg,
-  .acct-page .acct-settings-link > svg {
+  .acct-page .acct-row-meta {
+    flex: 0 0 auto;
+    font-size: 0.875rem;
+    color: var(--color-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .acct-page .acct-row-meta[data-fresh="true"] {
+    color: var(--color-accent-strong);
+    font-weight: 600;
+  }
+  .acct-page .acct-row > svg {
     width: 1.125rem;
     height: 1.125rem;
     flex: 0 0 auto;
     color: var(--color-muted);
   }
   .acct-page .acct-disclosure[open] > summary > svg {
-    transform: rotate(90deg);
+    transform: rotate(180deg);
   }
   .acct-page .acct-details-body {
     margin: 0 1.25rem;
@@ -2697,34 +2722,62 @@ h3 {
     border-top: var(--rule-w) solid var(--color-rule);
     min-width: 0;
   }
-  .acct-page .acct-settings-link {
-    padding-block: var(--space-xs);
+  .acct-page .acct-help-flush {
+    margin: 0;
   }
-  .acct-page .acct-settings-link + .acct-settings-link {
-    border-top: var(--rule-w) solid var(--color-rule);
-    border-radius: 0;
-  }
-  .acct-page .acct-resource-note {
-    margin: 0 0 var(--space-xs);
-  }
-  .acct-page .acct-disclosure-toggle:focus-visible,
-  .acct-page .acct-settings-link:focus-visible {
+  /* The card clips its corners, so the ring sits inside the row. */
+  .acct-page .acct-row:focus-visible {
     outline: 2px solid var(--color-focus);
-    outline-offset: 2px;
+    outline-offset: -2px;
   }
-  .acct-page .acct-disclosure-toggle:active,
-  .acct-page .acct-settings-link:active {
+  .acct-page .acct-row:active {
     background: var(--color-tint);
   }
   @media (hover: hover) {
-    .acct-page .acct-disclosure-toggle:hover,
-    .acct-page .acct-settings-link:hover {
+    .acct-page .acct-row:hover {
       background: var(--color-tint);
     }
   }
+  .acct-page .acct-group-note {
+    margin-top: var(--space-2xs);
+  }
+  .acct-page .acct-identity-meta {
+    margin-top: 0.25rem;
+  }
+  .acct-page .acct-nowrap {
+    white-space: nowrap;
+  }
+
+  .acct-page .acct-end {
+    margin-top: var(--space-lg);
+  }
+  .acct-page .acct-end-item + .acct-end-item {
+    margin-top: var(--space-xs);
+  }
+  .acct-page .acct-end-control {
+    color: var(--color-ink);
+  }
+  .acct-page .acct-end-control:hover {
+    color: var(--color-accent-strong);
+  }
+  .acct-page .acct-end-control[aria-disabled="true"] {
+    color: var(--color-muted);
+  }
+  .acct-page .acct-end-help {
+    margin: 0;
+    max-width: 36rem;
+  }
+  .acct-page .acct-delete-link {
+    font-weight: 400;
+    color: var(--color-muted);
+  }
+  .acct-page .acct-delete-link:hover {
+    color: var(--color-ink);
+  }
+
   @media (min-width: 40rem) {
-    .acct-page .acct-disclosure-toggle {
-      padding: var(--space-md) 1.75rem;
+    .acct-page .acct-row {
+      padding-inline: 1.75rem;
     }
     .acct-page .acct-details-body {
       margin-inline: 1.75rem;

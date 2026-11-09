@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { Check, ChevronRight, Copy } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
 import { useAccount, useAccountDeletion } from "@/application/useAccount";
 import { useApiKeys } from "@/application/useApiKeys";
 import {
@@ -10,6 +10,7 @@ import {
   signOut,
   useAuthUser,
   useEmailCodeSignIn,
+  useSignOutEverywhere,
 } from "@/application/useAuthSession";
 import AppBackLink from "@/components/AppBackLink";
 import { isPlainLeftClick } from "@/components/navClick";
@@ -18,21 +19,25 @@ import { formatDay } from "@/components/format";
 import type { ApiKeySummary, Capability } from "@/domain/entities";
 
 /* Hallmark · component: account panel · genre: editorial · theme: custom
- * (owner handoff, app/tokens.css; no board drawn yet, so it reuses the API key
- * page's anatomy: serif header and lede, white `.key-card`s, pill buttons)
+ * (owner handoff, app/tokens.css) · layout: option A, grouped list (owner's
+ * pick, 2026-11-09): identity card, then small uppercase group labels over
+ * white grouped cards of hairline rows, then the quiet account-ending
+ * controls last
  * states: unavailable · loading · signed out (email, sending, code sent,
  *         verifying, field errors, resend countdown, run-in-progress guard) ·
  *         signed in (account loading, rejected, failed + retry) · API keys
- *         (loading, load error, empty, list, creating, one-time secret,
- *         copied, revoke confirm, revoking, revoked, action error) ·
- *         delete account (collapsed, confirming with typed email, run guard,
+ *         (collapsed, count once known, unseen-secret flag, loading, load
+ *         error, empty, list, creating, one-time secret, copied, revoke
+ *         confirm, revoking, revoked, action error) · sign out everywhere
+ *         (idle, run guard, working, failed and still signed in) · delete
+ *         account (quiet link, confirming with typed email, run guard,
  *         deleting, failed: rejected / unavailable / unreachable / generic,
  *         not offered when the server keeps no accounts, deleted card)
  *
  * Auth phases 2 and 3 (docs/frontend/auth-sign-in.md). Sign-in is optional
  * and the page says so first. The emailed code is the only method: Google
- * is phase 4 and has no button. Deletion sits last, collapsed behind a quiet
- * control, and is confirmed by typing the account's email.
+ * is phase 4 and has no button. Deletion is the very last item, a muted link
+ * that opens the form, and is confirmed by typing the account's email.
  *
  * Components never touch the provider: the session, `/api/me` and
  * `/api/keys` all come through the three application hooks. */
@@ -47,12 +52,16 @@ type AccountPanelProps = {
    *  screen would stop answering (History keeps it: `recordGone`); the panel
    *  holds both actions until it settles. */
   runInProgress: boolean;
+  /** This device's free runs left today, from HomeScreen's one `useFreeRuns`
+   *  read. Null when unknown, unlimited, or beside the point (a Gemini key is
+   *  saved): the identity line then says nothing about free runs. */
+  freeRunsLeft: number | null;
 };
 
 const RUN_GUARD =
   "A run is in progress on Analyze. Wait until it finishes: signing in or out now would stop this screen following it until you switch back.";
 
-export default function AccountPanel({ authCapability, runInProgress }: AccountPanelProps) {
+export default function AccountPanel({ authCapability, runInProgress, freeRunsLeft }: AccountPanelProps) {
   const auth = useAuthUser();
   /* Held here, above the signed-in view: deleting signs out, which unmounts
      that view, and the confirmation has to outlive it. */
@@ -90,7 +99,7 @@ export default function AccountPanel({ authCapability, runInProgress }: AccountP
               whose report has not arrived): Sign out stays reachable here,
               at /app?view=account, even with the tab hidden. */}
           {auth.ready && auth.user && (
-            <IdentityCard email={auth.user.email} runInProgress={runInProgress} />
+            <IdentityCard email={auth.user.email} runInProgress={runInProgress} freeRunsLeft={freeRunsLeft} />
           )}
         </>
       ) : !auth.ready ? (
@@ -102,6 +111,7 @@ export default function AccountPanel({ authCapability, runInProgress }: AccountP
           userId={auth.user.id}
           email={auth.user.email}
           runInProgress={runInProgress}
+          freeRunsLeft={freeRunsLeft}
           onDeleted={markDeleted}
         />
       ) : (
@@ -286,15 +296,19 @@ function SignedIn({
   userId,
   email,
   runInProgress,
+  freeRunsLeft,
   onDeleted,
 }: {
   userId: string;
   email: string | null;
   runInProgress: boolean;
+  freeRunsLeft: number | null;
   onDeleted: (signedOut: Promise<void>) => void;
 }) {
   const { account, problem, loading, reload } = useAccount(userId);
-  const identity = <IdentityCard email={account?.email ?? email} runInProgress={runInProgress} />;
+  const identity = (
+    <IdentityCard email={account?.email ?? email} runInProgress={runInProgress} freeRunsLeft={freeRunsLeft} />
+  );
 
   if (problem?.kind === "unavailable") {
     return (
@@ -332,24 +346,44 @@ function SignedIn({
       )}
 
       {account && (
-        <ApiKeyManager key={userId} enabled={account.accounts_enabled && account.workspace !== null} />
+        <section className="acct-group" aria-labelledby="acct-grp-account">
+          <h2 id="acct-grp-account" className="history-group-label acct-group-label">
+            Your account
+          </h2>
+          <ApiKeyManager key={userId} enabled={account.accounts_enabled && account.workspace !== null} />
+        </section>
       )}
 
-      <AccountResources />
+      <AccountResources signedIn />
 
-      {account && (
-        <DeleteAccountSection
-          email={account.email ?? email}
-          enabled={account.accounts_enabled}
-          runInProgress={runInProgress}
-          onDeleted={onDeleted}
-        />
-      )}
+      {/* Last on the page, on purpose: the two controls that end something. */}
+      <section className="acct-end" aria-labelledby="acct-end-title">
+        <h2 id="acct-end-title" className="sr-only">
+          Sign out everywhere or delete your account
+        </h2>
+        <SignOutEverywhere runInProgress={runInProgress} />
+        {account && (
+          <DeleteAccountSection
+            email={account.email ?? email}
+            enabled={account.accounts_enabled}
+            runInProgress={runInProgress}
+            onDeleted={onDeleted}
+          />
+        )}
+      </section>
     </>
   );
 }
 
-function IdentityCard({ email, runInProgress }: { email: string | null; runInProgress: boolean }) {
+function IdentityCard({
+  email,
+  runInProgress,
+  freeRunsLeft,
+}: {
+  email: string | null;
+  runInProgress: boolean;
+  freeRunsLeft: number | null;
+}) {
   const [signingOut, setSigningOut] = useState(false);
 
   const handleSignOut = () => {
@@ -359,15 +393,19 @@ function IdentityCard({ email, runInProgress }: { email: string | null; runInPro
   };
 
   return (
-    <section className="key-card acct-identity" aria-labelledby="acct-id-title">
+    <section className="key-card acct-identity" aria-label="Signed in as">
       <div className="acct-identity-details">
-        <h2 id="acct-id-title" className="key-label">
-          Your account
-        </h2>
         <p className="acct-email">{email ?? "your account"}</p>
-        <p className="key-help">Email sign-in · Sign out applies to this device only.</p>
+        <p className="key-help acct-identity-meta">
+          Email sign-in
+          {freeRunsLeft !== null && (
+            <>
+              {" · "}
+              <span className="acct-nowrap">Free runs left on this device: {freeRunsLeft}</span>
+            </>
+          )}
+        </p>
       </div>
-      {runInProgress && <p className="pending-note acct-guard">{RUN_GUARD}</p>}
       <div className="key-actions">
         <button
           type="button"
@@ -378,90 +416,156 @@ function IdentityCard({ email, runInProgress }: { email: string | null; runInPro
           {signingOut ? "Signing out…" : "Sign out"}
         </button>
       </div>
+      {/* After the button, so on a phone the email and Sign out stay together. */}
+      {runInProgress && <p className="pending-note acct-guard">{RUN_GUARD}</p>}
     </section>
+  );
+}
+
+/* Ends every session, this device's last. A single click, like Sign out: it
+   is undone by signing in again. The copy says what it cannot do: tokens are
+   checked by signature only, so another device stays in until its access
+   token expires, and API keys are a separate credential. */
+function SignOutEverywhere({ runInProgress }: { runInProgress: boolean }) {
+  const { phase, error, run } = useSignOutEverywhere();
+  const helpId = useId();
+  const errorId = useId();
+  const working = phase === "working";
+
+  return (
+    <div className="acct-end-item">
+      <button
+        type="button"
+        className="acct-link acct-end-control"
+        onClick={() => {
+          if (working || runInProgress) return;
+          void run();
+        }}
+        aria-disabled={working || runInProgress || undefined}
+        aria-describedby={error ? `${errorId} ${helpId}` : helpId}
+      >
+        {working ? "Signing out everywhere…" : "Sign out everywhere"}
+      </button>
+      <p id={helpId} className="key-help acct-end-help">
+        Signs you out on every device. Others may stay signed in for up to an hour. API keys keep working
+        until you revoke them.
+      </p>
+      {runInProgress && <p className="pending-note acct-guard">{RUN_GUARD}</p>}
+      {error && (
+        <div id={errorId} role="alert" className="error-inline acct-gap-sm">
+          <p>{error}</p>
+        </div>
+      )}
+      <p role="status" className="sr-only">
+        {working ? "Signing out on every device…" : ""}
+      </p>
+    </div>
   );
 }
 
 /* ------------------------------------------------------------------ API keys */
 
+type ApiKeysState = ReturnType<typeof useApiKeys>;
+
 function ApiKeyManager({ enabled }: { enabled: boolean }) {
-  // Fetch only on first opening. Keep the mounted panel when collapsed so
-  // closing the disclosure does not discard a freshly created one-time key.
+  /* The keys are fetched on the first opening only (`visited`), never on
+     mount. The hook lives here, above the body, so the row can show a count
+     once that fetch has answered and can flag a one-time secret that is
+     still unseen when the row is collapsed. Collapsing keeps everything:
+     the body stays mounted. */
   const [visited, setVisited] = useState(false);
+  const [open, setOpen] = useState(false);
+  const api = useApiKeys(enabled && visited);
+  const active = api.keys?.filter((key) => key.active && !key.revoked_at).length ?? 0;
+  const meta =
+    api.justCreated && !open
+      ? { text: "New key to copy", fresh: true }
+      : api.keys && active > 0
+        ? { text: active === 1 ? "1 key" : `${active} keys`, fresh: false }
+        : null;
+
   return (
-    <details className="key-card acct-disclosure" onToggle={(event) => {
-      if (event.currentTarget.open) setVisited(true);
-    }}>
-      <summary className="acct-disclosure-toggle">
+    <details
+      className="key-card acct-card acct-disclosure"
+      onToggle={(event) => {
+        const isOpen = event.currentTarget.open;
+        setOpen(isOpen);
+        if (isOpen) setVisited(true);
+      }}
+    >
+      <summary className="acct-row acct-disclosure-toggle">
         <span className="acct-row-text">
-          <span className="acct-row-title">Manage API keys</span>
-          <span className="acct-row-description">Access for your scripts and agents</span>
+          <span className="acct-row-title">API keys</span>
+          <span className="acct-row-description">Let your scripts and agents use VideoLens as you</span>
         </span>
-        <ChevronRight aria-hidden="true" />
+        {meta && (
+          <span className="acct-row-meta" data-fresh={meta.fresh ? "true" : undefined}>
+            {meta.text}
+          </span>
+        )}
+        <ChevronDown aria-hidden="true" />
       </summary>
-      {visited && <ApiKeysSection enabled={enabled} />}
+      {visited && <ApiKeysSection enabled={enabled} api={api} />}
     </details>
   );
 }
 
-function AccountTabLink({ tab, title, description }: { tab: MainTab; title: string; description: string }) {
+function AccountTabLink({ tab, title, description }: { tab: MainTab; title: string; description?: string }) {
   return (
-    <Link href={mainTabHref(tab)} prefetch={false} className="acct-settings-link" onClick={(event) => {
+    <Link href={mainTabHref(tab)} prefetch={false} className="acct-row" onClick={(event) => {
       if (!isPlainLeftClick(event)) return;
       event.preventDefault();
       goToMainTab(tab);
     }}>
       <span className="acct-row-text">
         <span className="acct-row-title">{title}</span>
-        <span className="acct-row-description">{description}</span>
+        {description && <span className="acct-row-description">{description}</span>}
       </span>
       <ChevronRight aria-hidden="true" />
     </Link>
   );
 }
 
-function AccountResources() {
+/* The two link groups every state shows: plain rows, one tap to go. */
+function AccountResources({ signedIn = false }: { signedIn?: boolean }) {
   return (
     <>
-      <details className="key-card acct-disclosure">
-        <summary className="acct-disclosure-toggle">
-          <span className="acct-row-text">
-            <span className="acct-row-title">Data on this device</span>
-            <span className="acct-row-description">History and your Gemini key</span>
-          </span>
-          <ChevronRight aria-hidden="true" />
-        </summary>
-        <div className="acct-details-body">
-          <p className="key-help acct-resource-note">Saved in this browser, separately from your account. Signing out does not clear them.</p>
+      <section className="acct-group" aria-labelledby="acct-grp-device">
+        <h2 id="acct-grp-device" className="history-group-label acct-group-label">
+          On this device
+        </h2>
+        <div className="key-card acct-card">
           <AccountTabLink tab="history" title="History" description="View or remove saved analyses" />
-          <AccountTabLink tab="api-key" title="Gemini API key" description="Manage the key you use for analyses" />
+          <AccountTabLink
+            tab="api-key"
+            title="Your Gemini key"
+            description="Your own Google key for analyses. Stays in this browser."
+          />
         </div>
-      </details>
-      <details className="key-card acct-disclosure">
-        <summary className="acct-disclosure-toggle">
-          <span className="acct-row-text">
-            <span className="acct-row-title">Help &amp; privacy</span>
-            <span className="acct-row-description">Data practices, terms, and updates</span>
-          </span>
-          <ChevronRight aria-hidden="true" />
-        </summary>
-        <div className="acct-details-body">
-          <Link href="/privacy" prefetch={false} className="acct-settings-link">
-            <span className="acct-row-title">Privacy policy</span><ChevronRight aria-hidden="true" />
+        {signedIn && <p className="key-help acct-group-note">Both stay in this browser when you sign out.</p>}
+      </section>
+      <section className="acct-group" aria-labelledby="acct-grp-help">
+        <h2 id="acct-grp-help" className="history-group-label acct-group-label">
+          Help
+        </h2>
+        <div className="key-card acct-card">
+          <Link href="/privacy" prefetch={false} className="acct-row">
+            <span className="acct-row-title">Privacy policy</span>
+            <ChevronRight aria-hidden="true" />
           </Link>
-          <Link href="/terms" prefetch={false} className="acct-settings-link">
-            <span className="acct-row-title">Terms of use</span><ChevronRight aria-hidden="true" />
+          <Link href="/terms" prefetch={false} className="acct-row">
+            <span className="acct-row-title">Terms of use</span>
+            <ChevronRight aria-hidden="true" />
           </Link>
-          <AccountTabLink tab="releases" title="What’s new" description="Read the latest release notes" />
+          <AccountTabLink tab="releases" title="What’s new" />
         </div>
-      </details>
+      </section>
     </>
   );
 }
 
-function ApiKeysSection({ enabled }: { enabled: boolean }) {
-  const { keys, loadError, actionError, busy, create, revoke, reload, justCreated, dismissSecret } =
-    useApiKeys(enabled);
+function ApiKeysSection({ enabled, api }: { enabled: boolean; api: ApiKeysState }) {
+  const { keys, loadError, actionError, busy, create, revoke, reload, justCreated, dismissSecret } = api;
   const [name, setName] = useState("");
   const [confirming, setConfirming] = useState<string | null>(null);
   const nameId = useId();
@@ -469,12 +573,9 @@ function ApiKeysSection({ enabled }: { enabled: boolean }) {
 
   if (!enabled) {
     return (
-      <section className="acct-details-body" aria-labelledby="acct-keys-title">
-        <h2 id="acct-keys-title" className="acct-card-title">
-          API keys
-        </h2>
-        <p className="key-help">This server does not keep accounts, so it cannot issue API keys.</p>
-      </section>
+      <div className="acct-details-body">
+        <p className="key-help acct-help-flush">This server does not keep accounts, so it cannot issue API keys.</p>
+      </div>
     );
   }
 
@@ -721,15 +822,10 @@ function DeleteAccountSection({
 
   if (!enabled) {
     return (
-      <section className="key-card acct-delete" aria-labelledby="acct-del-title">
-        <h2 id="acct-del-title" className="acct-card-title">
-          Delete account
-        </h2>
-        <p className="key-help">
-          This server does not keep accounts, so it cannot delete one. Ask us if you want your sign-in
-          removed.
-        </p>
-      </section>
+      <p className="key-help acct-end-item">
+        This server does not keep accounts, so it cannot delete one. Ask us if you want your sign-in
+        removed.
+      </p>
     );
   }
 
@@ -747,108 +843,112 @@ function DeleteAccountSection({
     void remove();
   };
 
+  /* Closed, a muted text link and nothing else: the page's last item. Open,
+     the confirmation card takes its place. */
+  if (!open) {
+    return (
+      <div className="acct-end-item">
+        <button
+          ref={toggleRef}
+          type="button"
+          className="acct-link acct-delete-link"
+          aria-expanded={false}
+          aria-controls={regionId}
+          onClick={() => setOpen(true)}
+        >
+          Delete account…
+        </button>
+      </div>
+    );
+  }
+
   return (
     <section className="key-card acct-delete" aria-labelledby="acct-del-title">
-      <h2 id="acct-del-title" className="acct-card-title">
+      <h3 id="acct-del-title" className="acct-card-title">
         Delete account
-      </h2>
+      </h3>
       <p className="key-help">
         Removes your account from VideoLens for good. What is stored in this browser stays.
       </p>
 
-      {!open ? (
-        <div className="key-actions">
-          <button
-            ref={toggleRef}
-            type="button"
-            className="btn btn-secondary btn-pill key-remove"
-            aria-expanded={false}
-            aria-controls={regionId}
-            onClick={() => setOpen(true)}
-          >
-            Delete account…
-          </button>
-        </div>
-      ) : (
-        <form
-          id={regionId}
-          className="acct-delete-body"
-          onSubmit={submit}
-          noValidate
-          aria-label="Confirm account deletion"
-        >
-          <div className="acct-delete-lists">
-            <div>
-              <h3 className="acct-delete-head">Deleted, and cannot be undone</h3>
-              <ul className="acct-delete-list">
-                <li>Your account and its workspace</li>
-                <li>Every API key, so anything still using one stops working</li>
-                <li>Any runs the server still holds for you (it keeps them an hour at most)</li>
-              </ul>
-            </div>
-            <div>
-              <h3 className="acct-delete-head">Kept, in this browser</h3>
-              <ul className="acct-delete-list">
-                <li>Your History</li>
-                <li>Your own Gemini key</li>
-              </ul>
-              <p className="key-help acct-delete-note">
-                Deleting your account does not clear this browser’s saved History or Gemini key.
-                You can remove them under History and API key.
-              </p>
-            </div>
+      <form
+        id={regionId}
+        className="acct-delete-body"
+        onSubmit={submit}
+        noValidate
+        aria-label="Confirm account deletion"
+      >
+        <div className="acct-delete-lists">
+          <div>
+            <h4 className="acct-delete-head">Deleted, and cannot be undone</h4>
+            <ul className="acct-delete-list">
+              <li>Your account and its workspace</li>
+              <li>Every API key, so anything still using one stops working</li>
+              <li>Any runs the server still holds for you (it keeps them an hour at most)</li>
+            </ul>
           </div>
-
-          <label htmlFor={confirmId} className="key-label acct-delete-label">
-            {email ? "Type your email to confirm" : "Type delete to confirm"}
-          </label>
-          <p id={confirmHelpId} className="key-help acct-help-top">
-            It is <strong className="acct-strong">{phrase}</strong>. Capitals do not matter.
-          </p>
-          <input
-            ref={confirmRef}
-            id={confirmId}
-            type={email ? "email" : "text"}
-            inputMode={email ? "email" : "text"}
-            autoComplete="off"
-            autoCapitalize="off"
-            autoCorrect="off"
-            spellCheck={false}
-            className="field acct-field"
-            value={typed}
-            onChange={(event) => setTyped(event.target.value)}
-            aria-describedby={failed ? `${errorId} ${confirmHelpId}` : confirmHelpId}
-          />
-
-          {failed && (
-            <div ref={errorRef} id={errorId} role="alert" tabIndex={-1} className="error-inline acct-gap-sm">
-              <p>{failed.message}</p>
-            </div>
-          )}
-          {runInProgress && <p className="pending-note acct-guard">{RUN_GUARD_DELETE}</p>}
-
-          <div className="key-actions">
-            <button
-              type="submit"
-              className="btn btn-pill acct-danger"
-              aria-disabled={!matches || deleting || runInProgress || undefined}
-            >
-              {deleting ? "Deleting…" : "Delete my account"}
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary btn-pill key-remove"
-              onClick={cancel}
-              aria-disabled={deleting || undefined}
-            >
-              Cancel
-            </button>
-            <p role="status" className="key-status-slot">
-              {deleting && <span className="key-status">Deleting your account…</span>}
+          <div>
+            <h4 className="acct-delete-head">Kept, in this browser</h4>
+            <ul className="acct-delete-list">
+              <li>Your History</li>
+              <li>Your own Gemini key</li>
+            </ul>
+            <p className="key-help acct-delete-note">
+              Deleting your account does not clear this browser’s saved History or Gemini key.
+              You can remove them under History and API key.
             </p>
           </div>
-        </form>
-      )}
+        </div>
+
+        <label htmlFor={confirmId} className="key-label acct-delete-label">
+          {email ? "Type your email to confirm" : "Type delete to confirm"}
+        </label>
+        <p id={confirmHelpId} className="key-help acct-help-top">
+          It is <strong className="acct-strong">{phrase}</strong>. Capitals do not matter.
+        </p>
+        <input
+          ref={confirmRef}
+          id={confirmId}
+          type={email ? "email" : "text"}
+          inputMode={email ? "email" : "text"}
+          autoComplete="off"
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+          className="field acct-field"
+          value={typed}
+          onChange={(event) => setTyped(event.target.value)}
+          aria-describedby={failed ? `${errorId} ${confirmHelpId}` : confirmHelpId}
+        />
+
+        {failed && (
+          <div ref={errorRef} id={errorId} role="alert" tabIndex={-1} className="error-inline acct-gap-sm">
+            <p>{failed.message}</p>
+          </div>
+        )}
+        {runInProgress && <p className="pending-note acct-guard">{RUN_GUARD_DELETE}</p>}
+
+        <div className="key-actions">
+          <button
+            type="submit"
+            className="btn btn-pill acct-danger"
+            aria-disabled={!matches || deleting || runInProgress || undefined}
+          >
+            {deleting ? "Deleting…" : "Delete my account"}
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary btn-pill key-remove"
+            onClick={cancel}
+            aria-disabled={deleting || undefined}
+          >
+            Cancel
+          </button>
+          <p role="status" className="key-status-slot">
+            {deleting && <span className="key-status">Deleting your account…</span>}
+          </p>
+        </div>
+      </form>
     </section>
   );
 }
