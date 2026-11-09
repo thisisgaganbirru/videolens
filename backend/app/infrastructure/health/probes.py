@@ -390,3 +390,57 @@ class AuthProbe:
             probed=True,
             log_detail=f"JWKS fetched, {key_count} key(s)",
         )
+
+
+_DATABASE_TIMEOUT_SECONDS = 5.0
+
+
+class DatabaseProbe:
+    """Whether the account store answers: one `SELECT 1` through the shared
+    engine (the pool's pre-ping makes this the same round trip a signed-in
+    request would make first).
+
+    No `DATABASE_URL` is `disabled`, not a fault: a local API keeps accounts
+    in process memory, and a distributed one runs without accounts, both by
+    design. A failed query is `degraded`, not `unavailable` (the same rule as
+    `AuthProbe`): anonymous use still works, and the detail says so. Host
+    names and driver errors stay in the log.
+    """
+
+    def __init__(self, database, *, distributed: bool) -> None:
+        self._database = database
+        self._distributed = distributed
+
+    @property
+    def name(self) -> str:
+        return "database"
+
+    async def check(self) -> Capability:
+        if not self._database.enabled:
+            return Capability(
+                name=self.name,
+                state=CapabilityState.DISABLED,
+                detail=(
+                    "Accounts are not available on this server."
+                    if self._distributed
+                    else "Accounts are kept in memory and are lost if the server restarts."
+                ),
+                probed=False,
+            )
+        try:
+            await asyncio.wait_for(self._database.ping(), timeout=_DATABASE_TIMEOUT_SECONDS)
+        except Exception as exc:  # noqa: BLE001 - logged here; the class name goes in log_detail
+            logger.warning("Database probe failed", exc_info=True)
+            return Capability(
+                name=self.name,
+                state=CapabilityState.DEGRADED,
+                detail="Accounts are unavailable right now. You can keep using VideoLens without signing in.",
+                probed=True,
+                log_detail=f"SELECT 1 failed: {type(exc).__name__}",
+            )
+        return Capability(
+            name=self.name,
+            state=CapabilityState.OK,
+            detail="Accounts are available.",
+            probed=True,
+        )
