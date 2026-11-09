@@ -4,8 +4,8 @@ Every request resolves to one `Principal`: an anonymous browser, a signed-in
 person (a Supabase access token), or an agent holding an API key. Phase 1 of
 `docs/auth-plan.md` (backend identity) is implemented on `feat/auth-supabase`,
 phase 2 (frontend sign-in) on the same branch, and phase 3's backend half
-(account deletion, `DELETE /api/me`, and the `database` capability) is in
-the tree, uncommitted, pending review. None of it is merged yet.
+(account deletion, `DELETE /api/me`, and the `database` capability) is
+reviewed and committed on the same branch (2026-11-09). None of it is merged yet.
 
 ## Files
 
@@ -135,7 +135,7 @@ GRANT EXECUTE ON FUNCTION videolens_private.delete_auth_user(uuid) TO videolens_
 
 ### Data after account deletion
 
-Researched 2026-11-09 against `videolens-dev` (ref `pjekwwiaocywdbwqgtgl`, org `gagan-dev`, Pro, Postgres 17.11) and the Railway workspace "gaganbirru's Projects". Read-only throughout: catalog `SELECT`s, Logs counts (no values read), dashboard pages viewed without changing anything. Migration 0002 is **not applied** yet (no `videolens_private` functions exist on the project), so today step 3 cannot run; every Supabase row below assumes it has been.
+Researched 2026-11-09 against `videolens-dev` (ref `pjekwwiaocywdbwqgtgl`, org `gagan-dev`, Pro, Postgres 17.11) and the Railway workspace "gaganbirru's Projects". Read-only throughout: catalog `SELECT`s, Logs counts (no values read), dashboard pages viewed without changing anything. Migration 0002 was not applied at research time; it was applied later the same day (see the changelog), and every Supabase row below assumes it.
 
 | Location | What remains after `DELETE /api/me` | How long | Status and evidence |
 |---|---|---|---|
@@ -290,3 +290,4 @@ The application code has not yet run against a real Supabase project: the SQL ad
 - 2026-11-09 · backend subagent (auth phase 3, review fix) · a still-valid token can no longer re-create a deleted account or mint an unrevocable key: `IdentityProviderUsers` port, `videolens_private.auth_user_exists(uuid)` added to 0002 (edited in place, never applied), checked on first sight of a subject and before key issue; a second `DELETE /api/me` after a complete deletion is now 401, not 204; idempotency wording, SQL block, verify checks and tests updated
 - 2026-11-09 · research subagent · "Data after account deletion": what survives deletion and for how long (Supabase backups and PITR, auth.* cascades and flow_state, audit log table off, Supabase and Railway log retention, DPA, Redis keys), each row marked verified or unverified with evidence; the SQLAlchemy parameters-in-traceback leak to Railway logs noted
 - 2026-11-09 · backend subagent (log hygiene) · engine hides bound parameters in error text
+- 2026-11-09 · main session · 0002 applied to `videolens-dev` and verified: `alembic_version` at `0002_auth_user_deleter`, `videolens_api` has EXECUTE on both functions, `anon`/`authenticated` have no EXECUTE and no USAGE on `videolens_private`, both functions SECURITY DEFINER owned by `postgres` with empty search_path; status lines updated to committed
