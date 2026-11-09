@@ -307,4 +307,8 @@ export interface AccountGateway {
   listKeys(): Promise<ApiKeyListResponse>;
   createKey(name: string): Promise<ApiKeyCreated>;
   revokeKey(keyId: string): Promise<void>;
+  /** `DELETE /api/me` (auth phase 3): the account, its workspace, API keys
+   *  and any runs the server still holds for it. Resolves on 204; rejects
+   *  with `ApiError` (401, 403, 503, anything unexpected) or `NetworkError`. */
+  deleteAccount(): Promise<void>;
 }

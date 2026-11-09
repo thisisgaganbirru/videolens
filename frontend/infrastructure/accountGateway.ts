@@ -2,7 +2,7 @@ import type { AccountResponse, ApiKeyCreated, ApiKeyListResponse } from "@/domai
 import type { AccountGateway } from "@/domain/ports";
 import type { ApiClient } from "./apiClient";
 
-/* `GET /api/me`, `GET|POST /api/keys`, `DELETE /api/keys/{id}` (contract in
+/* `GET|DELETE /api/me`, `GET|POST /api/keys`, `DELETE /api/keys/{id}` (contract in
    docs/backend/auth.md). Sent through `ApiClient`, so the bearer token rides
    along whenever someone is signed in. Signed out, `/api/me` answers 401 and
    the hooks never ask; `/api/keys` refuses anything but a signed-in person.
@@ -25,5 +25,11 @@ export class FetchAccountGateway implements AccountGateway {
   async revokeKey(keyId: string): Promise<void> {
     const res = await this.client.send(`/api/keys/${encodeURIComponent(keyId)}`, { method: "DELETE" });
     if (!res.ok) await this.client.reject(res, "Could not revoke the API key");
+  }
+
+  /* No body either way: 204 is the only success. */
+  async deleteAccount(): Promise<void> {
+    const res = await this.client.send("/api/me", { method: "DELETE" });
+    if (!res.ok) await this.client.reject(res, "Could not delete your account");
   }
 }
