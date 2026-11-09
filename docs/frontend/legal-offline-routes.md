@@ -776,3 +776,4 @@ entry), privacy Back (after the app) and the dock from privacy all end on
 - 2026-11-02 · frontend agent (refinement 8) · NF-01: installed app sent to `/404.html` for unknown extensionless paths; home-page link hidden in the installed shell
 - 2026-11-02 · frontend agent (refinement 9) · installed app canonicalizes /app to /app.html (asset server only) so Back and the dock agree; web unchanged
 - 2026-11-02 · frontend agent (refinement 10) · Privacy/Terms Back link visible on every shell (`AppBackLink everywhere`), web target /app, app cold-open still /app.html; /offline unchanged (no Back link, plain <a>)
+- 2026-11-09 · frontend agent · privacy page deletion sentence corrected (backups and logs ~7 days); detail in auth-sign-in.md "Phase 3 state"
