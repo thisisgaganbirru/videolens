@@ -419,6 +419,28 @@ worker, not shared with the API service.
 - [ ] No API keys, cookies, local paths, or terminal color codes appear in
       responses.
 
+### Account database migrations (release step)
+
+Only for an environment with `DATABASE_URL` set (accounts on). Alembic is
+not run at startup and the Dockerfile does not copy `migrations/`, so run it
+from a checkout, **as `postgres`** (the project owner), before deploying
+code that needs the new revision. Full detail, including the offline
+`--sql` path through the SQL editor or connector: `docs/backend/auth.md`,
+"Migrations".
+
+- [ ] `0001_identity`: the `videolens_api` role exists first; then the four
+      identity tables, RLS, policies and grants.
+- [ ] `0002_auth_user_deleter` (account deletion, `DELETE /api/me`): applied
+      as `postgres`, because the two `SECURITY DEFINER` functions it creates
+      (`videolens_private.delete_auth_user(uuid)` and
+      `videolens_private.auth_user_exists(uuid)`) must be owned by a role that
+      can read and delete `auth.users`. Afterwards `has_function_privilege`
+      for `videolens_api` and `EXECUTE` is true for both, and `videolens_private` is **not** in the project's exposed
+      schemas (Supabase dashboard, API settings). Without it, deletion
+      removes the rows and then returns 500 on the Supabase user step, and
+      every first sign-in fails (the existence check cannot run).
+- [ ] `GET /api/capabilities` shows `database: ok` (and `auth: ok`).
+
 ## Phase 3: Installable PWA
 
 Add Progressive Web App support before producing the Android package:
@@ -652,3 +674,8 @@ The release is complete when:
   pre-launch reports.
 - The Play Store production release is approved and points to the same
   stable backend.
+
+## Changelog
+
+- 2026-11-09 · backend subagent (auth phase 3) · added the account database migrations release step (apply `0002_auth_user_deleter` as `postgres`, verify `has_function_privilege`, keep `videolens_private` unexposed, check `database: ok`)
+- 2026-11-09 · backend subagent (auth phase 3, review fix) · 0002 now also creates `auth_user_exists`; the verify step checks both functions

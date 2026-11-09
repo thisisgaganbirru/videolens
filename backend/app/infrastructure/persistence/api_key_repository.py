@@ -194,5 +194,14 @@ class InMemoryApiKeyRepository:
         key.revoked_at = utcnow()
         return True
 
+    def forget_workspaces(self, workspace_ids: set[str]) -> int:
+        """Account deletion (`InMemoryAccountDeleter`): drop every key, live
+        or revoked, in these workspaces. Returns how many were dropped."""
+        doomed = [key_id for key_id, key in self._keys.items() if key.workspace_id in workspace_ids]
+        for key_id in doomed:
+            del self._keys[key_id]
+        self._by_hash = {digest: key_id for digest, key_id in self._by_hash.items() if key_id in self._keys}
+        return len(doomed)
+
     async def close(self) -> None:
         return None

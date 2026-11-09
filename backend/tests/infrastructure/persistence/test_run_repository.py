@@ -192,5 +192,54 @@ class VisualsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(run.height)
 
 
+class DeleteForOwnerTests(unittest.IsolatedAsyncioTestCase):
+    """Account deletion (`DELETE /api/me`) removes one owner's runs only."""
+
+    async def test_in_memory_removes_only_that_owners_runs(self) -> None:
+        store = RunStore(Settings(_env_file=None))
+        await store.create("a", "user:sub-1")
+        await store.create("b", "user:sub-1")
+        await store.create("c", "user:sub-2")
+
+        self.assertEqual(await store.delete_for_owner("user:sub-1"), 2)
+        self.assertEqual(await store.delete_for_owner("user:sub-1"), 0)
+
+        self.assertIsNone(await store.get("a"))
+        self.assertIsNotNone(await store.get("c"))
+
+    async def test_redis_deletes_the_indexed_runs_and_the_index(self) -> None:
+        store = RunStore(Settings(_env_file=None, redis_url="redis://test"))
+        client = AsyncMock()
+        client.zrange.return_value = ["a", "b"]
+        client.delete.side_effect = [2, 1]
+        store._redis = client  # type: ignore[assignment]
+
+        self.assertEqual(await store.delete_for_owner("user:sub-1"), 2)
+
+        client.zrange.assert_awaited_once_with("videolens:owner:user:sub-1:runs", 0, -1)
+        self.assertEqual(
+            [call.args for call in client.delete.await_args_list],
+            [("videolens:run:a", "videolens:run:b"), ("videolens:owner:user:sub-1:runs",)],
+        )
+
+    async def test_redis_with_no_runs_still_drops_the_index(self) -> None:
+        store = RunStore(Settings(_env_file=None, redis_url="redis://test"))
+        client = AsyncMock()
+        client.zrange.return_value = []
+        store._redis = client  # type: ignore[assignment]
+
+        self.assertEqual(await store.delete_for_owner("user:sub-1"), 0)
+        client.delete.assert_awaited_once_with("videolens:owner:user:sub-1:runs")
+
+    async def test_a_run_deleted_mid_flight_is_not_recreated(self) -> None:
+        store = RunStore(Settings(_env_file=None))
+        await store.create("busy", "user:sub-1")
+        await store.delete_for_owner("user:sub-1")
+
+        await store.set_error("busy", "late worker write")
+
+        self.assertIsNone(await store.get("busy"))
+
+
 if __name__ == "__main__":
     unittest.main()

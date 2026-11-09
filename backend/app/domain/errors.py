@@ -130,3 +130,9 @@ class ApiKeyNotFoundError(Exception):
 class ClientIdInvalidError(Exception):
     """An anonymous caller sent no valid `X-Client-ID` (400, as before
     accounts existed: it is a malformed request, not a failed sign-in)."""
+
+
+class AccountDeletionError(UserFacingError):
+    """Deleting an account failed part-way (500). Whatever was already
+    removed stays removed; the provider user goes last, so retrying with the
+    same session finishes the job."""

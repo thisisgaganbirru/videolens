@@ -10,6 +10,7 @@ from unittest.mock import patch
 from starlette.testclient import TestClient
 
 from app.application.create_api_key import CreateApiKeyUseCase
+from app.application.delete_account import DeleteAccountUseCase
 from app.application.entitlements import EntitlementResolver
 from app.application.get_account import GetAccountUseCase
 from app.application.identify_caller import IdentifyCallerUseCase
@@ -17,8 +18,11 @@ from app.application.list_api_keys import ListApiKeysUseCase
 from app.application.revoke_api_key import RevokeApiKeyUseCase
 from app.container import container
 from app.domain.errors import AuthNotConfiguredError
+from app.infrastructure.config import Settings
+from app.infrastructure.persistence.account_deleter import InMemoryAccountDeleter
 from app.infrastructure.persistence.account_directory import InMemoryAccountDirectory
 from app.infrastructure.persistence.api_key_repository import InMemoryApiKeyRepository
+from app.infrastructure.persistence.run_repository import RunStore
 from app.interface.api.app import app
 
 
@@ -45,6 +49,8 @@ class AccountRoutesTests(unittest.TestCase):
         self.verifier = FakeTokenVerifier({"sub": "user-123", "email": "a@b.test", "role": "authenticated"})
         accounts = InMemoryAccountDirectory()
         keys = InMemoryApiKeyRepository()
+        self.accounts = accounts
+        self.runs = RunStore(Settings(_env_file=None))
         replacements = {
             "identify_caller_use_case": IdentifyCallerUseCase(
                 accounts=accounts, api_keys=keys, verifier=self.verifier, allow_anonymous=True
@@ -55,6 +61,12 @@ class AccountRoutesTests(unittest.TestCase):
             "create_api_key_use_case": CreateApiKeyUseCase(api_keys=keys, accounts=accounts, max_active=2),
             "list_api_keys_use_case": ListApiKeysUseCase(api_keys=keys, accounts=accounts),
             "revoke_api_key_use_case": RevokeApiKeyUseCase(api_keys=keys, accounts=accounts),
+            "delete_account_use_case": DeleteAccountUseCase(
+                accounts=accounts,
+                deleter=InMemoryAccountDeleter(Settings(_env_file=None), accounts=accounts, api_keys=keys),
+                api_keys=keys,
+                runs=self.runs,
+            ),
         }
         for name, value in replacements.items():
             patcher = patch.object(container, name, value)
@@ -152,6 +164,131 @@ class AccountRoutesTests(unittest.TestCase):
         response = self.client.post("/api/keys", headers=TOKEN, json={"name": "c"})
         self.assertEqual(response.status_code, 409)
         self.assertIn("at most 2", response.json()["detail"])
+
+    # -- DELETE /api/me --------------------------------------------------
+
+    def test_delete_me_is_401_for_anonymous_callers(self) -> None:
+        response = self.client.delete("/api/me", headers=ANON)
+        self.assertEqual(response.status_code, 401)
+
+    def test_delete_me_is_403_for_an_api_key(self) -> None:
+        secret = self._new_key()["secret"]
+        for headers in ({"X-Api-Key": secret}, {"Authorization": f"Bearer {secret}"}):
+            with self.subTest(header=next(iter(headers))):
+                self.assertEqual(self.client.delete("/api/me", headers=headers).status_code, 403)
+        # The key still works: nothing was deleted.
+        self.assertEqual(self.client.get("/api/me", headers={"X-Api-Key": secret}).status_code, 200)
+
+    def test_delete_me_is_204_with_no_body_and_removes_the_account(self) -> None:
+        secret = self._new_key()["secret"]
+        before = self.client.get("/api/me", headers=TOKEN).json()
+
+        response = self.client.delete("/api/me", headers=TOKEN)
+
+        self.assertEqual(response.status_code, 204, response.text)
+        self.assertEqual(response.content, b"")
+        self.assertEqual(self.client.get("/api/me", headers={"X-Api-Key": secret}).status_code, 401)
+        # The token still verifies, so the next request gets a fresh account.
+        after = self.client.get("/api/me", headers=TOKEN).json()
+        self.assertNotEqual(after["account_id"], before["account_id"])
+
+    def _with_a_real_identity_step(self, *, identity_fails_once: bool = False) -> set[str]:
+        """Rewire with an identity provider that forgets the user when the
+        deletion's last step runs. Returns the provider's `gone` set."""
+        gone: set[str] = set()
+        failures = [RuntimeError("auth.users unreachable")] if identity_fails_once else []
+
+        class Users:
+            async def exists(self, external_id: str) -> bool:
+                return external_id not in gone
+
+        users = Users()
+        accounts = InMemoryAccountDirectory(users=users)
+        keys = InMemoryApiKeyRepository()
+
+        class Deleter(InMemoryAccountDeleter):
+            async def delete_identity(self, external_id: str) -> bool:
+                if failures:
+                    raise failures.pop()
+                gone.add(external_id)
+                return True
+
+        replacements = {
+            "identify_caller_use_case": IdentifyCallerUseCase(
+                accounts=accounts, api_keys=keys, verifier=self.verifier, allow_anonymous=True
+            ),
+            "create_api_key_use_case": CreateApiKeyUseCase(
+                api_keys=keys, accounts=accounts, max_active=2, users=users
+            ),
+            "delete_account_use_case": DeleteAccountUseCase(
+                accounts=accounts,
+                deleter=Deleter(Settings(_env_file=None), accounts=accounts, api_keys=keys),
+                api_keys=keys,
+                runs=self.runs,
+            ),
+        }
+        patcher = patch.multiple(container, **replacements)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return gone
+
+    def test_after_a_complete_deletion_the_still_valid_token_is_refused(self) -> None:
+        gone = self._with_a_real_identity_step()
+        self.assertEqual(self.client.delete("/api/me", headers=TOKEN).status_code, 204)
+        self.assertEqual(gone, {"user-123"})
+
+        # The token still verifies (stateless), but it must not re-create the
+        # account or mint a key nobody could revoke.
+        self.assertEqual(self.client.delete("/api/me", headers=TOKEN).status_code, 401)
+        self.assertEqual(self.client.get("/api/me", headers=TOKEN).status_code, 401)
+        self.assertEqual(self.client.post("/api/keys", headers=TOKEN, json={"name": "x"}).status_code, 401)
+
+    def test_a_retry_after_an_identity_step_failure_completes(self) -> None:
+        gone = self._with_a_real_identity_step(identity_fails_once=True)
+        with self.assertLogs("videolens", "ERROR"):
+            self.assertEqual(self.client.delete("/api/me", headers=TOKEN).status_code, 500)
+        self.assertEqual(gone, set())
+
+        # The Supabase user still exists, so the retry resolves the person.
+        self.assertEqual(self.client.delete("/api/me", headers=TOKEN).status_code, 204)
+        self.assertEqual(gone, {"user-123"})
+
+    def test_delete_me_is_503_without_an_account_store(self) -> None:
+        accounts = InMemoryAccountDirectory(enabled=False)
+        keys = InMemoryApiKeyRepository(enabled=False)
+        replacements = {
+            "identify_caller_use_case": IdentifyCallerUseCase(
+                accounts=accounts, api_keys=keys, verifier=self.verifier, allow_anonymous=True
+            ),
+            "delete_account_use_case": DeleteAccountUseCase(
+                accounts=accounts,
+                deleter=InMemoryAccountDeleter(Settings(_env_file=None), accounts=accounts, api_keys=keys),
+                api_keys=keys,
+                runs=self.runs,
+            ),
+        }
+        with patch.multiple(container, **replacements):
+            response = self.client.delete("/api/me", headers=TOKEN)
+        self.assertEqual(response.status_code, 503)
+
+    def test_a_failed_deletion_is_a_readable_500(self) -> None:
+        class FailingDeleter:
+            enabled = True
+
+            async def delete_account(self, external_id: str) -> bool:
+                raise RuntimeError("relation api_keys does not exist")
+
+            async def delete_identity(self, external_id: str) -> bool:
+                raise AssertionError("must not run after the rows failed")
+
+        use_case = DeleteAccountUseCase(
+            accounts=self.accounts, deleter=FailingDeleter(), api_keys=InMemoryApiKeyRepository(), runs=self.runs
+        )
+        with patch.object(container, "delete_account_use_case", use_case), self.assertLogs("videolens", "ERROR"):
+            response = self.client.delete("/api/me", headers=TOKEN)
+        self.assertEqual(response.status_code, 500)
+        self.assertNotIn("relation", response.text)
+        self.assertIn("try again", response.json()["detail"])
 
     def test_unknown_key_is_401(self) -> None:
         response = self.client.get("/api/me", headers={"X-Api-Key": "vl_live_nope"})

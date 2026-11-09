@@ -17,15 +17,26 @@ from sqlalchemy import insert, select, update
 from sqlalchemy.exc import IntegrityError
 
 from ...domain.entities import Account, Workspace, WorkspaceRole
+from ...domain.errors import AuthenticationError
+from ...domain.ports import IdentityProviderUsers
 from .database import Database, as_utc, utcnow
 from .schema import accounts, workspace_members, workspaces
 
 DEFAULT_WORKSPACE_NAME = "Personal"
 
 
+class _FirstSight(Exception):
+    """Raised out of `_resolve`'s transaction (rolling back a read-only
+    transaction) when the subject has no account yet and the identity
+    provider has not been asked whether the user still exists."""
+
+
 class SqlAccountDirectory:
-    def __init__(self, database: Database) -> None:
+    def __init__(self, database: Database, users: IdentityProviderUsers | None = None) -> None:
         self._db = database
+        # None skips the check (tests that predate it). The container always
+        # passes one.
+        self._users = users
 
     @property
     def enabled(self) -> bool:
@@ -52,15 +63,30 @@ class SqlAccountDirectory:
 
     async def resolve_account(self, external_id: str, email: str | None = None) -> Account:
         try:
-            return await self._resolve(external_id, email)
+            return await self._resolve_once(external_id, email)
         except IntegrityError:
             # Two first sign-ins for the same subject raced and the other
             # inserted the account first; it now exists, so read it.
-            return await self._resolve(external_id, email)
+            return await self._resolve_once(external_id, email)
 
-    async def _resolve(self, external_id: str, email: str | None) -> Account:
+    async def _resolve_once(self, external_id: str, email: str | None) -> Account:
+        try:
+            return await self._resolve(external_id, email, user_confirmed=self._users is None)
+        except _FirstSight:
+            # First sight of this subject: create rows only if the identity
+            # provider still has the user. A token outlives a deleted user by
+            # up to an hour and would otherwise re-create the account (and
+            # could then mint a key nobody can ever revoke). Asked here only,
+            # so an existing account's reads cost no extra query.
+            if not await self._users.exists(external_id):
+                raise AuthenticationError("Invalid access token.") from None
+            return await self._resolve(external_id, email, user_confirmed=True)
+
+    async def _resolve(self, external_id: str, email: str | None, *, user_confirmed: bool) -> Account:
         async with self._db.connect() as conn:
             row = (await conn.execute(select(accounts).where(accounts.c.external_id == external_id))).first()
+            if row is None and not user_confirmed:
+                raise _FirstSight()
             if row is None:
                 now = utcnow()
                 account_id = str(uuid.uuid4())
@@ -130,8 +156,12 @@ class InMemoryAccountDirectory:
     """Process-local accounts for a deployment with no `DATABASE_URL`. Same
     semantics as the SQL adapter; everything is gone on restart."""
 
-    def __init__(self, *, enabled: bool = True) -> None:
+    def __init__(self, *, enabled: bool = True, users: IdentityProviderUsers | None = None) -> None:
         self._enabled = enabled
+        # Same first-sight check as the SQL adapter. The container passes an
+        # always-present one (no identity provider to ask locally); tests
+        # pass a fake to exercise the refusal.
+        self._users = users
         self._accounts: dict[str, Account] = {}  # by external_id
         self._workspaces: dict[str, Workspace] = {}
         self._members: dict[tuple[str, str], str] = {}
@@ -142,6 +172,9 @@ class InMemoryAccountDirectory:
 
     async def resolve_account(self, external_id: str, email: str | None = None) -> Account:
         account = self._accounts.get(external_id)
+        if account is None and self._users is not None and not await self._users.exists(external_id):
+            raise AuthenticationError("Invalid access token.")
+        account = self._accounts.get(external_id)  # re-read: the check awaited
         if account is None:
             account = Account(
                 account_id=str(uuid.uuid4()), external_id=external_id, email=email, created_at=utcnow()
@@ -171,6 +204,27 @@ class InMemoryAccountDirectory:
         if not self._enabled:
             return None
         return self._members.get((workspace_id, account_id))
+
+    def forget_account(self, external_id: str) -> set[str] | None:
+        """Account deletion (`InMemoryAccountDeleter`): drop the account, the
+        workspaces it owns and every membership in them or held by it. Returns
+        the dropped workspace ids, or None when there was no such account."""
+        account = self._accounts.pop(external_id, None)
+        if account is None:
+            return None
+        owned = {
+            workspace_id
+            for workspace_id, workspace in self._workspaces.items()
+            if workspace.owner_account_id == account.account_id
+        }
+        for workspace_id in owned:
+            del self._workspaces[workspace_id]
+        self._members = {
+            (workspace_id, member_id): role
+            for (workspace_id, member_id), role in self._members.items()
+            if workspace_id not in owned and member_id != account.account_id
+        }
+        return owned
 
     async def close(self) -> None:
         return None

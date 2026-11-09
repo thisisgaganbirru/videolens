@@ -5,6 +5,7 @@ application code never import from here."""
 
 from .application.create_api_key import CreateApiKeyUseCase
 from .application.create_run import CreateRunUseCase
+from .application.delete_account import DeleteAccountUseCase
 from .application.entitlements import EntitlementResolver
 from .application.get_account import GetAccountUseCase
 from .application.get_free_runs import GetFreeRunsUseCase
@@ -31,9 +32,11 @@ from .infrastructure.health.probes import (
     UrlDownloadProbe,
 )
 from .infrastructure.media.service import MediaService
+from .infrastructure.persistence.account_deleter import InMemoryAccountDeleter, SqlAccountDeleter
 from .infrastructure.persistence.account_directory import InMemoryAccountDirectory, SqlAccountDirectory
 from .infrastructure.persistence.api_key_repository import InMemoryApiKeyRepository, SqlApiKeyRepository
 from .infrastructure.persistence.database import Database
+from .infrastructure.persistence.identity_users import AlwaysPresentIdentityProviderUsers, SqlIdentityProviderUsers
 from .infrastructure.persistence.run_repository import RunStore
 from .infrastructure.releases.github_releases import GithubReleaseCatalog
 from .infrastructure.queue.job_queue import RunQueue
@@ -69,12 +72,20 @@ class Container:
         # are then bare `user:<sub>` principals, as before accounts existed.
         self.database = Database(settings)
         if self.database.enabled:
-            self.accounts = SqlAccountDirectory(self.database)
+            # Asked before rows are created for a subject, so a token that
+            # outlived its deleted Supabase user cannot re-create the account.
+            self.identity_users = SqlIdentityProviderUsers(settings, self.database)
+            self.accounts = SqlAccountDirectory(self.database, users=self.identity_users)
             self.api_keys = SqlApiKeyRepository(self.database)
+            self.account_deleter = SqlAccountDeleter(settings, self.database)
         else:
             in_process = not settings.queue_enabled
-            self.accounts = InMemoryAccountDirectory(enabled=in_process)
-            self.api_keys = InMemoryApiKeyRepository(enabled=in_process)
+            self.identity_users = AlwaysPresentIdentityProviderUsers(settings)
+            memory_accounts = InMemoryAccountDirectory(enabled=in_process, users=self.identity_users)
+            memory_keys = InMemoryApiKeyRepository(enabled=in_process)
+            self.accounts = memory_accounts
+            self.api_keys = memory_keys
+            self.account_deleter = InMemoryAccountDeleter(settings, accounts=memory_accounts, api_keys=memory_keys)
 
         # Use cases.
         self.identify_caller_use_case = IdentifyCallerUseCase(
@@ -89,10 +100,16 @@ class Container:
         )
         self.get_account_use_case = GetAccountUseCase(accounts=self.accounts, entitlements=self.entitlements)
         self.create_api_key_use_case = CreateApiKeyUseCase(
-            api_keys=self.api_keys, accounts=self.accounts, max_active=settings.api_keys_per_workspace
+            api_keys=self.api_keys,
+            accounts=self.accounts,
+            max_active=settings.api_keys_per_workspace,
+            users=self.identity_users,
         )
         self.list_api_keys_use_case = ListApiKeysUseCase(api_keys=self.api_keys, accounts=self.accounts)
         self.revoke_api_key_use_case = RevokeApiKeyUseCase(api_keys=self.api_keys, accounts=self.accounts)
+        self.delete_account_use_case = DeleteAccountUseCase(
+            accounts=self.accounts, deleter=self.account_deleter, api_keys=self.api_keys, runs=self.run_repository
+        )
         self.process_run_use_case = ProcessRunUseCase(
             runs=self.run_repository,
             media=self.media,

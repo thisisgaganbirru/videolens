@@ -9,9 +9,17 @@ from app.application.list_api_keys import ListApiKeysUseCase
 from app.application.revoke_api_key import RevokeApiKeyUseCase
 from app.domain.entities import AuthMethod, Principal
 from app.domain.entitlements import Plan
-from app.domain.errors import AccountsNotConfiguredError, ApiKeyLimitError, ApiKeyNotFoundError, ForbiddenError
+from app.domain.errors import (
+    AccountsNotConfiguredError,
+    ApiKeyLimitError,
+    ApiKeyNotFoundError,
+    AuthenticationError,
+    ForbiddenError,
+)
 from app.infrastructure.persistence.account_directory import InMemoryAccountDirectory
 from app.infrastructure.persistence.api_key_repository import InMemoryApiKeyRepository
+
+from .fakes import FakeIdentityProviderUsers
 
 
 class ApiKeyUseCaseTests(unittest.IsolatedAsyncioTestCase):
@@ -41,6 +49,25 @@ class ApiKeyUseCaseTests(unittest.IsolatedAsyncioTestCase):
 
         await self.revoke.execute(self.person, created.key.key_id)
         self.assertFalse((await self.list.execute(self.person))[0].active)
+
+    async def test_key_creation_is_refused_once_the_user_is_gone(self) -> None:
+        # A deletion that finished while this request was in flight, or a
+        # token that outlived its user: no key nobody could ever revoke.
+        users = FakeIdentityProviderUsers(gone={"user-123"})
+        create = CreateApiKeyUseCase(api_keys=self.keys, accounts=self.accounts, max_active=2, users=users)
+
+        with self.assertRaises(AuthenticationError):
+            await create.execute(self.person, "late")
+
+        self.assertEqual(users.asked, ["user-123"])
+        self.assertEqual(await self.keys.list_for_workspace(self.person.workspace_id), [])
+
+    async def test_key_creation_asks_and_proceeds_while_the_user_exists(self) -> None:
+        users = FakeIdentityProviderUsers()
+        create = CreateApiKeyUseCase(api_keys=self.keys, accounts=self.accounts, max_active=2, users=users)
+        created = await create.execute(self.person, "ok")
+        self.assertTrue(created.secret.startswith("vl_live_"))
+        self.assertEqual(users.asked, ["user-123"])
 
     async def test_there_is_no_plan_gate_on_creation(self) -> None:
         # The old branch refused keys on the free plan; this phase does not.

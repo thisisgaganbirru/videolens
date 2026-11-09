@@ -201,6 +201,26 @@ class RunStore:
         if run is not None:
             await self._refresh_owner_index(run.owner_id)
 
+    async def delete_for_owner(self, owner_id: str) -> int:
+        """Account deletion. In Redis the owner index is the only way to find
+        an owner's runs; it holds at most `_HISTORY_INDEX_CAP` ids, and any
+        older run would already be near its TTL. A run a worker is still
+        processing stays deleted: `_update` reads before it writes and skips a
+        run that is gone."""
+        if self._settings.queue_enabled:
+            client = self._client()
+            index_key = self._owner_index_key(owner_id)
+            run_ids = await client.zrange(index_key, 0, -1)
+            keys = [self._key(run_id) for run_id in run_ids]
+            removed = await client.delete(*keys) if keys else 0
+            await client.delete(index_key)
+            return int(removed or 0)
+        async with self._lock:
+            doomed = [run_id for run_id, run in self._memory.items() if run.owner_id == owner_id]
+            for run_id in doomed:
+                del self._memory[run_id]
+        return len(doomed)
+
     async def ping(self) -> bool:
         if not self._settings.queue_enabled:
             return True

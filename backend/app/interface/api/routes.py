@@ -194,6 +194,19 @@ async def me(request: Request, principal: Principal = Depends(get_signed_in_prin
     )
 
 
+@router.delete("/api/me", status_code=204)
+@limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
+async def delete_me(request: Request, principal: Principal = Depends(require_person)) -> Response:
+    """Delete the signed-in person's account for good: their server-side
+    runs, API keys, workspace and account rows, then their Supabase user.
+    A signed-in session only (`require_person`: anonymous 401, API key 403);
+    503 without an account store. A retry after a part-way failure is 204;
+    after a complete deletion the same token is refused (401), since the
+    Supabase user it names no longer exists."""
+    await container.delete_account_use_case.execute(principal)
+    return Response(status_code=204)
+
+
 def _api_key_response(key: ApiKey) -> ApiKeyResponse:
     return ApiKeyResponse(
         key_id=key.key_id,
