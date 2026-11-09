@@ -71,7 +71,7 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=container.settings.allowed_origin_list,
-    # DELETE for `DELETE /api/keys/{id}`.
+    # DELETE for `DELETE /api/keys/{id}` and `DELETE /api/me`.
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     # Listed explicitly, never "*": `Authorization` (a Supabase session token
     # or a `vl_live_` key) and `X-Api-Key` are credentials, and a wildcard

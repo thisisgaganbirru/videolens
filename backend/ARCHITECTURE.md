@@ -54,6 +54,8 @@ arq worker), `get_run` (ownership plus the abandoned-run backstop),
 | `TokenVerifier` | `auth/jwt_verifier.py` | RS256/ES256, required `exp`/`iat`/`sub`, 30 s leeway, audience when set; one caching JWKS client |
 | `AccountDirectory` | `persistence/account_directory.py` | SQL (Postgres via asyncpg, SQLite in tests) or in-memory; disabled in distributed mode without `DATABASE_URL` |
 | `ApiKeyRepository` | `persistence/api_key_repository.py` | SHA-256 only, cap enforced in the insert transaction, `last_used_at` at most once a minute |
+| `IdentityProviderUsers` | `persistence/identity_users.py` | Whether Supabase still has a user (`auth_user_exists`); asked on first sight of a subject and before key issue, so a token that outlived its deleted user cannot re-create rows. SQLite and in-memory: always yes |
+| `AccountDeleter` | `persistence/account_deleter.py` | Account deletion: identity rows in one transaction, then the Supabase user via the `SECURITY DEFINER` function from `0002_auth_user_deleter` (skipped on SQLite and in memory) |
 | — | `persistence/database.py`, `schema.py` | One async engine; schema owned by Alembic (`backend/migrations/`, a release step) |
 | `CapabilityProbe` | `health/probes.py` | One per dependency (`auth` is the seventh); `probed=False` where a check would cost money |
 | `ReleaseCatalog` | `releases/github_releases.py` | Server-side GitHub read; parses `v<version>-build<code>` tags |
@@ -125,3 +127,5 @@ one-line shims so the Dockerfile, compose file and Railway configs reference
 
 - 2026-11-07 · main session · rewritten as a codemap; merged the security pass (`security_headers.py`, trusted-proxy client IP, read-endpoint limit, startup refusal on a CORS wildcard): port/adapter table, invariants, cross-cutting; covers the resolver chain, captions, probes, releases, free runs and device tokens
 - 2026-11-08 · backend subagent (auth phase 1) · added the identity slice: `identify_caller` and the account/API-key use cases, `AccountDirectory` and `ApiKeyRepository` ports with SQL and in-memory adapters, `database.py`/`schema.py` and Alembic, the `auth` probe, the new routes and dependencies; layering violations down to two
+- 2026-11-09 · backend subagent (auth phase 3) · added the `AccountDeleter` port and adapters, `RunRepository.delete_for_owner`, `DeleteAccountUseCase` (`DELETE /api/me`) and the `database` probe
+- 2026-11-09 · backend subagent (auth phase 3, review fix) · added the `IdentityProviderUsers` port and adapters

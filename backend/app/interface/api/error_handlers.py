@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
 from ...domain.errors import (
+    AccountDeletionError,
     ApiKeyLimitError,
     ApiKeyNotFoundError,
     AuthenticationError,
@@ -34,6 +35,7 @@ _STATUS_BY_ERROR = {
     ForbiddenError: 403,
     ApiKeyNotFoundError: 404,
     ApiKeyLimitError: 409,
+    AccountDeletionError: 500,
     # Covers AccountsNotConfiguredError, its subclass.
     AuthNotConfiguredError: 503,
 }

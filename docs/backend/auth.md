@@ -2,8 +2,10 @@
 
 Every request resolves to one `Principal`: an anonymous browser, a signed-in
 person (a Supabase access token), or an agent holding an API key. Phase 1 of
-`docs/auth-plan.md` (backend identity) is implemented on `feat/auth-supabase`.
-It is pending a PR, and no frontend sign-in exists yet (that is phase 2).
+`docs/auth-plan.md` (backend identity) is implemented on `feat/auth-supabase`,
+phase 2 (frontend sign-in) on the same branch, and phase 3's backend half
+(account deletion, `DELETE /api/me`, and the `database` capability) is in
+the tree, uncommitted, pending review. None of it is merged yet.
 
 ## Files
 
@@ -12,18 +14,22 @@ It is pending a PR, and no frontend sign-in exists yet (that is phase 2).
 | domain | `entities.py` | `AuthMethod`, `Principal` (+ `method`, `account_id`, `workspace_id`, `email`, `owner_id`), `Account`, `Workspace`, `WorkspaceRole`, `ApiKey`, `ApiKeyCreated` |
 | domain | `entitlements.py` | `Plan.FREE` only, `Entitlement`, `entitlement_for` |
 | domain | `policies.py` | `is_valid_client_id`, `looks_like_api_key` (`vl_live_`), `can_access_run`, `quota_key`, `quota_key_from_headers` (fallback) |
-| domain | `errors.py` | `AuthenticationError` 401, `ForbiddenError` 403, `ApiKeyNotFoundError` 404, `ApiKeyLimitError` 409, `ClientIdInvalidError` 400, `AuthNotConfiguredError` / `AccountsNotConfiguredError` 503 |
-| domain | `ports.py` | `TokenVerifier`, `AccountDirectory`, `ApiKeyRepository` |
+| domain | `errors.py` | `AuthenticationError` 401, `ForbiddenError` 403, `ApiKeyNotFoundError` 404, `ApiKeyLimitError` 409, `ClientIdInvalidError` 400, `AccountDeletionError` 500, `AuthNotConfiguredError` / `AccountsNotConfiguredError` 503 |
+| domain | `ports.py` | `TokenVerifier`, `AccountDirectory`, `ApiKeyRepository`, `AccountDeleter`, `RunRepository.delete_for_owner` |
 | application | `identify_caller.py` | `IdentifyCallerUseCase`: the whole credential precedence |
 | application | `entitlements.py`, `get_account.py` | `EntitlementResolver.for_principal`, `GetAccountUseCase` (`/api/me`) |
 | application | `api_key_access.py`, `create_api_key.py`, `list_api_keys.py`, `revoke_api_key.py` | key management and its gate |
+| application | `delete_account.py` | `DeleteAccountUseCase` (`DELETE /api/me`) |
 | infrastructure | `auth/jwt_verifier.py` | `JwtVerifier` (PyJWT, one caching `PyJWKClient`) |
 | infrastructure | `persistence/database.py`, `schema.py` | async engine (asyncpg / aiosqlite), the four tables |
 | infrastructure | `persistence/account_directory.py`, `api_key_repository.py` | SQL and in-memory adapters |
-| infrastructure | `health/probes.py` | `AuthProbe` (`auth` capability) |
+| infrastructure | `persistence/account_deleter.py` | `SqlAccountDeleter`, `InMemoryAccountDeleter` |
+| infrastructure | `persistence/identity_users.py` | `SqlIdentityProviderUsers` (`auth_user_exists`), `AlwaysPresentIdentityProviderUsers` |
+| infrastructure | `persistence/run_repository.py` | `RunStore.delete_for_owner` (Redis owner index, or memory) |
+| infrastructure | `health/probes.py` | `AuthProbe` (`auth` capability), `DatabaseProbe` (`database` capability) |
 | interface | `api/dependencies.py` | `get_principal`, `get_signed_in_principal`, `require_person` |
-| interface | `api/routes.py`, `schemas.py` | `GET /api/me`, `GET|POST /api/keys`, `DELETE /api/keys/{id}` |
-| migrations | `backend/alembic.ini`, `backend/migrations/` | `0001_identity` |
+| interface | `api/routes.py`, `schemas.py` | `GET /api/me`, `DELETE /api/me`, `GET|POST /api/keys`, `DELETE /api/keys/{id}` |
+| migrations | `backend/alembic.ini`, `backend/migrations/` | `0001_identity`, `0002_auth_user_deleter` |
 
 ## Who is calling (`IdentifyCallerUseCase.resolve`)
 
@@ -58,7 +64,7 @@ Supabase values: `AUTH_JWKS_URL=https://<ref>.supabase.co/auth/v1/.well-known/jw
 
 - `get_principal`: any caller, used by the existing run routes and unchanged for them.
 - `get_signed_in_principal`: a person or an API key. Anonymous gets 401. Used by `GET /api/me`.
-- `require_person`: a signed-in person only. Anonymous gets 401 and an API key gets 403, so a leaked agent key cannot mint more keys. Used by all `/api/keys` routes and, in phase 3, by account deletion.
+- `require_person`: a signed-in person only. Anonymous gets 401 and an API key gets 403, so a leaked agent key cannot mint more keys. Used by all `/api/keys` routes and by `DELETE /api/me`.
 
 A 401 carries `WWW-Authenticate: Bearer`.
 
@@ -70,10 +76,88 @@ A 401 carries `WWW-Authenticate: Bearer`.
 | `GET /api/keys` | person (workspace owner) | `{keys: [...]}`, newest first, including revoked keys (`active: false`, `revoked_at`) |
 | `POST /api/keys` `{name}` | person (workspace owner) | 201 with the key and its `secret`, shown once. Names are trimmed to 80 characters and default to "Unnamed key" |
 | `DELETE /api/keys/{key_id}` | person (workspace owner) | 204. A key from another workspace or an unknown key gets 404 |
+| `DELETE /api/me` | person only | 204, no body. Anonymous 401, API key 403, no account store 503, a failure part-way 500 (see *Account deletion*) |
 
 The entitlement is the single free plan at the deployment's limits (`MAX_VIDEO_DURATION_SECONDS`, `MAX_FILE_SIZE_MB`), with `metered=false`, `api_access=true` and `library=false`. There is no plan gate on API keys.
 
 CORS lists `Authorization`, `Content-Type`, `X-Api-Key`, `X-Client-ID`, `X-Gemini-Api-Key` and `X-Device-Token`, and allows `DELETE`.
+
+## Account deletion (`DELETE /api/me`, phase 3)
+
+`DeleteAccountUseCase` removes a signed-in person for good. The order is the design:
+
+1. **Server-side runs.** `RunRepository.delete_for_owner` for `user:<sub>` and for `key:<id>` of every key in the person's workspace (runs an agent created belong to the same person). In Redis the owner index (`videolens:owner:<owner>:runs`, at most 50 ids) is the only way to find them; the run keys and the index go. Best effort: a run-store failure is logged and the deletion carries on, because runs expire within `RUN_TTL_SECONDS` anyway. A run a worker is still processing stays gone (`_update` reads before it writes and skips a missing run).
+2. **Identity rows, one transaction.** `AccountDeleter.delete_account`: `api_keys` of the workspaces the account owns, then `workspace_members` (of those workspaces, and the account's own memberships elsewhere), then `workspaces`, then `accounts`. Children first, since the foreign keys have no `ON DELETE CASCADE`. A failure rolls the whole transaction back and is a 500; the Supabase user is untouched.
+3. **The Supabase user, last.** `AccountDeleter.delete_identity` runs `SELECT videolens_private.delete_auth_user(:uuid)`. It goes last so that if anything earlier fails, the person still exists in `auth.users`, their session still verifies, and a retry can finish. A failure here is also a 500 (rows already gone).
+
+**Retry-safe, and final once complete.** The access token is stateless and still verifies for up to an hour after deletion. Left alone, it would re-create an empty account on its next request (`resolve_account` inserts on first sight of a subject) and could then mint an API key bound to a subject nobody can sign in as again, so nobody could ever list or revoke it (review finding, 2026-11-09; reachable with no attacker, e.g. a second device still signed in). So before creating rows for a subject it has not seen, the account directory asks `IdentityProviderUsers.exists` (on Postgres, `videolens_private.auth_user_exists(uuid)`); a gone user is `401 "Invalid access token."` with nothing written. `CreateApiKeyUseCase` asks again right before issuing a key, which closes the race where a concurrent request re-creates rows between step 2 and step 3. Consequences:
+
+- A retry after a step 2 or step 3 failure still works and returns 204: the Supabase user still exists, so the person resolves and the steps run again (step 2 finding no rows is not an error; step 3 always runs).
+- **A second `DELETE /api/me` after a complete deletion is 401, not 204**, and so is every other signed-in request with that token (`/api/me`, `/api/keys`). The frontend signs out after a 204 anyway.
+- Reads of an existing account never ask (no extra query per request). An account whose rows still exist resolves normally even if the user is gone, so a retry can always find the person.
+- On SQLite and the in-memory store there is no provider to ask: every subject exists.
+
+Only the account id is logged (no email, no subject).
+
+**Where the identity step is skipped.** On SQLite (no `auth` schema) and with the in-memory store (local `uvicorn` without `DATABASE_URL`) `delete_identity` logs and returns False; a real Supabase user, if any, stays. A subject that is not a UUID (a non-Supabase IdP) is skipped the same way, with a WARNING.
+
+**503** when there is no account store (blank `DATABASE_URL` in distributed mode), the same condition `/api/keys` uses. The use case also refuses an API-key principal itself (403), behind `require_person`.
+
+The frontend keeps the person's own local data (IndexedDB History, the BYOK key) and only signs out; see `docs/frontend/auth-sign-in.md`.
+
+### Why a `SECURITY DEFINER` function (`0002_auth_user_deleter`)
+
+Supabase's `postgres` holds `DELETE` on `auth.users` with `is_grantable = NO` (verified on `videolens-dev`, 2026-11-08), so 0001's direct grant to `videolens_api` never takes. The alternative, the Admin API with a service-role key on Railway, is what auth-plan decision 2 rules out. So `0002` creates, on Postgres only:
+
+```sql
+CREATE SCHEMA IF NOT EXISTS videolens_private;
+REVOKE ALL ON SCHEMA videolens_private FROM PUBLIC;
+GRANT USAGE ON SCHEMA videolens_private TO videolens_api;
+CREATE OR REPLACE FUNCTION videolens_private.delete_auth_user(target uuid)
+  RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = ''
+  AS $$ DELETE FROM auth.users WHERE id = target $$;
+CREATE OR REPLACE FUNCTION videolens_private.auth_user_exists(target uuid)
+  RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = ''
+  AS $$ SELECT EXISTS (SELECT 1 FROM auth.users WHERE id = target) $$;
+-- for each of the two functions:
+REVOKE ALL ON FUNCTION videolens_private.delete_auth_user(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION videolens_private.delete_auth_user(uuid) TO videolens_api;
+```
+
+`auth_user_exists` is the read-only partner the first-sight check uses (above); the backend role cannot read `auth.users` either.
+
+- The functions are owned by whoever runs Alembic, which must be `postgres`: it runs with the owner's rights, so it can delete the row the backend role cannot.
+- `videolens_private` is never added to PostgREST's exposed schemas, so the function is not reachable over the REST API.
+- `SET search_path = ''` is Supabase's hardening rule for definer functions: the body names `auth.users` fully, and nothing on a caller's search path can shadow it.
+- `PUBLIC` loses the default `EXECUTE` and `USAGE`; only the backend role gets them.
+- Online, the migration fails (Alembic records nothing) if the role is missing, if `has_function_privilege('videolens_api', …, 'EXECUTE')` is false afterwards for either `videolens_private.delete_auth_user(uuid)` or `videolens_private.auth_user_exists(uuid)`, or if `anon`/`authenticated` have `USAGE` on the schema. Offline (`--sql`) these checks are skipped, so after applying a rendered script run the same `has_function_privilege` query by hand.
+- Downgrade drops both functions, then the schema (`RESTRICT`: anything else that lands there stops the downgrade rather than vanishing). SQLite is a no-op both ways.
+
+### Data after account deletion
+
+Researched 2026-11-09 against `videolens-dev` (ref `pjekwwiaocywdbwqgtgl`, org `gagan-dev`, Pro, Postgres 17.11) and the Railway workspace "gaganbirru's Projects". Read-only throughout: catalog `SELECT`s, Logs counts (no values read), dashboard pages viewed without changing anything. Migration 0002 is **not applied** yet (no `videolens_private` functions exist on the project), so today step 3 cannot run; every Supabase row below assumes it has been.
+
+| Location | What remains after `DELETE /api/me` | How long | Status and evidence |
+|---|---|---|---|
+| Our tables (`accounts`, `workspaces`, `workspace_members`, `api_keys`) | Nothing in the live database | Gone at once (one transaction) | **Verified** in code: `account_deleter.py` `delete_account` |
+| `auth.users` + `identities`, `sessions` (and through it `refresh_tokens`, `mfa_amr_claims`), `mfa_factors`, `one_time_tokens`, `oauth_authorizations`, `oauth_consents`, `webauthn_*`, `mfa_recovery_code_sets` | Nothing: each references `auth.users` (directly or via `sessions`/`mfa_factors`) with `ON DELETE CASCADE` | Gone at once | **Verified**: `pg_constraint` query on the project. Only `auth.scim_users` is `SET NULL` (SSO/SCIM, unused here) |
+| `auth.flow_state` | One row per email sign-up/sign-in flow: `user_id` (UUID), provider type, timestamps. No email column. No FK to `auth.users`, so not cascaded | Until Supabase Auth's cleanup removes rows older than 24 h | **Verified**: column list and absent FK (catalog); cleanup rule in `supabase/auth` `internal/models/cleanup.go`: "created_at < now() - interval '24 hours'". That the hosted cleanup actually runs on this project is **unverified** (the only row is under 24 h old) |
+| `auth.audit_log_entries` (table) | Nothing is written: 0 rows although a sign-up happened | n/a | **Verified**: `count(*) = 0`; dashboard Authentication → Audit Logs shows "Write audit logs to the database" switched off. If switched on: no FK to `auth.users`, `payload` would hold `actor_id` and `actor_username` (the email), and no cleanup rule touches it, so rows would stay until deleted by hand |
+| Supabase Auth audit logs (Logs, source `auth_audit_logs`) | Events with `actor_id` and `actor_username` = the email (sign-up, confirmation, token refresh/revoke) | Pro: 7 days viewable | **Verified** content: count query, 4 of 4 events carry an email in `actor_username`. Retention: supabase.com/pricing, Pro "Auth audit logs" 7 days. Physical purge after 7 days **unverified** |
+| Supabase Auth server logs (`auth_logs`) | Some lines carry the email (4 of 37 in 24 h), plus `actor_id` and client IP (`remote_addr`) | Pro: 7 days viewable | **Verified** content (count query); retention supabase.com/pricing, "7-day log retention". Purge **unverified** |
+| Supabase API gateway (`edge_logs`) | Client IP, path, user agent per request; no email in the 40 sampled lines | Pro: 7 days viewable | **Verified** for one 24 h window only; retention as above |
+| Supabase Postgres logs (`postgres_logs`) | No email in the sampled window | Pro: 7 days viewable | **Verified** for one 24 h window only |
+| Supabase daily backups | The whole database as at backup time, including `auth.users` (email) and our rows. A restore brings the deleted person back | Pro: last 7 days of daily backups, so at most about 7 days after deletion | **Verified**: dashboard Database → Backups lists daily **PHYSICAL** backups (07 and 08 Nov 2026); docs.supabase.com/guides/platform/backups: "Pro Plan projects can access the last 7 days of daily backups". Whether older backups are destroyed rather than hidden **unverified** |
+| Supabase Point-in-Time Recovery | Not enabled | n/a | **Verified**: dashboard Backups → Point in time shows "available as an add-on" |
+| Supabase as processor | Customer data falls under the DPA, not the privacy notice | DPA cl. 11.2: delete all copies after the agreement ends; no day count, no backup-specific period, nothing per record | **Verified**: supabase.com/legal/dpa, "delete all copies of Covered Data"; supabase.com/privacy: the notice "does not apply to such processing" |
+| Railway logs (backend stdout) | Normal path: the account id only. **Failure path:** a database error inside `resolve_account` reaches uvicorn's unhandled-exception log, and one inside `delete_account` is logged by `logger.exception`; SQLAlchemy used to print bound parameters in the exception text, so such a line could carry the email (`resolve_account`) or the Supabase `sub` (`delete_account` filters on `external_id`). **Fixed 2026-11-09:** both engines in `database.py` and the Alembic engine in `migrations/env.py` set `hide_parameters=True`, so the text reads `[SQL parameters hidden due to hide_parameters=True]` | Hobby plan: 7-day log history | **Verified**: railway.com/workspace/plans shows "You're on the Hobby Plan" and "7-Day Log History"; docs.railway.com/observability/logs: Hobby 7 days; parameter printing reproduced locally (SQLAlchemy 2.1.8, `[parameters: (...)]`); the fix is covered by `HiddenParameterTests` in `tests/infrastructure/persistence/test_sql_adapters.py`. Lines written before the fix deployed may still hold identifiers until Railway drops them. The same docs page says upgrading "will immediately restore logs" past the window, so Railway keeps logs longer than it shows: real deletion time **unverified**. Whether such a line exists today **unverified** (logs not searched) |
+| Redis: runs | Run records and the owner index | Deleted at once; a missed one expires within `RUN_TTL_SECONDS` (3600 s) | **Verified** in code: `run_repository.py` `delete_for_owner`, `ex=run_ttl_seconds` |
+| Redis: arq job/result keys | `run_id`, `source_url`, `source_key`, the job result; no owner, email or account id | arq `keep_result` 3600 s | **Verified**: `job_queue.py` enqueue args; arq 0.28.0 `Worker.__init__` default `keep_result=3600` |
+| Redis: rate-limit counters | Key `account:<account id>` (internal UUID, not the email) | Expires with its window (1 h and 1 min limits) | **Verified** key shape in `domain/policies.py` `quota_key`; the expiry is the `limits` library's fixed window, not read from its source |
+| Redis: free runs, daily cap, BYOK vault | Free runs keyed by device id and a SHA-256 of the IP (not the account); daily cap a count only; BYOK key per run | 48 h (`free_run_allowance.py`, `daily_budget.py`); BYOK 900 s, single-use (`key_vault.py`) | **Verified** in code. None is keyed by account |
+| Browser | History (IndexedDB) and the BYOK key | Until the person clears them | By design; see `docs/frontend/auth-sign-in.md` |
+
+Upper bound on the Supabase side: about 7 days (backups, Auth logs), if Supabase destroys what it stops showing. Railway: 7 days shown, kept longer for an unstated period. What would close the gaps: Supabase support on destruction of expired daily backups and logs; Railway support on the real Hobby log deletion period. (`hide_parameters=True` on the engine, the third item, is done.)
 
 ## API keys
 
@@ -130,9 +214,19 @@ On Postgres, `0001_identity` also does the following:
 
 - It enables RLS on all four tables, so Supabase's `anon`/`authenticated` REST roles see nothing.
 - It grants that role `USAGE` on `public`, CRUD on each table, and a `FOR ALL TO videolens_api USING (true)` policy per table. Without the policy, RLS would block the backend's own non-owner role too. (It used to skip these with a NOTICE when the role was missing. asyncpg drops notices unless a listener is registered, so the skip was silent, Alembic recorded head anyway, and every signed-in request would later have failed with permission denied. Hence the hard failure.)
-- It grants `USAGE ON SCHEMA auth` plus `SELECT (id), DELETE ON auth.users` for phase 3 account deletion. A refusal does not fail the migration, but afterwards `has_table_privilege(role, 'auth.users', 'DELETE')` is checked and a missing privilege is reported at WARNING in the log and on Alembic's stdout. **Verified 2026-11-08 against `videolens-dev`: the grant does not take.** Supabase's `postgres` holds `DELETE` on `auth.users` with `is_grantable = NO` (only `SELECT` is grantable), so the statement "succeeds" with a server WARNING and `videolens_api` ends up without `DELETE`. Phase 3 therefore cannot delete `auth.users` rows through the backend role directly; the idiomatic route is a `SECURITY DEFINER` function owned by `postgres` in a non-exposed schema (e.g. `private.delete_auth_user(uuid)`), with `EXECUTE` granted only to `videolens_api`, so the backend still holds no Supabase API key. The alternative is the Admin API with the service-role key on Railway, which the plan's decision 2 avoids.
+- It grants `USAGE ON SCHEMA auth` plus `SELECT (id), DELETE ON auth.users` for phase 3 account deletion. A refusal does not fail the migration, but afterwards `has_table_privilege(role, 'auth.users', 'DELETE')` is checked and a missing privilege is reported at WARNING in the log and on Alembic's stdout. **Verified 2026-11-08 against `videolens-dev`: the grant does not take.** Supabase's `postgres` holds `DELETE` on `auth.users` with `is_grantable = NO` (only `SELECT` is grantable), so the statement "succeeds" with a server WARNING and `videolens_api` ends up without `DELETE`. Phase 3 therefore deletes `auth.users` rows through `videolens_private.delete_auth_user(uuid)`, a `SECURITY DEFINER` function that `0002_auth_user_deleter` creates (see *Account deletion*), so the backend still holds no Supabase API key.
 - `migrations/env.py` registers an asyncpg log listener, so server NOTICEs and WARNINGs raised during a migration are printed rather than dropped.
 - `alembic upgrade head --sql` (offline) renders the script without the role and privilege checks, since there is no connection to ask.
+
+To render only `0002` for a database already at `0001_identity` (it ends with the `alembic_version` update), point `DATABASE_URL` at any Postgres URL (offline mode never connects) and give the range:
+
+```bash
+cd backend
+DATABASE_URL=postgresql://offline@localhost/offline GEMINI_API_KEY=k \
+  alembic upgrade 0001_identity:0002_auth_user_deleter --sql > phase3.sql
+```
+
+Apply it as `postgres` (SQL editor or connector), then check that `SELECT has_function_privilege('videolens_api', 'videolens_private.delete_auth_user(uuid)', 'EXECUTE'), has_function_privilege('videolens_api', 'videolens_private.auth_user_exists(uuid)', 'EXECUTE');` returns true twice, and that `videolens_private` is not in the project's exposed schemas.
 
 The deployed `DATABASE_URL` then uses `videolens_api`, not `postgres`. The Dockerfile does not copy `migrations/`, so run Alembic from a checkout.
 
@@ -157,6 +251,8 @@ The `auth` row in `/api/capabilities` is how the frontend learns whether to offe
 
 The probe uses the verifier's own caching client, and the capability result is itself cached for 10 seconds.
 
+The `database` row (`DatabaseProbe`, after `auth`) says whether the account store answers: `disabled` when `DATABASE_URL` is blank (`probed=false`), `ok` on a `SELECT 1` within 5 s, `degraded` otherwise (anonymous use keeps working; the exception class goes to `log_detail`). See `capabilities.md`.
+
 ## Tests
 
 - `tests/infrastructure/auth/test_jwt_verifier.py`: claim rules (expired, leeway, audience on/off/missing, issuer, missing `sub`/`exp`/`iat`, wrong key, HS256 refused), the ES256 Supabase shape, and the log carrying the `kid` but not the token.
@@ -167,6 +263,10 @@ The probe uses the verifier's own caching client, and the capability result is i
 - `tests/infrastructure/health/test_probes.py`: `AuthProbe` states.
 - `tests/interface/api/test_account_routes.py`: the 401/403 matrix, both key headers, a revoked key, the 409 cap, the 503 when unconfigured, and the CORS preflight.
 - `tests/interface/api/test_rate_limiter.py`: the principal-based bucket and the header fallback.
+- `tests/application/test_delete_account.py`: order (runs, rows, identity last), only the person's runs go, API-key 403, no store 503, row failure keeps the identity, identity failure after rows, run-store failure does not stop it, repeat calls, skipped identity step; end to end over the in-memory adapters.
+- `tests/infrastructure/persistence/test_account_deleter.py`: one suite on SQLite and in-memory (the person's rows go, another person's account, workspace, key and owner membership stay, the person's membership in someone else's workspace goes, revoked keys go, repeat delete is False); the SQL transaction rolls back on a mid-way failure; the Postgres identity step calls the definer function with the UUID and skips a non-UUID subject; `0002` with Alembic mocked (DDL, revoke before grant, missing role, `has_function_privilege` false, REST role with schema USAGE, offline, SQLite no-op, downgrade order, role-name validation).
+- `tests/infrastructure/persistence/test_run_repository.py::DeleteForOwnerTests`, `tests/infrastructure/health/test_probes.py::DatabaseProbeTests`, and the `DELETE /api/me` cases in `test_account_routes.py` (401, 403 for both key headers, 204 with no body, 503, readable 500; after a complete deletion the same token gets 401 on `DELETE /api/me`, `GET /api/me` and `POST /api/keys`; a retry after an identity-step failure is 204).
+- Review fix (2026-11-09): `test_account_deleter.py::SqlFirstSightTests` / `InMemoryFirstSightTests` (a gone user is 401 with no rows written; first sight asks once, later reads never ask; an existing account with a gone user still reads), `IdentityProviderUsersTests` (Postgres calls `auth_user_exists`, non-UUID is gone without a query, SQLite and in-memory always present), the 0002 tests for the second function, its grants, both verify checks and its downgrade; `test_api_keys.py` key creation refused once the user is gone.
 
 - `tests/infrastructure/persistence/test_sql_adapters.py::PostgresMigrationPathTests`: the Postgres branch with Alembic mocked (missing role fails before DDL, grants/RLS/policies applied, missing `auth.users` DELETE warns without failing, offline rendering, role-name validation).
 - `tests/infrastructure/auth/test_jwt_verifier.py::JwksRefreshThrottleTests`: an unknown `kid` forces at most one refetch per window, a rotated key is picked up, and a missing `kid`, a bad `alg` or a malformed token never fetch.
@@ -186,3 +286,7 @@ The application code has not yet run against a real Supabase project: the SQL ad
 - 2026-11-08 · main session · dashboard Auth settings and Railway `dev` variables done; "not run against a real project" paragraph narrowed to the application code; end-to-end check deferred to the `dev` merge
 - 2026-11-08 · backend subagent (auth phase 1) · rewritten as the implemented reference. Covers `IdentifyCallerUseCase` (API key, then bearer, then client id); accounts, workspaces and API keys in Postgres via SQLAlchemy and Alembic, with in-memory or disabled fallbacks; `/api/me` and `/api/keys`; `require_person`; the stricter JWT rules (leeway, required claims, optional audience); account-keyed quota; the `auth` capability. Absorbs the parked branch's accounts-workspaces and api-keys docs
 - 2026-11-08 · backend subagent (auth phase 1, review fixes) · JWT header screened before key lookup and unknown-kid JWKS refetches throttled to one per 60 s (5 s fetch timeout); `role: authenticated` required and `is_anonymous` refused; case-insensitive `Bearer`; distributed mode refuses a SQLite `DATABASE_URL`; the migration fails on a missing backend role instead of a silent NOTICE, checks the `auth.users` DELETE privilege and warns loudly, and `env.py` surfaces server notices; Known issues section added
+- 2026-11-09 · backend subagent (auth phase 3) · `DELETE /api/me` (deletion order, idempotency, where the identity step is skipped), migration `0002_auth_user_deleter` and why it is a `SECURITY DEFINER` function, offline render of 0002 alone, the `database` capability, phase 3 tests
+- 2026-11-09 · backend subagent (auth phase 3, review fix) · a still-valid token can no longer re-create a deleted account or mint an unrevocable key: `IdentityProviderUsers` port, `videolens_private.auth_user_exists(uuid)` added to 0002 (edited in place, never applied), checked on first sight of a subject and before key issue; a second `DELETE /api/me` after a complete deletion is now 401, not 204; idempotency wording, SQL block, verify checks and tests updated
+- 2026-11-09 · research subagent · "Data after account deletion": what survives deletion and for how long (Supabase backups and PITR, auth.* cascades and flow_state, audit log table off, Supabase and Railway log retention, DPA, Redis keys), each row marked verified or unverified with evidence; the SQLAlchemy parameters-in-traceback leak to Railway logs noted
+- 2026-11-09 · backend subagent (log hygiene) · engine hides bound parameters in error text
