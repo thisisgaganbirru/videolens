@@ -207,3 +207,42 @@ export function useEmailCodeSignIn() {
 export function signOut(): Promise<void> {
   return authSession.signOut();
 }
+
+/** Where "Sign out everywhere" is. `failed` keeps the person signed in. */
+export type SignOutEverywherePhase = "idle" | "working" | "failed";
+
+/**
+ * Ends every session of the signed-in person, this device last. On success
+ * the session listeners fire and the panel falls back to the signed-out view
+ * as after `signOut()`. On failure nothing changes here and `error` says so.
+ *
+ * Other devices are signed out at their next token refresh: the API checks
+ * tokens by signature only, so an access token already issued keeps working
+ * until it expires (up to an hour). VideoLens API keys are not revoked.
+ */
+export function useSignOutEverywhere() {
+  const [phase, setPhase] = useState<SignOutEverywherePhase>("idle");
+  const [error, setError] = useState<string | null>(null);
+
+  const run = useCallback(async () => {
+    if (phase === "working") return;
+    setPhase("working");
+    setError(null);
+    try {
+      await authSession.signOutEverywhere();
+      setPhase("idle");
+    } catch (err) {
+      const reason = err instanceof AuthFlowError ? err.reason : "unknown";
+      setError(
+        reason === "unreachable"
+          ? "Can't reach the sign-in service, so nothing changed. You are still signed in. Check your connection and try again."
+          : reason === "rate_limited"
+            ? "Too many attempts. Wait a minute, then try again. You are still signed in."
+            : "Signing out everywhere did not work. You are still signed in. Try again."
+      );
+      setPhase("failed");
+    }
+  }, [phase]);
+
+  return { phase, error, run };
+}

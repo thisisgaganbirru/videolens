@@ -273,7 +273,15 @@ export interface AuthSession {
   requestEmailCode(email: string): Promise<void>;
   /** Exchanges the emailed code for a session. */
   verifyEmailCode(email: string, code: string): Promise<void>;
+  /** Signs out on this device only. Never rejects; the stored session is
+   *  cleared even when the provider cannot be reached. */
   signOut(): Promise<void>;
+  /** Ends every session of this person (other devices and this one). Rejects
+   *  with `AuthFlowError` when the provider refused or could not be reached,
+   *  and then this device **stays signed in**. Other devices keep a valid
+   *  access token until it expires (the API verifies tokens by JWKS only),
+   *  and VideoLens API keys are not touched. */
+  signOutEverywhere(): Promise<void>;
   /** Called whenever the session changes (sign-in, sign-out, a token
    *  refresh, another tab). Returns unsubscribe. */
   subscribe(listener: () => void): () => void;
