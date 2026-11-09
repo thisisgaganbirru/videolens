@@ -107,20 +107,17 @@ session.
   there, even with the tab hidden.
 - **Signed out:** the optional lede, email, Send code, then the code step
   (Verify, resend, change email).
-- **Signed in:** a compact identity card (email, email sign-in, Sign out),
-  followed by Manage API keys, Data on this device, and Help & privacy.
-  Each of those three sections is a native disclosure, initially collapsed.
-  The existing, unfinished Phase 3 delete-account control remains last.
-- **Manage API keys:** opening it first mounts `ApiKeysSection` and loads
-  keys. It stays mounted when collapsed so a freshly created secret is not
-  lost by closing and reopening. It resets on leaving the page, signing out,
-  or changing users. Inside: create, Copy/Done for the one-time secret, and
-  the list with inline revoke confirmation. Technical copy stays inside.
-- **Data on this device:** links to History and the Gemini API key tab,
-  explaining that these are browser-local and separate from the account.
-- **Help & privacy:** existing Privacy, Terms, and Releases destinations.
-  No unsupported support endpoint or new account feature is added. These
-  resources also remain accessible in signed-out and unavailable states.
+- **Signed in:** the grouped-list layout (option A, 2026-11-09); see
+  "Account layout: option A, grouped list" below.
+- **API keys row:** a native disclosure. Opening it the first time sets
+  `visited`, which enables `useApiKeys` and loads the keys; nothing is
+  fetched before that. The body stays mounted when collapsed, so a freshly
+  created secret is kept. It resets on leaving the page, signing out, or
+  changing users. Inside: create, Copy/Done for the one-time secret, and the
+  list with inline revoke confirmation.
+- **On this device / Help:** plain link rows (History, Your Gemini key;
+  Privacy policy, Terms of use, What's new). They show in every state:
+  signed out, unavailable, deleted and signed in.
 - Tab links use `mainTabHref` and `goToMainTab` for plain clicks, following
   existing web/native navigation; modified clicks keep normal link behavior.
 - **Run ownership across identities.** The server holds a run for the
@@ -135,7 +132,7 @@ session.
     in from another tab.
   - same, or the record has no owner (written before auth): the old rule,
     expired, written to History.
-- **Run guard (on screen):** Verify and Sign out are also held, with a note,
+- **Run guard (on screen):** Verify, Sign out and Sign out everywhere are also held, with a note,
   while the run on Analyze is submitting, queued or processing
   (`runInProgress`), so the watched run is not interrupted at all.
 - Busy controls use `aria-disabled` and handler guards, never `disabled`,
@@ -255,6 +252,89 @@ Still to do before this ships, in order:
 4. **Phone width** on the bundled APK; signed-out form after a deliberate
    sign-out by the owner.
 
+## Account layout: option A, grouped list (2026-11-09)
+
+The owner picked option A of the layout proposal (`mem/20261109-auth-phase3-frontend.md`).
+Theme unchanged: existing tokens, Newsreader/Hanken, `.key-card`, no new
+colours, fonts or radii. Signed in, top to bottom:
+
+1. Title and lede (unchanged).
+2. **Identity card** (`aria-label="Signed in as"`, no heading): email, then
+   "Email sign-in · Free runs left on this device: N", then Sign out. N is
+   `useFreeRuns().banner.remaining`, passed from `HomeScreen` as
+   `freeRunsLeft`; when the banner is null (count unknown, the deployment has
+   no limit, or a Gemini key is saved) the free-runs part is left out. The
+   run guard note comes *after* the button, so on a phone the email and Sign
+   out are never split (on wide screens it spans the grid's second row).
+3. **"Your account"** group: one card with the **API keys** row ("Let your
+   scripts and agents use VideoLens as you"), a disclosure with a down
+   chevron that turns 180° when open. The row shows "N keys" (active keys)
+   only after the lazy fetch has answered and N > 0; there is no eager
+   fetch. If a one-time secret is still unseen and the row is collapsed, the
+   row shows "New key to copy" in accent-strong. `useApiKeys` moved up from
+   `ApiKeysSection` into `ApiKeyManager` (`useApiKeys(enabled && visited)`)
+   to make that possible.
+4. **"On this device"** group: History ("View or remove saved analyses") and
+   **Your Gemini key** ("Your own Google key for analyses. Stays in this
+   browser."), right-chevron link rows to the existing tabs. Signed in, a
+   muted note below: "Both stay in this browser when you sign out."
+5. **"Help"** group: Privacy policy, Terms of use, What's new.
+6. **End zone**, last: "Sign out everywhere" (ink, underlined text control)
+   with its helper text, then "Delete account…" as a muted underlined link.
+   The link opens the existing typed-email form in a card (behaviour, run
+   guard `RUN_GUARD_DELETE`, focus in and out, and `DeletedCard` unchanged).
+   Delete is always the last item.
+
+Heading outline: h1 Account → h2 per group (styled with History's
+`.history-group-label`) → a visually hidden h2 "Sign out everywhere or
+delete your account" over the end zone → h3 "Delete account" when the form
+is open → h4 for its two lists. Rows are at least 56px (`min-height:
+3.5rem`), the text controls 44px. The grouped card clips its corners, so row
+focus rings are inset (`outline-offset: -2px`).
+
+Removed as dead: `.acct-settings-link`, `.acct-resource-note` and the old
+disclosure-toggle padding rules. The "Manage API keys", "Data on this
+device" and "Help & privacy" disclosures are gone.
+
+### Sign out everywhere
+
+- Port: `AuthSession.signOutEverywhere()` (`domain/ports.ts`). The null
+  adapter is a no-op. Hook: `useSignOutEverywhere()` in `useAuthSession.ts`
+  (`idle | working | failed`, `error`, `run`); the panel never calls the
+  adapter.
+- **The Supabase adapter does not use `scope: "global"`.** In supabase-js
+  2.118, `_signOut` removes the local session even when the global logout
+  request fails, which would break "on failure, stay signed in". The
+  adapter calls `signOut({ scope: "others" })` first (on error nothing local
+  is touched, and it throws a classified `AuthFlowError`), then the ordinary
+  local `signOut()`. On success the net effect is the same as global. Edge
+  case: if the connection drops between the two steps, this device is still
+  signed out locally, but its own refresh token may stay valid on the server
+  until it expires.
+- Failure: an inline `error-inline` alert, and the person stays signed in.
+  Success: the session listeners fire and the panel shows the signed-out
+  view, as after Sign out. Single click, no confirm (signing in undoes it).
+- **Caveat in the copy:** the API verifies Supabase JWTs by JWKS only, so
+  another device's current access token keeps working until it expires.
+  The project docs record no custom JWT expiry, so the copy says "up to an
+  hour" (Supabase's default is 3600 s). VideoLens API keys are not revoked.
+  Helper text: "Signs you out on every device. Others may stay signed in for
+  up to an hour. API keys keep working until you revoke them."
+
+Files: `components/panels/AccountPanel.tsx`, `components/HomeScreen.tsx`
+(`freeRunsLeft` prop), `app/globals.css` (`.acct-page` grouped-list block),
+`domain/ports.ts`, `infrastructure/authSession.ts`,
+`application/useAuthSession.ts`.
+
+Checks: `tsc --noEmit` clean, `build` and `build:mobile` pass, lint shows
+only the 5 known findings. Chrome at 1536 px, signed in against the local
+dev server (read-only): identity line with free runs, the group outline,
+56px rows, 44px end controls, no horizontal scroll, no console errors. The
+API keys disclosure was opened (the list loads) but nothing was created or
+revoked, and neither sign-out control nor delete was used. Phone width and
+the installed-app shell were not checked in a browser (the Chrome window
+cannot be resized); check them on the bundled APK.
+
 ## Known limits
 
 - Legal and offline routes render `AppNav` without `showAccount`, so the
@@ -279,3 +359,4 @@ Still to do before this ships, in order:
 - 2026-11-09 · frontend subagent (auth phase 3) · hygiene: removed dead `.acct-section-head` CSS and the tooling comment, disc markers on `.acct-delete-list`, reverted `next-env.d.ts`; verified class usage, single `AccountResources` render and the `DELETE /api/me` status mapping; tsc clean, build and build:mobile pass, lint 5 known findings only; changelog put in date order (the `?`-separator duplicate was already gone), refinement section corrected on the key count and delete-card background
 - 2026-11-09 · frontend subagent (auth phase 3, review fix) · "Back to sign in" on the deleted card is held (`aria-disabled`, guard, status line) until `signOut()` settles, via a promise passed to `onDeleted`, so the old session cannot re-create the account; `rejected` deletion copy reworded to stay true when a lost-204 retry gets 401; tsc clean, build and build:mobile pass, lint 5 known only
 - 2026-11-09 · frontend agent · privacy page deletion sentence corrected (backups and logs ~7 days)
+- 2026-11-09 · frontend agent · Account tab option A layout; sign out everywhere

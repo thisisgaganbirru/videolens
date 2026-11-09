@@ -475,7 +475,11 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
 
       {activeTab === "account" && (
         <main className="view-scroll" data-view="account" aria-label="Account">
-          <AccountPanel authCapability={authCapability} runInProgress={runInProgress} />
+          <AccountPanel
+            authCapability={authCapability}
+            runInProgress={runInProgress}
+            freeRunsLeft={freeRuns.banner ? freeRuns.banner.remaining : null}
+          />
         </main>
       )}
 
