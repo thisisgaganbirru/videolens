@@ -32,7 +32,9 @@ and host → platform), `ports.ts` (the interfaces below).
 | `FirstRunStore` | `firstRunStore.ts` | splash and Welcome flags |
 | `NativeShell`, `SystemBarsStyler`, `NativeThemeMirror`, `DocumentExporter` | `nativeShell.ts`, `systemBars.ts`, `nativeTheme.ts`, `documentExporter.ts` | Capacitor only; no-ops in a browser |
 
-`apiBase.ts` holds the one `NEXT_PUBLIC_API_BASE_URL` fallback; `clientId.ts`
+`apiBase.ts` holds the one `NEXT_PUBLIC_API_BASE_URL` fallback; `siteOrigin.ts`
+the site's own public origin (`NEXT_PUBLIC_SITE_URL`, canonical links, sitemap,
+the preview image) and the `NEXT_PUBLIC_NOINDEX` switch; `clientId.ts`
 the persisted client id.
 
 **`application/`** — one hook or React-free module per concern.
