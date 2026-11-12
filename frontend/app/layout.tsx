@@ -7,6 +7,7 @@ import { SHELL_STORAGE_KEY } from "@/components/shell";
 import { LANDING_REDIRECT_SCRIPT } from "@/application/landingRedirect";
 import { SPLASH_INIT_SCRIPT } from "@/application/firstRunScripts";
 import { FONT_SCALE_INIT_SCRIPT } from "@/application/nativeFontScale";
+import { SITE_DESCRIPTION, SITE_NAME, SITE_NOINDEX, SITE_URL } from "@/infrastructure/siteOrigin";
 import "./globals.css";
 
 /* Self-hosted at build time by next/font — no request to Google at runtime,
@@ -39,17 +40,56 @@ const newsreader = Newsreader({
   display: "swap",
 });
 
+/* Site-wide metadata. Each page sets its own `title` (the template appends
+   the site name), `description` and canonical URL; everything else is
+   inherited from here. `metadataBase` is what turns the relative icon, image
+   and canonical paths into absolute URLs (infrastructure/siteOrigin.ts).
+
+   The Open Graph / Twitter card is one site-level image (`public/og.png`,
+   1200×630, rendered from the landing hero) rather than a per-page one: the
+   four public pages are one product, and a legal page's link preview should
+   still show the product. `alt` is the hero's own line. See
+   docs/frontend/seo-and-discovery.md. */
 export const metadata: Metadata = {
-  title: "VideoLens AI",
-  description: "Upload a short video and get a transcript, on-screen text, summary, and notes.",
+  metadataBase: new URL(SITE_URL),
+  applicationName: SITE_NAME,
+  title: { default: SITE_NAME, template: `%s · ${SITE_NAME}` },
+  description: SITE_DESCRIPTION,
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [
+      /* The classic path first: crawlers, link unfurlers and old browsers ask
+         for /favicon.ico without reading <link> tags. 48/32/16 in one file. */
+      { url: "/favicon.ico", sizes: "48x48 32x32 16x16" },
       { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
       { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
     ],
     apple: "/apple-touch-icon.png",
   },
+  openGraph: {
+    type: "website",
+    siteName: SITE_NAME,
+    title: SITE_NAME,
+    description: SITE_DESCRIPTION,
+    url: "/",
+    images: [
+      {
+        url: "/og.png",
+        width: 1200,
+        height: 630,
+        alt: "VideoLens AI. Turn any short video into clean notes.",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: SITE_NAME,
+    description: SITE_DESCRIPTION,
+    images: ["/og.png"],
+  },
+  /* Only the dev deployment sets NEXT_PUBLIC_NOINDEX; production inherits the
+     browser default (index, follow), so nothing is written there. */
+  ...(SITE_NOINDEX ? { robots: { index: false, follow: false } } : {}),
 };
 
 export const viewport: Viewport = {

@@ -342,11 +342,19 @@ Do not configure `YTDLP_COOKIES_FROM_BROWSER` on a hosted server.
 
 ```env
 NEXT_PUBLIC_API_BASE_URL=https://api.example.com
+# Optional. The site's own public origin, for canonical links, sitemap.xml,
+# robots.txt and the social preview image. Defaults to the production
+# Railway domain; set it when a custom domain lands.
+NEXT_PUBLIC_SITE_URL=https://app.example.com
+# Optional. Set to 1 on the dev frontend service only: robots.txt becomes
+# Disallow: /, every page gets a noindex meta and an X-Robots-Tag header.
+NEXT_PUBLIC_NOINDEX=1
 ```
 
-Because this value is inlined into the browser bundle at build time, configure
-it before building the frontend image. A frontend image or APK is therefore
-bound to one backend and cannot be promoted between environments.
+Because these values are inlined into the browser bundle at build time,
+configure them before building the frontend image. A frontend image or APK is
+therefore bound to one backend and cannot be promoted between environments.
+See `docs/frontend/seo-and-discovery.md`.
 
 ### Domains
 

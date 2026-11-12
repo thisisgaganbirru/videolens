@@ -49,6 +49,7 @@ Every new feature or component should get (or update) a doc here. Scope is stric
 | `legal-offline-routes.md` | `/privacy`, `/terms`, `/offline` |
 | `web-manifest.md` | `manifest.ts` |
 | `security-headers.md` | The CSP (web header, hash-based meta in both builds), the other security headers, Android backup rules |
+| `seo-and-discovery.md` | Per-page metadata, canonicals, sitemap.xml, robots.txt, the social preview image, favicon.ico, the noindex switch, and the 2026-11-12 launch-checklist audit |
 
 ### Cross-cutting
 
