@@ -11,7 +11,7 @@ The "Analyze" tab's entry point: paste a public media URL, or drag/drop/browse a
 - File: extension allowlist (`.mp3`/`.mp4`/`.mov`), the effective `limits.maxFileSizeMb`, and a best-effort duration check (`readMediaDuration`, via a hidden `<video>`/`<audio>` element's `loadedmetadata` event) against the effective `limits.maxDurationSeconds` — wrapped in try/catch since this can fail on some browsers/files, in which case it's silently skipped ("Backend performs authoritative validation"). The limits are no longer constants in the form (2026-11-13): see "Upload limits per tier" below.
 - URL: must parse as `http:`/`https:`.
 
-**Terms acceptance**: a checkbox, persisted in `localStorage` (`videolens-media-terms-v3`; versioned, see "Terms acceptance version") so it stays checked across sessions once accepted. Required before either submit path proceeds. Both paths explain on press rather than greying out: pressing Analyze link, pressing Browse files (click, Enter or Space) or dropping a file with the terms unticked shows "Accept the media-use terms before analysis." under the terms row (`#terms-error`, refinement 4; it used to be `#intake-error`), marks the checkbox (`aria-invalid`, danger outline), focuses it and reveals it. Browse opens no picker and the drop is not taken. Until refinement 8 Browse was simply disabled while unticked, which hid the reason and disagreed with the link path.
+**Terms acceptance**: a checkbox, persisted in `localStorage` (`videolens-media-terms-v4`; versioned, see "Terms acceptance version") so it stays checked across sessions once accepted. Required before either submit path proceeds. Both paths explain on press rather than greying out: pressing Analyze link, pressing Browse files (click, Enter or Space) or dropping a file with the terms unticked shows "Accept the media-use terms before analysis." under the terms row (`#terms-error`, refinement 4; it used to be `#intake-error`), marks the checkbox (`aria-invalid`, danger outline), focuses it and reveals it. Browse opens no picker and the drop is not taken. Until refinement 8 Browse was simply disabled while unticked, which hid the reason and disagreed with the link path.
 
 **Analyze link is enabled with an empty field (Phase 2).** It used to be
 disabled until a URL was typed; Main.png draws it as the live green primary
@@ -413,7 +413,7 @@ Owner decision "Level 2": signed in **and** a Gemini key saved → videos up to
 
 The checkbox's flag is versioned in its storage key,
 `MEDIA_TERMS_ACCEPTANCE_KEY` in `components/mediaTerms.ts`, now
-`videolens-media-terms-v3`. **Bump the version whenever the Terms change
+`videolens-media-terms-v4`. **Bump the version whenever the Terms change
 materially**: a new key reads as "not accepted", so everyone sees the box
 unticked once and re-accepts the updated Terms. Put the replaced key in
 `RETIRED_KEYS`; `readTermsAccepted` and `writeTermsAccepted` remove it
@@ -525,3 +525,4 @@ one is one line).
 - 2026-11-14 · frontend agent · UX fix spec batch b: "Paste a public link"; out-of-runs block with `blockedOffer` (sign-in / upgrade / key) and `.intake-blocked__*` classes; phone-only short h1 "New analysis" with eyebrow and lede hidden below 32rem
 - 2026-11-14 · frontend agent · reviewed Codex's simplified intake in the browser; card widened to 46rem so the consent, retention, hint and strip lines are one line each at 1024-1440; phone wrapping tidied (`text-wrap: pretty`, nowrap legal links, "200 MB"); stale UploadForm comment fixed
 - 2026-11-14 · frontend agent · desktop (60rem up) intake centred in the content band: `main.view-scroll:has(> .intake-layout)` is a size container and `.intake-layout` gets `margin-top: max(0px, (100cqb - 27rem) / 2)` (fixed anchor, so the out-of-runs card grows downward instead of re-centring; taller than the band starts at the top and scrolls). Allowance strip and h1 wrapped in `.intake-head`, a title-left / strip-right row on desktop; phones unchanged
+- 2026-11-14 · frontend agent · terms key bumped to `videolens-media-terms-v4` (Privacy/Terms: paid saved runs, 30-day hold), v3 added to `RETIRED_KEYS`; out-of-runs block extracted to `BlockedBlock`, with an inert `blockedHeld` stand-in (see free-runs.md "Remembered spent state")

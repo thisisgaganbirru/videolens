@@ -161,3 +161,4 @@ those start fresh.
 - 2026-11-08 · frontend subagent (auth phase 2) · `connect-src` gains the exact origin of `NEXT_PUBLIC_SUPABASE_URL` (`authOriginFrom`), nothing when blank; no `*.supabase.co` wildcard, on purpose
 - 2026-11-13 · frontend agent · reviewed for billing (Stripe Checkout/Portal by top-level redirect): no change. `connect-src` only governs fetch (billing fetches go to the API origin), navigation is not governed, no form posts to Stripe, `payment=()` does not reach Stripe's page. See `billing.md`
 - 2026-11-14 · frontend agent · one more pre-paint snippet, `SESSION_INIT_SCRIPT` (stamps `data-session` from the stored-session key's presence); hashed by the build, no CSP change
+- 2026-11-14 · frontend agent · one more pre-paint snippet, `LAYOUT_HINTS_INIT_SCRIPT` (`data-runs-spent`, `data-plan-paid` from localStorage presence/expiry), appended to the same inline script; hash confirmed in `out/app.html`, no CSP change
