@@ -786,6 +786,15 @@ section carries a JSX comment marking it a draft. Effective date unchanged
 (November 13, 2026). Static, no scripts: CSP hashes unchanged. Terms key
 bumped to v3 (`upload-form.md`). Detail in `billing.md`.
 
+## Daily account count (2026-11-14)
+
+Privacy "Signing in": "a count of the free runs your account has used each
+month" -> "each day", following the owner's switch of the free account to 10
+runs per UTC day. Effective date unchanged (November 13, 2026): a wording
+fix to what is counted, not a new practice. Terms untouched, so the
+media-terms key is not bumped. The "Payments" paragraph's monthly run count
+is the paid plan's and stays. Static, no scripts: CSP hashes unchanged.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported privacy/terms/offline off the Midnight Glass classes
@@ -812,3 +821,4 @@ bumped to v3 (`upload-form.md`). Detail in `billing.md`.
 - 2026-11-13 · frontend agent · Terms "Paid plan" and Privacy "Payments" sections (drafts for legal review), Stripe named under third-party services, meta descriptions updated
 - 2026-11-13 · frontend agent · Terms "Paid plan": deleting your account cancels your subscription immediately; Privacy "Payments": deletion cancels first (no refund), billing rows removed, Stripe keeps its customer record for invoices and tax (drafts)
 - 2026-11-14 · frontend agent · Privacy, Terms and 404 use `RouteNav`/`RouteTabBar` for the Account entry; `/offline` keeps plain `AppNav`/`BottomTabBar` (no network, the `auth` capability can never be read). See auth-sign-in.md
+- 2026-11-14 · frontend agent · Privacy "Signing in": the account's free-run count is kept "each day" (was "each month"); effective date and terms key unchanged

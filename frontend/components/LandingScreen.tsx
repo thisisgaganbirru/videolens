@@ -4,7 +4,7 @@ import RouteTabBar from "@/components/RouteTabBar";
 import SiteFooter from "@/components/SiteFooter";
 import SampleResult from "@/components/SampleResult";
 import LandingAllowance from "@/components/LandingAllowance";
-import { ACCOUNT_FREE_RUNS_PER_MONTH } from "@/application/accountAllowance";
+import { ACCOUNT_FREE_RUNS_PER_DAY } from "@/application/accountAllowance";
 
 /* Hallmark · macrostructure: owner board (design/shots/Landing.png, LandingWeb.png)
  * genre: editorial · theme: custom (app/tokens.css — the owner's handoff)
@@ -42,7 +42,7 @@ export default function LandingScreen() {
       <RouteNav
         activeTab={null}
         landing
-        signedOutLabel={`Get ${ACCOUNT_FREE_RUNS_PER_MONTH} free runs`}
+        signedOutLabel={`Get ${ACCOUNT_FREE_RUNS_PER_DAY} free runs`}
         signedOutShortLabel="Sign up free"
       />
 

@@ -102,7 +102,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      allowance depends on it). History re-imports the server's runs when a
      person signs in (useHistoryBoot, below), and the Account tab is offered
      only where sign-in actually works. Signed in, the server counts the
-     account's monthly free runs instead of this device's (2026-11-13), so
+     account's free runs instead of this device's (2026-11-13), so
      a sign-in or sign-out re-reads the allowance. */
   const authUser = useAuthUser();
   const freeRuns = useFreeRuns(authUser.ready ? (authUser.user?.id ?? "") : null);
@@ -334,7 +334,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                   onSubmit={submit}
                   submitting={submitting}
                   blocked={freeRuns.blocked}
-                  blockedScope={freeRuns.banner?.scope}
+                  blockedPeriod={freeRuns.banner?.period}
                   sharedUrl={formPrefill}
                   urlCapability={urlDownload}
                   /* Back at idle with an error means the submit was rejected,

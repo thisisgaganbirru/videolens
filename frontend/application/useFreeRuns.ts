@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useSyncExternalStore } from "react";
-import type { BillingPlan, FreeRunsScope, FreeRunsStatus } from "@/domain/entities";
+import type { BillingPlan, FreeRunsPeriod, FreeRunsScope, FreeRunsStatus } from "@/domain/entities";
 import { apiKeyStore, freeRunsGateway, nativeShell } from "@/infrastructure/container";
 import { forgetReadResult, isReadFailing, noteReadResult, onReconnectChance } from "@/application/serverReachability";
 
 /* Free runs (Phase 5b): an anonymous device gets a few runs per UTC day
-   without a Gemini key; a signed-in account gets its own monthly allowance
-   instead (2026-11-13). This module holds the one copy of what the app knows
+   without a Gemini key; a signed-in account gets its own allowance instead
+   (2026-11-13; per UTC day on the free plan since 2026-11-14, per month on
+   the paid one). This module holds the one copy of what the app knows
    about that allowance, outside React, because three places act on it and
    none of them owns the others:
 
@@ -19,7 +20,7 @@ import { forgetReadResult, isReadFailing, noteReadResult, onReconnectChance } fr
      limit), which arrives through `apiKeyStore.subscribe`.
 
    Two allowances, one store (2026-11-13). Signed in, the server counts the
-   account's monthly runs instead of this device's daily ones; the shared
+   account's runs instead of this device's; the shared
    `ApiClient` adds the bearer, so the same read answers for whoever is
    signed in, and `status.scope` says which allowance it is. Signing in or
    out therefore makes the cached count wrong: `useFreeRuns(identity)` sees
@@ -96,7 +97,7 @@ export function refreshFreeRuns(): Promise<FreeRunsStatus | null> {
 
 /**
  * Someone signed in or out, so the server now counts a different allowance
- * (the account's monthly runs, or this device's daily ones). Forgets the
+ * (the account's runs, or this device's). Forgets the
  * cached count, including a 402's limit state (that refusal was for the other
  * identity), and reads again unless a key is saved. Until the read lands the
  * intake shows nothing about free runs, never the other identity's number.
@@ -128,6 +129,8 @@ export function markFreeRunsUsed(limit?: number, used?: number, scope?: string):
       /* A 402 is only ever sent to the free plan (a paid account's runs past
          its allowance are billed instead). */
       plan: "free",
+      /* Both free allowances count a day (2026-11-14). */
+      period: "day",
       overage: false,
       deviceToken: prev?.deviceToken ?? "",
       limit: lim,
@@ -180,8 +183,11 @@ const hasKeySnapshot = () => apiKeyStore.get() !== "";
 const hasKeyServerSnapshot = () => false;
 
 export type FreeRunsBanner = {
-  /** `device` (per UTC day) or `account` (per UTC month); drives the copy. */
+  /** `device` (this device) or `account` (the signed-in account). */
   scope: FreeRunsScope;
+  /** `day` or `month` (2026-11-14): with the plan, drives the copy. Free
+   *  allowances (device or account) are daily, the paid one monthly. */
+  period: FreeRunsPeriod;
   /** `paid` (2026-11-13): the paid plan's monthly allowance, worded as runs
    *  rather than free runs. */
   plan: BillingPlan;
@@ -268,7 +274,7 @@ export function useFreeRuns(identity: string | null = ""): { banner: FreeRunsBan
 
   /* Spent for this period: read again just after the UTC reset the server
      named, so a tab left open overnight unblocks itself. Capped at a day, so
-     a bogus far-future instant cannot overflow setTimeout (and an account's
+     a bogus far-future instant cannot overflow setTimeout (and a paid
      month-end reset is simply checked once a day until it is near). */
   const resetsAt = status && status.remaining <= 0 ? status.resetsAt : "";
   useEffect(() => {
@@ -287,6 +293,7 @@ export function useFreeRuns(identity: string | null = ""): { banner: FreeRunsBan
     banner: {
       scope: status.scope,
       plan: status.plan,
+      period: status.period,
       remaining: Math.max(0, status.remaining),
       limit: status.limit,
       exhausted,
