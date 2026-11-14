@@ -52,7 +52,7 @@ caller-scoped gateway (runs, free runs, account) uses: `X-Client-ID` always,
 `/app?view=…`, switched with `pushState` so the shell is never unmounted),
 `backNavigation` + `useHardwareBack`, `useResultExport`, `useSoftKeyboard`,
 `useSystemBarsTheme`, `useFirstRun`, `useAuthSession` (`useAuthUser`,
-`useEmailCodeSignIn`), `useAccount`, `useApiKeys`. `landingRedirect.ts`, `firstRunScripts.ts`
+`useEmailCodeSignIn`), `useAccount`, `useApiKeys`, `useAccountEntry` (the Account entry for routes other than `/app`, used by `RouteNav`/`RouteTabBar`). `landingRedirect.ts`, `firstRunScripts.ts`
 and `nativeFontScale.ts` export pre-paint inline scripts (strings), inlined by
 `app/layout.tsx`.
 

@@ -811,3 +811,4 @@ bumped to v3 (`upload-form.md`). Detail in `billing.md`.
 - 2026-11-13 · frontend agent · effective date November 13, 2026 on both pages; Terms gains "Your own Gemini key" and a suspension sentence in "Prohibited use"; Privacy gains "Your own Gemini key" and the monthly free-run count under "Signing in"
 - 2026-11-13 · frontend agent · Terms "Paid plan" and Privacy "Payments" sections (drafts for legal review), Stripe named under third-party services, meta descriptions updated
 - 2026-11-13 · frontend agent · Terms "Paid plan": deleting your account cancels your subscription immediately; Privacy "Payments": deletion cancels first (no refund), billing rows removed, Stripe keeps its customer record for invoices and tax (drafts)
+- 2026-11-14 · frontend agent · Privacy, Terms and 404 use `RouteNav`/`RouteTabBar` for the Account entry; `/offline` keeps plain `AppNav`/`BottomTabBar` (no network, the `auth` capability can never be read). See auth-sign-in.md

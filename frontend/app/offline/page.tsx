@@ -47,6 +47,10 @@ export const metadata: Metadata = {
 export default function OfflinePage() {
   return (
     <div className="shell" data-view="offline">
+      {/* Plain AppNav, not RouteNav: this page is what the service worker
+          serves with no network, so the `auth` capability can never be read
+          and the Account entry could never pass its gate. RouteNav would only
+          add a failing request and a sign-in SDK load. */}
       <AppNav activeTab={null} />
 
       <main className="view-scroll" data-view="offline" aria-label="Offline">

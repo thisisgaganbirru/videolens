@@ -1,15 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Compass } from "lucide-react";
-import AppNav from "@/components/AppNav";
-import BottomTabBar from "@/components/BottomTabBar";
+import RouteNav from "@/components/RouteNav";
+import RouteTabBar from "@/components/RouteTabBar";
 import SiteFooter from "@/components/SiteFooter";
 
 /* Hallmark · theme: editorial (carried from tokens.css) · sibling of /offline
  *
  * Refinement 6 (OFF-03): an unknown address used to get Next's bare 404 —
  * no nav, no footer, no way back but the browser's own. It is the app's
- * chrome here, as on every route: the same `.shell` frame, `<AppNav />`,
+ * chrome here, as on every route (nav and dock through `RouteNav` /
+ * `RouteTabBar`, which add the Account entry): the same `.shell` frame, `<AppNav />`,
  * `<SiteFooter />` and `<BottomTabBar />` (the display mode picks which of
  * the last two shows), and the content band is the page's one `<main>`.
  *
@@ -42,7 +43,7 @@ export const metadata: Metadata = {
 export default function NotFound() {
   return (
     <div className="shell" data-view="not-found">
-      <AppNav activeTab={null} />
+      <RouteNav activeTab={null} />
 
       <main className="view-scroll" data-view="not-found" aria-labelledby="not-found-title">
         <div className="not-found">
@@ -65,7 +66,7 @@ export default function NotFound() {
       </main>
 
       <SiteFooter />
-      <BottomTabBar activeTab={null} />
+      <RouteTabBar activeTab={null} />
     </div>
   );
 }
