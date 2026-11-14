@@ -40,12 +40,13 @@ import {
  *         without an account, quiet extras) · signed in (account loading,
  *         rejected, failed + retry) · plan and usage (always, billing or
  *         not: plan name, runs left, video length, reset in local time; each
- *         value blank in a reserved row until its read lands; own Gemini key
+ *         static placeholder in each reserved slot until its read lands; own Gemini key
  *         variant; count unavailable) · upgrade (free + billing: comparison,
  *         price, one action, yearly as a quiet link, a null price hides its
  *         control, extra-run terms) · billing (paid: runs left, price,
  *         renews / ends, payment failed, extra-run terms, Manage billing) ·
  *         both: opening, handed off to the browser, action error, reserved
+ *         static loading lines or unavailable text over the reserved
  *         stand-in while the plan is read · VideoLens API access (collapsed,
  *         count once known, unseen-secret flag, account loading, loading,
  *         load error, empty, list, creating, one-time secret, copied, revoke
@@ -101,6 +102,9 @@ type AccountPanelProps = {
   /** The server sells a plan and its answer for this account is still on
    *  the way: the Upgrade / Billing group's height is held meanwhile. */
   billingPending: boolean;
+  /** A billing request failed; keep its reservation with an unavailable
+   *  message, rather than treating the deployment as billing-disabled. */
+  billingFailed: boolean;
   /** Set when this load came back from Stripe Checkout
    *  (`?billing=success|cancel`, already stripped from the address). */
   checkoutReturn: CheckoutReturn | null;
@@ -122,6 +126,7 @@ export default function AccountPanel({
   freeRunsPending,
   billing,
   billingPending,
+  billingFailed,
   checkoutReturn,
   limits,
 }: AccountPanelProps) {
@@ -184,6 +189,7 @@ export default function AccountPanel({
           freeRunsPending={freeRunsPending}
           billing={billing}
           billingPending={billingPending}
+          billingFailed={billingFailed}
           limits={limits}
           onDeleted={markDeleted}
         />
@@ -340,7 +346,7 @@ function SignInCard({ runInProgress }: { runInProgress: boolean }) {
         <div className="key-actions">
           <button
             type="submit"
-            className="btn btn-primary btn-pill"
+            className="btn btn-primary btn-pill acct-send-code"
             aria-disabled={sending || undefined}
           >
             {sending ? "Sending…" : "Send code"}
@@ -427,6 +433,7 @@ function SignedIn({
   freeRunsPending,
   billing,
   billingPending,
+  billingFailed,
   limits,
   onDeleted,
 }: {
@@ -437,6 +444,7 @@ function SignedIn({
   freeRunsPending: boolean;
   billing: BillingDetails | null;
   billingPending: boolean;
+  billingFailed: boolean;
   limits: MediaLimitsState;
   onDeleted: (signedOut: Promise<void>) => void;
 }) {
@@ -454,7 +462,12 @@ function SignedIn({
     );
   }
 
-  const paid = billing?.plan === "paid" || freeRuns?.plan === "paid";
+  /* /api/me names the plan too, and usually lands before the run count and
+     the plan: it lets the held stand-in below be the Billing card from the
+     start for a paid account, instead of swapping from the taller Upgrade
+     card (which moved every group under it). */
+  const entitledPaid = account?.entitlement?.plan === "paid";
+  const paid = billing?.plan === "paid" || freeRuns?.plan === "paid" || entitledPaid;
 
   return (
     <>
@@ -485,25 +498,36 @@ function SignedIn({
         freeRunsPending={freeRunsPending}
         billing={billing}
         billingPending={billingPending}
+        billingFailed={billingFailed}
+        entitledPaid={entitledPaid}
         limits={limits}
       />
 
-      {billing ? (
+      {billing && !billingFailed ? (
         billing.plan === "paid" ? (
           <BillingGroup billing={billing} />
         ) : (
           <UpgradeGroup billing={billing} limits={limits} />
         )
-      ) : billingPending ? (
-        /* The plan is on its way. Its group is held, unseen and inert, so
-           the groups under it do not drop when it lands. Which of the two
-           it will be is only known if the run count already said "paid". */
-        <div className="acct-ghost" aria-hidden="true" inert>
-          {paid ? (
-            <BillingGroup billing={GHOST_PAID_BILLING} />
-          ) : (
-            <UpgradeGroup billing={GHOST_FREE_BILLING} limits={limits} />
-          )}
+      ) : billingPending || billingFailed ? (
+        /* Keep the existing stand-in's dimensions. Static loading lines or
+           a failure message are painted over it without entering flow. */
+        <div className="acct-loading-group" aria-busy={billingPending || undefined}>
+          <div className="acct-ghost" aria-hidden="true" inert>
+            {paid ? (
+              <BillingGroup billing={billing ?? GHOST_PAID_BILLING} />
+            ) : (
+              <UpgradeGroup billing={billing ?? GHOST_FREE_BILLING} limits={limits} />
+            )}
+          </div>
+          <div className="acct-loading-overlay" role="status">
+            {billingFailed ? <p className="key-help">Billing unavailable.</p> : (
+              <>
+                <span className="sr-only">Loading billing</span>
+                <PlaceholderLine /><PlaceholderLine /><PlaceholderLine />
+              </>
+            )}
+          </div>
         </div>
       ) : null}
 
@@ -593,18 +617,26 @@ function PlanUsageGroup({
   freeRunsPending,
   billing,
   billingPending,
+  billingFailed,
+  entitledPaid,
   limits,
 }: {
   freeRuns: FreeRunsBanner | null;
   freeRunsPending: boolean;
   billing: BillingDetails | null;
   billingPending: boolean;
+  billingFailed: boolean;
+  /** The session's own entitlement (`/api/me`) says the plan is paid. */
+  entitledPaid: boolean;
   limits: MediaLimitsState;
 }) {
-  const paid = billing?.plan === "paid" || freeRuns?.plan === "paid";
+  const paid = billing?.plan === "paid" || freeRuns?.plan === "paid" || entitledPaid;
   /* Either read can name the plan; with both settled and silent (billing
-     off, or a saved key so no count is read) the account is a free one. */
+     off, or a saved key so no count is read) the account is a free one.
+     A failed plan read with no count is not silence: the plan is not known,
+     and a paid account must not be told it is a free one. */
   const planKnown = freeRuns !== null || billing !== null || (!freeRunsPending && !billingPending);
+  const planFailed = planKnown && billingFailed && freeRuns === null && billing === null && !entitledPaid;
 
   /* The run count's own read first; the plan's count stands in when that
      one failed. The plan read carries no reset instant. */
@@ -626,16 +658,15 @@ function PlanUsageGroup({
         }
       : null;
   const ownKey = limits.hasKey;
-  const waiting = !ownKey && usage === null && freeRunsPending;
+  const waiting = !ownKey && usage === null && (freeRunsPending || billingPending);
 
-  const runsLabel = ownKey ? "Runs" : `Runs left ${usage?.monthly ? "this month" : "today"}`;
   const runsValue = ownKey
     ? "On your own Gemini key"
     : usage
-      ? `${usage.remaining} of ${usage.limit}${usage.device ? " on this device" : ""}`
+      ? `${usage.remaining} of ${usage.limit} runs left ${usage.monthly ? "this month" : "today"}`
       : waiting
         ? null
-        : "Not available";
+        : "Runs unavailable";
 
   /* The length follows the plan, so it waits for the plan as well as for
      the limits: a paid account must not read "3 minutes" for a moment. */
@@ -658,38 +689,43 @@ function PlanUsageGroup({
         : null
       : formatClockTime(usage.resetsAt)
     : null;
-  const unknown = (
-    <>
-      <span aria-hidden="true">—</span>
-      <span className="sr-only">Not available</span>
-    </>
-  );
+  const resetValue = ownKey
+    ? "No daily limit with your Gemini key"
+    : resetWhen
+      ? `${usage?.device ? "This browser · " : ""}Resets ${usage?.monthly ? "on" : "at"} ${resetWhen}`
+      : "Reset time unavailable";
 
   return (
-    <section className="acct-group" aria-labelledby="acct-grp-plan">
+    <section className="acct-group acct-group-primary" aria-labelledby="acct-grp-plan">
       <h2 id="acct-grp-plan" className="history-group-label acct-group-label">
         Plan and usage
       </h2>
       <div className="key-card acct-card acct-plan">
-        <p className="acct-plan-name">{planKnown ? (paid ? "Paid plan" : "Free account") : null}</p>
+        <p className="acct-plan-name">
+          {planFailed ? "Plan unavailable" : planKnown ? (paid ? "Paid plan" : "Free account") : <PlaceholderLine />}
+        </p>
         <dl className="acct-facts">
-          <div className="acct-fact">
-            <dt>{runsLabel}</dt>
-            <dd>{runsValue}</dd>
+          <div className="acct-usage" aria-busy={waiting || undefined}>
+            <dt className="sr-only">Runs</dt>
+            <dd className="acct-usage-count" data-none={(!ownKey && !usage && !waiting) || undefined}>
+              {runsValue ?? <><span className="sr-only">Loading runs</span><PlaceholderLine /></>}
+            </dd>
+            <dt className="sr-only">{ownKey ? "Daily limit" : "Reset time"}</dt>
+            <dd className="acct-usage-reset">{waiting ? <PlaceholderLine /> : resetValue}</dd>
           </div>
           <div className="acct-fact">
             <dt>Video length</dt>
-            <dd>{lengthKnown ? `Up to ${durationLabel(limits.limits.maxDurationSeconds)}` : null}</dd>
+            <dd>{lengthKnown ? `Up to ${durationLabel(limits.limits.maxDurationSeconds)}` : <PlaceholderLine />}</dd>
             <dd className="acct-fact-note">{lengthNote}</dd>
-          </div>
-          <div className="acct-fact">
-            <dt>{ownKey ? "Daily limit" : usage?.monthly ? "Resets on" : "Resets at"}</dt>
-            <dd>{ownKey ? "None with your key" : waiting ? null : (resetWhen ?? unknown)}</dd>
           </div>
         </dl>
       </div>
     </section>
   );
+}
+
+function PlaceholderLine() {
+  return <span className="acct-placeholder" aria-hidden="true" />;
 }
 
 /* ------------------------------------------------------- upgrade and billing */
@@ -715,8 +751,7 @@ const GHOST_PAID_BILLING: BillingDetails = {
   interval: "month",
   currentPeriodEnd: "2026-12-13T00:00:00Z",
   runs: { limit: PAID_RUNS_PER_DAY, used: 0, period: "day" },
-  /* Reserves the "Extra runs this month" row; a server without the field
-     drops it once, when the real card lands. */
+  /* Reserves the "Extra runs this month" row, including older servers. */
   extraRuns: { used: 0, limit: PAID_EXTRA_RUNS_PER_MONTH, period: "month", resetsAt: null },
 };
 
@@ -908,16 +943,16 @@ function BillingGroup({ billing }: { billing: BillingDetails }) {
           )}
           {/* The server's own count and cap (2026-11-14). No limit means the
               cap is off: the count alone, never an invented number. */}
-          {billing.extraRuns && (
-            <div className="acct-fact">
+            <div className={billing.extraRuns ? "acct-fact" : "acct-fact acct-ghost"} aria-hidden={!billing.extraRuns || undefined}>
               <dt>Extra runs this month</dt>
               <dd>
-                {billing.extraRuns.limit === null
-                  ? billing.extraRuns.used
-                  : `${billing.extraRuns.used} of ${billing.extraRuns.limit}`}
+                {billing.extraRuns
+                  ? billing.extraRuns.limit === null
+                    ? billing.extraRuns.used
+                    : `${billing.extraRuns.used} of ${billing.extraRuns.limit}`
+                  : "—"}
               </dd>
             </div>
-          )}
         </dl>
         <p className="key-help acct-extra-terms">{extraRunTerms(billing.runs.limit, extraRun)}</p>
         <div className="key-actions">
@@ -1065,7 +1100,7 @@ function DeviceGroup({ signedIn = false }: { signedIn?: boolean }) {
         <AccountTabLink
           tab="history"
           title="Recent history"
-          description={`Up to ${HISTORY_LIMIT} runs saved in this browser. Not synced between devices.`}
+          description={`Saved in this browser · Up to ${HISTORY_LIMIT} runs`}
         />
         <AccountTabLink
           tab="api-key"
@@ -1074,10 +1109,10 @@ function DeviceGroup({ signedIn = false }: { signedIn?: boolean }) {
               Your Gemini key <span className="acct-optional">(optional)</span>
             </>
           }
-          description="A Gemini key lets VideoLens use your own Google AI access."
+          description="Use your own Google AI access."
         />
       </div>
-      {signedIn && <p className="key-help acct-group-note">Both stay in this browser when you sign out.</p>}
+      <p className="key-help acct-group-note">Not synced between devices.{signedIn ? " Both stay in this browser when you sign out." : ""}</p>
     </section>
   );
 }
@@ -1085,7 +1120,7 @@ function DeviceGroup({ signedIn = false }: { signedIn?: boolean }) {
 /* No support or contact row: there is no monitored address yet. */
 function InformationGroup() {
   return (
-    <section className="acct-group" aria-labelledby="acct-grp-info">
+    <section className="acct-group acct-group-information" aria-labelledby="acct-grp-info">
       <h2 id="acct-grp-info" className="history-group-label acct-group-label">
         Information
       </h2>

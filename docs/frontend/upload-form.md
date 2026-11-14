@@ -446,7 +446,54 @@ already records acceptance. `.link-row` is back to three grid areas.
   (560); at 412x915 both are in the first screen; at 1280x800 the idle intake
   does not scroll (band scrollHeight = clientHeight = 666).
 
+## Simplified Analyze entry (2026-11-14)
+
+This supersedes the earlier two-column board layout. Idle Analyze now has
+one "New analysis" h1 at every width, with no eyebrow, marketing headline,
+introduction or "What you get" panel. The intake is centred with a maximum
+width of 46rem (736px; was 38.75rem in Codex's first pass, see below). The existing free-runs strip stays above the title
+with its live region, pending stand-in, wording and pre-paint saved-key gate.
+The exact former panel retention sentence appears directly below the intake
+card as 14px muted text at every width. UploadForm controls, consent wording
+and blocked state are unchanged. Removed panel and title-switch CSS; shared
+landing eyebrow, output-row and chip styles remain. Run/result/failed states
+are unchanged.
+
+### Card width: one line each on desktop (frontend agent review, 2026-11-14)
+
+Owner: "Don't wrap anything, extend the box properly." `.intake-layout`'s
+`max-width` is **46rem** at every width (phones fill the gutters anyway).
+Sized to the longest line, measured in the browser at 1280: the consent
+sentence is 625px at 14px, plus the checkbox column (32px) and the card's
+padding and border (50px) = 707px, so 736px leaves ~29px. The retention
+line under the card (688px), the file hint (304px), the allowance strip text
+(408px anonymous, 280-344px signed in or spent) and the out-of-runs block
+(274px sentence, 409-423px actions) all fit. The strip is in the same column,
+so it is the same width and left edge as the card. rem, so it scales with
+the text.
+
+Measured lines (Playwright, mocked `/api/`, light and dark):
+
+| Width | Consent | Retention | File hint | Strip | Out-of-runs sentence |
+|---|---|---|---|---|---|
+| 1024 / 1280 / 1440 | 1 | 1 | 1 | 1 | 1 |
+| 412 | 3 | 2 | 2 | 1-2 | 1 |
+| 320 | 4 | 3 | 2 | 2 | 2 |
+
+Phones: `text-wrap: pretty` on the consent text, retention line, file hint,
+strip text and blocked sentence (no lone last word); the Terms / Privacy
+Policy links are `nowrap`, and "200 MB" is joined by a no-break space in
+UploadForm, so neither splits. Button labels stay on one line at every
+width. No horizontal overflow at 320-1440. At 1280x800 the idle page does
+not scroll (runs left, signed in, out of runs). CLS on load: 0.0006-0.0027
+everywhere except the known out-of-runs in-card shift (0.017 at 1440, 0.024
+at 1280, 0.039 at 1024, 0.083-0.112 at 412/320) and signed in at 412 (0.016-
+0.018: the strip's stand-in is the two-line anonymous sentence, the signed-in
+one is one line).
+
 ## Changelog
+
+- 2026-11-14 · Codex · simplified idle Analyze to one centred column with a single New analysis h1 at every width, removed the marketing introduction/output panel and dead CSS, retained the allowance reservation above the title, and moved the exact retention sentence below the card
 
 - 2026-08-15 · frontend agent · ported UploadForm to the unboxed .intake; returns a fragment since HomeScreen supplies the wrapper
 - 2026-08-15 · frontend agent (error block weight) · split HomeScreen's one error branch in two — idle demoted to an inline note in UploadForm's own error slot, poll-death promoted to a full .error-block with a start-over button inside it; requested an `.error-note` class
@@ -476,3 +523,5 @@ already records acceptance. `.link-row` is back to three grid areas.
 - 2026-11-14 · frontend agent · `useMediaLimits` also returns `settled`, `standardSeconds` and `byokMinutes` (Account panel's Plan and usage card and Upgrade comparison); upload form unchanged
 - 2026-11-14 · frontend agent · "What you get" foot reads "Your video is deleted from our servers when the run finishes. The result is kept for up to an hour, then deleted." (UX fix spec batch a)
 - 2026-11-14 · frontend agent · UX fix spec batch b: "Paste a public link"; out-of-runs block with `blockedOffer` (sign-in / upgrade / key) and `.intake-blocked__*` classes; phone-only short h1 "New analysis" with eyebrow and lede hidden below 32rem
+- 2026-11-14 · frontend agent · reviewed Codex's simplified intake in the browser; card widened to 46rem so the consent, retention, hint and strip lines are one line each at 1024-1440; phone wrapping tidied (`text-wrap: pretty`, nowrap legal links, "200 MB"); stale UploadForm comment fixed
+- 2026-11-14 · frontend agent · desktop (60rem up) intake centred in the content band: `main.view-scroll:has(> .intake-layout)` is a size container and `.intake-layout` gets `margin-top: max(0px, (100cqb - 27rem) / 2)` (fixed anchor, so the out-of-runs card grows downward instead of re-centring; taller than the band starts at the top and scrolls). Allowance strip and h1 wrapped in `.intake-head`, a title-left / strip-right row on desktop; phones unchanged
