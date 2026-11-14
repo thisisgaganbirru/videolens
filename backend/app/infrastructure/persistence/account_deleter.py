@@ -21,9 +21,20 @@ from sqlalchemy import delete, or_, select, text
 
 from ..config import Settings
 from .account_directory import InMemoryAccountDirectory
+from .account_free_runs import InMemoryAccountFreeRuns
 from .api_key_repository import InMemoryApiKeyRepository
+from .billing_store import InMemoryBillingAccounts, InMemoryExtraRunLedger
 from .database import Database
-from .schema import accounts, api_keys, workspace_members, workspaces
+from .schema import (
+    account_free_run_holds,
+    account_free_runs,
+    accounts,
+    api_keys,
+    billing_accounts,
+    billing_extra_runs,
+    workspace_members,
+    workspaces,
+)
 
 logger = logging.getLogger("videolens")
 
@@ -45,7 +56,15 @@ class SqlAccountDeleter:
             if account_id is None:
                 return False
             owned = select(workspaces.c.id).where(workspaces.c.owner_account_id == account_id)
-            # Children first: the foreign keys have no ON DELETE CASCADE.
+            # Children first: the identity foreign keys have no ON DELETE
+            # CASCADE. The free-run tables do (0003), but SQLite does not
+            # enforce it, so they go explicitly too.
+            await conn.execute(delete(account_free_run_holds).where(account_free_run_holds.c.account_id == account_id))
+            await conn.execute(delete(account_free_runs).where(account_free_runs.c.account_id == account_id))
+            # Billing rows (0004) cascade too. The subscription itself was
+            # cancelled in Stripe before this (DeleteAccountUseCase).
+            await conn.execute(delete(billing_extra_runs).where(billing_extra_runs.c.account_id == account_id))
+            await conn.execute(delete(billing_accounts).where(billing_accounts.c.account_id == account_id))
             await conn.execute(delete(api_keys).where(api_keys.c.workspace_id.in_(owned)))
             await conn.execute(
                 delete(workspace_members).where(
@@ -82,20 +101,33 @@ class InMemoryAccountDeleter:
         *,
         accounts: InMemoryAccountDirectory,
         api_keys: InMemoryApiKeyRepository,
+        free_runs: InMemoryAccountFreeRuns | None = None,
+        billing_accounts: InMemoryBillingAccounts | None = None,
+        extra_runs: InMemoryExtraRunLedger | None = None,
     ) -> None:
+        self._billing_accounts = billing_accounts
+        self._extra_runs = extra_runs
         self._settings = settings
         self._accounts = accounts
         self._api_keys = api_keys
+        self._free_runs = free_runs
 
     @property
     def enabled(self) -> bool:
         return self._accounts.enabled
 
     async def delete_account(self, external_id: str) -> bool:
+        account_id = self._accounts.account_id_for(external_id)
         owned = self._accounts.forget_account(external_id)
         if owned is None:
             return False
         self._api_keys.forget_workspaces(owned)
+        if self._free_runs is not None and account_id is not None:
+            self._free_runs.forget_account(account_id)
+        if account_id is not None:
+            for store in (self._billing_accounts, self._extra_runs):
+                if store is not None:
+                    store.forget_account(account_id)
         return True
 
     async def delete_identity(self, external_id: str) -> bool:

@@ -19,6 +19,25 @@ from ..config import Settings
 # RUN_TTL_SECONDS is set to.
 _HISTORY_INDEX_CAP = 50
 
+# A run in either state has ended; `_update` never writes to it again.
+_SETTLED = (RunStatus.COMPLETE, RunStatus.FAILED)
+
+# Write the run back only if it still exists and has not ended in the
+# meantime. The status check runs inside Redis, so a worker's result and the
+# stale-run sweep's failure cannot both land: the second one sees the first.
+_WRITE_UNLESS_SETTLED = """
+local current = redis.call('GET', KEYS[1])
+if not current then
+  return 0
+end
+local ok, doc = pcall(cjson.decode, current)
+if ok and type(doc) == 'table' and (doc.status == 'complete' or doc.status == 'failed') then
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[2]))
+return 1
+"""
+
 
 class RunStore:
     """RunRepository adapter: Redis-backed when a queue is configured
@@ -84,6 +103,8 @@ class RunStore:
         source_kind: str | None = None,
         platform: str | None = None,
         duration_seconds: float | None = None,
+        media_tier: str | None = None,
+        admitted_byok: bool = False,
     ) -> Run:
         now = datetime.now(timezone.utc)
         run = Run(
@@ -95,6 +116,8 @@ class RunStore:
             source_kind=source_kind,
             platform=platform,
             duration_seconds=duration_seconds,
+            media_tier=media_tier,
+            admitted_byok=admitted_byok,
         )
         await self._write(run)
         if self._settings.queue_enabled:
@@ -129,9 +152,9 @@ class RunStore:
         async with self._lock:
             return self._memory.get(run_id)
 
-    async def _update(
-        self,
-        run_id: str,
+    @staticmethod
+    def _apply(
+        run: Run,
         *,
         status: RunStatus | None = None,
         stage: str | None = None,
@@ -141,10 +164,7 @@ class RunStore:
         duration_seconds: float | None = None,
         visuals: MediaVisuals | None = None,
         error: str | None = None,
-    ) -> Run | None:
-        run = await self.get(run_id)
-        if run is None:
-            return None
+    ) -> None:
         if status is not None:
             run.status = status
         if stage is not None:
@@ -166,8 +186,36 @@ class RunStore:
         if error is not None:
             run.error = error
         run.updated_at = datetime.now(timezone.utc)
-        await self._write(run)
-        return run
+
+    async def _update(self, run_id: str, **changes) -> Run | None:
+        """Apply `changes` and write the run back. Returns the written run,
+        or None when nothing was written: the run is gone (TTL, account
+        deletion), or it has already ended. A complete or failed run is
+        final - whichever of the worker's result and the stale-run sweep's
+        failure lands first is the outcome every later read sees, so a late
+        worker can neither resurrect a run the client was told failed nor a
+        late sweep fail one that completed. The check and the write are one
+        step (a Lua script in Redis, the lock in memory)."""
+        if not self._settings.queue_enabled:
+            async with self._lock:
+                run = self._memory.get(run_id)
+                if run is None or run.status in _SETTLED:
+                    return None
+                self._apply(run, **changes)
+                self._prune_memory()
+                return run
+        run = await self.get(run_id)
+        if run is None or run.status in _SETTLED:
+            return None
+        self._apply(run, **changes)
+        written = await self._client().eval(
+            _WRITE_UNLESS_SETTLED,
+            1,
+            self._key(run_id),
+            run.model_dump_json(),
+            self._settings.run_ttl_seconds,
+        )
+        return run if int(written or 0) == 1 else None
 
     async def set_status(self, run_id: str, status: RunStatus) -> None:
         await self._update(run_id, status=status)
@@ -180,12 +228,14 @@ class RunStore:
         run_id: str,
         result: VideoAnalysis,
         completeness: AnalysisCompleteness = AnalysisCompleteness.FULL,
-    ) -> None:
+    ) -> bool:
         run = await self._update(
             run_id, status=RunStatus.COMPLETE, result=result, completeness=completeness
         )
-        if run is not None:
-            await self._refresh_owner_index(run.owner_id)
+        if run is None:
+            return False
+        await self._refresh_owner_index(run.owner_id)
+        return True
 
     async def set_source_metadata(self, run_id: str, metadata: SourceMetadata) -> None:
         await self._update(run_id, source_metadata=metadata)
@@ -196,10 +246,12 @@ class RunStore:
     async def set_visuals(self, run_id: str, visuals: MediaVisuals) -> None:
         await self._update(run_id, visuals=visuals)
 
-    async def set_error(self, run_id: str, error: str) -> None:
+    async def set_error(self, run_id: str, error: str) -> bool:
         run = await self._update(run_id, status=RunStatus.FAILED, error=error)
-        if run is not None:
-            await self._refresh_owner_index(run.owner_id)
+        if run is None:
+            return False
+        await self._refresh_owner_index(run.owner_id)
+        return True
 
     async def delete_for_owner(self, owner_id: str) -> int:
         """Account deletion. In Redis the owner index is the only way to find

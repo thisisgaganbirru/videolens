@@ -105,6 +105,18 @@ Only the account id is logged (no email, no subject).
 
 The frontend keeps the person's own local data (IndexedDB History, the BYOK key) and only signs out; see `docs/frontend/auth-sign-in.md`.
 
+### Step 0: the Stripe subscription (paid plan)
+
+Before anything else (runs, rows, identity), `DeleteAccountUseCase` cancels
+the account's Stripe subscription immediately, with no proration refund
+(`invoice_now=true, prorate=false`), after reporting any completed extra
+runs still due. If Stripe fails, or billing was switched off while a live
+subscription is on file, the request is refused with
+`503 {"detail": "We couldn't cancel your subscription, so your account was not deleted. Please try again.", "code": "subscription_cancel_failed"}`
+and nothing is deleted. The `billing_accounts` and `billing_extra_runs`
+rows then go with the account (explicit delete plus `ON DELETE CASCADE`).
+The Stripe Customer record stays in Stripe (invoices). `docs/backend/billing.md`.
+
 ### Why a `SECURITY DEFINER` function (`0002_auth_user_deleter`)
 
 Supabase's `postgres` holds `DELETE` on `auth.users` with `is_grantable = NO` (verified on `videolens-dev`, 2026-11-08), so 0001's direct grant to `videolens_api` never takes. The alternative, the Admin API with a service-role key on Railway, is what auth-plan decision 2 rules out. So `0002` creates, on Postgres only:
@@ -139,7 +151,7 @@ Researched 2026-11-09 against `videolens-dev` (ref `pjekwwiaocywdbwqgtgl`, org `
 
 | Location | What remains after `DELETE /api/me` | How long | Status and evidence |
 |---|---|---|---|
-| Our tables (`accounts`, `workspaces`, `workspace_members`, `api_keys`) | Nothing in the live database | Gone at once (one transaction) | **Verified** in code: `account_deleter.py` `delete_account` |
+| Our tables (`accounts`, `workspaces`, `workspace_members`, `api_keys`, and since 2026-11-13 `account_free_runs`, `account_free_run_holds`) | Nothing in the live database | Gone at once (one transaction) | **Verified** in code: `account_deleter.py` `delete_account` (free-run rows deleted explicitly and by `ON DELETE CASCADE`) |
 | `auth.users` + `identities`, `sessions` (and through it `refresh_tokens`, `mfa_amr_claims`), `mfa_factors`, `one_time_tokens`, `oauth_authorizations`, `oauth_consents`, `webauthn_*`, `mfa_recovery_code_sets` | Nothing: each references `auth.users` (directly or via `sessions`/`mfa_factors`) with `ON DELETE CASCADE` | Gone at once | **Verified**: `pg_constraint` query on the project. Only `auth.scim_users` is `SET NULL` (SSO/SCIM, unused here) |
 | `auth.flow_state` | One row per email sign-up/sign-in flow: `user_id` (UUID), provider type, timestamps. No email column. No FK to `auth.users`, so not cascaded | Until Supabase Auth's cleanup removes rows older than 24 h | **Verified**: column list and absent FK (catalog); cleanup rule in `supabase/auth` `internal/models/cleanup.go`: "created_at < now() - interval '24 hours'". That the hosted cleanup actually runs on this project is **unverified** (the only row is under 24 h old) |
 | `auth.audit_log_entries` (table) | Nothing is written: 0 rows although a sign-up happened | n/a | **Verified**: `count(*) = 0`; dashboard Authentication → Audit Logs shows "Write audit logs to the database" switched off. If switched on: no FK to `auth.users`, `payload` would hold `actor_id` and `actor_username` (the email), and no cleanup rule touches it, so rows would stay until deleted by hand |
@@ -177,6 +189,8 @@ The identity data lives in Postgres (Supabase), not in Redis. The four tables ar
 - `workspaces`: `id`, `name`, `owner_account_id` (FK), `created_at`.
 - `workspace_members`: (`workspace_id`, `account_id`) PK, `role`.
 - `api_keys`: `id`, `workspace_id` (FK, indexed), `name`, `prefix`, `key_hash` (unique), `scopes` (JSON), `active`, `last_used_at`, `revoked_at`, `created_at`.
+
+Since 2026-11-13 two more tables sit beside them for signed-in free runs (migration `0003_account_free_runs`, see `free-runs.md`): `account_free_runs` (`account_id` FK cascade, `period` `YYYY-MM`, `used`; PK `(account_id, period)`) and `account_free_run_holds` (`run_id` PK, `account_id` FK cascade, `period`, `created_at`). RLS and the backend role's policy and grants as for the four above.
 
 Runs and history are unchanged. The server still holds runs for `RUN_TTL_SECONDS` only, and history stays in the browser.
 
@@ -239,7 +253,9 @@ The deployed `DATABASE_URL` then uses `videolens_api`, not `postgres`. The Docke
 - An anonymous caller gets `ip:<ip>`.
 - A request with no resolved principal falls back to the old header key: the token hash, else the IP.
 
-The free-run and BYOK rules are unchanged (`create_run.py` untouched). See `cost-abuse-protection.md`.
+Since 2026-11-13 a signed-in caller with an account (JWT or API key) and no BYOK key is admitted against the account's monthly free runs (`FREE_RUNS_PER_ACCOUNT_MONTHLY`, default 10) instead of the device counter, in `CreateRunUseCase._admit`. See `free-runs.md`, "Signed-in free runs". BYOK and `DAILY_RUN_CAP` are unchanged. See `cost-abuse-protection.md`.
+
+Since 2026-11-13 the same principal also picks the media limits: signed in (JWT or account API key) and sending `X-Gemini-Api-Key` allows 10 minutes / 500 MB (`SIGNED_IN_BYOK_MAX_*`), everyone else 3 minutes / 200 MB. At most one run above the standard limits per account is in flight, keyed on `account_id` (else the subject); a second is 429 `long_run_in_progress`. `GET /api/limits` (no auth) reports both sets. See `media-validation.md`, "Limits per caller".
 
 ## Capability
 
@@ -276,7 +292,7 @@ The application code has not yet run against a real Supabase project: the SQL ad
 
 ## Known issues
 
-- `/api/free-runs` has no `get_principal` dependency, so its rate-limit bucket still comes from the header fallback (token hash, else IP), not the account. This predates phase 1 and was judged below threshold in review.
+- `/api/free-runs` resolves a principal only when a credential is sent (`get_optional_signed_in_principal`, since 2026-11-13), so signed-in callers' reads are bucketed per account; anonymous callers still use the header fallback (IP). An invalid credential there is a 401, as on `/api/me`.
 - The JWKS cache-expiry fetch (every 10 minutes) is not throttled beyond PyJWT's own cache. If the identity provider is down, each token request still makes one fetch attempt, capped at the 5-second timeout.
 
 ## Changelog
@@ -291,3 +307,6 @@ The application code has not yet run against a real Supabase project: the SQL ad
 - 2026-11-09 · research subagent · "Data after account deletion": what survives deletion and for how long (Supabase backups and PITR, auth.* cascades and flow_state, audit log table off, Supabase and Railway log retention, DPA, Redis keys), each row marked verified or unverified with evidence; the SQLAlchemy parameters-in-traceback leak to Railway logs noted
 - 2026-11-09 · backend subagent (log hygiene) · engine hides bound parameters in error text
 - 2026-11-09 · main session · 0002 applied to `videolens-dev` and verified: `alembic_version` at `0002_auth_user_deleter`, `videolens_api` has EXECUTE on both functions, `anon`/`authenticated` have no EXECUTE and no USAGE on `videolens_private`, both functions SECURITY DEFINER owned by `postgres` with empty search_path; status lines updated to committed
+- 2026-11-13 · backend agent · signed-in free runs: the two `0003_account_free_runs` tables in Storage and in the deletion table, `_admit` now reads the account, `/api/free-runs` resolves an optional principal (known issue narrowed)
+- 2026-11-13 · backend agent · signed-in BYOK media limits (600 s / 500 MB) and the one-long-run-per-account guard, both keyed on the resolved principal
+- 2026-11-13 · backend agent · account deletion cancels the Stripe subscription first and refuses (503 `subscription_cancel_failed`) when it cannot; `Plan.PAID` on `/api/me` for a paid account; migration 0004 adds the three billing tables beside the identity tables

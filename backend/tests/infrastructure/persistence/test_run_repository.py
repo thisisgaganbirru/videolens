@@ -1,3 +1,4 @@
+import json
 import unittest
 from datetime import timedelta
 from unittest.mock import AsyncMock
@@ -103,8 +104,17 @@ class RetentionTests(unittest.IsolatedAsyncioTestCase):
         async def fake_get(key):
             return data.get(key)
 
+        async def fake_eval(script, numkeys, key, value, ttl):
+            # The write-unless-ended script: skip a missing or ended run.
+            current = data.get(key)
+            if current is None or json.loads(current)["status"] in ("complete", "failed"):
+                return 0
+            await client.set(key, value, ex=int(ttl))
+            return 1
+
         client.set.side_effect = fake_set
         client.get.side_effect = fake_get
+        client.eval.side_effect = fake_eval
         store._redis = client  # type: ignore[assignment]
         return store, client
 
@@ -239,6 +249,114 @@ class DeleteForOwnerTests(unittest.IsolatedAsyncioTestCase):
         await store.set_error("busy", "late worker write")
 
         self.assertIsNone(await store.get("busy"))
+
+
+
+_ANALYSIS = VideoAnalysis(title="T", summary="S", transcript="", screen_text="", markdown="")
+
+
+class EndedRunsAreFinalTests(unittest.IsolatedAsyncioTestCase):
+    """2026-11-13: whichever of the worker's result and the stale-run
+    sweep's failure lands first is the run's outcome."""
+
+    async def test_in_memory_a_failed_run_is_not_resurrected_by_a_late_result(self) -> None:
+        store = RunStore(Settings(_env_file=None))
+        await store.create("run-1", "client:o")
+        self.assertTrue(await store.set_error("run-1", "stopped responding"))
+
+        self.assertFalse(await store.set_result("run-1", _ANALYSIS))
+        await store.set_stage("run-1", "analyzing")
+        await store.set_status("run-1", RunStatus.PROCESSING)
+
+        saved = await store.get("run-1")
+        assert saved is not None
+        self.assertEqual(saved.status, RunStatus.FAILED)
+        self.assertEqual(saved.error, "stopped responding")
+        self.assertIsNone(saved.result)
+        self.assertIsNone(saved.stage)
+
+    async def test_in_memory_a_completed_run_is_not_failed_by_a_late_sweep(self) -> None:
+        store = RunStore(Settings(_env_file=None))
+        await store.create("run-1", "client:o")
+        self.assertTrue(await store.set_result("run-1", _ANALYSIS))
+
+        self.assertFalse(await store.set_error("run-1", "stopped responding"))
+
+        saved = await store.get("run-1")
+        assert saved is not None
+        self.assertEqual(saved.status, RunStatus.COMPLETE)
+        self.assertIsNone(saved.error)
+
+    async def test_writes_to_a_missing_run_report_false(self) -> None:
+        store = RunStore(Settings(_env_file=None))
+        self.assertFalse(await store.set_result("gone", _ANALYSIS))
+        self.assertFalse(await store.set_error("gone", "x"))
+
+    def _redis_store(self) -> tuple[RunStore, AsyncMock, dict[str, str]]:
+        store = RunStore(Settings(_env_file=None, redis_url="redis://test", run_ttl_seconds=3600))
+        data: dict[str, str] = {}
+        client = AsyncMock()
+
+        async def fake_set(key, value, ex=None):
+            data[key] = value
+
+        async def fake_get(key):
+            return data.get(key)
+
+        async def fake_eval(script, numkeys, key, value, ttl):
+            current = data.get(key)
+            if current is None or json.loads(current)["status"] in ("complete", "failed"):
+                return 0
+            data[key] = value
+            return 1
+
+        client.set.side_effect = fake_set
+        client.get.side_effect = fake_get
+        client.eval.side_effect = fake_eval
+        store._redis = client  # type: ignore[assignment]
+        return store, client, data
+
+    async def test_redis_updates_go_through_the_guarded_script(self) -> None:
+        store, client, _ = self._redis_store()
+        await store.create("run-1", "client:o")
+        client.set.reset_mock()
+
+        await store.set_stage("run-1", "downloading")
+
+        client.set.assert_not_awaited()
+        script, numkeys, key, _payload, ttl = client.eval.await_args.args
+        self.assertIn("cjson.decode", script)
+        self.assertEqual((numkeys, key, ttl), (1, "videolens:run:run-1", 3600))
+
+    async def test_redis_result_after_the_sweep_failed_the_run_is_refused(self) -> None:
+        store, client, data = self._redis_store()
+        await store.create("run-1", "client:o")
+        await store.set_error("run-1", "stopped responding")
+        client.expire.reset_mock()
+
+        self.assertFalse(await store.set_result("run-1", _ANALYSIS))
+
+        self.assertEqual(json.loads(data["videolens:run:run-1"])["status"], "failed")
+        client.expire.assert_not_awaited()
+
+    async def test_redis_race_the_record_ended_between_read_and_write(self) -> None:
+        # The worker read `processing`, then the sweep failed the run before
+        # the worker's write: the script sees `failed` and refuses.
+        store, client, data = self._redis_store()
+        await store.create("run-1", "client:o")
+        real_get = client.get.side_effect
+
+        async def get_then_sweep(key):
+            payload = await real_get(key)
+            doc = json.loads(data[key])
+            doc["status"] = "failed"
+            data[key] = json.dumps(doc)
+            return payload
+
+        client.get.side_effect = get_then_sweep
+
+        self.assertFalse(await store.set_result("run-1", _ANALYSIS))
+        self.assertEqual(json.loads(data["videolens:run:run-1"])["status"], "failed")
 
 
 if __name__ == "__main__":

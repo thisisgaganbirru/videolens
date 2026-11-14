@@ -1,6 +1,8 @@
-"""The identity schema, as SQLAlchemy Core metadata: four tables and nothing
-else. Runs stay in Redis and history in the browser; these are the only rows
-the backend keeps.
+"""The identity schema, as SQLAlchemy Core metadata: the four identity tables
+plus the two that count signed-in free runs (`0003_account_free_runs`) and
+the three of the paid plan (`0004_billing`). Runs
+stay in Redis and history in the browser; these are the only rows the
+backend keeps.
 
 Core rather than ORM: the adapters build domain entities from rows and back,
 and an ORM session's identity map is one more thing to reason about. The
@@ -8,11 +10,10 @@ Alembic migration under `migrations/versions` mirrors this and is the source
 of truth for a deployed database.
 
 Deliberately portable: no foreign key into Supabase's `auth` schema and no
-Postgres-only types, so the tests run the same adapters on SQLite. Plan,
-seat and billing columns are subscription work and come with its migration.
+Postgres-only types, so the tests run the same adapters on SQLite.
 """
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Index, MetaData, String, Table
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Index, Integer, MetaData, String, Table
 
 metadata = MetaData()
 
@@ -63,4 +64,79 @@ api_keys = Table(
     Index("ix_api_keys_workspace", "workspace_id"),
 )
 
+# Signed-in free runs: one row per account per UTC month ("YYYY-MM") it has
+# used any. ON DELETE CASCADE so deleting the account always takes its usage
+# with it (the deleter also removes these explicitly: SQLite does not
+# enforce foreign keys unless asked).
+account_free_runs = Table(
+    "account_free_runs",
+    metadata,
+    Column("account_id", String(36), ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True),
+    Column("period", String(7), primary_key=True),
+    Column("used", Integer, nullable=False, default=0),
+)
+
+# Which account run a queued run took, so the pipeline can hand it back
+# (`AccountFreeRunAllowance.hold`/`release`); the account counterpart of
+# the Redis `videolens:free:held:*` keys. Rows older than two days are
+# pruned on the next hold, like those keys' TTL.
+account_free_run_holds = Table(
+    "account_free_run_holds",
+    metadata,
+    Column("run_id", String(36), primary_key=True),
+    Column("account_id", String(36), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False),
+    Column("period", String(7), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Index("ix_account_free_run_holds_created", "created_at"),
+    Index("ix_account_free_run_holds_account", "account_id"),
+)
+
+# The paid plan (`0004_billing`, docs/backend/billing.md). One row per
+# account that has ever started a checkout: its Stripe customer, and the
+# subscription it holds or last held, as Stripe last reported it.
+billing_accounts = Table(
+    "billing_accounts",
+    metadata,
+    Column("account_id", String(36), ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True),
+    Column("stripe_customer_id", String(255), nullable=False, unique=True),
+    Column("stripe_subscription_id", String(255), nullable=True),
+    Column("status", String(32), nullable=True),
+    Column("price_id", String(255), nullable=True),
+    Column("interval", String(8), nullable=True),
+    Column("current_period_end", DateTime(timezone=True), nullable=True),
+    Column("cancel_at_period_end", Boolean, nullable=False, default=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
+# Stripe event ids already handled, for webhook idempotency. Not tied to an
+# account (an event can outlive it); pruned after 30 days.
+billing_events = Table(
+    "billing_events",
+    metadata,
+    Column("event_id", String(255), primary_key=True),
+    Column("event_type", String(100), nullable=False),
+    Column("received_at", DateTime(timezone=True), nullable=False),
+    Index("ix_billing_events_received", "received_at"),
+)
+
+# Paid runs past the included ones: held at admission, due once the run
+# completed, reported once Stripe took the meter event, or void when the run
+# did not complete. The run id is the meter event's identifier.
+billing_extra_runs = Table(
+    "billing_extra_runs",
+    metadata,
+    Column("run_id", String(36), primary_key=True),
+    Column("account_id", String(36), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False),
+    Column("stripe_customer_id", String(255), nullable=False),
+    Column("period", String(7), nullable=False),
+    Column("state", String(16), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("completed_at", DateTime(timezone=True), nullable=True),
+    Column("reported_at", DateTime(timezone=True), nullable=True),
+    Index("ix_billing_extra_runs_account_period", "account_id", "period"),
+    Index("ix_billing_extra_runs_state", "state"),
+)
+
 IDENTITY_TABLES = ("accounts", "workspaces", "workspace_members", "api_keys")
+FREE_RUN_TABLES = ("account_free_runs", "account_free_run_holds")
+BILLING_TABLES = ("billing_accounts", "billing_events", "billing_extra_runs")

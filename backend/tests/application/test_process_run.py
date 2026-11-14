@@ -20,6 +20,7 @@ from app.domain.errors import (
 )
 
 from .fakes import (
+    FakeAccountFreeRunAllowance,
     FakeAnalysisEngine,
     FakeDeviceTokens,
     FakeFreeRunAllowance,
@@ -651,6 +652,88 @@ class FreeRunDownloadRefundTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.runs.runs[run_id].status, RunStatus.FAILED)
         self.assertEqual(self.runs.runs[run_id].error, self.PRIVATE)
+
+
+class AccountFreeRunRefundTests(unittest.IsolatedAsyncioTestCase):
+    """The account counterpart of FreeRunDownloadRefundTests: a signed-in
+    account's link run rejected before analysis gets its account run back,
+    through the same release in ProcessRunUseCase; others keep it."""
+
+    URL = "https://www.instagram.com/p/private"
+
+    def setUp(self) -> None:
+        self.runs = FakeRunRepository()
+        self.media = FakeMediaProcessor()
+        self.analysis = FakeAnalysisEngine(result=ANALYSIS)
+        self.free_runs = FakeFreeRunAllowance()
+        self.accounts = FakeAccountFreeRunAllowance()
+        self.use_case = ProcessRunUseCase(
+            runs=self.runs,
+            media=self.media,
+            storage=FakeObjectStore(),
+            analysis=self.analysis,
+            free_runs=self.free_runs,
+            account_free_runs=self.accounts,
+        )
+
+    async def _intake(self) -> str:
+        create = CreateRunUseCase(
+            runs=self.runs,
+            media=self.media,
+            storage=FakeObjectStore(),
+            queue=FakeJobQueue(),
+            spend_cap=FakeSpendCap(),
+            free_runs=self.free_runs,
+            device_tokens=FakeDeviceTokens(),
+            distributed=False,
+            account_free_runs=self.accounts,
+        )
+        run = await create.execute(
+            principal=Principal(subject="user:sub-1", authenticated=True, account_id="acct-1"),
+            accept_terms=True,
+            file=None,
+            url=self.URL,
+            gemini_api_key=None,
+        )
+        return run.run_id
+
+    async def test_a_failed_download_hands_the_account_run_back(self) -> None:
+        run_id = await self._intake()
+        self.assertEqual(self.accounts.used("acct-1"), 1)
+        self.media.download_error = MediaValidationError("This post is not public.")
+
+        await self.use_case.execute(run_id, source_url=self.URL)
+
+        self.assertEqual(self.accounts.used("acct-1"), 0)
+        self.assertEqual(self.accounts.held, {})
+        self.assertEqual(self.free_runs.refunds, [])
+
+    async def test_the_duration_cap_after_download_hands_the_account_run_back(self) -> None:
+        run_id = await self._intake()
+        self.media.enforce_duration_error = MediaValidationError("too long")
+
+        await self.use_case.execute(run_id, source_url=self.URL)
+
+        self.assertEqual(self.accounts.used("acct-1"), 0)
+
+    async def test_a_gemini_failure_keeps_the_account_run_spent(self) -> None:
+        run_id = await self._intake()
+        self.analysis.error = RuntimeError("gemini down")
+
+        await self.use_case.execute(run_id, source_url=self.URL)
+
+        self.assertEqual(self.accounts.used("acct-1"), 1)
+        self.assertEqual(self.accounts.held, {})
+
+    async def test_a_retried_job_never_refunds_twice(self) -> None:
+        run_id = await self._intake()
+        self.media.download_error = MediaValidationError("This post is not public.")
+
+        await self.use_case.execute(run_id, source_url=self.URL)
+        await self.use_case.execute(run_id, source_url=self.URL)
+
+        self.assertEqual(len(self.accounts.refunds), 1)
+        self.assertEqual(self.accounts.used("acct-1"), 0)
 
 
 if __name__ == "__main__":

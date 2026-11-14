@@ -4,6 +4,7 @@ from starlette.requests import Request
 from ...container import container
 from ...domain.entities import AuthMethod, Principal
 from ...domain.errors import AuthenticationError, ForbiddenError
+from ...domain.policies import bearer_credential
 
 
 async def get_principal(
@@ -24,6 +25,23 @@ async def get_principal(
     principal = await container.identify_caller_use_case.resolve(
         authorization=authorization, api_key=x_api_key, client_id=x_client_id
     )
+    request.state.principal = principal
+    return principal
+
+
+async def get_optional_signed_in_principal(
+    request: Request,
+    authorization: str = Header(default=""),
+    x_api_key: str = Header(default=""),
+) -> Principal | None:
+    """The signed-in caller when the request carries a credential (a bearer
+    JWT or API key, or `X-Api-Key`), else None. For endpoints anonymous
+    callers use too and that need no `X-Client-ID` (`GET /api/free-runs`).
+    A credential that does not verify is a 401, exactly as on `/api/me`;
+    it is never silently treated as anonymous."""
+    if not bearer_credential(authorization) and not x_api_key.strip():
+        return None
+    principal = await container.identify_caller_use_case.resolve(authorization=authorization, api_key=x_api_key)
     request.state.principal = principal
     return principal
 

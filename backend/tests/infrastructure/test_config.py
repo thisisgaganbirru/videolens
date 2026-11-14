@@ -95,3 +95,17 @@ class DistributedDatabaseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MediaLimitSettingsTests(unittest.TestCase):
+    def test_defaults(self) -> None:
+        settings = Settings(_env_file=None)
+        self.assertEqual((settings.max_duration_seconds, settings.max_file_size_mb), (180, 200))
+        self.assertEqual(
+            (settings.signed_in_byok_max_duration_seconds, settings.signed_in_byok_max_file_size_mb), (600, 500)
+        )
+        self.assertEqual((settings.worker_job_timeout_seconds, settings.long_job_timeout_seconds), (600, 1800))
+
+    def test_long_job_timeout_never_below_the_standard_one(self) -> None:
+        settings = Settings(_env_file=None, worker_job_timeout_seconds=900, worker_long_job_timeout_seconds=300)
+        self.assertEqual(settings.long_job_timeout_seconds, 900)

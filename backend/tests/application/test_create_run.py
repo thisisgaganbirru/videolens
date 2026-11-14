@@ -1,7 +1,7 @@
 import unittest
 
 from app.application.create_run import CreateRunUseCase
-from app.domain.entities import Principal
+from app.domain.entities import AuthMethod, Principal
 from app.domain.errors import (
     DeviceTokenInvalidError,
     FreeRunsExhaustedError,
@@ -13,6 +13,7 @@ from app.domain.errors import (
 )
 
 from .fakes import (
+    FakeAccountFreeRunAllowance,
     FakeDeviceTokens,
     FakeFreeRunAllowance,
     FakeJobQueue,
@@ -311,6 +312,147 @@ class FreeRunAdmissionTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(InvalidSourceError):
             await self._run(use_case, url=None)
         self.assertEqual(self.free_runs.consume_calls, 0)
+
+
+PERSON = Principal(
+    subject="user:sub-1", authenticated=True, method=AuthMethod.TOKEN, account_id="acct-1", workspace_id="ws-1"
+)
+AGENT = Principal(
+    subject="key:key-1", authenticated=True, method=AuthMethod.API_KEY, account_id="acct-1", workspace_id="ws-1"
+)
+# Signed in on a deployment with no account store: no account id to count.
+BARE_USER = Principal(subject="user:sub-2", authenticated=True, method=AuthMethod.TOKEN)
+
+
+class AccountFreeRunAdmissionTests(unittest.IsolatedAsyncioTestCase):
+    """Signed-in free runs (owner decision 2026-11-13): a signed-in account
+    without its own key is admitted against its monthly account counter
+    instead of the device counter."""
+
+    def _make(self, *, spend_allowed: bool = True, limit: int = 10, enabled: bool = True, wired: bool = True):
+        self.free_runs = FakeFreeRunAllowance(per_device=3, per_ip=10)
+        self.accounts = FakeAccountFreeRunAllowance(limit=limit, enabled=enabled)
+        self.media = FakeMediaProcessor()
+        self.queue = FakeJobQueue()
+        self.spend_cap = FakeSpendCap(allow=spend_allowed)
+        return CreateRunUseCase(
+            runs=FakeRunRepository(),
+            media=self.media,
+            storage=FakeObjectStore(),
+            queue=self.queue,
+            spend_cap=self.spend_cap,
+            free_runs=self.free_runs,
+            device_tokens=FakeDeviceTokens(),
+            distributed=False,
+            account_free_runs=self.accounts if wired else None,
+        )
+
+    async def _run(self, use_case, *, principal=PERSON, token=None, key=None, file=None, url=URL, ip="1.1.1.1"):
+        return await use_case.execute(
+            principal=principal, accept_terms=True, file=file, url=url,
+            gemini_api_key=key, device_token=token, client_ip=ip,
+        )
+
+    async def test_a_signed_in_account_is_admitted_and_counted_without_a_device_token(self) -> None:
+        use_case = self._make()
+        run = await self._run(use_case, token=None)
+        self.assertEqual(self.accounts.used("acct-1"), 1)
+        self.assertIn(run.run_id, self.accounts.held)
+        # Not additive: the device counter is never touched.
+        self.assertEqual(self.free_runs.consume_calls, 0)
+        self.assertEqual(self.free_runs.held, {})
+
+    async def test_the_device_counter_is_untouched_even_when_a_token_is_sent(self) -> None:
+        use_case = self._make()
+        await self._run(use_case, token="good:dev-a")
+        self.assertEqual(self.free_runs.device_counts, {})
+
+    async def test_the_eleventh_run_is_refused_with_the_account_numbers(self) -> None:
+        use_case = self._make()
+        for _ in range(10):
+            await self._run(use_case)
+        with self.assertRaises(FreeRunsExhaustedError) as caught:
+            await self._run(use_case)
+        error = caught.exception
+        self.assertEqual((error.limit, error.used, error.scope), (10, 10, "account"))
+        self.assertEqual(str(error), "You have used this month's free runs. Add your own Gemini key to keep going.")
+        self.assertEqual(len(self.queue.enqueued), 10)
+        # Refused before the daily budget is touched.
+        self.assertEqual(self.spend_cap.consume_calls, 10)
+
+    async def test_an_api_key_spends_its_owners_account_runs(self) -> None:
+        use_case = self._make(limit=2)
+        await self._run(use_case, principal=PERSON)
+        await self._run(use_case, principal=AGENT)
+        with self.assertRaises(FreeRunsExhaustedError):
+            await self._run(use_case, principal=AGENT)
+        self.assertEqual(self.accounts.used("acct-1"), 2)
+
+    async def test_own_key_is_exempt(self) -> None:
+        use_case = self._make()
+        await self._run(use_case, key="user-key")
+        self.assertEqual(self.accounts.consume_calls, 0)
+        self.assertEqual(self.accounts.held, {})
+
+    async def test_anonymous_callers_stay_on_the_device_rule(self) -> None:
+        use_case = self._make()
+        await self._run(use_case, principal=PRINCIPAL, token="good:dev-a")
+        self.assertEqual(self.accounts.consume_calls, 0)
+        self.assertEqual(self.free_runs.device_counts["dev-a"], 1)
+        with self.assertRaises(DeviceTokenInvalidError):
+            await self._run(use_case, principal=PRINCIPAL, token=None)
+
+    async def test_the_device_402_carries_scope_device(self) -> None:
+        use_case = self._make()
+        for _ in range(3):
+            await self._run(use_case, principal=PRINCIPAL, token="good:dev-a")
+        with self.assertRaises(FreeRunsExhaustedError) as caught:
+            await self._run(use_case, principal=PRINCIPAL, token="good:dev-a")
+        self.assertEqual(caught.exception.scope, "device")
+
+    async def test_disabled_account_allowance_falls_back_to_the_device_rule(self) -> None:
+        use_case = self._make(enabled=False)
+        with self.assertRaises(DeviceTokenInvalidError):
+            await self._run(use_case, token=None)
+        await self._run(use_case, token="good:dev-a")
+        self.assertEqual(self.free_runs.device_counts["dev-a"], 1)
+        self.assertEqual(self.accounts.consume_calls, 0)
+
+    async def test_unwired_account_allowance_falls_back_to_the_device_rule(self) -> None:
+        use_case = self._make(wired=False)
+        await self._run(use_case, token="good:dev-a")
+        self.assertEqual(self.free_runs.device_counts["dev-a"], 1)
+
+    async def test_signed_in_without_an_account_store_uses_the_device_rule(self) -> None:
+        use_case = self._make()
+        await self._run(use_case, principal=BARE_USER, token="good:dev-a")
+        self.assertEqual(self.accounts.consume_calls, 0)
+        self.assertEqual(self.free_runs.device_counts["dev-a"], 1)
+
+    async def test_a_rejected_intake_hands_the_account_run_back_once(self) -> None:
+        use_case = self._make(spend_allowed=False)
+        with self.assertRaises(QuotaExceededError):
+            await self._run(use_case)
+        self.assertEqual(self.accounts.used("acct-1"), 0)
+        self.assertEqual(len(self.accounts.refunds), 1)
+        self.assertEqual(self.accounts.held, {})
+
+    async def test_a_media_validation_failure_hands_the_account_run_back(self) -> None:
+        use_case = self._make()
+        self.media.enforce_duration_error = MediaValidationError("too long")
+        with self.assertRaises(MediaValidationError):
+            await self._run(use_case, file=FakeUploadedFile(), url=None)
+        self.assertEqual(self.accounts.used("acct-1"), 0)
+
+    async def test_a_new_month_starts_a_fresh_allowance(self) -> None:
+        use_case = self._make(limit=1)
+        await self._run(use_case)
+        with self.assertRaises(FreeRunsExhaustedError):
+            await self._run(use_case)
+        self.accounts.period = "2026-12"
+        await self._run(use_case)
+        self.assertEqual(self.accounts.used("acct-1", "2026-11"), 1)
+        self.assertEqual(self.accounts.used("acct-1", "2026-12"), 1)
 
 
 if __name__ == "__main__":

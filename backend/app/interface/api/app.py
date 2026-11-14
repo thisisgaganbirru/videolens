@@ -42,6 +42,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         database_error = settings.distributed_database_error()
         if database_error:
             raise RuntimeError(database_error)
+        # Billing configured without a database: the subscription links and
+        # the extra-run ledger would live in one replica's memory.
+        billing_error = settings.distributed_billing_error()
+        if billing_error:
+            raise RuntimeError(billing_error)
     try:
         yield
     finally:

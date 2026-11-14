@@ -91,6 +91,17 @@ class Run(BaseModel):
     thumbnail: Optional[str] = None
     width: Optional[int] = None
     height: Optional[int] = None
+    # The media tier the run was admitted under (`MediaTier` value). Server
+    # bookkeeping, not sent to the client: it picks the staleness threshold,
+    # since a signed-in + BYOK run has the longer worker timeout. None (a run
+    # stored before tiers existed) reads as standard.
+    media_tier: Optional[str] = None
+    # True when intake admitted the run on the caller's own Gemini key, so it
+    # skipped the free-run and daily-cap checks. Never the key itself. The
+    # worker refuses such a run when the vault has no key for it rather than
+    # spend the shared key on it (docs/backend/byok.md). Server bookkeeping,
+    # not sent to the client; False for a run stored before it existed.
+    admitted_byok: bool = False
 
 
 class CapabilityState(str, Enum):
@@ -261,6 +272,9 @@ class SavedUpload:
     thumbnail_urls: tuple[str, ...] = ()
     width: Optional[int] = None
     height: Optional[int] = None
+    # Bytes on disk, when the adapter measured them (the one-long-run-per-
+    # account guard counts a file above the standard size as long).
+    size_bytes: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -296,9 +310,19 @@ class CaptionTrack:
     height: Optional[int] = None
 
 
+class FreeRunScope(str, Enum):
+    """Which counter a caller's free runs come from. DEVICE: anonymous (and
+    signed-in callers when the account allowance is off), per UTC day.
+    ACCOUNT: a signed-in account, per UTC calendar month, across devices."""
+
+    DEVICE = "device"
+    ACCOUNT = "account"
+
+
 @dataclass(frozen=True)
 class FreeRunStatus:
-    """Where one device stands against today's free-run allowance.
+    """Where one device (or, with `scope=ACCOUNT`, one account) stands
+    against its free-run allowance.
 
     `used` is the device's own count; the per-IP backstop is deliberately
     not reflected here (it is not something a device can see or act on).
@@ -310,6 +334,7 @@ class FreeRunStatus:
     used: int
     remaining: int
     resets_at: datetime
+    scope: FreeRunScope = FreeRunScope.DEVICE
 
 
 @dataclass(frozen=True)
@@ -321,3 +346,99 @@ class FreeRunClaim:
     device_id: str
     client_ip: str
     day: str
+
+
+@dataclass(frozen=True)
+class AccountFreeRunClaim:
+    """One free run taken from an account's monthly allowance. `period`
+    ("YYYY-MM", UTC) pins a refund to the month it was taken from, even if
+    the month turns in between."""
+
+    account_id: str
+    period: str
+
+
+# ------------------------------------------------------------------ billing
+#
+# The paid plan (docs/backend/billing.md): one Stripe subscription per
+# account, monthly or yearly, with `PAID_RUNS_PER_MONTH` shared-key runs
+# included and every run past them billed as one "extra run" (a Stripe
+# Billing Meter event, sent only once the run completed). Amounts are never
+# here: they live in Stripe Prices, read through `BillingGateway.prices`.
+
+
+@dataclass(frozen=True)
+class Price:
+    """One Stripe Price as the client shows it: `amount` in the currency's
+    minor units (cents), `currency` lower-case ISO 4217."""
+
+    amount: int
+    currency: str
+
+
+@dataclass(frozen=True)
+class BillingPrices:
+    """The plan's three prices. Any may be None: not configured (yearly is
+    optional), or Stripe could not be read just now."""
+
+    month: Optional[Price] = None
+    year: Optional[Price] = None
+    extra_run: Optional[Price] = None
+
+
+@dataclass(frozen=True)
+class SubscriptionSnapshot:
+    """A Stripe subscription reduced to what the plan check needs. Built by
+    the gateway from a fresh read, so webhook ordering never matters.
+    `interval` is the base price's ("month" | "year"); `account_id` is the
+    one the subscription's metadata names, when it names one."""
+
+    subscription_id: str
+    customer_id: str
+    status: str
+    price_id: Optional[str] = None
+    interval: Optional[str] = None
+    current_period_end: Optional[datetime] = None
+    cancel_at_period_end: bool = False
+    account_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class BillingAccount:
+    """An account's Stripe link (`billing_accounts`): the customer, and the
+    subscription it holds or last held. Subscription fields are None until a
+    checkout completes."""
+
+    account_id: str
+    stripe_customer_id: str
+    stripe_subscription_id: Optional[str] = None
+    status: Optional[str] = None
+    price_id: Optional[str] = None
+    interval: Optional[str] = None
+    current_period_end: Optional[datetime] = None
+    cancel_at_period_end: bool = False
+    updated_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class BillingWebhookEvent:
+    """A verified Stripe event, reduced by the gateway. Only ids: never a
+    card, an address or an email. `subscription_id` is the subscription the
+    event concerns (directly, or through its invoice or checkout session);
+    `account_id` is the one the object's metadata / client reference names."""
+
+    event_id: str
+    type: str
+    customer_id: Optional[str] = None
+    subscription_id: Optional[str] = None
+    account_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ExtraRunCharge:
+    """A completed extra run waiting to be (or being) reported to Stripe."""
+
+    run_id: str
+    account_id: str
+    stripe_customer_id: str
+    completed_at: datetime
