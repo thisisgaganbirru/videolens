@@ -26,7 +26,7 @@ Dockerfile does not declare is ignored and sign-in stays hidden.
 
 | Layer | File | Role |
 |---|---|---|
-| domain | `entities.ts` | `AuthUser`, `AccountResponse` (+ `AccountWorkspace`, `AccountEntitlement`), `ApiKeySummary`, `ApiKeyCreated`, `ApiKeyListResponse` |
+| domain | `entities.ts` | `AuthUser`, `AccountResponse` (+ `AccountWorkspace`, `AccountEntitlement`, which gains an optional `complimentary` on 2026-11-14, see `billing.md`), `ApiKeySummary`, `ApiKeyCreated`, `ApiKeyListResponse` |
 | domain | `ports.ts` | `AuthSession` (`enabled`, `load`, `user`, `hasSession`, `getToken`, `requestEmailCode`, `verifyEmailCode`, `signOut`, `subscribe`; no Google method yet), `AccountGateway` (`fetchAccount`, `listKeys`, `createKey`, `revokeKey`), `ServerAuthStatus` (the server's `auth` capability: `unknown`/`ok`/`off`), `CallerIdentity` (`lastOwner()`) |
 | domain | `entities.ts` (History) | `HistoryRecord.owner`: `user:<id>` or `anonymous`, the identity the run was created or imported under |
 | domain | `errors.ts` | `AuthFlowError(reason)`, reasons `invalid_email`, `invalid_code`, `rate_limited`, `unreachable`, `unavailable`, `unknown` |
@@ -587,3 +587,4 @@ copy now explains the hold. Everything is in `saved-history.md`.
 2026-11-14 · frontend agent · `DELETE /api/me` now answers 200 `{status, purge_at}` (30-day hold; legacy 204 still handled); delete form, deleted card and the new held/restore states rewritten for the hold; `AccountProblem` gains `held`; `useAccount` re-reads after a restore (see saved-history.md)
 - 2026-11-14 · frontend agent · paid plan is named Plus in the UI (Plan card name)
 - 2026-11-14 · orchestrator · `frontend/Dockerfile` declares the two `NEXT_PUBLIC_SUPABASE_*` values as build ARGs; without them the Railway dev build had no sign-in
+- 2026-11-14 · frontend agent · `AccountEntitlement.complimentary` typed; the Plan and usage card reads it (complimentary Plus: "Plus" plus "Complimentary. Nothing to pay."), see billing.md
