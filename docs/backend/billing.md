@@ -1,9 +1,10 @@
 # Billing: the paid plan (Stripe)
 
 One paid plan. It costs $12 a month (a yearly price is optional; the owner
-has not settled the yearly amount) and includes 100 runs a month on the
-shared Gemini key. Runs past those 100 are billed as extra runs, one at a
-time, and only when a run completes. A paid account also gets the bigger
+has not settled the yearly amount) and includes 30 runs a day (UTC day) on
+the shared Gemini key. Runs past those 30 in a day are billed as extra runs,
+one at a time, and only when a run completes. (Until 2026-11-14 it was 100
+runs a month, which was less than the free account's 10 a day.) A paid account also gets the bigger
 media limits (10 min / 500 MB by default) without its own key. Payment goes
 through Stripe-hosted Checkout and the Stripe Customer Portal. The server
 never sees a card and the frontend does not load Stripe.js. Amounts are
@@ -61,7 +62,7 @@ account store, the response is exactly `{"enabled": false}`. Otherwise:
   "interval": "month" | "year" | null,
   "current_period_end": "2026-12-13T00:00:00Z" | null,
   "cancel_at_period_end": false,
-  "runs": {"limit": 100, "used": 12, "period": "month"},
+  "runs": {"limit": 30, "used": 12, "period": "day"},
   "prices": {
     "month": {"amount": 1200, "currency": "usd"} | null,
     "year": {"amount": 12000, "currency": "usd"} | null,
@@ -75,10 +76,11 @@ account store, the response is exactly `{"enabled": false}`. Otherwise:
 - `plan` is `"paid"` only when the status is active or trialing and the
   current period (plus 3 days of grace) has not ended. `past_due`,
   `unpaid`, `canceled` and every other status read as `"free"`.
-- `runs` is the plan's own counter, and `period` says which: on the paid
-  plan this UTC month's (`"month"`, limit `PAID_RUNS_PER_MONTH`); on the
-  free plan today's (`"day"`, limit `FREE_RUNS_PER_ACCOUNT_DAILY`, since
-  2026-11-14; it was the month's `FREE_RUNS_PER_ACCOUNT_MONTHLY` before).
+- `runs` is the plan's own counter for today, and `period` is always sent:
+  on the paid plan `"day"` with limit `PAID_RUNS_PER_DAY` (30; since
+  2026-11-14, it was `"month"` with `PAID_RUNS_PER_MONTH`); on the free plan
+  `"day"` with limit `FREE_RUNS_PER_ACCOUNT_DAILY`. Both read the same daily
+  row; only the limit differs.
 - `amount` is in the currency's smallest unit (cents). A price is `null`
   when it is not configured (yearly is optional), when Stripe could not be
   read just now, or when the Price is tiered.
@@ -142,9 +144,10 @@ gets ids only: event, customer, subscription and account.
 - `GET /api/free-runs`, signed in: gains `"plan": "free" | "paid"` and
   `"overage": bool`, which is true on the paid plan, where runs past
   `limit` are billed instead of refused. On the paid plan, `limit`,
-  `used` and `remaining` are the plan's included runs and `period` is
-  `"month"` (every response carries `period` since 2026-11-14; free
-  accounts and devices are `"day"`, `free-runs.md`). Anonymous callers
+  `used` and `remaining` are the plan's included runs today and `period`
+  is `"day"` (it was `"month"` before 2026-11-14; every response carries
+  `period`, and the frontend assumes month for a paid response without
+  it, so it is always sent). Anonymous callers
   never get `plan` or `overage`.
 - `GET /api/limits` gains `"paid": {"max_duration_seconds", "max_file_size_mb"}`,
   listed whether or not billing is on.
@@ -163,22 +166,25 @@ gets ids only: event, customer, subscription and account.
 ### Paid admission (`CreateRunUseCase._admit_paid`)
 
 1. A run with the caller's own Gemini key is admitted first, as always. It
-   is never counted against the 100 and never billed.
-2. A paid account takes a run from its per-account **monthly** counter in
-   `account_free_runs` (key `"YYYY-MM"`, UTC calendar month), with the limit
-   `PAID_RUNS_PER_MONTH`. This is unchanged by the 2026-11-14 switch of the
-   free plan to a daily counter: free accounts now count on daily rows
-   (`"YYYY-MM-DD"`), a different key, so a run is only ever on one of them.
-   Free runs used before upgrading no longer count toward the 100 (until
-   2026-11-14 they did: free and paid shared the monthly row; monthly rows
-   written that way in November 2026 still count). The period lives in one
-   place, `BillingPlans.PAID_RUNS_PERIOD`, and the limit in
-   `PAID_RUNS_PER_MONTH`, so the owner's pending decision on paid numbers is
-   a settings or one-line change.
+   is never counted against the included runs and never billed.
+2. A paid account takes a run from its per-account **daily** counter in
+   `account_free_runs` (key `"YYYY-MM-DD"`, UTC day), with the limit
+   `PAID_RUNS_PER_DAY` (default 30; owner decision 2026-11-14, it was
+   `PAID_RUNS_PER_MONTH`=100 on a `"YYYY-MM"` row). It is the same row the
+   free plan counts on, so a run is counted once whichever plan took it:
+   upgrading mid-day, the day's free runs count toward the 30; downgrading
+   mid-day, the day's paid runs count toward the free 10 (an account that
+   used 10 or more paid runs today has no free runs left until midnight
+   UTC). Monthly rows from before the switch stay in the table and are no
+   longer read. The period lives in one place,
+   `BillingPlans.PAID_RUNS_PERIOD` (`FreeRunPeriod.DAY`), and the limit in
+   `PAID_RUNS_PER_DAY`. No migration: 0005 already widened `period` to
+   varchar(10).
 3. Past the limit, the run is admitted and an extra-run row is held in the
    ledger. The run is never refused for running past the included runs.
-4. The one refusal is the safety cap: when this month already has
-   `PAID_EXTRA_RUNS_MONTHLY_CAP` extra runs (default 200; 0 turns the cap
+4. The one refusal is the safety cap: when this UTC month already has
+   `PAID_EXTRA_RUNS_MONTHLY_CAP` extra runs (the ledger keys on the month,
+   `"YYYY-MM"`, while the included runs key on the day) (default 200; 0 turns the cap
    off), the run gets 402 `extra_runs_cap`. The cap guards against a
    runaway bill and is not a price point.
 5. Paid runs are exempt from `DAILY_RUN_CAP`. The per-IP rate limit still
@@ -298,7 +304,7 @@ asked.
 | `STRIPE_PRICE_EXTRA_RUN_YEARLY` | blank | optional yearly metered price for yearly plans (fallback 2 above) |
 | `STRIPE_METER_EVENT_NAME` | `videolens_extra_run` | the meter's event name. Required (it has a default). |
 | `BILLING_RETURN_ORIGIN` | blank | where Checkout and the portal return. Blank means the first non-`*` `ALLOWED_ORIGINS` entry, else `http://localhost:3005`. |
-| `PAID_RUNS_PER_MONTH` | 100 | included runs per UTC month |
+| `PAID_RUNS_PER_DAY` | 30 | included runs per UTC day (replaces `PAID_RUNS_PER_MONTH`, 2026-11-14, no longer read) |
 | `PAID_EXTRA_RUNS_MONTHLY_CAP` | 200 | extra runs per account per month before 402 `extra_runs_cap`; 0 turns the cap off |
 | `PAID_MAX_DURATION_SECONDS` | 0 | 0 or less means `SIGNED_IN_BYOK_MAX_DURATION_SECONDS` |
 | `PAID_MAX_FILE_SIZE_MB` | 0 | 0 or less means `SIGNED_IN_BYOK_MAX_FILE_SIZE_MB` |
@@ -412,3 +418,4 @@ Nothing in this repository creates Stripe objects.
 ## Changelog
 - 2026-11-13 · backend agent · created: paid plan through Stripe-hosted Checkout and Portal; `GET /api/billing`, `POST /api/billing/checkout|portal|webhook`; paid admission on the account counter (`PAID_RUNS_PER_MONTH`), extra runs through a held/due/reported ledger and a Billing Meter (identifier = run id), billed only on success; paid media tier; DAILY_RUN_CAP exemption; `extra_runs_cap` 402; deletion cancels the subscription first; migration 0004; `billing` capability row
 - 2026-11-14 · backend agent · the paid counter is still monthly (100/month, metered overage unchanged); the free plan moved to daily rows, so free and paid no longer share a row; `runs.period` on `GET /api/billing`; paid period in `BillingPlans.PAID_RUNS_PERIOD`
+- 2026-11-14 · backend agent · paid included runs are daily: `PAID_RUNS_PER_DAY` (30) replaces `PAID_RUNS_PER_MONTH` (100, no alias); `BillingPlans.PAID_RUNS_PERIOD` is day, on the same daily row as the free plan; `runs.period` and `/api/free-runs` `period` are "day" for paid; extra runs and `PAID_EXTRA_RUNS_MONTHLY_CAP` unchanged (ledger still keyed on the month); no migration

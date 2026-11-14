@@ -273,8 +273,9 @@ class FreeRunAllowance(Protocol):
 class AccountFreeRunAllowance(Protocol):
     """How many runs a signed-in account without its own Gemini key may
     start per counter period: per UTC day on the free plan
-    (`FREE_RUNS_PER_ACCOUNT_DAILY`), per UTC month for the paid plan's
-    included runs (the caller passes `limit` and `period`). Replaces the
+    (`FREE_RUNS_PER_ACCOUNT_DAILY`), and per UTC day too for the paid
+    plan's included runs (`PAID_RUNS_PER_DAY`; the caller passes `limit`
+    and `period`). Replaces the
     device counter for that caller (never adds to it), so the runs follow
     the person across devices. Same hold/release contract as
     `FreeRunAllowance`, so the pipeline can hand a run back the same way."""
@@ -288,7 +289,8 @@ class AccountFreeRunAllowance(Protocol):
         """Read-only: never consumes. `scope` is ACCOUNT. `limit` overrides
         the free daily limit and `period` the free daily period (the paid
         plan's included runs: docs/backend/billing.md). A daily and a
-        monthly counter are different rows ("YYYY-MM-DD" vs "YYYY-MM")."""
+        monthly counter are different rows ("YYYY-MM-DD" vs "YYYY-MM"); the
+        free and the paid plan's daily counters are the same row."""
         ...
 
     async def try_consume(

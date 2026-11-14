@@ -147,8 +147,8 @@ never a deployment manifest. See `docs/container-workflows.md`.
     needed: `402 {"code": "free_runs_used", "scope": "account", "period": "day", "limit", "used"}`;
   - `DAILY_RUN_CAP` (200) across all callers per UTC day: `503`.
   An `X-Gemini-Api-Key` header exempts the run from the last two. A paid
-  account (when billing is configured) takes `PAID_RUNS_PER_MONTH` (100)
-  included runs from its own monthly counter, then each further run is
+  account (when billing is configured) takes `PAID_RUNS_PER_DAY` (30)
+  included runs a UTC day from its account counter, then each further run is
   admitted and billed once it completes, up to `PAID_EXTRA_RUNS_MONTHLY_CAP`
   (`402 {"code": "extra_runs_cap", "limit"}`); paid runs skip the daily cap
   and get the paid media limits with or without a key.
@@ -168,8 +168,9 @@ never a deployment manifest. See `docs/container-workflows.md`.
   remaining, resets_at }`; issues a token when the sent one is missing or
   forged. Never spends a run. `scope` is `device`, or `account` (today's
   account runs) with a valid bearer; an invalid bearer is `401`. `period`
-  is `day` (device, free account; `resets_at` = next UTC midnight) or
-  `month` (paid plan; the 1st of next month).
+  is `day` (device, free account and, since 2026-11-14, the paid plan;
+  `resets_at` = next UTC midnight); `month` stays in the contract but no
+  counter uses it now.
   Signed in, also `plan` (`free` | `paid`) and `overage` (true on the paid
   plan: runs past `limit` are billed, not refused).
 - `GET /api/billing` — the signed-in caller's plan: `{"enabled": false}`

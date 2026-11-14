@@ -75,8 +75,9 @@ class FreeRunsResponse(BaseModel):
     `X-Device-Token`. `enabled=False` means no free-run limit applies.
     `scope` says which counter the numbers are: "device" or "account" (a
     signed-in account). `period` says how long it runs (since 2026-11-14):
-    "day" (UTC; the device, and a free account) or "month" (UTC calendar
-    month; the paid plan's included runs). `resets_at` is its end.
+    "day" (UTC; the device, a free account, and since 2026-11-14 the paid
+    plan's included runs) or "month" (UTC calendar month; a monthly plan
+    counter, none today). `resets_at` is its end.
 
     Signed in only (left out for anonymous callers, so their response is
     unchanged): `plan` "free" or "paid"; `overage` true on the paid plan,
@@ -108,11 +109,12 @@ class BillingPricesResponse(BaseModel):
 
 
 class BillingRunsResponse(BaseModel):
-    """`period`: "day" (free plan, since 2026-11-14) or "month" (paid)."""
+    """`period`: "day" on both plans since 2026-11-14 (the paid plan was
+    "month" before). Always sent."""
 
     limit: int
     used: int
-    period: Literal["day", "month"] = "month"
+    period: Literal["day", "month"] = "day"
 
 
 class BillingResponse(BaseModel):

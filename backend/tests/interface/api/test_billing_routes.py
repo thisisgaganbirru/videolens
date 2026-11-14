@@ -86,7 +86,7 @@ class BillingRoutesTests(unittest.TestCase):
         ledger = InMemoryExtraRunLedger(settings)
         self.account_runs = InMemoryAccountFreeRuns(settings)
         plans = BillingPlans(
-            gateway=self.gateway, accounts=self.billing_accounts, ledger=ledger, paid_runs_per_month=100
+            gateway=self.gateway, accounts=self.billing_accounts, ledger=ledger, paid_runs_per_day=30
         )
         self.plans = plans
         replacements = {
@@ -202,7 +202,7 @@ class EnabledBillingRoutesTests(BillingRoutesTests):
 
         body = self.client.get("/api/billing", headers=TOKEN).json()
         self.assertEqual((body["plan"], body["status"], body["interval"]), ("paid", "active", "month"))
-        self.assertEqual(body["runs"], {"limit": 100, "used": 0, "period": "month"})
+        self.assertEqual(body["runs"], {"limit": 30, "used": 0, "period": "day"})
 
     def test_an_invalid_interval_is_422(self) -> None:
         response = self.client.post("/api/billing/checkout", headers=TOKEN, json={"interval": "week"})
@@ -247,10 +247,11 @@ class EnabledBillingRoutesTests(BillingRoutesTests):
         self.stripe.v1.subscriptions.retrieve.return_value = self._subscription()
         self._webhook("evt_1")
         body = self.client.get("/api/free-runs", headers=TOKEN).json()
-        self.assertEqual((body["plan"], body["overage"], body["limit"], body["remaining"]), ("paid", True, 100, 100))
-        # The paid plan's included runs are still monthly.
-        self.assertEqual(body["period"], "month")
-        self.assertRegex(body["resets_at"], r"^\d{4}-\d{2}-01T00:00:00(Z|\+00:00)$")
+        self.assertEqual((body["plan"], body["overage"], body["limit"], body["remaining"]), ("paid", True, 30, 30))
+        # The paid plan's included runs are daily since 2026-11-14, and
+        # `period` is always sent (the frontend assumes month without it).
+        self.assertEqual(body["period"], "day")
+        self.assertRegex(body["resets_at"], r"T00:00:00(Z|\+00:00)$")
         # Anonymous: the fields it always had, nothing more.
         anonymous = self.client.get("/api/free-runs").json()
         self.assertNotIn("plan", anonymous)

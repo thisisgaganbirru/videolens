@@ -75,7 +75,7 @@ class BillingSettingsTests(unittest.TestCase):
 
     def test_paid_defaults(self) -> None:
         settings = Settings(_env_file=None)
-        self.assertEqual((settings.paid_runs_per_month, settings.paid_extra_runs_monthly_cap), (100, 200))
+        self.assertEqual((settings.paid_runs_per_day, settings.paid_extra_runs_monthly_cap), (30, 200))
         self.assertEqual(settings.stripe_meter_event_name, "videolens_extra_run")
 
 

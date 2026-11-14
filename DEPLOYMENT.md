@@ -131,7 +131,12 @@ Complete these items before making the application publicly available.
       backend **and** worker, add the webhook endpoint
       `https://<api>/api/billing/webhook`, then check `billing: ok` in
       `GET /api/capabilities` and run one test checkout. Not yet applied
-      or configured in any environment.
+      or configured in any environment. Since 2026-11-14 the paid plan's
+      included runs are `PAID_RUNS_PER_DAY` (default 30 per UTC day);
+      `PAID_RUNS_PER_MONTH` is no longer read. If an environment has
+      `PAID_RUNS_PER_MONTH` set, delete it and set `PAID_RUNS_PER_DAY`
+      instead (or leave it unset for 30), on the backend **and** worker.
+      No migration: 0005 already widened `period`.
 - [x] Abandoned runs are reported as failed instead of polling forever
       (`GetRunUseCase` staleness backstop, arq cancellation handling).
 - [x] `GET /api/capabilities` reports which dependencies work, and the app
@@ -364,7 +369,9 @@ STRIPE_PRICE_EXTRA_RUN=<price_... (metered, monthly)>
 STRIPE_PRICE_EXTRA_RUN_YEARLY=
 STRIPE_METER_EVENT_NAME=videolens_extra_run
 BILLING_RETURN_ORIGIN=https://app.example.com
-PAID_RUNS_PER_MONTH=100
+# Included runs per UTC day (replaces PAID_RUNS_PER_MONTH, no longer read).
+PAID_RUNS_PER_DAY=30
+# Extra runs per account per UTC month; stays monthly.
 PAID_EXTRA_RUNS_MONTHLY_CAP=200
 PAID_MAX_DURATION_SECONDS=0
 PAID_MAX_FILE_SIZE_MB=0
@@ -769,3 +776,4 @@ The release is complete when:
 - 2026-11-13 · backend agent · `SIGNED_IN_BYOK_MAX_DURATION_SECONDS` / `SIGNED_IN_BYOK_MAX_FILE_SIZE_MB` and `WORKER_LONG_JOB_TIMEOUT_SECONDS` variables; capacity note for 500 MB uploads; release check for `GET /api/limits` and the long-run guard. Deploy the worker before (or with) the API: an old worker does not know `process_long_run` or the `limits` job argument
 - 2026-11-13 · backend agent · paid plan: `STRIPE_*`, `BILLING_RETURN_ORIGIN` and `PAID_*` variables (both services); release checklist item and migration step for `0004_billing`; deploy order (migration, code with billing off, Stripe objects, variables, webhook)
 - 2026-11-14 · backend agent · `FREE_RUNS_PER_ACCOUNT_DAILY` replaces `FREE_RUNS_PER_ACCOUNT_MONTHLY` (remove the old variable); migration step for `0005_account_daily_free_runs` before the daily code
+- 2026-11-14 · backend agent · `PAID_RUNS_PER_DAY` (30/UTC day) replaces `PAID_RUNS_PER_MONTH` (100/month, no longer read): rename the variable on both services if set; no migration

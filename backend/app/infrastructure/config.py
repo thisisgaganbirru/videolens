@@ -150,8 +150,11 @@ class Settings(BaseSettings):
     # the first ALLOWED_ORIGINS entry. Paths are fixed:
     # /app?view=account&billing=success|cancel.
     billing_return_origin: str = ""
-    # Shared-key runs included per UTC calendar month on the paid plan.
-    paid_runs_per_month: int = 100
+    # Shared-key runs included per UTC day on the paid plan (owner decision
+    # 2026-11-14: 30 a day; it was PAID_RUNS_PER_MONTH=100, which is no
+    # longer read). Counted on the account's daily row, the same one the
+    # free plan uses. Runs past it are extra runs, billed after success.
+    paid_runs_per_day: int = 30
     # Media limits on the paid plan, with or without the person's own key.
     # <= 0 = the SIGNED_IN_BYOK_* values; never below the standard limits.
     paid_max_duration_seconds: int = 0

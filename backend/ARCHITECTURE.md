@@ -54,7 +54,7 @@ held -> due -> reported, billed once on success), `get_billing`,
 | `SpendCap` | `quota/daily_budget.py` | |
 | `DeviceTokenSigner` | `quota/device_tokens.py` | Stateless HMAC tokens; refuses to start distributed without a secret |
 | `FreeRunAllowance` | `quota/free_run_allowance.py` | Per-device and per-IP counters, hold/release for refunds |
-| `AccountFreeRunAllowance` | `persistence/account_free_runs.py` | Signed-in free runs per account per UTC day, and the paid plan's included runs per UTC month, on separate keys (SQL upsert-if-below-limit, or in-memory), hold/release like the device one |
+| `AccountFreeRunAllowance` | `persistence/account_free_runs.py` | Signed-in free runs per account per UTC day, and the paid plan's included runs per UTC day on the same row with the paid limit (SQL upsert-if-below-limit, or in-memory), hold/release like the device one |
 | `KeyVault` | `byok/key_vault.py` | Single-use, deleted on read, 15-minute TTL |
 | `TokenVerifier` | `auth/jwt_verifier.py` | RS256/ES256, required `exp`/`iat`/`sub`, 30 s leeway, audience when set; one caching JWKS client |
 | `AccountDirectory` | `persistence/account_directory.py` | SQL (Postgres via asyncpg, SQLite in tests) or in-memory; disabled in distributed mode without `DATABASE_URL` |
@@ -142,3 +142,4 @@ one-line shims so the Dockerfile, compose file and Railway configs reference
 - 2026-11-13 · backend agent · `AccountFreeRunAllowance` port and adapters; `create_run` admits signed-in accounts against their monthly allowance
 - 2026-11-13 · backend agent · paid plan: `BillingGateway` (Stripe) and `BillingAccounts`/`ExtraRunLedger` ports and adapters, the billing use cases, paid admission in `create_run`, billing on completion in `process_run`, the `billing` probe, `flush_extra_runs` cron
 - 2026-11-14 · backend agent · `AccountFreeRunAllowance` takes `period` (`FreeRunPeriod` day/month); free accounts count per UTC day, the paid plan per month
+- 2026-11-14 · backend agent · the paid plan's included runs count per UTC day (`BillingPlans.PAID_RUNS_PERIOD = DAY`, `PAID_RUNS_PER_DAY`); the extra-run ledger stays monthly
