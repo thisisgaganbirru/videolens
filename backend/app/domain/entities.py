@@ -227,6 +227,9 @@ class Account(BaseModel):
     # has passed, the cleanup job removes the account for good.
     deleted_at: Optional[datetime] = None
     purge_at: Optional[datetime] = None
+    # Complimentary Plus (docs/backend/billing.md): on the paid plan without
+    # Stripe, never billed. Set only by hand in SQL by the owner.
+    complimentary_plus: bool = False
 
     @property
     def pending_deletion(self) -> bool:
@@ -449,6 +452,37 @@ class BillingAccount:
     current_period_end: Optional[datetime] = None
     cancel_at_period_end: bool = False
     updated_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class PlanStanding:
+    """Which plan an account is on right now, and why
+    (`BillingPlans.standing`).
+
+    - `subscription`: the account's billing row when a Stripe subscription
+      grants the paid plan now (active or trialing, within its period plus
+      the grace). Billing follows it: extra runs past the included ones are
+      admitted and billed through the meter.
+    - `complimentary`: on the paid plan through `accounts.complimentary_plus`
+      and NOT through a paying subscription. Never billed: no extra runs,
+      no ledger row, no meter event, no checkout or portal. False whenever
+      `subscription` is set (the real subscription wins).
+
+    Neither: the free plan."""
+
+    subscription: Optional[BillingAccount] = None
+    complimentary: bool = False
+
+    @property
+    def paid(self) -> bool:
+        """On the paid plan ("Plus"): paid media limits, the paid plan's
+        included runs, saved history."""
+        return self.subscription is not None or self.complimentary
+
+    @property
+    def billable(self) -> bool:
+        """Runs past the included ones may be admitted as billed extra runs."""
+        return self.subscription is not None
 
 
 @dataclass(frozen=True)

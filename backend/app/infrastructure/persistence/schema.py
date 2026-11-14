@@ -28,6 +28,7 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    false,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -75,6 +76,10 @@ accounts = Table(
     # When the account's saved runs are removed, set once the paid plan has
     # ended (0006); cleared by a resubscribe.
     Column("saved_runs_expire_at", DateTime(timezone=True), nullable=True),
+    # Complimentary Plus (0010, docs/backend/billing.md): the paid plan
+    # without Stripe and never billed. Set and cleared only by hand in SQL
+    # by the owner; nothing in the code writes it.
+    Column("complimentary_plus", Boolean, nullable=False, server_default=false()),
     Index("ix_accounts_purge_at", "purge_at"),
     Index("ix_accounts_saved_runs_expire_at", "saved_runs_expire_at"),
 )
