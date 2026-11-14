@@ -201,6 +201,12 @@ Separately, `next.config.mjs` currently sets `output: "standalone"`, so
 routes) — the export in `out/` served over a plain static server is the working
 harness.
 
+## UX fix spec 6.3 (2026-11-14)
+
+The Releases lede is "Each version and its date. Release notes open on
+GitHub." followed by the existing " You are on version X.Y.Z." when the build
+knows its version.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported VersionLogPanel by analogy — no drawn spec, needs a design review pass
@@ -212,3 +218,4 @@ harness.
 - 2026-11-01 · frontend agent (Phase 4) · restyled as the editorial Releases page (view-title + lede, hairline release rows with ArrowUpRight, `formatDay` dates replacing `formatDate`); no board, built in the ApiKey board's language; no Latest badge (endpoint order not guaranteed)
 - 2026-11-01 · frontend agent (Phase 4, boards) · rebuilt as per-release cards to design/phase4-boards/Releases*.png: "Version X.Y.Z" serif title, Latest pill on the newest, date; client-side newest-first sort (components/releases.ts) because the endpoint does not guarantee order (supersedes the earlier "no Latest badge" call); lede names the running version via NEXT_PUBLIC_APP_VERSION from next.config.mjs; no bullet notes (endpoint has no body) — release name + GitHub link instead
 - 2026-11-14 · frontend agent · error string "Could not load the releases." (UX fix spec batch a)
+- 2026-11-14 · frontend agent · UX fix spec batch e: Releases lede says what the list holds and where the notes open

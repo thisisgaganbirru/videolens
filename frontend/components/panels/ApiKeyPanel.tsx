@@ -106,10 +106,10 @@ export default function ApiKeyPanel({
     <div className="key-page">
       <AppBackLink />
       <header className="view-head">
-        <h1 className="view-title">API key</h1>
+        <h1 className="view-title">Gemini key</h1>
         <p className="view-lede">
-          Optional. You get a few free runs. Add your own Gemini key to keep going. It is stored in
-          this browser only.
+          Optional. VideoLens works without a key. Runs on your own Gemini key don&apos;t count
+          toward your daily runs. The key is saved in this browser only.
         </p>
       </header>
 
@@ -121,7 +121,7 @@ export default function ApiKeyPanel({
 
       <form className="key-card" onSubmit={handleSubmit} noValidate>
         <label htmlFor={fieldId} className="key-label">
-          Gemini API key
+          Gemini key
         </label>
         <div className="key-row">
           <input

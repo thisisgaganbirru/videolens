@@ -810,6 +810,12 @@ media-terms key not bumped: billing is not live and both sections are still
 drafts for the owner's legal review; bump both before launch if the owner
 wants a re-accept. Static, no scripts: CSP hashes unchanged.
 
+## UX fix spec 6.4 and 6.5 (2026-11-14)
+
+- 404: "Open the app" (`/app`, ink) and "Home page" (`/`, outline).
+- Offline: "Open the app" (plain `<a href="/app">`, still required offline)
+  and "Open History". "Try again" promised a retry the link does not do.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported privacy/terms/offline off the Midnight Glass classes
@@ -839,3 +845,4 @@ wants a re-accept. Static, no scripts: CSP hashes unchanged.
 - 2026-11-14 · frontend agent · Privacy "Signing in": the account's free-run count is kept "each day" (was "each month"); effective date and terms key unchanged
 - 2026-11-14 · frontend agent · Terms "Paid plan" states a daily included allowance and a monthly cap on extra runs; Privacy "Payments" keeps a daily run count and a monthly extra-run count (drafts; effective date and terms key unchanged, flagged)
 - 2026-11-14 · frontend agent · vocabulary only (UX fix spec batch a): Terms "stored only in your browser", Privacy "out of this browser"; nothing else changed
+- 2026-11-14 · frontend agent · UX fix spec batch e: 404 actions "Open the app" / "Home page"; offline "Try again" is now "Open the app"
