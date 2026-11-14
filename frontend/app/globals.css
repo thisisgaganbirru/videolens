@@ -2069,6 +2069,156 @@ h3 {
     color: var(--color-ink-2);
   }
 
+  /* ---- saved to the account (2026-11-14, docs/frontend/saved-history.md) ----
+     Tokens only. The plan-ended and held notices are the quiet surface card
+     the Account page uses for plan notices; the browser-only group is the
+     same grid under a muted label and one line; the per-run delete is a
+     small surface disc in the thumb's empty top-right corner, a 44px target
+     around a 2rem disc, so it never covers the chip or the badge. */
+  .history-notice {
+    margin-top: var(--space-md);
+    max-width: 40rem;
+    padding: var(--space-sm) 1.25rem 0.25rem;
+    background: var(--color-surface);
+    border: var(--rule-w) solid var(--color-rule);
+    border-radius: var(--radius-card);
+    color: var(--color-ink-2);
+    line-height: 1.5;
+  }
+  .history-notice p {
+    margin: 0 0 0.25rem;
+  }
+  /* Holds the open-failure line; empty and zero-height otherwise. */
+  .history-saved-alert > .error-inline {
+    margin-top: var(--space-md);
+  }
+  .history-saved-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-xs) var(--space-md);
+    margin-top: var(--space-lg);
+  }
+  .history-saved-foot > .history-delete-all {
+    margin-left: auto;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--color-muted);
+  }
+  .history-saved-foot > .history-delete-all:hover {
+    color: var(--color-danger);
+  }
+  .history-saved-note {
+    margin: var(--space-2xs) 0 0;
+    font-size: 0.875rem;
+    color: var(--color-ink-2);
+  }
+  .history-local {
+    margin-top: var(--space-xl);
+    padding-top: var(--space-lg);
+    border-top: var(--rule-w) solid var(--color-rule);
+  }
+  .history-local > .history-group-label {
+    margin-bottom: 0.25rem;
+  }
+  .history-local-note {
+    margin: 0;
+    max-width: 34rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--color-muted);
+  }
+  .history-local > .history-group {
+    margin-top: var(--space-md);
+  }
+  .history-local > .history-group + .history-group {
+    margin-top: 1.25rem;
+  }
+
+  .poster-item[data-deletable] {
+    position: relative;
+  }
+  .poster-item[data-deletable] .poster-chip {
+    max-width: calc(100% - 3.5rem);
+  }
+  .poster-delete {
+    all: unset;
+    box-sizing: border-box;
+    position: absolute;
+    z-index: 2;
+    top: 0;
+    right: 0;
+    width: 2.75rem;
+    height: 2.75rem;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    border-radius: var(--radius-pill);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .poster-delete__disc {
+    display: grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-surface);
+    color: var(--color-ink-2);
+    transition: color var(--dur-short) var(--ease-out);
+  }
+  .poster-delete__icon {
+    width: 0.9375rem;
+    height: 0.9375rem;
+  }
+  .poster-delete:hover .poster-delete__disc {
+    color: var(--color-danger);
+  }
+  .poster-delete:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: -2px;
+  }
+  .poster[aria-busy="true"] {
+    cursor: progress;
+  }
+
+  /* First page on its way: blank posters the size of real ones. */
+  .history-ghost .poster {
+    cursor: default;
+  }
+  .history-ghost-label {
+    display: block;
+    width: 4.5rem;
+    height: 1em;
+    border-radius: 4px;
+    background: var(--color-tint);
+  }
+  .history-ghost-thumb {
+    background: var(--color-tint);
+  }
+  .history-ghost-line {
+    display: block;
+    width: 80%;
+    height: 0.875rem;
+    border-radius: 4px;
+    background: var(--color-tint);
+  }
+  .history-ghost-line--short {
+    width: 45%;
+    height: 0.75rem;
+    margin-top: 0.375rem;
+  }
+
+  .confirm-dialog__error {
+    margin-top: var(--space-sm);
+  }
+  .confirm-dialog .update-prompt__text p {
+    margin: 0;
+  }
+  .confirm-dialog .update-prompt__text p + p {
+    margin-top: var(--space-2xs);
+  }
+
   @media (min-width: 40rem) {
     .poster-grid {
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -5548,5 +5698,12 @@ h3 {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* Deletion hold card (2026-11-14, docs/frontend/saved-history.md). */
+@layer components {
+  .acct-page .acct-held-more {
+    margin-top: 0.5rem;
   }
 }
