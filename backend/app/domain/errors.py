@@ -95,3 +95,44 @@ class FreeRunsExhaustedError(Exception):
         super().__init__(message)
         self.limit = limit
         self.used = used
+
+
+class AuthenticationError(Exception):
+    """The credential presented could not be verified (401). The message is
+    safe to show; it never echoes the credential."""
+
+
+class ForbiddenError(Exception):
+    """The caller is known but this credential may not do this (403): an API
+    key asking to manage keys, or a workspace member who is not its owner."""
+
+
+class AuthNotConfiguredError(RuntimeError):
+    """A bearer token arrived but this deployment has no identity provider
+    configured (503). Lives in the domain, not the JWT adapter, so the API
+    layer maps it without importing an adapter: any `TokenVerifier` raises
+    this one type."""
+
+
+class AccountsNotConfiguredError(AuthNotConfiguredError):
+    """A signed-in caller asked for something that needs the account
+    directory (API keys), on a deployment that has none (503)."""
+
+
+class ApiKeyLimitError(Exception):
+    """The workspace already holds its maximum of live API keys (409)."""
+
+
+class ApiKeyNotFoundError(Exception):
+    """No live API key with that id in the caller's workspace (404)."""
+
+
+class ClientIdInvalidError(Exception):
+    """An anonymous caller sent no valid `X-Client-ID` (400, as before
+    accounts existed: it is a malformed request, not a failed sign-in)."""
+
+
+class AccountDeletionError(UserFacingError):
+    """Deleting an account failed part-way (500). Whatever was already
+    removed stays removed; the provider user goes last, so retrying with the
+    same session finishes the job."""

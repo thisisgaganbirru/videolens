@@ -39,6 +39,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             # Refused, not warned: a deployed API with a CORS wildcard is open
             # to every website, and a warning in a platform log reaches nobody.
             raise RuntimeError(origin_error)
+        database_error = settings.distributed_database_error()
+        if database_error:
+            raise RuntimeError(database_error)
     try:
         yield
     finally:
@@ -68,8 +71,19 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=container.settings.allowed_origin_list,
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Client-ID", "X-Gemini-Api-Key", "X-Device-Token"],
+    # DELETE for `DELETE /api/keys/{id}` and `DELETE /api/me`.
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    # Listed explicitly, never "*": `Authorization` (a Supabase session token
+    # or a `vl_live_` key) and `X-Api-Key` are credentials, and a wildcard
+    # would not cover `Authorization` under the CORS spec anyway.
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "X-Api-Key",
+        "X-Client-ID",
+        "X-Gemini-Api-Key",
+        "X-Device-Token",
+    ],
     # Not a CORS-safelisted response header: without this a cross-origin
     # fetch (the web app and the Android WebView both are) reads it as null.
     expose_headers=["Retry-After"],

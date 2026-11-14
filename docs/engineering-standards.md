@@ -67,10 +67,13 @@ with CI installing via `--require-hashes`. Blast radius: 1 file, ~60 lines.
 
 Root `CLAUDE.md` and `backend/ARCHITECTURE.md:14-16` both state that
 `interface/` and `infrastructure/` never depend on each other directly and are
-wired together only in `container.py`. Three verified violations:
+wired together only in `container.py`. Three verified violations (the first fixed 2026-11-08, two remain):
 
-- `backend/app/interface/api/dependencies.py:8` — imports
-  `AuthNotConfiguredError` from `infrastructure.auth.jwt_verifier`
+- ~~`backend/app/interface/api/dependencies.py:8` — imports
+  `AuthNotConfiguredError` from `infrastructure.auth.jwt_verifier`~~ FIXED
+  2026-11-08 (auth phase 1): the error lives in `domain/errors.py` and is
+  mapped to 503 in `error_handlers.py`; `dependencies.py` only calls the
+  container's `IdentifyCallerUseCase`
 - `backend/app/interface/api/app.py:13` — imports `configure_logging` from
   `infrastructure.logging_config`
 - `backend/app/interface/api/rate_limiter.py:5` — imports `settings` from
@@ -669,3 +672,4 @@ Re-verify before fixing; do not treat the line numbers as authoritative.
 - 2026-08-29 · main session · merged dev: the count is 6 errors + 1 warning, not 5 + 1 — dev's PR #26 `UploadForm.tsx` share effect trips the same `set-state-in-effect` rule, and `dev` has no eslint config to have caught it
 - 2026-10-02 · ci-cache agent · marked "Container base images are past end-of-life" resolved pending this branch's CI and "The one outstanding CVE" removed: `CVE-2026-15308` ignore rule deleted from `.grype.yaml` (image on CPython 3.13.16; Grype DB range `< 3.13.15`)
 - 2026-11-06 · claude (ci-hardening session) · fixed the stale `reusable-container-checks.yml` reference and recorded that the ARG-based base image layout was reversed (Dependabot-visible `FROM ... AS base` now)
+- 2026-11-08 · backend subagent (auth phase 1) · marked layering violation #1 (`dependencies.py` importing `AuthNotConfiguredError` from the adapter) fixed; two remain (`app.py` logging, `rate_limiter.py` settings)

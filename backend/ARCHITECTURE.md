@@ -9,7 +9,7 @@ domain  <-  application  <-  infrastructure
 ```
 
 `interface/` and `infrastructure/` never import each other; `container.py`
-wires them. (Three known violations are recorded in
+wires them. (Two known violations remain, recorded in
 `docs/engineering-standards.md`.) Every adapter takes `Settings` in its
 constructor, which is what makes it testable with an explicit `Settings(...)`.
 
@@ -17,9 +17,10 @@ constructor, which is what makes it testable with an explicit `Settings(...)`.
 
 **`domain/`** — pure types and rules, no I/O.
 `entities.py` (`Run`, `VideoAnalysis`, `SourceMetadata`, `CaptionTrack`,
-`MediaVisuals`, capability and release models, free-run models, `Principal`),
+`MediaVisuals`, capability and release models, free-run models, `Principal` and `AuthMethod`, `Account`, `Workspace`,
+`ApiKey`), `entitlements.py` (`Plan.FREE`, `Entitlement`),
 `errors.py` (every exception a use case may raise; `UserFacingError` carries a
-user message plus operator-only `log_detail`), `policies.py` (quota key,
+user message plus operator-only `log_detail`), `policies.py` (quota key per principal, `can_access_run`, `looks_like_api_key`,
 client IP from the proxy-written `X-Forwarded-For` entry, client-id
 validity, run staleness), `run_facts.py` (the media facts a history
 card shows, derived from a stored run), `ports.py` (the `Protocol`s below).
@@ -30,7 +31,10 @@ save, enqueue, clean up and refund on partial failure), `process_run` (the
 pipeline: fetch → normalize → analyze → persist, with the caption-only fallback
 and the concurrent poster capture; identical under the local runner and the
 arq worker), `get_run` (ownership plus the abandoned-run backstop),
-`list_runs`, `get_free_runs`, `get_capabilities`, `get_releases`.
+`list_runs`, `get_free_runs`, `get_capabilities`, `get_releases`,
+`identify_caller` (API key, then bearer token, then client id → `Principal`),
+`get_account` + `entitlements`, and the API-key use cases (`create_api_key`,
+`list_api_keys`, `revoke_api_key`, gated by `api_key_access`).
 
 **`infrastructure/`** — one adapter per port.
 
@@ -47,8 +51,13 @@ arq worker), `get_run` (ownership plus the abandoned-run backstop),
 | `DeviceTokenSigner` | `quota/device_tokens.py` | Stateless HMAC tokens; refuses to start distributed without a secret |
 | `FreeRunAllowance` | `quota/free_run_allowance.py` | Per-device and per-IP counters, hold/release for refunds |
 | `KeyVault` | `byok/key_vault.py` | Single-use, deleted on read, 15-minute TTL |
-| `TokenVerifier` | `auth/jwt_verifier.py` | |
-| `CapabilityProbe` | `health/probes.py` | One per dependency; `probed=False` where a check would cost money |
+| `TokenVerifier` | `auth/jwt_verifier.py` | RS256/ES256, required `exp`/`iat`/`sub`, 30 s leeway, audience when set; one caching JWKS client |
+| `AccountDirectory` | `persistence/account_directory.py` | SQL (Postgres via asyncpg, SQLite in tests) or in-memory; disabled in distributed mode without `DATABASE_URL` |
+| `ApiKeyRepository` | `persistence/api_key_repository.py` | SHA-256 only, cap enforced in the insert transaction, `last_used_at` at most once a minute |
+| `IdentityProviderUsers` | `persistence/identity_users.py` | Whether Supabase still has a user (`auth_user_exists`); asked on first sight of a subject and before key issue, so a token that outlived its deleted user cannot re-create rows. SQLite and in-memory: always yes |
+| `AccountDeleter` | `persistence/account_deleter.py` | Account deletion: identity rows in one transaction, then the Supabase user via the `SECURITY DEFINER` function from `0002_auth_user_deleter` (skipped on SQLite and in memory) |
+| — | `persistence/database.py`, `schema.py` | One async engine; schema owned by Alembic (`backend/migrations/`, a release step) |
+| `CapabilityProbe` | `health/probes.py` | One per dependency (`auth` is the seventh); `probed=False` where a check would cost money |
 | `ReleaseCatalog` | `releases/github_releases.py` | Server-side GitHub read; parses `v<version>-build<code>` tags |
 
 Plus `config.py` (`Settings`; `NATIVE_APP_ORIGINS` is the Capacitor WebView
@@ -57,9 +66,9 @@ origin allowed in code) and `logging_config.py`.
 **`interface/`** — the only layer that knows FastAPI and arq.
 `api/app.py` (factory, lifespan checks, CORS, rate-limit middleware),
 `api/routes.py` (thin handlers: health, readiness, capabilities, releases,
-free-runs, runs), `api/schemas.py` (response DTOs; kept separate from
+free-runs, runs, `/api/me`, `/api/keys`), `api/schemas.py` (response DTOs; kept separate from
 `domain.entities.Run` so `owner_id` never leaks), `api/dependencies.py`
-(`get_principal`), `api/error_handlers.py` (exception → status, `Retry-After`),
+(`get_principal`, `get_signed_in_principal`, `require_person`), `api/error_handlers.py` (exception → status, `Retry-After`),
 `api/rate_limiter.py` (slowapi; not behind a port, and the one import-time
 global; the client IP comes from `policies.client_ip_from_forwarded` with
 `TRUSTED_PROXY_HOPS`), `api/security_headers.py` (pure-ASGI middleware,
@@ -92,8 +101,9 @@ one-line shims so the Dockerfile, compose file and Railway configs reference
 ## Cross-cutting
 
 - **Errors**: domain exceptions map to HTTP in `error_handlers.py` (400
-  validation, 401 device token, 402 free runs, 404, 429 rate limit, 503
-  quota/scheduling/analysis). `docs/error-messaging.md` covers wording.
+  validation, 401 device token / authentication, 402 free runs, 403 forbidden,
+  404, 409 API-key cap, 429 rate limit, 503 quota/scheduling/analysis/auth
+  not configured). `docs/error-messaging.md` covers wording.
 - **Spend limits**: rate limit, free runs, daily cap, BYOK exemption, plus
   a looser per-IP limit on the read endpoints;
   `docs/backend/cost-abuse-protection.md` and `free-runs.md`.
@@ -116,3 +126,6 @@ one-line shims so the Dockerfile, compose file and Railway configs reference
 ## Changelog
 
 - 2026-11-07 · main session · rewritten as a codemap; merged the security pass (`security_headers.py`, trusted-proxy client IP, read-endpoint limit, startup refusal on a CORS wildcard): port/adapter table, invariants, cross-cutting; covers the resolver chain, captions, probes, releases, free runs and device tokens
+- 2026-11-08 · backend subagent (auth phase 1) · added the identity slice: `identify_caller` and the account/API-key use cases, `AccountDirectory` and `ApiKeyRepository` ports with SQL and in-memory adapters, `database.py`/`schema.py` and Alembic, the `auth` probe, the new routes and dependencies; layering violations down to two
+- 2026-11-09 · backend subagent (auth phase 3) · added the `AccountDeleter` port and adapters, `RunRepository.delete_for_owner`, `DeleteAccountUseCase` (`DELETE /api/me`) and the `database` probe
+- 2026-11-09 · backend subagent (auth phase 3, review fix) · added the `IdentityProviderUsers` port and adapters

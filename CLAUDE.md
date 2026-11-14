@@ -43,10 +43,16 @@ Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
   recreate them here. `feat/paid-tier-integration` is parked the same way.
 - History lives in the browser (IndexedDB), not on the server. The server
   forgets a run `RUN_TTL_SECONDS` (1 hour) after its last write. Do not add
-  server-side persistence; the paid tier that would need it is deferred.
-- No accounts and no paid tier yet. Keep the app usable anonymously and
-  client-side-only for storage (BYOK key, history). The `AUTH_*` OIDC settings
-  exist but are unused by design.
+  server-side persistence for runs or results; the paid tier that would need
+  it is deferred. The only server-side tables are the four identity tables
+  (`accounts`, `workspaces`, `workspace_members`, `api_keys`) in
+  `infrastructure/persistence/`, owned by Alembic in `backend/migrations/`.
+- Sign-in is optional and anonymous use is first-class. The `AUTH_*` settings
+  verify Supabase-issued JWTs by JWKS only (RS256/ES256; never add HS256 or a
+  Supabase SDK to the backend); with them and `DATABASE_URL` blank the API
+  behaves exactly as before accounts existed. No paid tier yet. Keep the BYOK
+  key and history client-side. See `docs/auth-plan.md` and
+  `docs/backend/auth.md`.
 - Four spend limits gate Gemini: per-IP rate limit (429), per-device free
   runs (402, needs `DEVICE_TOKEN_SECRET` in distributed mode or the API
   refuses to start), `DAILY_RUN_CAP` (503), and the BYOK exemption from the
@@ -70,7 +76,7 @@ Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
 - Every outbound fetch for a URL run goes through `media/net.py`, the one
   SSRF guard. A new resolver or fetch path must use it, not copy it.
 - `interface/` and `infrastructure/` must not import each other; only
-  `container.py` wires them. Three known violations are listed in
+  `container.py` wires them. Two known violations are listed in
   `docs/engineering-standards.md`; do not add more.
 - Railway builds from source. The GHCR images CI publishes are an archive
   and nothing deploys them. Deploys are gated by Railway's Wait for CI, which

@@ -5,7 +5,8 @@ from unittest import mock
 
 from app.infrastructure.config import Settings
 from app.interface.api import rate_limiter
-from app.interface.api.rate_limiter import client_ip
+from app.domain.entities import AuthMethod, Principal
+from app.interface.api.rate_limiter import client_ip, quota_key
 
 # Header shapes measured on Railway's dev environment (2026-11-07) with an
 # opt-in diagnostic. The edge REPLACES X-Forwarded-For with
@@ -121,6 +122,40 @@ class ReadLimitAcrossRunIdsTests(unittest.TestCase):
         self.assertNotIn(429, codes[:limit])
         self.assertEqual(codes[limit], 429)
 
+
+
+class QuotaKeyFromPrincipalTests(unittest.TestCase):
+    """The bucket follows the caller `get_principal` resolved, not the raw
+    token, so a signed-in person keeps one bucket across token refreshes."""
+
+    def _request(self, principal=None, authorization: str = "") -> SimpleNamespace:
+        headers = {"x-forwarded-for": f"{CLIENT}, 10.0.0.1"}
+        if authorization:
+            headers["authorization"] = authorization
+        state = SimpleNamespace(principal=principal) if principal is not None else SimpleNamespace()
+        return SimpleNamespace(headers=headers, client=SimpleNamespace(host="100.64.0.2"), state=state)
+
+    def test_a_person_keeps_one_bucket_across_token_refreshes(self) -> None:
+        person = Principal(subject="user:u1", authenticated=True, method=AuthMethod.TOKEN, account_id="acct-1")
+        keys = {
+            quota_key(self._request(person, "Bearer first-token")),
+            quota_key(self._request(person, "Bearer refreshed-token")),
+        }
+        self.assertEqual(keys, {"account:acct-1"})
+
+    def test_an_api_key_shares_its_owners_bucket(self) -> None:
+        key = Principal(subject="key:k1", authenticated=True, method=AuthMethod.API_KEY, account_id="acct-1")
+        self.assertEqual(quota_key(self._request(key, "Bearer vl_live_x")), "account:acct-1")
+
+    def test_anonymous_is_keyed_by_ip(self) -> None:
+        anon = Principal(subject="client:abc0123456789xyz", authenticated=False)
+        self.assertEqual(quota_key(self._request(anon)), f"ip:{CLIENT}")
+
+    def test_unresolved_request_falls_back_to_the_header_key(self) -> None:
+        key = quota_key(self._request(None, "Bearer private-token"))
+        self.assertTrue(key.startswith("token:"))
+        self.assertNotIn("private-token", key)
+        self.assertEqual(quota_key(self._request(None)), f"ip:{CLIENT}")
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,8 +4,12 @@ import time
 from slowapi import Limiter
 from starlette.requests import Request
 
+from ...domain.entities import Principal
 from ...domain.policies import client_ip_from_forwarded, quota_key_from_headers, seconds_until
+from ...domain.policies import quota_key as principal_quota_key
 from ...infrastructure.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def client_ip(request: Request) -> str:
@@ -22,7 +26,25 @@ def client_ip(request: Request) -> str:
 
 
 def quota_key(request: Request) -> str:
-    return quota_key_from_headers(request.headers.get("authorization", ""), client_ip(request))
+    """The rate-limit bucket for this request.
+
+    Keyed on the caller `get_principal` resolved (it leaves it on
+    `request.state`; slowapi's route decorator runs the check inside the
+    endpoint, after dependencies): `account:<id>` for a signed-in person or an
+    API key, `ip:<ip>` for anonymous callers (`policies.quota_key`). A route
+    without `get_principal`, or anything going wrong here, falls back to the
+    header-based key (token hash, else IP) the limiter used before accounts
+    existed; a request with a bad credential is refused with a 401 by the
+    dependency before it ever reaches the limit check.
+    """
+    ip = client_ip(request)
+    try:
+        principal = getattr(request.state, "principal", None)
+        if isinstance(principal, Principal):
+            return principal_quota_key(principal, ip)
+    except Exception:  # noqa: BLE001 - never fail a request over its bucket name
+        logger.warning("Could not derive the quota key from the principal", exc_info=True)
+    return quota_key_from_headers(request.headers.get("authorization", ""), ip)
 
 
 # Redis-backed so the limit holds across worker processes/replicas, not just
@@ -40,8 +62,6 @@ limiter = Limiter(
     key_style="endpoint",
 )
 
-
-logger = logging.getLogger(__name__)
 
 
 def retry_after_seconds(request: Request, rate_limiter: Limiter = limiter) -> int | None:

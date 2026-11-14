@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { HistoryRecord, RunPlatform, RunSummary } from "@/domain/entities";
 import { knownPlatformName, linkHost, platformFromUrl } from "@/domain/platforms";
 import { StorageUnavailableError } from "@/domain/errors";
-import { EXPIRED_MESSAGE, bootHistory } from "@/application/historySync";
+import { EXPIRED_MESSAGE, bootHistory, importServerRuns } from "@/application/historySync";
 import { historyStore } from "@/infrastructure/container";
 
 /* History is read from this browser (IndexedDB, via `HistoryStore`), not from
@@ -77,11 +77,33 @@ function toEntry(record: HistoryRecord, thumbnailUrl: string | null): HistoryEnt
 }
 
 /** Starts the once-per-load History work (the one-time import from the
- *  server and the re-check of unfinished runs). Mount once, in the shell. */
-export function useHistoryBoot(): void {
+ *  server and the re-check of unfinished runs). Mount once, in the shell.
+ *
+ *  Auth phase 2: `auth` is who is signed in. When that changes after the
+ *  session first settled (a sign-in, or another person in another tab), the
+ *  server's run owner changed too, so History asks the server again as the
+ *  new caller (`importServerRuns`). The first settle is not a change: the
+ *  boot import already went out with whatever session was restored, because
+ *  every request waits for the provider before it is sent. Signing out
+ *  re-imports nothing; History stays as it is. The list itself re-reads on
+ *  its own, through the store's subscription. */
+export function useHistoryBoot(auth: { ready: boolean; userId: string | null }): void {
   useEffect(() => {
     void bootHistory();
   }, []);
+
+  const lastUser = useRef<string | null | undefined>(undefined);
+  const { ready, userId } = auth;
+  useEffect(() => {
+    if (!ready) return;
+    if (lastUser.current === undefined) {
+      lastUser.current = userId;
+      return;
+    }
+    if (lastUser.current === userId) return;
+    lastUser.current = userId;
+    if (userId) void importServerRuns();
+  }, [ready, userId]);
 }
 
 export function useRunHistory() {

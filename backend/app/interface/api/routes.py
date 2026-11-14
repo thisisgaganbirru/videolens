@@ -1,12 +1,25 @@
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from starlette.requests import Request
 
 from ...container import container
-from ...domain.entities import CapabilityReport, Principal, ReleaseIndex, Run
+from ...domain.entities import ApiKey, CapabilityReport, Principal, ReleaseIndex, Run
 from ...domain.run_facts import describe_run
-from .dependencies import get_principal
+from .dependencies import get_principal, get_signed_in_principal, require_person
 from .rate_limiter import client_ip, limiter
-from .schemas import FreeRunsResponse, RunCreateResponse, RunListResponse, RunStatusResponse, RunSummary
+from .schemas import (
+    AccountResponse,
+    ApiKeyCreatedResponse,
+    ApiKeyCreateRequest,
+    ApiKeyListResponse,
+    ApiKeyResponse,
+    EntitlementResponse,
+    FreeRunsResponse,
+    RunCreateResponse,
+    RunListResponse,
+    RunStatusResponse,
+    RunSummary,
+    WorkspaceResponse,
+)
 
 router = APIRouter()
 
@@ -151,3 +164,88 @@ async def get_run(
         height=facts.height,
         orientation=facts.orientation,
     )
+
+
+@router.get("/api/me", response_model=AccountResponse)
+@limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
+async def me(request: Request, principal: Principal = Depends(get_signed_in_principal)) -> AccountResponse:
+    """Who the caller is and what they may do. Any authenticated caller (a
+    signed-in person or an API key, so an agent can check its key); an
+    anonymous caller gets 401 and reads limits from `/api/capabilities`."""
+    view = await container.get_account_use_case.execute(principal)
+    entitlement = view.entitlement
+    return AccountResponse(
+        subject=principal.subject,
+        method=principal.method.value,
+        email=principal.email,
+        account_id=principal.account_id,
+        workspace=WorkspaceResponse(workspace_id=view.workspace.workspace_id, name=view.workspace.name)
+        if view.workspace
+        else None,
+        entitlement=EntitlementResponse(
+            plan=entitlement.plan.value,
+            max_duration_seconds=entitlement.max_duration_seconds,
+            max_file_size_mb=entitlement.max_file_size_mb,
+            metered=entitlement.metered,
+            api_access=entitlement.api_access,
+            library=entitlement.library,
+        ),
+        accounts_enabled=view.accounts_enabled,
+    )
+
+
+@router.delete("/api/me", status_code=204)
+@limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
+async def delete_me(request: Request, principal: Principal = Depends(require_person)) -> Response:
+    """Delete the signed-in person's account for good: their server-side
+    runs, API keys, workspace and account rows, then their Supabase user.
+    A signed-in session only (`require_person`: anonymous 401, API key 403);
+    503 without an account store. A retry after a part-way failure is 204;
+    after a complete deletion the same token is refused (401), since the
+    Supabase user it names no longer exists."""
+    await container.delete_account_use_case.execute(principal)
+    return Response(status_code=204)
+
+
+def _api_key_response(key: ApiKey) -> ApiKeyResponse:
+    return ApiKeyResponse(
+        key_id=key.key_id,
+        name=key.name,
+        prefix=key.prefix,
+        scopes=key.scopes,
+        active=key.active,
+        last_used_at=key.last_used_at,
+        revoked_at=key.revoked_at,
+        created_at=key.created_at,
+    )
+
+
+# Key management needs a signed-in person (`require_person`): anonymous is
+# 401 and an API key is 403, so a leaked agent key cannot mint more keys.
+@router.get("/api/keys", response_model=ApiKeyListResponse)
+@limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
+async def list_api_keys(request: Request, principal: Principal = Depends(require_person)) -> ApiKeyListResponse:
+    keys = await container.list_api_keys_use_case.execute(principal)
+    return ApiKeyListResponse(keys=[_api_key_response(key) for key in keys])
+
+
+@router.post("/api/keys", response_model=ApiKeyCreatedResponse, status_code=201)
+@limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
+async def create_api_key(
+    request: Request,
+    body: ApiKeyCreateRequest,
+    principal: Principal = Depends(require_person),
+) -> ApiKeyCreatedResponse:
+    created = await container.create_api_key_use_case.execute(principal, body.name)
+    return ApiKeyCreatedResponse(**_api_key_response(created.key).model_dump(), secret=created.secret)
+
+
+@router.delete("/api/keys/{key_id}", status_code=204)
+@limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
+async def revoke_api_key(
+    request: Request,
+    key_id: str,
+    principal: Principal = Depends(require_person),
+) -> Response:
+    await container.revoke_api_key_use_case.execute(principal, key_id)
+    return Response(status_code=204)

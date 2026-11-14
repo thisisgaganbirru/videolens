@@ -7,4 +7,4 @@ class ListRunsUseCase:
         self._runs = runs
 
     async def execute(self, principal: Principal) -> list[Run]:
-        return await self._runs.list_for_owner(principal.subject)
+        return await self._runs.list_for_owner(principal.owner_id)

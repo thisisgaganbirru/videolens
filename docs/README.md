@@ -20,7 +20,7 @@ Every new feature or component should get (or update) a doc here. Scope is stric
 | `cost-abuse-protection.md` | Rate limit, daily cap, BYOK asymmetry, `Retry-After` |
 | `free-runs.md` | The per-device daily free-run allowance: device tokens, `GET /api/free-runs`, the 401/402 codes, refunds, how easy it is to bypass |
 | `byok.md` | Bring-your-own-key and the single-use key vault |
-| `auth.md` | `get_principal`, OIDC bearer tokens, `X-Client-ID` |
+| `auth.md` | Caller identity (API key, Supabase bearer token, `X-Client-ID`), accounts and workspaces, API keys, `/api/me`, `/api/keys`, the identity database and its migration |
 | `cors.md` | `ALLOWED_ORIGINS` and the native WebView origins |
 | `capabilities.md` | `GET /api/capabilities` and the probes |
 | `releases.md` | `GET /api/releases`, read from GitHub server-side |
@@ -42,6 +42,7 @@ Every new feature or component should get (or update) a doc here. Scope is stric
 | `run-history.md` | History in IndexedDB, the poster grid, filters and sort |
 | `free-runs.md` | The client half of free runs: device token, banner, 401 retry and 402 handling |
 | `byok-api-key.md` | The API key tab |
+| `auth-sign-in.md` | Optional sign-in (emailed code), the Account tab, VideoLens API keys, the bearer on every request |
 | `capability-reporting.md` | The capability notice and callouts |
 | `release-notes.md` | The Releases tab |
 | `android-update-check.md` | The native update check and `UpdatePrompt` |
@@ -70,6 +71,11 @@ Every new feature or component should get (or update) a doc here. Scope is stric
 - `images/` — the README screenshots. Regenerate with
   `scripts/readme-screenshots.js` (mocked API, fixture data) after a visual
   change, so the README never shows a design the app no longer has.
+- `auth-plan.md` — the design for Supabase-backed sign-in, API keys for
+  agents, and the authorization seam the paid tier will use. A plan, not a
+  reference: phase 1 (backend identity) is implemented, and its reference is
+  `backend/auth.md`. Read before touching
+  `backend/auth.md` or starting any account work.
 - `engineering-standards.md` — cross-cutting, not a per-feature reference. A
   repo-wide engineering-hygiene register audited 2026-08-15, with resolution
   notes where work has landed. Also records the decision to keep the MCP
@@ -117,3 +123,6 @@ someone else's entry.
 - 2026-11-07 · main session · replaced the quick-links sections with a full index of every backend and frontend doc
 - 2026-11-07 · frontend agent · indexed `frontend/security-headers.md`
 - 2026-11-07 · main session · added `images/` (README screenshots) and the script that regenerates them; indexed both `security-headers.md` docs
+- 2026-11-07 · main session · indexed `auth-plan.md`
+- 2026-11-08 · backend subagent (auth phase 1) · widened the `auth.md` row to cover accounts, API keys and the identity database
+- 2026-11-08 · frontend subagent (auth phase 2) · indexed `frontend/auth-sign-in.md`

@@ -95,5 +95,8 @@ export function useCapabilities() {
     /** Wired to the API-key panel: unavailable here means the shared budget is
      *  spent and a bring-your-own key is the way through. */
     dailyBudget: find(report, "daily_budget"),
+    /** Wired to the Account tab (auth phase 2): the tab shows only when this
+     *  is `ok`, meaning the server verifies sign-in tokens. */
+    auth: find(report, "auth"),
   };
 }

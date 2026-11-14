@@ -23,6 +23,8 @@ class FakeRunRepository:
         self.created_ids: list[str] = []
         self.set_visuals_error: Exception | None = None
         self.visuals_written_while: list[RunStatus] = []
+        self.deleted_owners: list[str] = []
+        self.delete_error: Exception | None = None
 
     async def create(
         self,
@@ -54,6 +56,15 @@ class FakeRunRepository:
     async def list_for_owner(self, owner_id: str, limit: int = 20) -> list[Run]:
         matches = [run for run in self.runs.values() if run.owner_id == owner_id]
         return matches[:limit]
+
+    async def delete_for_owner(self, owner_id: str) -> int:
+        self.deleted_owners.append(owner_id)
+        if self.delete_error is not None:
+            raise self.delete_error
+        doomed = [run_id for run_id, run in self.runs.items() if run.owner_id == owner_id]
+        for run_id in doomed:
+            del self.runs[run_id]
+        return len(doomed)
 
     async def set_status(self, run_id: str, status: RunStatus) -> None:
         self.runs[run_id].status = status
@@ -370,3 +381,70 @@ class FakeFreeRunAllowance:
 
     async def close(self) -> None:
         pass
+
+
+class FakeTokenVerifier:
+    """Returns fixed claims, or raises `error` (an AuthNotConfiguredError, or
+    anything else for a token that does not verify)."""
+
+    def __init__(self, claims: dict | None = None, error: Exception | None = None) -> None:
+        self.claims = claims if claims is not None else {"sub": "user-123", "role": "authenticated"}
+        self.error = error
+        self.tokens: list[str] = []
+
+    def decode(self, token: str) -> dict:
+        self.tokens.append(token)
+        if self.error is not None:
+            raise self.error
+        return dict(self.claims)
+
+
+class FakeIdentityProviderUsers:
+    """Every subject exists unless it is in `gone`. `asked` records each
+    lookup, so a test can pin that reads of existing accounts never ask."""
+
+    def __init__(self, gone: set[str] | None = None) -> None:
+        self.gone = gone if gone is not None else set()
+        self.asked: list[str] = []
+
+    async def exists(self, external_id: str) -> bool:
+        self.asked.append(external_id)
+        return external_id not in self.gone
+
+
+class FakeAccountDeleter:
+    """Records each step into `log` (shared with the test, so the order of
+    run deletion against these two steps can be asserted). `rows_exist` is
+    what `delete_account` reports; `identity_supported` is False for a store
+    with no identity provider (SQLite, in-memory)."""
+
+    def __init__(
+        self,
+        log: list[str] | None = None,
+        *,
+        enabled: bool = True,
+        rows_exist: bool = True,
+        identity_supported: bool = True,
+    ) -> None:
+        self.log = log if log is not None else []
+        self._enabled = enabled
+        self.rows_exist = rows_exist
+        self.identity_supported = identity_supported
+        self.rows_error: Exception | None = None
+        self.identity_error: Exception | None = None
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    async def delete_account(self, external_id: str) -> bool:
+        self.log.append(f"rows:{external_id}")
+        if self.rows_error is not None:
+            raise self.rows_error
+        return self.rows_exist
+
+    async def delete_identity(self, external_id: str) -> bool:
+        self.log.append(f"identity:{external_id}")
+        if self.identity_error is not None:
+            raise self.identity_error
+        return self.identity_supported

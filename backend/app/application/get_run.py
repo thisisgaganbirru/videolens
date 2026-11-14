@@ -1,6 +1,6 @@
 from ..domain.entities import Principal, Run, RunStatus
 from ..domain.errors import RunNotFoundError
-from ..domain.policies import is_run_stale
+from ..domain.policies import can_access_run, is_run_stale
 from ..domain.ports import RunRepository
 
 RUN_ABANDONED_MESSAGE = "Analysis stopped responding and did not finish. Please try again."
@@ -22,7 +22,7 @@ class GetRunUseCase:
 
     async def execute(self, run_id: str, principal: Principal) -> Run:
         run = await self._runs.get(run_id)
-        if run is None or run.owner_id != principal.subject:
+        if not can_access_run(principal, run):
             raise RunNotFoundError("Run not found.")
 
         if is_run_stale(run.status, run.updated_at, self._stale_after_seconds):

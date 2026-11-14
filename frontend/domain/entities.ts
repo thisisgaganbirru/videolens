@@ -155,6 +155,12 @@ export interface HistoryRecord {
    *  for the result's Source card. The server never keeps it. Null for links
    *  and imported runs; absent on records written before it existed. */
   file_name?: string | null;
+  /** Who the server holds this run for, as the request that created (or
+   *  imported) it went out: `user:<id>` or `anonymous` (auth phase 2). A 404
+   *  under a different identity means "not yours right now", not "expired",
+   *  so the row is left alone. Absent on records written before it existed;
+   *  those keep the old 404-means-expired rule. */
+  owner?: string | null;
   updated_at: string;
 }
 
@@ -215,4 +221,68 @@ export interface FreeRunsStatus {
   resetsAt: string;
   /** `false`: the deployment has no free-run limit — show nothing. */
   enabled: boolean;
+}
+
+/* ---- accounts (auth phase 2; contract in docs/backend/auth.md) ----
+   Sign-in is optional. A deployment without an identity provider never
+   produces any of these. Field names follow the API's JSON, as the run
+   shapes above do. */
+
+/** The person the identity provider says is signed in. Provider-neutral:
+ *  nothing outside `infrastructure/authSession.ts` knows it is Supabase. */
+export interface AuthUser {
+  /** The provider's stable user id (the token's `sub`). */
+  id: string;
+  email: string | null;
+}
+
+export interface AccountWorkspace {
+  workspace_id: string;
+  name: string;
+}
+
+/** What the caller may do. One free plan in this phase; the numbers are the
+ *  deployment's own limits. */
+export interface AccountEntitlement {
+  plan: string;
+  max_duration_seconds: number;
+  max_file_size_mb: number;
+  metered: boolean;
+  api_access: boolean;
+  library: boolean;
+}
+
+/** `GET /api/me`. Identity and entitlement, no usage and no plan cards. */
+export interface AccountResponse {
+  subject: string;
+  method: "token" | "api_key" | "anonymous" | (string & {});
+  email: string | null;
+  account_id: string | null;
+  workspace: AccountWorkspace | null;
+  entitlement: AccountEntitlement;
+  /** False when the server has nowhere to keep accounts: sign-in works, but
+   *  there is no workspace and `/api/keys` answers 503. */
+  accounts_enabled: boolean;
+}
+
+/** A VideoLens API key as a listing shows it. Never carries the secret. */
+export interface ApiKeySummary {
+  key_id: string;
+  name: string;
+  /** `vl_live_` plus the first eight characters, kept so a key is recognisable. */
+  prefix: string;
+  scopes: string[];
+  active: boolean;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+/** The one response that carries a key's secret. Shown once, never stored. */
+export interface ApiKeyCreated extends ApiKeySummary {
+  secret: string;
+}
+
+export interface ApiKeyListResponse {
+  keys: ApiKeySummary[];
 }
