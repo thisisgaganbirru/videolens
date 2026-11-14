@@ -34,7 +34,14 @@ export default function nextConfig(phase) {
       : {
           async headers() {
             const apiOrigin = apiOriginFrom(process.env.NEXT_PUBLIC_API_BASE_URL);
-            return [{ source: "/:path*", headers: securityHeaders({ apiOrigin, dev }) }];
+            const headers = securityHeaders({ apiOrigin, dev });
+            // The dev deployment's noindex switch (infrastructure/siteOrigin.ts).
+            // The header covers what a robots <meta> cannot: images, the
+            // manifest, sitemap.xml itself.
+            if (process.env.NEXT_PUBLIC_NOINDEX === "1") {
+              headers.push({ key: "X-Robots-Tag", value: "noindex, nofollow" });
+            }
+            return [{ source: "/:path*", headers }];
           },
         }),
     // `next dev` otherwise writes frontend/AGENTS.md and frontend/CLAUDE.md on

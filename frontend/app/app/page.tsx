@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { Suspense } from "react";
 import HomeScreen, { RoutedHomeScreen } from "@/components/HomeScreen";
 import Splash from "@/components/Splash";
@@ -26,6 +27,15 @@ import "../first-run.css";
    the root layout's <head>, see application/firstRunScripts.ts); Welcome is a modal dialog over the tool, which stays mounted
    underneath it (so a share still lands in the intake). Both are inert in a
    browser tab. See application/useFirstRun.ts. */
+/* Every `?view=` is a view of this one document, so `/app` is the canonical
+   address for all of them. */
+export const metadata: Metadata = {
+  title: "Analyze a video",
+  description:
+    "Paste a YouTube, TikTok or Instagram link, or add an audio or video file, and get a transcript, on-screen text, summary and notes.",
+  alternates: { canonical: "/app" },
+};
+
 export default function AppPage() {
   return (
     <>

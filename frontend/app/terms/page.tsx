@@ -1,4 +1,12 @@
+import type { Metadata } from "next";
 import LegalShell, { LegalSection } from "@/components/LegalShell";
+
+export const metadata: Metadata = {
+  title: "Terms",
+  description:
+    "The terms for using VideoLens AI: what you may submit, prohibited use, generated results and availability.",
+  alternates: { canonical: "/terms" },
+};
 
 export default function TermsPage() {
   return (

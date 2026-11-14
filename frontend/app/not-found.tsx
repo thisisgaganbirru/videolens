@@ -33,8 +33,10 @@ import SiteFooter from "@/components/SiteFooter";
  * pre-emit critique: P5 H5 E5 S4 R5 V4
  */
 
+/* No `robots` here: Next already writes `noindex` on every not-found
+   document, and a second meta would only repeat it. */
 export const metadata: Metadata = {
-  title: "Page not found · VideoLens AI",
+  title: "Page not found",
 };
 
 export default function NotFound() {
