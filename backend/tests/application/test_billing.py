@@ -216,6 +216,58 @@ class GetBillingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((view.plan, view.status, view.interval), ("paid", "active", "year"))
         self.assertEqual((view.runs_limit, view.runs_used, view.runs_period), (30, 5, "day"))
 
+    async def test_paid_account_with_extra_runs_this_month(self) -> None:
+        now = datetime(2026, 11, 14, 9, 30, tzinfo=timezone.utc)
+        billing = _Billing(clock=lambda: now, cap=200)
+        await billing.subscribe(end=now + timedelta(days=20))
+        for run_id in ("a", "b", "c", "d"):
+            await billing.ledger.hold(run_id, account_id=ACCOUNT, customer_id=CUSTOMER, period="2026-11")
+        await billing.ledger.complete("a")  # due
+        await billing.ledger.complete("b")
+        await billing.ledger.mark_reported("b")  # reported
+        await billing.ledger.void("d")  # never billed: not counted
+        # Last month's and another account's rows are not this month's.
+        await billing.ledger.hold("old", account_id=ACCOUNT, customer_id=CUSTOMER, period="2026-10")
+        await billing.ledger.hold("other", account_id="acct-2", customer_id="cus_2", period="2026-11")
+        view = await GetBillingUseCase(
+            plans=billing.plans, account_free_runs=FakeAccountFreeRunAllowance(limit=10)
+        ).execute(_person())
+        extra = view.extra_runs
+        self.assertIsNotNone(extra)
+        # held + due + reported, the same count the cap at admission uses.
+        self.assertEqual((extra.used, extra.limit, extra.period), (3, 200, "month"))
+        self.assertEqual(extra.used, await billing.plans.extra_runs_used(ACCOUNT))
+        self.assertEqual(extra.resets_at, datetime(2026, 12, 1, tzinfo=timezone.utc))
+
+    async def test_paid_account_with_no_extra_runs(self) -> None:
+        now = datetime(2026, 12, 31, 23, 0, tzinfo=timezone.utc)
+        billing = _Billing(clock=lambda: now)
+        await billing.subscribe(end=now + timedelta(days=20))
+        view = await GetBillingUseCase(
+            plans=billing.plans, account_free_runs=FakeAccountFreeRunAllowance(limit=10)
+        ).execute(_person())
+        self.assertEqual((view.extra_runs.used, view.extra_runs.limit), (0, 200))
+        self.assertEqual(view.extra_runs.resets_at, datetime(2027, 1, 1, tzinfo=timezone.utc))
+
+    async def test_paid_account_with_the_cap_off_has_no_limit(self) -> None:
+        billing = _Billing(cap=0)
+        await billing.subscribe()
+        view = await GetBillingUseCase(plans=billing.plans, account_free_runs=None).execute(_person())
+        self.assertEqual((view.extra_runs.used, view.extra_runs.limit), (0, None))
+
+    async def test_free_and_past_due_accounts_have_no_extra_runs(self) -> None:
+        billing = _Billing()
+        runs = FakeAccountFreeRunAllowance(limit=10)
+        self.assertIsNone((await GetBillingUseCase(plans=billing.plans, account_free_runs=runs).execute(_person())).extra_runs)
+        await billing.subscribe("past_due")
+        # A row left from when it was paid is not shown on the free plan.
+        await billing.ledger.hold("a", account_id=ACCOUNT, customer_id=CUSTOMER, period=billing.plans.extra_runs_period())
+        self.assertIsNone((await GetBillingUseCase(plans=billing.plans, account_free_runs=runs).execute(_person())).extra_runs)
+
+    async def test_billing_off_has_no_extra_runs(self) -> None:
+        view = await GetBillingUseCase(plans=_Billing(enabled=False).plans, account_free_runs=None).execute(_person())
+        self.assertEqual((view.enabled, view.extra_runs), (False, None))
+
     async def test_past_due_reads_as_free(self) -> None:
         billing = _Billing()
         await billing.subscribe("past_due")
