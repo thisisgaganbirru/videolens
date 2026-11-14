@@ -33,6 +33,7 @@ import { useSharedUrl, type SharedUrl } from "@/application/useSharedUrl";
 import { canonicalizeAppPath, goToMainTab, useMainTab, type MainTab } from "@/application/useMainTab";
 import type { RunSourceKind, SavedRunSummary } from "@/domain/entities";
 import { platformName } from "@/domain/platforms";
+import { useRememberPlan, useRememberRunsSpent } from "@/application/useLayoutHints";
 
 /**
  * The app shell for one tab.
@@ -58,6 +59,21 @@ const FREE_RUNS_GHOST: FreeRunsBannerState = {
   /* A valid time, so the stand-in carries the "Resets at …" sentence and is
      as long as the real strip (UX fix spec 3.2). */
   resetsAt: "2026-01-01T00:00:00Z",
+};
+/* The other stand-ins (2026-11-14), picked by CSS from the pre-paint stamps
+   (`data-session`, `data-runs-spent`) so a returning visitor reserves the
+   strip they will actually get: signed in, the one-line account sentence;
+   spent last time, the spent sentence. */
+const FREE_RUNS_GHOST_SIGNED_IN: FreeRunsBannerState = {
+  ...FREE_RUNS_GHOST,
+  scope: "account",
+  remaining: 10,
+  limit: 10,
+};
+const FREE_RUNS_GHOST_SPENT: FreeRunsBannerState = {
+  ...FREE_RUNS_GHOST,
+  remaining: 0,
+  exhausted: true,
 };
 
 export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
@@ -198,6 +214,31 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      never lands short and then grows a "Sign in" sentence (a measured 0.037
      layout shift at 412 px, UX fix spec 3.6). */
   const stripKnown = capabilitiesSettled && authUser.ready;
+  /* The out-of-runs offer, in order: sign in, upgrade, key. */
+  const blockedOffer =
+    showAccount && authUser.ready && !authUser.user
+      ? ("sign-in" as const)
+      : billing !== null && billing.plan === "free"
+        ? ("upgrade" as const)
+        : ("key" as const);
+  const blockedShown = freeRuns.blocked && stripKnown;
+  /* Out-of-runs space (2026-11-14): while the block may still appear, the
+     card holds an unseen copy of it, shown only when the pre-paint stamp
+     says this device was out of runs last time (CSS), so a returning spent
+     visitor's card does not grow when the count lands. */
+  const blockedHeld =
+    !blockedShown && !mediaLimits.hasKey && (freeRuns.pending || (freeRuns.blocked && !stripKnown));
+  useRememberRunsSpent({
+    known: (stripKnown && !freeRuns.pending) || mediaLimits.hasKey,
+    blocked: blockedShown,
+    available: mediaLimits.hasKey || (freeRuns.banner !== null && !freeRuns.blocked),
+    resetsAt: freeRuns.banner?.resetsAt ?? "",
+    offer: blockedOffer,
+  });
+  useRememberPlan(
+    billing?.plan ?? freeRuns.banner?.plan ?? null,
+    authUser.ready && !authUser.user
+  );
   /* The Gemini key page's "Sign in" line needs the session, the auth
      capability and `/api/limits`. It is known not to apply as soon as any of
      them says so (no provider in this build, someone signed in, sign-in not
@@ -450,9 +491,17 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                         extraRunPrice={extraRunPrice}
                       />
                     ) : freeRuns.pending || freeRuns.banner ? (
-                      <div className="free-runs-ghost" aria-hidden="true" inert>
-                        <FreeRunsBanner banner={FREE_RUNS_GHOST} offerSignIn />
-                      </div>
+                      <>
+                        <div className="free-runs-ghost" data-variant="signed-out" aria-hidden="true" inert>
+                          <FreeRunsBanner banner={FREE_RUNS_GHOST} offerSignIn />
+                        </div>
+                        <div className="free-runs-ghost" data-variant="signed-in" aria-hidden="true" inert>
+                          <FreeRunsBanner banner={FREE_RUNS_GHOST_SIGNED_IN} />
+                        </div>
+                        <div className="free-runs-ghost" data-variant="spent" aria-hidden="true" inert>
+                          <FreeRunsBanner banner={FREE_RUNS_GHOST_SPENT} />
+                        </div>
+                      </>
                     ) : null}
                   </div>
                   <h1 className="intake-title">New analysis</h1>
@@ -460,16 +509,10 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                 <UploadForm
                   onSubmit={submitFresh}
                   submitting={submitting}
-                  blocked={freeRuns.blocked && stripKnown}
+                  blocked={blockedShown}
+                  blockedHeld={blockedHeld}
                   blockedPeriod={freeRuns.banner?.period}
-                  /* The out-of-runs offer, in order: sign in, upgrade, key. */
-                  blockedOffer={
-                    showAccount && authUser.ready && !authUser.user
-                      ? "sign-in"
-                      : billing !== null && billing.plan === "free"
-                        ? "upgrade"
-                        : "key"
-                  }
+                  blockedOffer={blockedOffer}
                   sharedUrl={formPrefill}
                   urlCapability={urlDownload}
                   /* Back at idle with an error means the submit was rejected,

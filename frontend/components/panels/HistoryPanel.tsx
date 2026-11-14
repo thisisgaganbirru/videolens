@@ -9,6 +9,7 @@ import {
   goneSavedRuns,
   loadMoreSaved,
   refreshSavedHistory,
+  SAVED_PAGE_SIZE,
   type SavedHistoryState,
 } from "@/application/useSavedHistory";
 import type { SavedOpenOutcome } from "@/application/useAnalysisRun";
@@ -467,7 +468,7 @@ function SavedHistory({
       ) : (
         <>
           <div className="history-groups">
-            {savedGroups.map((group) => (
+            {savedGroups.map((group, index) => (
               <section key={group.bucket} className="history-group">
                 <h2 className="history-group-label">{group.label}</h2>
                 <ul className="poster-grid">
@@ -486,6 +487,12 @@ function SavedHistory({
                       />
                     );
                   })}
+                  {/* Load more (2026-11-14): the next page's space is taken
+                      the moment it is asked for, at the end of the last
+                      group (where an older page usually continues), so the
+                      control moves with the press and the posters land in
+                      place instead of pushing it down when they arrive. */}
+                  {saved.loadingMore && index === savedGroups.length - 1 ? <GhostPosters count={SAVED_PAGE_SIZE} /> : null}
                 </ul>
               </section>
             ))}
@@ -571,6 +578,22 @@ function SavedHistory({
 
 /* While the first page is on its way: one row of blank posters the size of
    the real ones, so the grid lands in space already taken. */
+function GhostPosters({ count }: { count: number }) {
+  return (
+    <>
+      {Array.from({ length: count }, (_, n) => (
+        <li key={`ghost-${n}`} className="poster-item history-ghost" aria-hidden="true">
+          <span className="poster">
+            <span className="poster-thumb history-ghost-thumb" />
+            <span className="poster-title history-ghost-line" />
+            <span className="poster-date history-ghost-line history-ghost-line--short" />
+          </span>
+        </li>
+      ))}
+    </>
+  );
+}
+
 function SavedLoading() {
   return (
     <div className="history-groups">

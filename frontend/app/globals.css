@@ -3261,6 +3261,19 @@ h3 {
     position: relative;
     display: flow-root;
   }
+  /* No read has named the plan yet (2026-11-14): both stand-ins are in the
+     markup and the pre-paint `data-plan-paid` stamp (the last plan read on
+     this device) picks one; the Upgrade card when there is no stamp. */
+  .acct-page .acct-ghost-plan {
+    display: contents;
+  }
+  .acct-page .acct-ghost-plan[data-plan="paid"],
+  :root[data-plan-paid] .acct-page .acct-ghost-plan[data-plan="free"] {
+    display: none;
+  }
+  :root[data-plan-paid] .acct-page .acct-ghost-plan[data-plan="paid"] {
+    display: contents;
+  }
   .acct-page .acct-loading-group > .acct-ghost .key-card {
     visibility: visible;
   }
@@ -4347,6 +4360,43 @@ h3 {
   }
   :root[data-byok] .free-runs-slot[data-pending] {
     display: none;
+  }
+  /* 2026-11-14: three stand-ins, one shown, chosen by the pre-paint stamps
+     so a returning visitor reserves the strip they will get: the two-line
+     signed-out sentence by default, the one-line account sentence when a
+     session is stored, the spent sentence when this device was out of runs
+     last time (`data-runs-spent`, which expires at the stored reset). */
+  .free-runs-ghost:not([data-variant="signed-out"]) {
+    display: none;
+  }
+  :root[data-session] .free-runs-ghost[data-variant="signed-out"] {
+    display: none;
+  }
+  :root[data-session] .free-runs-ghost[data-variant="signed-in"] {
+    display: block;
+  }
+  :root[data-runs-spent]:not([data-byok]) .free-runs-ghost[data-variant] {
+    display: none;
+  }
+  :root[data-runs-spent]:not([data-byok]) .free-runs-ghost[data-variant="spent"] {
+    display: block;
+  }
+  /* The out-of-runs block's space in the card (UploadForm `blockedHeld`):
+     nothing unless the stamp says spent, then the copy for the stamped offer
+     (one outline button, or a button and a link), unseen. */
+  .intake-blocked-ghost {
+    display: none;
+    visibility: hidden;
+  }
+  :root[data-runs-spent]:not([data-byok]) .intake-blocked-ghost {
+    display: block;
+  }
+  .intake-blocked-ghost > .intake-blocked[data-offer="key"],
+  :root[data-runs-spent="key"] .intake-blocked-ghost > .intake-blocked[data-offer="pair"] {
+    display: none;
+  }
+  :root[data-runs-spent="key"] .intake-blocked-ghost > .intake-blocked[data-offer="key"] {
+    display: block;
   }
   .free-runs-slot {
     margin-bottom: var(--space-md);
@@ -5705,5 +5755,14 @@ h3 {
 @layer components {
   .acct-page .acct-held-more {
     margin-top: 0.5rem;
+  }
+  /* Window closed: the closed words over an unseen copy of the held ones,
+     one grid cell, so the card is as tall as the taller of the two. */
+  .acct-page .acct-held-layers {
+    display: grid;
+  }
+  .acct-page .acct-held-layer {
+    grid-area: 1 / 1;
+    min-width: 0;
   }
 }

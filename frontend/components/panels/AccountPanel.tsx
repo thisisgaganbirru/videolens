@@ -1,5 +1,6 @@
 "use client";
 
+import { useRememberPlan } from "@/application/useLayoutHints";
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
@@ -477,6 +478,11 @@ function SignedIn({
     problem?.kind === "held" ? { purgeAt: problem.purgeAt ?? hold?.purgeAt ?? null } : hold;
   const identity = <IdentityRow email={account?.email ?? email} runInProgress={runInProgress} />;
 
+  /* `/api/me` saying paid is remembered for the next visit's stand-in too
+     (HomeScreen remembers the plan and count reads), so a paid account
+     whose plan read fails still gets the Billing stand-in next time. */
+  useRememberPlan(account?.entitlement?.plan === "paid" ? "paid" : null, false);
+
   if (held && restore.state.phase !== "restored") {
     return (
       <>
@@ -510,6 +516,8 @@ function SignedIn({
      card (which moved every group under it). */
   const entitledPaid = account?.entitlement?.plan === "paid";
   const paid = billing?.plan === "paid" || freeRuns?.plan === "paid" || entitledPaid;
+  /* Some read has said which plan this is (free or paid). */
+  const planNamed = billing !== null || freeRuns !== null || Boolean(account?.entitlement);
 
   return (
     <>
@@ -565,8 +573,21 @@ function SignedIn({
           <div className="acct-ghost" aria-hidden="true" inert>
             {paid ? (
               <BillingGroup billing={billing ?? GHOST_PAID_BILLING} />
-            ) : (
+            ) : planNamed ? (
               <UpgradeGroup billing={billing ?? GHOST_FREE_BILLING} limits={limits} />
+            ) : (
+              /* No read has named the plan yet (2026-11-14): both stand-ins,
+                 and CSS shows the one the pre-paint `data-plan-paid` stamp
+                 (the last plan read here) points at, so a paid account's
+                 page does not swap the taller Upgrade card for Billing. */
+              <>
+                <div className="acct-ghost-plan" data-plan="free">
+                  <UpgradeGroup billing={GHOST_FREE_BILLING} limits={limits} />
+                </div>
+                <div className="acct-ghost-plan" data-plan="paid">
+                  <BillingGroup billing={GHOST_PAID_BILLING} />
+                </div>
+              </>
             )}
           </div>
           <div className="acct-loading-overlay" role="status">
@@ -720,8 +741,16 @@ function PlanUsageGroup({
   /* The length follows the plan, so it waits for the plan as well as for
      the limits: a paid account must not read "3 minutes" for a moment. */
   const lengthKnown = limits.settled && planKnown;
-  const onPaidTier = paid && limits.extended && limits.paidMinutes !== null;
-  const lengthNote = !lengthKnown
+  const onPaidTier =
+    paid &&
+    limits.extended &&
+    limits.paidMinutes !== null &&
+    limits.limits.maxDurationSeconds >= limits.paidMinutes * 60;
+  /* Paid, but the paid tier's length is not known here (the plan or the
+     limits read failed, so the limits fell back to the free tier): say so
+     rather than show the free length to a paid account (2026-11-14). */
+  const lengthUnavailable = lengthKnown && paid && !onPaidTier;
+  const lengthNote = !lengthKnown || lengthUnavailable
     ? null
     : onPaidTier
       ? "No Gemini key needed"
@@ -764,7 +793,13 @@ function PlanUsageGroup({
           </div>
           <div className="acct-fact">
             <dt>Video length</dt>
-            <dd>{lengthKnown ? `Up to ${durationLabel(limits.limits.maxDurationSeconds)}` : <PlaceholderLine />}</dd>
+            <dd>
+              {lengthUnavailable
+                ? "Length unavailable"
+                : lengthKnown
+                  ? `Up to ${durationLabel(limits.limits.maxDurationSeconds)}`
+                  : <PlaceholderLine />}
+            </dd>
             <dd className="acct-fact-note">{lengthNote}</dd>
           </div>
         </dl>
@@ -1715,8 +1750,28 @@ function HeldAccount({
     void signOut().finally(() => setSigningOut(false));
   };
 
-  return (
-    <section className="key-card acct-held" aria-labelledby="acct-held-title">
+  const heldText = (
+    <>
+      <p className="key-help">
+        {email ? (
+          <>
+            <strong className="acct-strong">{email}</strong> was deleted.{" "}
+          </>
+        ) : (
+          "This account was deleted. "
+        )}
+        {until
+          ? `It is kept until ${until}, then removed for good, with every run saved to it.`
+          : "It is kept for 30 days after it was deleted, then removed for good, with every run saved to it."}
+      </p>
+      <p className="key-help acct-held-more">
+        Restore it to keep using it. It comes back on the free plan, with its saved runs.
+      </p>
+    </>
+  );
+
+  const content = (
+    <>
       <h2 id="acct-held-title" ref={titleRef} tabIndex={-1} className="acct-card-title acct-focus-title">
         {closed ? "This account can no longer be restored" : "This account is scheduled for deletion"}
       </h2>
@@ -1726,23 +1781,7 @@ function HeldAccount({
           VideoLens without an account. Once it is gone, signing in with the same email starts a new one.
         </p>
       ) : (
-        <>
-          <p className="key-help">
-            {email ? (
-              <>
-                <strong className="acct-strong">{email}</strong> was deleted.{" "}
-              </>
-            ) : (
-              "This account was deleted. "
-            )}
-            {until
-              ? `It is kept until ${until}, then removed for good, with every run saved to it.`
-              : "It is kept for 30 days after it was deleted, then removed for good, with every run saved to it."}
-          </p>
-          <p className="key-help acct-held-more">
-            Restore it to keep using it. It comes back on the free plan, with its saved runs.
-          </p>
-        </>
+        heldText
       )}
       {state.phase === "failed" && (
         <div role="alert" className="error-inline acct-gap-sm">
@@ -1775,6 +1814,39 @@ function HeldAccount({
           {restoring ? <span className="key-status">Restoring your account…</span> : null}
         </p>
       </div>
+    </>
+  );
+
+  return (
+    <section className="key-card acct-held" aria-labelledby="acct-held-title">
+      {closed ? (
+        /* Closed (2026-11-14): the card keeps the height it had while the
+           restore was under way. The held words (and the "Restoring" line)
+           stay laid out underneath, unseen and inert, in the same grid cell,
+           so the shorter closed text does not pull up what follows when the
+           restore answer lands. */
+        <div className="acct-held-layers">
+          <div className="acct-held-layer">{content}</div>
+          <div className="acct-held-layer acct-ghost" aria-hidden="true" inert>
+            <h2 className="acct-card-title">This account is scheduled for deletion</h2>
+            {heldText}
+            <div className="key-actions">
+              <button type="button" className="btn btn-primary btn-pill" tabIndex={-1}>
+                Restore account
+              </button>
+              <button type="button" className="btn btn-secondary btn-pill key-remove" tabIndex={-1}>
+                Sign out
+              </button>
+              {/* As it was when the answer came: the restore was under way. */}
+              <p className="key-status-slot">
+                <span className="key-status">Restoring your account…</span>
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        content
+      )}
     </section>
   );
 }
