@@ -337,6 +337,7 @@ async def list_history(
                 completeness=item.completeness,
                 created_at=item.created_at,
                 source=_source(item.source),
+                thumbnail=item.thumbnail,
             )
             for item in page.items
         ],
@@ -359,6 +360,7 @@ async def get_history_run(
         completeness=saved.completeness,
         created_at=saved.created_at,
         source=_source(saved.source),
+        thumbnail=saved.thumbnail,
         result=saved.result,
     )
 

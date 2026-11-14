@@ -33,7 +33,8 @@ deletable.
 ## API contract
 
 All of these need a signed-in session (`require_person`): anonymous is 401,
-an API key is 403. They always act on the caller's own account; another
+an API key is 403 (owner decision 2026-11-14: API keys cannot read saved
+history). They always act on the caller's own account; another
 account's run id is a plain 404. Rate limit: the read limit.
 
 ### `GET /api/history?limit=20&cursor=`
@@ -53,6 +54,7 @@ it does not decode).
       "summary_snippet": "≤ 160 characters, or null",
       "completeness": "full",
       "created_at": "2026-11-14T12:00:00Z",
+      "thumbnail": "data:image/jpeg;base64,/9j/… (≤ 20 KB), or null",
       "source": {
         "source_kind": "link",
         "platform": "youtube",
@@ -70,7 +72,17 @@ it does not decode).
 ```
 
 Newest first (`created_at` = when the run was created, then the row id).
-Light fields only: no transcript, no notes. A source field is null when it
+Light fields only: no transcript, no notes.
+
+`thumbnail` is the run's poster, under the same name and in the same shape
+as a finished run's `GET /api/runs/{run_id}` `thumbnail`: a ≤ 20 KB
+`data:image/jpeg;base64,...` URL, or `null` when the run had none (audio,
+capture failed, or the size guard dropped it). It is a top-level field of
+the item, not part of `source`, and is always present. The frontend can
+render a saved card with the code it uses for its own History. A 20-item
+page of posters is at most ~400 KB.
+
+A source field is null when it
 is not known; a file run has no `source_url` (the server never keeps a file
 name).
 
@@ -81,9 +93,9 @@ name).
 
 ### `GET /api/history/{run_id}`
 
-The summary fields above plus `result`, the full saved `VideoAnalysis`
-(title, summary, transcript, screen_text, markdown, transcript_segments,
-screen_text_segments). 404 `That saved run was not found.`
+The summary fields above (including `thumbnail`) plus `result`, the full
+saved `VideoAnalysis` (title, summary, transcript, screen_text, markdown,
+transcript_segments, screen_text_segments). 404 `That saved run was not found.`
 
 ### `DELETE /api/history/{run_id}`
 
@@ -130,8 +142,11 @@ resolved (`/api/me`, `/api/keys`, `/api/history`, `/api/billing`,
      "code": "account_pending_deletion", "purge_at": "2026-12-14T12:00:00Z"}
 ```
 
-Its API keys are `401 Invalid API key.` (not revoked: they come back on
-restore). Signed out, the person can keep using the app anonymously.
+Its API keys are `401 Invalid API key.`: **blocked, not revoked** (owner
+decision 2026-11-14), so they come back on restore. The same sign-in cannot
+start a fresh account during the hold (owner decision 2026-11-14): it gets
+this 410 until it restores or the hold ends. Signed out, the person can keep
+using the app anonymously.
 
 ## Rules
 
@@ -153,10 +168,11 @@ Runs made with the account's API keys are saved too (same account). BYOK
 runs are saved like any other (the key is never part of the record).
 
 Saved: title, summary snippet, the full `VideoAnalysis` as JSON,
-`completeness`, `created_at`, and a source descriptor (kind, platform, the
+`completeness`, `created_at`, a source descriptor (kind, platform, the
 public link for a link run, the publisher's title and uploader, duration,
-width, height). **Never** saved: the media, the poster image (a ~20 KB
-JPEG data URL on the run; it is media), any key, the file name.
+width, height), and the poster thumbnail (`Run.thumbnail` as is, the ≤ 20 KB
+JPEG data URL the live run exposes; owner decision 2026-11-14). **Never**
+saved: any other media, any key, the file name.
 
 **Idempotent**: `(account_id, run_id)` is unique and the insert is `ON
 CONFLICT DO NOTHING`, so a retried job saves once.
@@ -166,9 +182,15 @@ account's history`) and swallowed. The run stays complete and billed.
 
 ### Size guard: `PAID_SAVED_RUN_MAX_BYTES` = 2 MiB
 
-Measured as compact UTF-8 JSON of the result. Over it, the two segment lists
-are dropped first (they only time text that is kept in full) and a WARNING
-logged; still over, the run is not saved and an ERROR logged. 2 MiB is far
+Measured as compact UTF-8 JSON of the result plus the poster data URL's
+length. Over it, in this order:
+
+1. drop the two segment lists (they only time text that is kept in full);
+2. still over: drop the poster too (`thumbnail` saved as null);
+3. still over: the run is not saved, ERROR logged.
+
+Steps 1 and 2 log a WARNING naming what was dropped. The text (title,
+summary, transcript, on-screen text, notes) is never trimmed. 2 MiB is far
 above a real result (a 10-minute run's transcript is tens of KB) and well
 under Postgres' limits; it exists so one pathological result cannot bloat
 the table.
@@ -244,7 +266,8 @@ in-process mode (no worker): holds and windows simply never end there.
 | `completeness` | varchar(16) | the run's `AnalysisCompleteness` value |
 | `source` | JSONB | descriptor, nulls dropped |
 | `result` | JSONB | the `VideoAnalysis` |
-| `result_bytes` | integer | size of `result` as saved, for operators |
+| `result_bytes` | integer | size of `result` as saved, for operators (the poster not included) |
+| `thumbnail` | text null | the poster data URL, as `Run.thumbnail`; null when none or dropped by the size guard |
 | `created_at` | timestamptz | the run's creation time |
 
 Index `ix_saved_runs_account_created (account_id, created_at, id)` serves the
@@ -293,15 +316,13 @@ on Postgres if `DATABASE_APP_ROLE` does not exist.
 - **Not run against Postgres.** SQL adapters are exercised on SQLite; the
   Postgres branch of 0006 with mocks and an offline render. The JSONB
   columns, `ON CONFLICT`, and `FOR UPDATE` have not run on a real database.
-- **During the hold the person cannot start over** with the same Supabase
-  identity: signing in gives the 410 until they restore or the hold ends.
-- **API keys are blocked, not revoked**, during the hold, so a restore
-  brings them back. Revoking would be safer if a key leaked; asked.
-- **History endpoints refuse API keys** (403). Conservative; an agent may
-  want them.
+- Confirmed by the owner 2026-11-14, no longer open: during the hold the
+  same sign-in cannot start a fresh account; API keys are blocked, not
+  revoked, and return on restore; API keys cannot read `/api/history` (403).
 - The frontend has no UI for any of this yet (backend only).
 - Local in-process mode has no cron, so holds and windows never end there.
 
 ## Changelog
 
+- 2026-11-14 · backend agent · saved runs keep the poster: `saved_runs.thumbnail` (text null, in 0006 in place), `thumbnail` on every `GET /api/history` item and on `GET /api/history/{run_id}`, same shape as a live run's; size guard drops segments, then the poster, then skips; recorded the owner's confirmations on keys during the hold, no fresh account during the hold, no API-key history reads
 - 2026-11-14 · backend agent · created: paid saved history (migration 0006, saving on success, `/api/history*`, `saved_history` on `/api/me`), the post-cancel window, the 30-day deletion hold with `POST /api/me/restore`, and the hourly cleanup cron

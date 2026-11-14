@@ -478,8 +478,9 @@ class ExtraRunCharge:
 # ------------------------------------------------------------ saved history
 #
 # Paid accounts' run results, kept on the server (docs/backend/saved-history.md;
-# owner decision 2026-11-14). Result text and a source descriptor only:
-# never the media, never the poster image, never a key.
+# owner decisions 2026-11-14). Result text, a source descriptor and the
+# run's small poster thumbnail (as `Run.thumbnail`): no other media, never a
+# key.
 
 
 @dataclass(frozen=True)
@@ -518,6 +519,9 @@ class SavedRunSummary:
     created_at: datetime
     # The keyset cursor's tie-breaker (the row's own uuid).
     saved_id: str = ""
+    # The poster exactly as the live run's `thumbnail`: a <=20 KB
+    # `data:image/jpeg;base64,...` URL, or None when the run had none.
+    thumbnail: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -534,6 +538,7 @@ class SavedRun:
     completeness: str
     created_at: datetime
     saved_id: str = ""
+    thumbnail: Optional[str] = None
 
 
 @dataclass(frozen=True)

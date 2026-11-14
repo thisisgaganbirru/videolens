@@ -194,8 +194,9 @@ never a deployment manifest. See `docs/container-workflows.md`.
   capped at 20.
 - `GET /api/history?limit=&cursor=` — a paid account's saved results
   (signed-in person only), newest first: `{ saving, expires_at, items:
-  [{ run_id, title, summary_snippet, completeness, created_at, source }],
-  next_cursor }`. `GET /api/history/{run_id}` adds `result`;
+  [{ run_id, title, summary_snippet, completeness, created_at, source,
+  thumbnail }], next_cursor }` (`thumbnail` is the same poster data URL a
+  finished run returns, or null). `GET /api/history/{run_id}` adds `result`;
   `DELETE /api/history/{run_id}` (204) and `DELETE /api/history`
   (`{ deleted }`). Free accounts get `items: []`, `saving: false`; after the
   plan ends `expires_at` says when they go (30 days).

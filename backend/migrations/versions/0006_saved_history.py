@@ -5,10 +5,11 @@ Owner decisions 2026-11-14 (docs/backend/saved-history.md), which reverse
 
 - `saved_runs`: a paid account's run results, saved automatically once a
   run succeeds, no cap on how many. Result text (title, summary, notes,
-  transcript, on-screen text, their segments) and a source descriptor
-  (kind, platform, public link, publisher title, duration, size) only:
-  never the media, never the poster image, never a key. `(account_id,
-  run_id)` is unique, which is what makes saving idempotent.
+  transcript, on-screen text, their segments), a source descriptor
+  (kind, platform, public link, publisher title, duration, size) and the
+  run's poster thumbnail (`thumbnail`, the same <=20 KB JPEG data URL the
+  live run exposes; null when it has none). No other media, never a key.
+  `(account_id, run_id)` is unique, which is what makes saving idempotent.
 - `accounts.saved_runs_expire_at`: set once the account's paid plan has
   ended; the saved runs stay readable and deletable until then, and the
   cleanup job removes them after it. A resubscribe clears it.
@@ -97,6 +98,7 @@ def upgrade() -> None:
         sa.Column("source", document, nullable=False),
         sa.Column("result", document, nullable=False),
         sa.Column("result_bytes", sa.Integer, nullable=False),
+        sa.Column("thumbnail", sa.Text, nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.UniqueConstraint("account_id", "run_id", name="uq_saved_runs_account_run"),
     )
