@@ -10,6 +10,7 @@ import { FONT_SCALE_INIT_SCRIPT } from "@/application/nativeFontScale";
 import { SITE_DESCRIPTION, SITE_NAME, SITE_NOINDEX, SITE_URL } from "@/infrastructure/siteOrigin";
 import { BYOK_INIT_SCRIPT } from "@/infrastructure/apiKeyStore";
 import { SESSION_INIT_SCRIPT } from "@/infrastructure/authSessionStamp";
+import { LAYOUT_HINTS_INIT_SCRIPT } from "@/infrastructure/layoutHints";
 import "./globals.css";
 
 /* Self-hosted at build time by next/font — no request to Google at runtime,
@@ -176,7 +177,10 @@ if(r.getAttribute("data-shell")==="web"){document.addEventListener("DOMContentLo
    reserved height before hydration. See infrastructure/apiKeyStore.ts.
    The session stamp (2026-11-14) follows it the same way: `data-session`
    lets CSS drop the Gemini key page's held sign-in line for a signed-in
-   visit. See infrastructure/authSessionStamp.ts. */
+   visit. See infrastructure/authSessionStamp.ts. The layout hints
+   (2026-11-14) go last: `data-runs-spent` (the out-of-runs block's space on
+   Analyze, until the stored reset time) and `data-plan-paid` (the Billing
+   card's stand-in on Account). See infrastructure/layoutHints.ts. */
 const PRE_PAINT_SCRIPT =
   FONT_SCALE_INIT_SCRIPT +
   THEME_INIT_SCRIPT +
@@ -184,7 +188,8 @@ const PRE_PAINT_SCRIPT =
   LANDING_REDIRECT_SCRIPT +
   SPLASH_INIT_SCRIPT +
   BYOK_INIT_SCRIPT +
-  SESSION_INIT_SCRIPT;
+  SESSION_INIT_SCRIPT +
+  LAYOUT_HINTS_INIT_SCRIPT;
 
 export default function RootLayout({
   children,

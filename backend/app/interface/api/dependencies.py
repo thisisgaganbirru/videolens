@@ -64,3 +64,23 @@ async def require_person(principal: Principal = Depends(get_principal)) -> Princ
     if principal.method is not AuthMethod.TOKEN:
         raise ForbiddenError("This needs a signed-in session, not an API key.")
     return principal
+
+
+async def require_person_even_if_deleted(
+    request: Request,
+    authorization: str = Header(default=""),
+    x_client_id: str = Header(default=""),
+    x_api_key: str = Header(default=""),
+) -> Principal:
+    """`require_person`, but an account in the deletion hold gets through
+    instead of the 410. For `POST /api/me/restore` only: every other route
+    must refuse a held account (docs/backend/saved-history.md)."""
+    principal = await container.identify_caller_use_case.resolve(
+        authorization=authorization, api_key=x_api_key, client_id=x_client_id, allow_pending_deletion=True
+    )
+    request.state.principal = principal
+    if not principal.authenticated:
+        raise AuthenticationError("Sign in to use this.")
+    if principal.method is not AuthMethod.TOKEN:
+        raise ForbiddenError("This needs a signed-in session, not an API key.")
+    return principal

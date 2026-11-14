@@ -1,33 +1,39 @@
-"""`DELETE /api/me`: a signed-in person deletes their account for good.
+"""`DELETE /api/me`: a signed-in person deletes their account.
 
-Order matters, and is the whole design:
+Since 2026-11-14 (owner decision, docs/backend/saved-history.md) this puts
+the account in a 30-day hold instead of removing it. To the person it is
+deleted: every endpoint refuses it (410 `account_pending_deletion`) and its
+API keys stop working. The rows, the saved runs and the Supabase user stay,
+hidden, so signing in again within the hold can restore it
+(`RestoreAccountUseCase`). After the hold the worker's cleanup job removes
+everything for good (`PurgeDeletedAccountsUseCase`).
+
+Order:
 
 0. The account's Stripe subscription, cancelled now (docs/backend/billing.md):
    no proration credit, and usage not yet invoiced (completed extra runs)
-   invoiced immediately. Before anything else, because once the rows are
-   gone nobody could find the subscription to stop it. If Stripe cannot be
-   reached the deletion is refused (503 `subscription_cancel_failed`) with
-   nothing removed, rather than leave a paying orphan.
+   invoiced immediately. The person comes back on the free plan if they
+   restore. If Stripe cannot be reached the deletion is refused (503
+   `subscription_cancel_failed`) with nothing changed, rather than leave a
+   paying account nobody can sign in to manage.
 1. Server-side runs owned by the person (`user:<sub>`) and by each of their
-   workspace's API keys (`key:<id>`). Best effort: runs expire within
-   `RUN_TTL_SECONDS` anyway, so a Redis hiccup here is logged and does not
-   stop the deletion.
-2. The identity rows (API keys, memberships, workspaces, the account), in
-   one transaction. A failure here is a 500 and nothing else has happened.
-3. The identity-provider user, last. A failure here is also a 500; the
-   provider user still exists, so the person's session still verifies, and
-   retrying finishes the job (step 2 then finds the account `resolve_account`
-   re-created on the retry's way in and removes it again).
+   workspace's API keys (`key:<id>`). Best effort: they expire within
+   `RUN_TTL_SECONDS` anyway.
+2. The hold itself: `accounts.deleted_at` / `purge_at`, one write. A failure
+   here is a 500 and the account still works (retry).
 
-Retry-safe, not repeatable: an account whose rows are already gone is not an
-error here, and step 3 runs regardless, so a retry after a step 3 failure
-completes. Once step 3 has succeeded, though, the person's still-valid token
-is refused before it gets here: `IdentityProviderUsers` reports the user gone
-when `resolve_account` would create rows, so a second `DELETE /api/me` is a
-401, and the token cannot re-create the account or mint an API key.
+The Supabase user is deliberately NOT deleted here any more: without it the
+person could never sign in to restore. The cleanup job deletes it (through
+the same `SECURITY DEFINER` function, `0002_auth_user_deleter`) when the
+hold ends.
+
+A second `DELETE /api/me` never reaches this: the held account is refused
+(410) on the way in, so the first purge date stands.
 """
 
 import logging
+from datetime import datetime, timedelta, timezone
+from typing import Callable
 
 from ..domain.entities import AuthMethod, Principal
 from ..domain.errors import (
@@ -45,6 +51,47 @@ logger = logging.getLogger("videolens")
 _SUBJECT_PREFIX = "user:"
 _FAILED = "We couldn't delete your account just now. Please try again."
 
+Clock = Callable[[], datetime]
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+async def cancel_account_subscription(
+    billing: BillingPlans | None, account_id: str | None, *, only_if_live: bool = False
+) -> None:
+    """Cancel the account's Stripe subscription now, if it holds one. Raises
+    `SubscriptionCancelFailedError` when it cannot tell or cannot cancel,
+    so the caller stops before changing anything. Shared by deletion and the
+    cleanup job's last check before removing an account for good."""
+    if billing is None or account_id is None or not billing.accounts.enabled:
+        return
+    try:
+        account = await billing.accounts.get(account_id)
+    except Exception as exc:  # noqa: BLE001 - cannot tell whether it pays: stop
+        logger.exception("Could not read the billing account (account %s)", account_id)
+        raise SubscriptionCancelFailedError(log_detail=f"billing read: {type(exc).__name__}") from exc
+    if account is None or not account.stripe_subscription_id:
+        return
+    if only_if_live and not subscription_is_live(account.status):
+        return
+    if not billing.gateway.enabled:
+        if subscription_is_live(account.status):
+            # Billing was switched off with a live subscription on file.
+            logger.error("Refused: live subscription but billing is off (account %s)", account_id)
+            raise SubscriptionCancelFailedError(log_detail="live subscription on file, STRIPE_* not configured")
+        return
+    # Completed extra runs first, so the final invoice carries them.
+    await ExtraRunBilling(plans=billing).flush_due()
+    try:
+        # Whatever the row says: a missed webhook must not leave one running.
+        await billing.gateway.cancel_subscription(account.stripe_subscription_id)
+    except Exception as exc:  # noqa: BLE001 - refused, logged in full
+        logger.exception("Could not cancel the subscription (account %s)", account_id)
+        raise SubscriptionCancelFailedError(log_detail=f"stripe cancel: {type(exc).__name__}") from exc
+    logger.info("Cancelled subscription %s (account %s)", account.stripe_subscription_id, account_id)
+
 
 class DeleteAccountUseCase:
     def __init__(
@@ -55,14 +102,20 @@ class DeleteAccountUseCase:
         api_keys: ApiKeyRepository,
         runs: RunRepository,
         billing: BillingPlans | None = None,
+        hold_days: int = 30,
+        clock: Clock | None = None,
     ) -> None:
         self._billing = billing
         self._accounts = accounts
         self._deleter = deleter
         self._api_keys = api_keys
         self._runs = runs
+        self._hold = timedelta(days=max(0, hold_days))
+        self._clock = clock or _utcnow
 
-    async def execute(self, principal: Principal) -> None:
+    async def execute(self, principal: Principal) -> datetime:
+        """Put the account in the hold. Returns when it will be removed for
+        good (the restore deadline)."""
         # Defence in depth behind the route's `require_person`: an API key
         # must never be able to delete the person who owns it.
         if principal.method is not AuthMethod.TOKEN or not principal.subject.startswith(_SUBJECT_PREFIX):
@@ -71,58 +124,23 @@ class DeleteAccountUseCase:
             raise AccountsNotConfiguredError("Accounts are not available on this server.")
         external_id = principal.subject[len(_SUBJECT_PREFIX):]
 
-        await self._cancel_subscription(principal.account_id)
+        await cancel_account_subscription(self._billing, principal.account_id)
         await self._delete_runs(principal)
 
+        now = self._clock()
         try:
-            existed = await self._deleter.delete_account(external_id)
+            purge_at = await self._deleter.schedule_deletion(external_id, now=now, purge_at=now + self._hold)
         except Exception as exc:  # noqa: BLE001 - mapped to one 500, logged in full
-            logger.exception("Account deletion failed deleting rows (account %s)", principal.account_id)
-            raise AccountDeletionError(_FAILED, log_detail=f"rows: {type(exc).__name__}") from exc
-
-        try:
-            removed_identity = await self._deleter.delete_identity(external_id)
-        except Exception as exc:  # noqa: BLE001 - mapped to one 500, logged in full
-            logger.exception(
-                "Account deletion removed the rows but not the identity-provider user (account %s)",
-                principal.account_id,
-            )
-            raise AccountDeletionError(_FAILED, log_detail=f"identity: {type(exc).__name__}") from exc
+            logger.exception("Account deletion failed scheduling the hold (account %s)", principal.account_id)
+            raise AccountDeletionError(_FAILED, log_detail=f"hold: {type(exc).__name__}") from exc
 
         # The account id only: no email, no subject in the log.
         logger.info(
-            "Account deleted (account %s, rows %s, identity %s)",
+            "Account deletion scheduled (account %s, removed for good after %s)",
             principal.account_id,
-            "removed" if existed else "already gone",
-            "removed" if removed_identity else "skipped",
+            purge_at.isoformat() if purge_at else "n/a",
         )
-
-    async def _cancel_subscription(self, account_id: str | None) -> None:
-        billing = self._billing
-        if billing is None or account_id is None or not billing.accounts.enabled:
-            return
-        try:
-            account = await billing.accounts.get(account_id)
-        except Exception as exc:  # noqa: BLE001 - cannot tell whether it pays: stop
-            logger.exception("Account deletion could not read the billing account (account %s)", account_id)
-            raise SubscriptionCancelFailedError(log_detail=f"billing read: {type(exc).__name__}") from exc
-        if account is None or not account.stripe_subscription_id:
-            return
-        if not billing.gateway.enabled:
-            if subscription_is_live(account.status):
-                # Billing was switched off with a live subscription on file.
-                logger.error("Account deletion refused: live subscription but billing is off (account %s)", account_id)
-                raise SubscriptionCancelFailedError(log_detail="live subscription on file, STRIPE_* not configured")
-            return
-        # Completed extra runs first, so the final invoice carries them.
-        await ExtraRunBilling(plans=billing).flush_due()
-        try:
-            # Whatever the row says: a missed webhook must not leave one running.
-            await billing.gateway.cancel_subscription(account.stripe_subscription_id)
-        except Exception as exc:  # noqa: BLE001 - refused, logged in full
-            logger.exception("Account deletion could not cancel the subscription (account %s)", account_id)
-            raise SubscriptionCancelFailedError(log_detail=f"stripe cancel: {type(exc).__name__}") from exc
-        logger.info("Account deletion cancelled subscription %s (account %s)", account.stripe_subscription_id, account_id)
+        return purge_at or now + self._hold
 
     async def _delete_runs(self, principal: Principal) -> None:
         owners = [principal.owner_id]

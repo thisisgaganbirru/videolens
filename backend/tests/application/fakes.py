@@ -43,6 +43,7 @@ class FakeRunRepository:
         duration_seconds: float | None = None,
         media_tier: str | None = None,
         admitted_byok: bool = False,
+        account_id: str | None = None,
     ) -> Run:
         now = datetime.now(timezone.utc)
         run = Run(
@@ -56,6 +57,7 @@ class FakeRunRepository:
             duration_seconds=duration_seconds,
             media_tier=media_tier,
             admitted_byok=admitted_byok,
+            account_id=account_id,
         )
         self.runs[run_id] = run
         self.created_ids.append(run_id)
@@ -568,14 +570,47 @@ class FakeAccountDeleter:
         self.rows_error: Exception | None = None
         self.identity_error: Exception | None = None
 
+        # The deletion hold: external_id -> purge_at.
+        self.held: dict[str, datetime] = {}
+        self.hold_error: Exception | None = None
+
     @property
     def enabled(self) -> bool:
         return self._enabled
 
-    async def delete_account(self, external_id: str) -> bool:
+    async def schedule_deletion(self, external_id: str, *, now: datetime, purge_at: datetime) -> datetime | None:
+        self.log.append(f"hold:{external_id}")
+        if self.hold_error is not None:
+            raise self.hold_error
+        if not self.rows_exist:
+            return None
+        return self.held.setdefault(external_id, purge_at)
+
+    async def restore(self, external_id: str, *, now: datetime) -> bool | None:
+        self.log.append(f"restore:{external_id}")
+        purge_at = self.held.get(external_id)
+        if purge_at is None:
+            return False if self.rows_exist else None
+        if purge_at <= now:
+            return None
+        del self.held[external_id]
+        return True
+
+    async def due_for_purge(self, now: datetime, *, limit: int) -> list:
+        from app.domain.entities import PendingAccountPurge
+
+        due = sorted((at, ext) for ext, at in self.held.items() if at <= now)[:limit]
+        return [PendingAccountPurge(account_id=f"acct-{ext}", external_id=ext) for _, ext in due]
+
+    async def delete_account(self, external_id: str, *, due_before: datetime | None = None) -> bool:
+        if due_before is not None:
+            purge_at = self.held.get(external_id)
+            if purge_at is None or purge_at > due_before:
+                return False
         self.log.append(f"rows:{external_id}")
         if self.rows_error is not None:
             raise self.rows_error
+        self.held.pop(external_id, None)
         return self.rows_exist
 
     async def delete_identity(self, external_id: str) -> bool:

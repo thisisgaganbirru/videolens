@@ -1,4 +1,5 @@
 import logging
+from datetime import timezone
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -6,6 +7,10 @@ from starlette.requests import Request
 
 from ...domain.errors import (
     AccountDeletionError,
+    AccountPendingDeletionError,
+    AccountRestoreClosedError,
+    InvalidCursorError,
+    SavedRunNotFoundError,
     ApiKeyLimitError,
     ApiKeyNotFoundError,
     AuthenticationError,
@@ -54,6 +59,8 @@ _STATUS_BY_ERROR = {
     QuotaExceededError: 503,
     RunSchedulingError: 503,
     RunNotFoundError: 404,
+    SavedRunNotFoundError: 404,
+    InvalidCursorError: 400,
     RateLimitedError: 429,
     ClientIdInvalidError: 400,
     ForbiddenError: 403,
@@ -143,6 +150,26 @@ def register_error_handlers(app: FastAPI) -> None:
         logger.warning("Account deletion refused: subscription not cancelled (%s)", exc.log_detail)
         return JSONResponse(status_code=503, content={"detail": str(exc), "code": "subscription_cancel_failed"})
 
+    # 410 with a `code` and the date: the client shows "Restore your
+    # account?" and how long it has left (docs/backend/saved-history.md).
+    async def account_pending_deletion(request: Request, exc: Exception) -> JSONResponse:
+        assert isinstance(exc, AccountPendingDeletionError)
+        # The same UTC "Z" form pydantic gives `DELETE /api/me`'s purge_at.
+        purge_at = (
+            exc.purge_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            if exc.purge_at is not None
+            else None
+        )
+        return JSONResponse(
+            status_code=410,
+            content={"detail": str(exc), "code": "account_pending_deletion", "purge_at": purge_at},
+        )
+
+    async def restore_closed(request: Request, exc: Exception) -> JSONResponse:
+        return JSONResponse(status_code=410, content={"detail": str(exc), "code": "restore_window_closed"})
+
+    app.add_exception_handler(AccountPendingDeletionError, account_pending_deletion)
+    app.add_exception_handler(AccountRestoreClosedError, restore_closed)
     app.add_exception_handler(BillingError, billing_error)
     app.add_exception_handler(WebhookSignatureError, webhook_signature)
     app.add_exception_handler(ExtraRunsCapReachedError, extra_runs_cap)

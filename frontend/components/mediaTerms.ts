@@ -11,9 +11,11 @@
    everyone sees the box unticked and accepts the updated Terms once. Add the
    key it replaces to RETIRED_KEYS so it is cleared from storage.
    v2 (2026-11-13): the Terms were updated alongside BYOK and sign-in.
-   v3 (2026-11-13): the Terms gained the Paid plan section (billing). */
-const MEDIA_TERMS_ACCEPTANCE_KEY = "videolens-media-terms-v3";
-const RETIRED_KEYS = ["videolens-media-terms-v1", "videolens-media-terms-v2"];
+   v3 (2026-11-13): the Terms gained the Paid plan section (billing).
+   v4 (2026-11-14): paid accounts' results are stored on the server, and a
+   deleted account is held for 30 days (Privacy and Terms). */
+const MEDIA_TERMS_ACCEPTANCE_KEY = "videolens-media-terms-v4";
+const RETIRED_KEYS = ["videolens-media-terms-v1", "videolens-media-terms-v2", "videolens-media-terms-v3"];
 
 function clearRetiredKeys(): void {
   for (const key of RETIRED_KEYS) {

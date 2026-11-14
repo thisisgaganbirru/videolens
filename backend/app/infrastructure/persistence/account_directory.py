@@ -16,7 +16,7 @@ from typing import Optional
 from sqlalchemy import insert, select, update
 from sqlalchemy.exc import IntegrityError
 
-from ...domain.entities import Account, Workspace, WorkspaceRole
+from ...domain.entities import Account, PendingAccountPurge, Workspace, WorkspaceRole
 from ...domain.errors import AuthenticationError
 from ...domain.ports import IdentityProviderUsers
 from .database import Database, as_utc, utcnow
@@ -50,6 +50,8 @@ class SqlAccountDirectory:
             email=row.email,
             default_workspace_id=row.default_workspace_id,
             created_at=as_utc(row.created_at),
+            deleted_at=as_utc(row.deleted_at),
+            purge_at=as_utc(row.purge_at),
         )
 
     @staticmethod
@@ -134,6 +136,13 @@ class SqlAccountDirectory:
             row = (await conn.execute(select(workspaces).where(workspaces.c.id == workspace_id))).first()
         return self._workspace(row) if row is not None else None
 
+    async def get_account(self, account_id: str) -> Optional[Account]:
+        if not self.enabled:
+            return None
+        async with self._db.connect() as conn:
+            row = (await conn.execute(select(accounts).where(accounts.c.id == account_id))).first()
+        return self._account(row) if row is not None else None
+
     async def member_role(self, workspace_id: str, account_id: str) -> Optional[str]:
         if not self.enabled:
             return None
@@ -200,10 +209,52 @@ class InMemoryAccountDirectory:
         workspace = self._workspaces.get(workspace_id)
         return workspace.model_copy() if workspace else None
 
+    async def get_account(self, account_id: str) -> Optional[Account]:
+        if not self._enabled:
+            return None
+        account = next((a for a in self._accounts.values() if a.account_id == account_id), None)
+        return account.model_copy() if account else None
+
     async def member_role(self, workspace_id: str, account_id: str) -> Optional[str]:
         if not self._enabled:
             return None
         return self._members.get((workspace_id, account_id))
+
+    # The deletion hold, for `InMemoryAccountDeleter` (the SQL adapter keeps
+    # it in `accounts.deleted_at` / `purge_at`).
+
+    def schedule_deletion(self, external_id: str, now, purge_at):
+        account = self._accounts.get(external_id)
+        if account is None:
+            return None
+        if account.purge_at is None:
+            account.deleted_at, account.purge_at = now, purge_at
+        return account.purge_at
+
+    def restore(self, external_id: str, now):
+        account = self._accounts.get(external_id)
+        if account is None:
+            return None
+        if account.purge_at is None:
+            return False
+        if account.purge_at <= now:
+            return None
+        account.deleted_at = account.purge_at = None
+        return True
+
+    def due_for_purge(self, now, limit: int) -> list[str]:
+        due = sorted(
+            (a for a in self._accounts.values() if a.purge_at is not None and a.purge_at <= now),
+            key=lambda a: a.purge_at,
+        )
+        return [PendingAccountPurge(account_id=a.account_id, external_id=a.external_id) for a in due[:limit]]
+
+    def is_pending(self, account_id: str) -> bool:
+        return any(a.account_id == account_id and a.purge_at is not None for a in self._accounts.values())
+
+    def is_due(self, external_id: str, now) -> bool:
+        account = self._accounts.get(external_id)
+        return account is not None and account.purge_at is not None and account.purge_at <= now
 
     def account_id_for(self, external_id: str) -> str | None:
         account = self._accounts.get(external_id)

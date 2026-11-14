@@ -1,8 +1,9 @@
 """The identity schema, as SQLAlchemy Core metadata: the four identity tables
-plus the two that count signed-in free runs (`0003_account_free_runs`) and
-the three of the paid plan (`0004_billing`). Runs
-stay in Redis and history in the browser; these are the only rows the
-backend keeps.
+plus the two that count signed-in free runs (`0003_account_free_runs`), the
+three of the paid plan (`0004_billing`) and the paid plan's saved runs
+(`0006_saved_history`). Runs stay in Redis for delivery; history is the
+browser's, except a paid account's results, which are saved here too
+(docs/backend/saved-history.md). These are the only rows the backend keeps.
 
 Core rather than ORM: the adapters build domain entities from rows and back,
 and an ORM session's identity map is one more thing to reason about. The
@@ -13,7 +14,25 @@ Deliberately portable: no foreign key into Supabase's `auth` schema and no
 Postgres-only types, so the tests run the same adapters on SQLite.
 """
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Index, Integer, MetaData, String, Table
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.dialects.postgresql import JSONB
+
+# jsonb on Postgres (smaller, indexable if it ever needs to be), plain JSON
+# on SQLite so the tests run the same adapters.
+JSON_DOCUMENT = JSON().with_variant(JSONB(), "postgresql")
 
 metadata = MetaData()
 
@@ -28,6 +47,15 @@ accounts = Table(
     # need deferred constraints on Postgres for nothing.
     Column("default_workspace_id", String(36), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    # The deletion hold (0006): set by DELETE /api/me, cleared by a restore;
+    # the cleanup job removes the account once `purge_at` has passed.
+    Column("deleted_at", DateTime(timezone=True), nullable=True),
+    Column("purge_at", DateTime(timezone=True), nullable=True),
+    # When the account's saved runs are removed, set once the paid plan has
+    # ended (0006); cleared by a resubscribe.
+    Column("saved_runs_expire_at", DateTime(timezone=True), nullable=True),
+    Index("ix_accounts_purge_at", "purge_at"),
+    Index("ix_accounts_saved_runs_expire_at", "saved_runs_expire_at"),
 )
 
 workspaces = Table(
@@ -138,6 +166,31 @@ billing_extra_runs = Table(
     Index("ix_billing_extra_runs_state", "state"),
 )
 
+# A paid account's saved run results (0006, docs/backend/saved-history.md).
+# Result text, a source descriptor and the run's small poster thumbnail
+# (the same <=20 KB JPEG data URL the live run exposes as `thumbnail`): never
+# other media, never a key. (account_id, run_id) is unique, so saving is
+# idempotent.
+saved_runs = Table(
+    "saved_runs",
+    metadata,
+    Column("id", String(36), primary_key=True),
+    Column("account_id", String(36), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False),
+    Column("run_id", String(36), nullable=False),
+    Column("title", String(500), nullable=False),
+    Column("summary_snippet", String(400), nullable=True),
+    Column("completeness", String(16), nullable=False),
+    Column("source", JSON_DOCUMENT, nullable=False),
+    Column("result", JSON_DOCUMENT, nullable=False),
+    Column("result_bytes", Integer, nullable=False),
+    Column("thumbnail", Text, nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("account_id", "run_id", name="uq_saved_runs_account_run"),
+    # The list: newest first per account, keyset on (created_at, id).
+    Index("ix_saved_runs_account_created", "account_id", "created_at", "id"),
+)
+
 IDENTITY_TABLES = ("accounts", "workspaces", "workspace_members", "api_keys")
 FREE_RUN_TABLES = ("account_free_runs", "account_free_run_holds")
 BILLING_TABLES = ("billing_accounts", "billing_events", "billing_extra_runs")
+SAVED_HISTORY_TABLES = ("saved_runs",)

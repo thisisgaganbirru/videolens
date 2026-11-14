@@ -292,7 +292,7 @@ class EnabledBillingRoutesTests(BillingRoutesTests):
         self.assertTrue(self.directory._accounts)
 
         self.stripe.v1.subscriptions.cancel.side_effect = None
-        self.assertEqual(self.client.delete("/api/me", headers=TOKEN).status_code, 204)
+        self.assertEqual(self.client.delete("/api/me", headers=TOKEN).status_code, 200)
         self.stripe.v1.subscriptions.cancel.assert_called_with("sub_1", params={"invoice_now": True, "prorate": False})
 
 

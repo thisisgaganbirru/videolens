@@ -232,6 +232,10 @@ interface RunStatusViewProps {
    *  "try a different link" advice and no stage strip — we never learned
    *  where it got to. */
   expired?: boolean;
+  /** Expired only: why (2026-11-14). `server` (the default): the server
+   *  forgot a live run. `saved`: a run listed as saved to the account is no
+   *  longer there. */
+  expiredReason?: "server" | "saved";
   /** Expired only: whether the link can be put back in the field. */
   canRefill?: boolean;
   /** Expired only: back to the intake (with the link filled, when stored). */
@@ -262,6 +266,7 @@ export default function RunStatusView({
   onRetryNow,
   lostCause = "network",
   expired = false,
+  expiredReason = "server",
   canRefill = false,
   onAnalyzeAgain,
   onBackToHistory,
@@ -271,6 +276,7 @@ export default function RunStatusView({
   if (status === "failed" && expired) {
     return (
       <ExpiredRunView
+        reason={expiredReason}
         sourceKind={sourceKind}
         canRefill={canRefill}
         onAnalyzeAgain={onAnalyzeAgain ?? onReset}
@@ -521,11 +527,13 @@ export default function RunStatusView({
    and the stages it drew were guesses. Pill, title, one honest sentence, the
    one action. */
 function ExpiredRunView({
+  reason,
   sourceKind,
   canRefill,
   onAnalyzeAgain,
   onBackToHistory,
 }: {
+  reason: "server" | "saved";
   sourceKind: SourceKind;
   canRefill: boolean;
   onAnalyzeAgain?: () => void;
@@ -535,6 +543,44 @@ function ExpiredRunView({
   /* Refinement 9: "the server keeps a run for an hour" was only half the
      story — a server restart loses runs too, well inside the hour. This says
      what is true either way, without naming a cause we cannot know. */
+  /* Saved history (2026-11-14): a saved run that answers 404 was deleted
+     (perhaps on another device) or removed when the plan's 30 days ended.
+     Either way it is not on the account any more; say that, not a cause. */
+  if (reason === "saved") {
+    const savedLede =
+      sourceKind === "url" && canRefill
+        ? "It may have been deleted on another device. The link is ready to analyze again."
+        : sourceKind === "url"
+          ? "It may have been deleted on another device. Paste the link again to start over."
+          : "It may have been deleted on another device. Choose the file again to start over.";
+    return (
+      <>
+        <span className="status" data-tone="failed">
+          <span className="pip" aria-hidden="true" />
+          Unavailable
+        </span>
+        <h1 className="run-title">This run is no longer saved</h1>
+        <p className="run-lede">{savedLede}</p>
+        <p className="sr-only" aria-live="polite" aria-atomic="true">
+          This run is no longer saved to your account.
+        </p>
+        {onAnalyzeAgain || onBackToHistory ? (
+          <div className="run-actions">
+            {onAnalyzeAgain ? (
+              <button type="button" className="btn btn-ink" onClick={onAnalyzeAgain}>
+                {sourceKind === "url" || canRefill ? "Analyze it again" : `Choose the ${what} again`}
+              </button>
+            ) : null}
+            {onBackToHistory ? (
+              <button type="button" className="btn btn-secondary" onClick={onBackToHistory}>
+                Back to History
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </>
+    );
+  }
   const gone = "The server no longer has this run, and its result never reached this browser.";
   const lede =
     sourceKind === "url"

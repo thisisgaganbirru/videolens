@@ -1,15 +1,34 @@
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Response, UploadFile
 from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
 from ...container import container
-from ...domain.entities import ApiKey, BillingPrices, CapabilityReport, Price, Principal, ReleaseIndex, Run
+from ...application.saved_history import encode_cursor
+from ...domain.entities import (
+    ApiKey,
+    BillingPrices,
+    CapabilityReport,
+    Price,
+    Principal,
+    ReleaseIndex,
+    Run,
+    SavedHistoryStatus,
+    SavedRunSource,
+)
 from ...domain.errors import WebhookSignatureError
 from ...domain.run_facts import describe_run
-from .dependencies import get_optional_signed_in_principal, get_principal, get_signed_in_principal, require_person
+from .dependencies import (
+    get_optional_signed_in_principal,
+    get_principal,
+    get_signed_in_principal,
+    require_person,
+    require_person_even_if_deleted,
+)
 from .rate_limiter import client_ip, limiter
 from .schemas import (
+    AccountDeletionResponse,
     AccountResponse,
+    AccountRestoreResponse,
     ApiKeyCreatedResponse,
     ApiKeyCreateRequest,
     ApiKeyListResponse,
@@ -29,6 +48,12 @@ from .schemas import (
     RunListResponse,
     RunStatusResponse,
     RunSummary,
+    SavedHistoryResponse,
+    SavedRunListResponse,
+    SavedRunResponse,
+    SavedRunsDeletedResponse,
+    SavedRunSourceResponse,
+    SavedRunSummaryResponse,
     WorkspaceResponse,
 )
 
@@ -241,20 +266,117 @@ async def me(request: Request, principal: Principal = Depends(get_signed_in_prin
             library=entitlement.library,
         ),
         accounts_enabled=view.accounts_enabled,
+        saved_history=_saved_history(view.saved_history),
     )
 
 
-@router.delete("/api/me", status_code=204)
+def _saved_history(status: SavedHistoryStatus) -> SavedHistoryResponse:
+    return SavedHistoryResponse(saving=status.saving, expires_at=status.expires_at)
+
+
+@router.delete("/api/me", response_model=AccountDeletionResponse)
 @limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
-async def delete_me(request: Request, principal: Principal = Depends(require_person)) -> Response:
-    """Delete the signed-in person's account for good: their server-side
-    runs, API keys, workspace and account rows, then their Supabase user.
-    A signed-in session only (`require_person`: anonymous 401, API key 403);
-    503 without an account store. A retry after a part-way failure is 204;
-    after a complete deletion the same token is refused (401), since the
-    Supabase user it names no longer exists."""
-    await container.delete_account_use_case.execute(principal)
+async def delete_me(request: Request, principal: Principal = Depends(require_person)) -> AccountDeletionResponse:
+    """Delete the signed-in person's account: a 30-day hold
+    (docs/backend/saved-history.md). Any subscription is cancelled now and
+    the account stops working at once (every endpoint answers 410
+    `account_pending_deletion`, its API keys 401); signing in again before
+    `purge_at` can restore it, after it the worker removes everything and
+    the Supabase user for good. A signed-in session only (`require_person`:
+    anonymous 401, API key 403); 503 without an account store."""
+    purge_at = await container.delete_account_use_case.execute(principal)
+    return AccountDeletionResponse(purge_at=purge_at)
+
+
+@router.post("/api/me/restore", response_model=AccountRestoreResponse)
+@limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
+async def restore_me(
+    request: Request, principal: Principal = Depends(require_person_even_if_deleted)
+) -> AccountRestoreResponse:
+    """Take an account back out of the deletion hold: the one endpoint a
+    held account may call. Everything returns (keys, saved runs) on the
+    free plan. `restored: false` when it was not held; 410
+    `restore_window_closed` once the hold has ended."""
+    restored = await container.restore_account_use_case.execute(principal)
+    return AccountRestoreResponse(restored=restored)
+
+
+# ----------------------------------------------------------- saved history
+# docs/backend/saved-history.md. A paid account's results, saved by the
+# worker; a signed-in session only (`require_person`), always the caller's
+# own account. Readable and deletable in the post-cancel window too.
+
+
+def _source(source: SavedRunSource) -> SavedRunSourceResponse:
+    kind = source.source_kind if source.source_kind in ("link", "file") else None
+    return SavedRunSourceResponse(**{**source.to_dict(), "source_kind": kind})
+
+
+@router.get("/api/history", response_model=SavedRunListResponse)
+@limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
+async def list_history(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=200),
+    principal: Principal = Depends(require_person),
+) -> SavedRunListResponse:
+    """The caller's saved runs, newest first, light fields only. A free
+    account that never paid gets `items: []` and `saving: false`; in the
+    post-cancel window `expires_at` says when they go."""
+    queries = container.saved_history_queries
+    status = await queries.status(principal)
+    page = await queries.list(principal, limit=limit, cursor=cursor)
+    return SavedRunListResponse(
+        saving=status.saving,
+        expires_at=status.expires_at,
+        items=[
+            SavedRunSummaryResponse(
+                run_id=item.run_id,
+                title=item.title,
+                summary_snippet=item.summary_snippet,
+                completeness=item.completeness,
+                created_at=item.created_at,
+                source=_source(item.source),
+                thumbnail=item.thumbnail,
+            )
+            for item in page.items
+        ],
+        next_cursor=encode_cursor(page.next_cursor),
+    )
+
+
+@router.get("/api/history/{run_id}", response_model=SavedRunResponse)
+@limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
+async def get_history_run(
+    request: Request, run_id: str, principal: Principal = Depends(require_person)
+) -> SavedRunResponse:
+    """One saved run in full (transcript, notes, on-screen text). 404 when
+    the caller's account has no saved run with that id."""
+    saved = await container.saved_history_queries.get(principal, run_id)
+    return SavedRunResponse(
+        run_id=saved.run_id,
+        title=saved.title,
+        summary_snippet=saved.summary_snippet,
+        completeness=saved.completeness,
+        created_at=saved.created_at,
+        source=_source(saved.source),
+        thumbnail=saved.thumbnail,
+        result=saved.result,
+    )
+
+
+@router.delete("/api/history/{run_id}", status_code=204)
+@limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
+async def delete_history_run(request: Request, run_id: str, principal: Principal = Depends(require_person)) -> Response:
+    await container.saved_history_queries.delete(principal, run_id)
     return Response(status_code=204)
+
+
+@router.delete("/api/history", response_model=SavedRunsDeletedResponse)
+@limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
+async def delete_history(request: Request, principal: Principal = Depends(require_person)) -> SavedRunsDeletedResponse:
+    deleted = await container.saved_history_queries.delete_all(principal)
+    return SavedRunsDeletedResponse(deleted=deleted)
 
 
 def _api_key_response(key: ApiKey) -> ApiKeyResponse:
