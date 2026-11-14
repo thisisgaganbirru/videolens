@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 
 export default function PrivacyPage() {
   return (
-    <LegalShell title="Privacy" effective="Effective November 13, 2026" current="privacy">
+    <LegalShell title="Privacy" effective="Effective November 14, 2026" current="privacy">
       <LegalSection heading="Media processing">
         Uploaded or downloaded media is used only to perform the requested analysis. Media is temporarily processed by our backend and Gemini, then deleted after the run finishes or fails.
       </LegalSection>

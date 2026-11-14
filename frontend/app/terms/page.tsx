@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 
 export default function TermsPage() {
   return (
-    <LegalShell title="Terms" effective="Effective November 13, 2026" current="terms">
+    <LegalShell title="Terms" effective="Effective November 14, 2026" current="terms">
       <LegalSection heading="Permission to process">
         You may submit only media you own or are authorized to process. You are responsible for complying with copyright, privacy, contractual, and platform requirements.
       </LegalSection>
