@@ -3,6 +3,8 @@ import math
 import re
 from datetime import datetime, time, timedelta, timezone
 
+from .entities import AuthMethod, Principal
+
 CLIENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
 
 
@@ -10,11 +12,64 @@ def is_valid_client_id(value: str) -> bool:
     return bool(CLIENT_ID_PATTERN.fullmatch(value))
 
 
+# Every VideoLens API key starts with this. It is what lets a bearer header be
+# routed to the key lookup without a database read: an identity-provider JWT
+# starts with "eyJ" (base64 of `{"`), never with this.
+API_KEY_PREFIX = "vl_live_"
+
+
+# The `role` claim on a Supabase access token for a real signed-in user
+# (anonymous sign-ins are `authenticated` too, but flagged `is_anonymous`).
+SIGNED_IN_ROLE = "authenticated"
+
+
+def bearer_credential(authorization: str) -> str:
+    """The credential in an `Authorization: Bearer <credential>` header, or
+    "" for any other scheme or an empty credential. The scheme name is
+    case-insensitive (RFC 9110 section 11.1), so `bearer x` counts."""
+    scheme, _, credential = authorization.strip().partition(" ")
+    if scheme.lower() != "bearer":
+        return ""
+    return credential.strip()
+
+
+def looks_like_api_key(value: str) -> bool:
+    return value.startswith(API_KEY_PREFIX)
+
+
+def can_access_run(principal: Principal, run) -> bool:
+    """The one ownership rule: a run is visible to the owner it was created
+    for and to nobody else. `run` is anything with an `owner_id`."""
+    return run is not None and run.owner_id == principal.owner_id
+
+
+def quota_key(principal: Principal, client_ip: str) -> str:
+    """Which rate-limit bucket a resolved caller spends from.
+
+    A signed-in person is keyed by account, not by token: the token rotates
+    every time the client refreshes it (hourly with supabase-js), and keying
+    on its hash reset the hourly window with it. An API key spends from the
+    account that owns its workspace, so ten keys are one quota, not ten.
+    Anonymous callers stay keyed by IP, never by the self-reported
+    X-Client-ID, which is free to regenerate.
+    """
+    if principal.method in (AuthMethod.TOKEN, AuthMethod.API_KEY):
+        if principal.account_id:
+            return f"account:{principal.account_id}"
+        # No account directory (DATABASE_URL blank in a deployed API): the
+        # subject is still stable across token refreshes, unlike the token.
+        return principal.subject
+    return f"ip:{client_ip}" if client_ip else "anonymous"
+
+
 def quota_key_from_headers(authorization: str, client_ip: str) -> str:
-    # Keyed by IP, not the client-supplied X-Client-ID: that header is
-    # self-reported and free to regenerate, so it carries no quota weight.
-    if authorization.startswith("Bearer "):
-        digest = hashlib.sha256(authorization.encode()).hexdigest()[:32]
+    """Fallback bucket for a request whose caller was not resolved (a route
+    without `get_principal`, or resolution failing). Keyed by IP, not the
+    client-supplied X-Client-ID: that header is self-reported and free to
+    regenerate, so it carries no quota weight."""
+    credential = bearer_credential(authorization)
+    if credential:
+        digest = hashlib.sha256(credential.encode()).hexdigest()[:32]
         return f"token:{digest}"
     return f"ip:{client_ip}" if client_ip else "anonymous"
 

@@ -1,6 +1,6 @@
 import type { Capability, CapabilityReport } from "@/domain/entities";
 import { ApiError, NetworkError } from "@/domain/errors";
-import type { CapabilitiesGateway } from "@/domain/ports";
+import type { CapabilitiesGateway, ServerAuthStatus } from "@/domain/ports";
 import { API_BASE_URL } from "./apiBase";
 
 /* `GET /api/capabilities` — the deployment describing itself. See
@@ -56,7 +56,19 @@ function normaliseReport(raw: unknown): CapabilityReport {
 }
 
 export class FetchCapabilitiesGateway implements CapabilitiesGateway {
+  /** `serverAuth` hears the `auth` row of every report (auth phase 2): the
+   *  API client sends the bearer only when it is `ok`. A report without the
+   *  row (an older backend) counts as `off`. */
+  constructor(private readonly serverAuth?: ServerAuthStatus) {}
+
   async fetchReport(): Promise<CapabilityReport> {
+    const report = await this.read();
+    const auth = report.capabilities.find((row) => row.name === "auth");
+    this.serverAuth?.report(auth?.state === "ok" ? "ok" : "off");
+    return report;
+  }
+
+  private async read(): Promise<CapabilityReport> {
     let res: Response;
     try {
       res = await fetch(`${API_BASE_URL}/api/capabilities`);

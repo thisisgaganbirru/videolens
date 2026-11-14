@@ -3,7 +3,14 @@ from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
 from ...domain.errors import (
+    AccountDeletionError,
+    ApiKeyLimitError,
+    ApiKeyNotFoundError,
+    AuthenticationError,
+    AuthNotConfiguredError,
+    ClientIdInvalidError,
     DeviceTokenInvalidError,
+    ForbiddenError,
     FreeRunsExhaustedError,
     AnalysisUnavailableError,
     InvalidSourceError,
@@ -24,6 +31,13 @@ _STATUS_BY_ERROR = {
     RunSchedulingError: 503,
     RunNotFoundError: 404,
     RateLimitedError: 429,
+    ClientIdInvalidError: 400,
+    ForbiddenError: 403,
+    ApiKeyNotFoundError: 404,
+    ApiKeyLimitError: 409,
+    AccountDeletionError: 500,
+    # Covers AccountsNotConfiguredError, its subclass.
+    AuthNotConfiguredError: 503,
 }
 
 
@@ -63,5 +77,13 @@ def register_error_handlers(app: FastAPI) -> None:
             content={"detail": str(exc), "code": "free_runs_used", "limit": exc.limit, "used": exc.used},
         )
 
+    # 401 with the challenge header RFC 9110 asks for; the message never
+    # echoes the credential.
+    async def unauthenticated(request: Request, exc: Exception) -> JSONResponse:
+        return JSONResponse(
+            status_code=401, content={"detail": str(exc)}, headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    app.add_exception_handler(AuthenticationError, unauthenticated)
     app.add_exception_handler(DeviceTokenInvalidError, device_token_invalid)
     app.add_exception_handler(FreeRunsExhaustedError, free_runs_used)

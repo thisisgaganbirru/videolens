@@ -17,10 +17,23 @@ import { nativeShell } from "@/infrastructure/container";
    folders would mean four prerendered pages each carrying the whole shell, and
    a real document navigation on every tab switch. */
 
-/** The four destinations, in nav order. */
-export const MAIN_TABS = ["analyze", "history", "api-key", "releases"] as const;
+/** The destinations, in nav order. `account` (auth phase 2) is offered only
+ *  where sign-in is available; see `navTabs`. */
+export const MAIN_TABS = ["analyze", "history", "api-key", "releases", "account"] as const;
 
 export type MainTab = (typeof MAIN_TABS)[number];
+
+/**
+ * The tabs a nav should draw. The Account tab is left out unless the caller
+ * says sign-in is available (the deployment has a provider and its `auth`
+ * capability reports `ok`). Only `/app` knows that, so the legal and offline
+ * routes, which pass nothing, draw the tabs without it. Its address still
+ * works everywhere: `/app?view=account` renders the panel, which explains
+ * itself when sign-in is off.
+ */
+export function navTabs(showAccount = false): readonly MainTab[] {
+  return showAccount ? MAIN_TABS : MAIN_TABS.filter((tab) => tab !== "account");
+}
 
 /** The tab a bare `/app` shows, and the one that needs no param to address it. */
 export const DEFAULT_MAIN_TAB: MainTab = "analyze";

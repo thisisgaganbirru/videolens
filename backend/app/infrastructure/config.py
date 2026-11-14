@@ -86,10 +86,23 @@ class Settings(BaseSettings):
     # Credentials tab says which, and the wrong one fails HeadBucket with 403.
     s3_addressing_style: str = "auto"
 
+    # OIDC token verification (Supabase Auth in practice; see .env.example).
+    # JWKS URL and issuer make a token verifiable at all and are both
+    # required; the audience is enforced whenever it is set.
     auth_jwks_url: str = ""
     auth_issuer: str = ""
     auth_audience: str = ""
     allow_anonymous: bool = True
+
+    # Accounts, workspaces, members and API keys. Blank = no database: the
+    # API keeps those in process memory in local mode, and has no account
+    # store at all in distributed mode (signed-in callers are bare subjects,
+    # key management answers 503). Postgres URLs (postgres://, postgresql://)
+    # are rewritten for asyncpg; sqlite+aiosqlite:/// works for local use.
+    # The schema is Alembic's (`alembic upgrade head`), run as a release step.
+    database_url: str = ""
+    # Live API keys a workspace may hold at once.
+    api_keys_per_workspace: int = 10
 
     github_repo: str = "thisisgaganbirru/videolens"
     github_token: str = ""
@@ -127,6 +140,24 @@ class Settings(BaseSettings):
                 "ALLOWED_ORIGINS is \"*\" in a distributed deployment (REDIS_URL is set). "
                 "Any website could call this API from a browser. Set ALLOWED_ORIGINS to the "
                 "real frontend origin(s)."
+            )
+        return None
+
+    def distributed_database_error(self) -> str | None:
+        """Why this database configuration must not start, or None.
+
+        SQLite is a file on one machine, so each replica of a distributed
+        deployment would hold its own accounts and API keys, and a key minted
+        on one would 401 on the next. Same reasoning as leaving the account
+        store disabled, rather than in-memory, when `DATABASE_URL` is blank.
+        """
+        if not self.queue_enabled:
+            return None
+        if self.database_url.strip().lower().startswith("sqlite"):
+            return (
+                "DATABASE_URL is a SQLite URL in a distributed deployment (REDIS_URL is set). "
+                "Each replica would keep its own accounts and API keys. Use the Postgres "
+                "(Supabase) URL, or leave DATABASE_URL blank."
             )
         return None
 

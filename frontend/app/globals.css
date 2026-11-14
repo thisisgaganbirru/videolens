@@ -2282,6 +2282,508 @@ h3 {
     }
   }
 
+  /* ---- Account (auth phase 2, docs/frontend/auth-sign-in.md) ----
+     The API key page's anatomy (.key-page, .key-card, .key-label) with a
+     few additions: a card title, the code field, quiet text links, the
+     one-time secret and the key list. Tokens only. */
+  .acct-gap {
+    margin-top: var(--space-md);
+  }
+  .acct-gap-sm {
+    margin-top: 1rem;
+  }
+  .acct-card-title {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-weight: 400;
+    font-size: 1.5rem;
+    line-height: 1.2;
+    color: var(--color-ink);
+  }
+  .acct-help-top {
+    margin: 0 0 0.75rem;
+  }
+  .acct-card-title + .key-help {
+    margin-top: 0.5rem;
+  }
+  .acct-strong {
+    font-weight: 600;
+    color: var(--color-ink);
+    overflow-wrap: anywhere;
+  }
+  .acct-field {
+    flex: 1 1 auto;
+    height: 3rem;
+  }
+  input.acct-code {
+    max-width: 14rem;
+    font-size: 1.25rem;
+    letter-spacing: 0.18em;
+    font-variant-numeric: tabular-nums;
+  }
+  .acct-guard {
+    margin: 0.75rem 0 0;
+  }
+  .acct-links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 1.25rem;
+    margin-top: 0.75rem;
+    font-size: 0.875rem;
+  }
+  .acct-quiet {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    color: var(--color-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .acct-link {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    font-weight: 600;
+    color: var(--color-accent-strong);
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+    text-decoration-thickness: 1px;
+    transition: color var(--dur-short) var(--ease-out);
+  }
+  .acct-link:hover {
+    color: var(--color-ink);
+  }
+  .acct-link[aria-disabled="true"] {
+    cursor: default;
+    color: var(--color-muted);
+  }
+  .acct-link:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  .acct-email {
+    margin: 0;
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--color-ink);
+    overflow-wrap: anywhere;
+  }
+  .acct-inline-code {
+    font-family: var(--font-mono);
+    font-size: 0.875em;
+    padding: 0.0625rem 0.3125rem;
+    border-radius: 4px;
+    background: var(--color-tint);
+    color: var(--color-ink-2);
+  }
+  .acct-create {
+    margin-top: 1.25rem;
+  }
+  .acct-create-btn {
+    flex: 0 0 auto;
+    min-height: 3rem;
+    padding-inline: 1.25rem;
+  }
+
+  /* The one-time secret: the soft-green panel the app uses for "this is
+     the thing to take away", the value itself in mono on the surface. */
+  .acct-secret {
+    margin-top: 1.25rem;
+    padding: 1.25rem;
+    border-radius: var(--radius-card);
+    background: var(--color-accent-soft);
+    color: var(--color-accent-strong);
+  }
+  .acct-secret-lede {
+    margin: 0;
+    font-size: 0.9375rem;
+    line-height: 1.5;
+  }
+  .acct-secret .acct-strong {
+    color: inherit;
+  }
+  .acct-secret-value {
+    display: block;
+    margin-top: 0.75rem;
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius-control);
+    border: var(--rule-w) solid var(--color-rule);
+    background: var(--color-surface);
+    color: var(--color-ink);
+    font-family: var(--font-mono);
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+    word-break: break-all;
+    user-select: all;
+  }
+  .acct-secret .pending-note {
+    margin: 0.5rem 0 0;
+  }
+  .acct-secret-actions {
+    margin-top: 1rem;
+  }
+
+  .acct-key-list {
+    margin: 1.25rem 0 0;
+    padding: 0;
+    list-style: none;
+    border-top: var(--rule-w) solid var(--color-rule);
+  }
+  .acct-key {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem 1rem;
+    padding: 0.875rem 0;
+    border-bottom: var(--rule-w) solid var(--color-rule);
+  }
+  .acct-key-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+    flex: 1 1 14rem;
+  }
+  .acct-key-name {
+    font-weight: 600;
+    color: var(--color-ink);
+    overflow-wrap: anywhere;
+  }
+  .acct-key-meta {
+    font-size: 0.8125rem;
+    color: var(--color-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .acct-key[data-revoked="true"] .acct-key-name {
+    color: var(--color-muted);
+    font-weight: 500;
+  }
+  .acct-key .btn {
+    min-height: 2.75rem;
+    padding-inline: 1.125rem;
+  }
+  .acct-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.75rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-tint);
+    color: var(--color-muted);
+    font-size: 0.8125rem;
+    font-weight: 600;
+  }
+  .acct-confirm {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.75rem;
+  }
+  .acct-confirm-q {
+    font-size: 0.875rem;
+    color: var(--color-ink-2);
+  }
+  .acct-danger {
+    background: var(--color-danger);
+    border-color: var(--color-danger);
+    color: var(--color-danger-ink);
+  }
+  .acct-danger:hover:not([aria-disabled="true"]) {
+    background: color-mix(in srgb, var(--color-danger) 88%, var(--color-ink));
+  }
+
+  /* Delete account (auth phase 3). Last on the page, collapsed behind a
+     secondary pill. Opened, two short lists split by a hairline (what goes,
+     what stays), the typed email, then the one solid-danger control on the
+     page: red is reserved for errors and for this, never for a primary. */
+  .acct-delete-body {
+    margin-top: 1.25rem;
+    padding-top: 1.25rem;
+    border-top: var(--rule-w) solid var(--color-rule);
+  }
+  .acct-delete-lists {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+  .acct-delete-head {
+    margin: 0 0 0.5rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  .acct-delete-list {
+    margin: 0;
+    padding-inline-start: 1.125rem;
+    /* Tailwind's preflight strips markers; as on .key-steps, restore them */
+    list-style: disc;
+    font-size: 0.9375rem;
+    line-height: 1.55;
+    color: var(--color-ink-2);
+  }
+  .acct-delete-list li + li {
+    margin-top: 0.25rem;
+  }
+  .acct-delete-list li::marker {
+    color: var(--color-muted);
+  }
+  .acct-delete-note {
+    margin-top: 0.5rem;
+  }
+  .acct-delete-label {
+    margin-bottom: 0.25rem;
+  }
+  .acct-delete .error-inline:focus {
+    outline: none;
+  }
+  .acct-delete .error-inline:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  .acct-focus-title:focus {
+    outline: none;
+  }
+
+  @media (min-width: 40rem) {
+    .acct-secret {
+      padding: 1.5rem 1.75rem;
+    }
+    .acct-delete-lists {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1.5rem 2rem;
+    }
+  }
+
+  /* Account-only refinement; retains the editorial tokens and shared controls. */
+  .acct-page .view-lede {
+    max-width: 36rem;
+  }
+  .acct-page .acct-identity-details {
+    min-width: 0;
+  }
+  .acct-page .acct-create {
+    padding-top: var(--space-md);
+    border-top: var(--rule-w) solid var(--color-rule);
+  }
+  .acct-page .acct-empty {
+    margin: var(--space-md) 0 0;
+    padding-top: var(--space-sm);
+    border-top: var(--rule-w) solid var(--color-rule);
+  }
+  .acct-page .acct-key-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.25rem;
+    overflow-wrap: anywhere;
+  }
+  .acct-page .acct-delete {
+    background: transparent;
+  }
+  .acct-page .acct-card-title {
+    overflow-wrap: anywhere;
+  }
+  .acct-page .acct-field {
+    min-width: 0;
+  }
+  .acct-page .btn,
+  .acct-page .acct-link {
+    white-space: nowrap;
+  }
+  @media (max-width: 30rem) {
+    .acct-page .acct-create .key-row {
+      flex-direction: column;
+      gap: var(--space-xs);
+    }
+    .acct-page .acct-create-btn {
+      align-self: flex-start;
+    }
+    .acct-page .acct-confirm-q {
+      flex-basis: 100%;
+    }
+  }
+  @media (min-width: 40rem) {
+    .acct-page .acct-identity {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: var(--space-sm) var(--space-md);
+    }
+    .acct-page .acct-identity > .key-actions {
+      grid-column: 2;
+      grid-row: 1;
+      margin-top: 0;
+    }
+    .acct-page .acct-identity > .acct-guard {
+      grid-column: 1 / -1;
+      margin: 0;
+    }
+  }
+
+  /* Account form states reuse the page's existing type and spacing scale. */
+  .acct-page .acct-form-intro {
+    margin: var(--space-2xs) 0 var(--space-md);
+  }
+  .acct-page .acct-field[readonly] {
+    background: var(--color-tint);
+    color: var(--color-muted);
+  }
+  .acct-page .acct-link:active:not([aria-disabled="true"]) {
+    color: var(--color-ink);
+  }
+
+  /* Option A, grouped list (owner's pick, 2026-11-09). Small uppercase group
+     labels (History's .history-group-label) over white grouped cards of
+     hairline rows. Keys is the only disclosure (chevron down, turns on
+     open); every other row is a link (chevron right). The page ends on two
+     quiet text controls: Sign out everywhere, then Delete account. */
+  .acct-page .acct-group {
+    margin-top: var(--space-lg);
+  }
+  .acct-page .acct-group-label {
+    margin: 0 0 var(--space-2xs);
+  }
+  .acct-page .acct-card {
+    margin-top: 0;
+    padding: 0;
+    overflow: clip;
+  }
+  .acct-page .acct-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    min-height: 3.5rem;
+    padding: var(--space-xs) 1.25rem;
+    color: var(--color-ink);
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color var(--dur-short) var(--ease-out);
+  }
+  .acct-page .acct-card > .acct-row + .acct-row {
+    border-top: var(--rule-w) solid var(--color-rule);
+  }
+  .acct-page .acct-disclosure-toggle {
+    list-style: none;
+  }
+  .acct-page .acct-disclosure-toggle::-webkit-details-marker {
+    display: none;
+  }
+  .acct-page .acct-row-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .acct-page .acct-row > .acct-row-title {
+    flex: 1 1 auto;
+  }
+  .acct-page .acct-row-title {
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+  .acct-page .acct-row-description {
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--color-muted);
+    overflow-wrap: anywhere;
+  }
+  .acct-page .acct-row-meta {
+    flex: 0 0 auto;
+    font-size: 0.875rem;
+    color: var(--color-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .acct-page .acct-row-meta[data-fresh="true"] {
+    color: var(--color-accent-strong);
+    font-weight: 600;
+  }
+  .acct-page .acct-row > svg {
+    width: 1.125rem;
+    height: 1.125rem;
+    flex: 0 0 auto;
+    color: var(--color-muted);
+  }
+  .acct-page .acct-disclosure[open] > summary > svg {
+    transform: rotate(180deg);
+  }
+  .acct-page .acct-details-body {
+    margin: 0 1.25rem;
+    padding: var(--space-md) 0;
+    border-top: var(--rule-w) solid var(--color-rule);
+    min-width: 0;
+  }
+  .acct-page .acct-help-flush {
+    margin: 0;
+  }
+  /* The card clips its corners, so the ring sits inside the row. */
+  .acct-page .acct-row:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: -2px;
+  }
+  .acct-page .acct-row:active {
+    background: var(--color-tint);
+  }
+  @media (hover: hover) {
+    .acct-page .acct-row:hover {
+      background: var(--color-tint);
+    }
+  }
+  .acct-page .acct-group-note {
+    margin-top: var(--space-2xs);
+  }
+  .acct-page .acct-identity-meta {
+    margin-top: 0.25rem;
+  }
+  .acct-page .acct-nowrap {
+    white-space: nowrap;
+  }
+
+  .acct-page .acct-end {
+    margin-top: var(--space-lg);
+  }
+  .acct-page .acct-end-item + .acct-end-item {
+    margin-top: var(--space-xs);
+  }
+  .acct-page .acct-end-control {
+    color: var(--color-ink);
+  }
+  .acct-page .acct-end-control:hover {
+    color: var(--color-accent-strong);
+  }
+  .acct-page .acct-end-control[aria-disabled="true"] {
+    color: var(--color-muted);
+  }
+  .acct-page .acct-end-help {
+    margin: 0;
+    max-width: 36rem;
+  }
+  .acct-page .acct-delete-link {
+    font-weight: 400;
+    color: var(--color-muted);
+  }
+  .acct-page .acct-delete-link:hover {
+    color: var(--color-ink);
+  }
+
+  @media (min-width: 40rem) {
+    .acct-page .acct-row {
+      padding-inline: 1.75rem;
+    }
+    .acct-page .acct-details-body {
+      margin-inline: 1.75rem;
+    }
+  }
+
   /* ---- Releases ----
      One white card per release (Releases*.png): serif version title, the
      Latest pill on the newest, the date, then what the API can say — the

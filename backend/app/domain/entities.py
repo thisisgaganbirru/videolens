@@ -152,10 +152,102 @@ class ReleaseIndex(BaseModel):
     latest: Optional[LatestRelease] = None
 
 
+class AuthMethod(str, Enum):
+    """How the caller proved who they are. `require_person` in the API layer
+    accepts only TOKEN: an API key may run analyses but never manage keys."""
+
+    ANONYMOUS = "anonymous"
+    TOKEN = "token"
+    API_KEY = "api_key"
+
+
 @dataclass(frozen=True)
 class Principal:
+    """Who is calling, and on whose behalf.
+
+    `subject` identifies the caller: `client:<X-Client-ID>` (anonymous),
+    `user:<sub>` (a signed-in person's identity-provider subject) or
+    `key:<key_id>` (an API key). `account_id` is set for a signed-in person
+    and, for an API key, is the account that owns the key's workspace, so
+    quota is per person however many keys they mint.
+    """
+
     subject: str
     authenticated: bool
+    method: AuthMethod = AuthMethod.ANONYMOUS
+    account_id: Optional[str] = None
+    workspace_id: Optional[str] = None
+    email: Optional[str] = None
+
+    @property
+    def owner_id(self) -> str:
+        """What runs are scoped to.
+
+        The subject, in this phase. The target is the workspace
+        (`workspace:<id>`), so a key and the web app see one history, but
+        `CreateRunUseCase` writes `principal.subject` as a run's owner and is
+        deliberately not modified in auth phase 1 (`docs/auth-plan.md`). Read
+        and list go through this property via `policies.can_access_run`, so
+        switching to the workspace is this line plus the one in
+        `create_run.py`, together.
+        """
+        return self.subject
+
+
+class Account(BaseModel):
+    """A signed-in person. `external_id` is the identity provider's `sub`
+    claim; it is the only thing a token carries, so it is what accounts are
+    looked up by."""
+
+    account_id: str
+    external_id: str
+    email: Optional[str] = None
+    default_workspace_id: Optional[str] = None
+    created_at: datetime
+
+
+class WorkspaceRole(str, Enum):
+    OWNER = "owner"
+    MEMBER = "member"
+
+
+class Workspace(BaseModel):
+    """Where API keys (and, later, seats and plans) live. Every account gets
+    one on first sign-in; not shown in the UI in this phase."""
+
+    workspace_id: str
+    name: str
+    owner_account_id: str
+    created_at: datetime
+
+
+class ApiKey(BaseModel):
+    """The visible half of an API key. The secret is hashed at issue time and
+    never stored, so this is all a listing can ever show."""
+
+    key_id: str
+    workspace_id: str
+    name: str
+    # The first characters of the secret (`vl_live_` plus a few), kept so a
+    # list of keys is recognisable. Not enough to authenticate with.
+    prefix: str
+    scopes: list[str] = Field(default_factory=lambda: ["runs:write", "runs:read"])
+    last_used_at: Optional[datetime] = None
+    revoked_at: Optional[datetime] = None
+    created_at: datetime
+
+    @property
+    def active(self) -> bool:
+        return self.revoked_at is None
+
+
+@dataclass(frozen=True)
+class ApiKeyCreated:
+    """A freshly issued key together with its secret: the only moment the
+    plaintext exists on the server side. Returned to the caller once."""
+
+    key: ApiKey
+    secret: str
 
 
 @dataclass

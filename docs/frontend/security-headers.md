@@ -35,6 +35,17 @@ hard-coded. **A build pointed at one backend cannot talk to another**: that is
 the point, and it is also why a mis-set variable now fails as a CSP violation
 in the console rather than a CORS error.
 
+**The identity provider origin (auth phase 2).** When
+`NEXT_PUBLIC_SUPABASE_URL` is set, its exact origin (https only, apart from
+localhost) is added to `connect-src` by `authOriginFrom` in `csp.mjs`, in the
+web header and in the export's meta policy. When it is blank, sign-in is off
+and nothing is added. There is deliberately **no `https://*.supabase.co`
+fallback**: a wildcard would let a script that read the BYOK key post it to
+any Supabase project, including an attacker's. `securityHeaders()` defaults
+the origin from the environment, so `next.config.mjs` did not change; a
+running `next dev` still serves the policy it computed at start and needs a
+restart to pick up a newly set URL.
+
 ## The policy
 
 Web header (production, dev origin shown as `<api>`):
@@ -147,3 +158,4 @@ those start fresh.
 
 - 2026-11-07 · frontend agent · created: security headers + CSP for the web build, hash-based meta CSP for both builds, Android backup rules excluding WebView Local Storage
 - 2026-11-07 · security-check · `inject-csp.mjs` fails the web build on any non-prerendered page route; `@next/env` declared in package.json
+- 2026-11-08 · frontend subagent (auth phase 2) · `connect-src` gains the exact origin of `NEXT_PUBLIC_SUPABASE_URL` (`authOriginFrom`), nothing when blank; no `*.supabase.co` wildcard, on purpose

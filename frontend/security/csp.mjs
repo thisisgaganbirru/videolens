@@ -44,6 +44,31 @@ export function apiOriginFrom(raw) {
 }
 
 /**
+ * The identity provider's origin (auth phase 2), from
+ * `NEXT_PUBLIC_SUPABASE_URL`, the same value the client bundle inlines and
+ * `infrastructure/authSession.ts` talks to. `null` when blank: that build has
+ * sign-in off (`NullAuthSession` never opens a connection), so it gets no
+ * extra origin at all. Deliberately not a `https://*.supabase.co` fallback: a
+ * wildcard would let a script that read the BYOK key post it to *any*
+ * Supabase project, including one an attacker owns. One exact origin keeps
+ * the door as narrow as the backend's. See docs/frontend/security-headers.md.
+ */
+export function authOriginFrom(raw) {
+  const value = (raw || "").trim();
+  if (!value) return null;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`NEXT_PUBLIC_SUPABASE_URL is not a valid URL: ${JSON.stringify(value)}`);
+  }
+  if (url.protocol !== "https:" && url.hostname !== "localhost" && url.hostname !== "127.0.0.1") {
+    throw new Error(`NEXT_PUBLIC_SUPABASE_URL must be https: ${JSON.stringify(value)}`);
+  }
+  return url.origin;
+}
+
+/**
  * Every directive except `script-src`, which differs per layer.
  *
  * - img-src: thumbnails are `data:` URLs, History posters are `blob:` object
@@ -56,11 +81,13 @@ export function apiOriginFrom(raw) {
  *   'unsafe-hashes'. Style injection cannot read the key; with img-src and
  *   font-src locked to this origin it cannot carry anything out either.
  * - font-src 'self': next/font self-hosts both faces at build time.
+ * - connect-src also lists the identity provider's one origin when sign-in
+ *   is configured (`authOriginFrom`); sign-in is plain fetch, no WebSocket.
  */
-function baseDirectives(apiOrigin) {
+function baseDirectives(apiOrigin, authOrigin = null) {
   return [
     ["default-src", "'self'"],
-    ["connect-src", `'self' ${apiOrigin}`],
+    ["connect-src", ["'self'", apiOrigin, authOrigin].filter(Boolean).join(" ")],
     ["img-src", "'self' data: blob:"],
     ["media-src", "'self' blob:"],
     ["style-src", "'self' 'unsafe-inline'"],
@@ -82,10 +109,10 @@ function serialize(directives) {
  * The web build's header policy. `dev` adds 'unsafe-eval', which React needs
  * in development only (Next's CSP guide); production never gets it.
  */
-export function headerPolicy({ apiOrigin, dev = false }) {
+export function headerPolicy({ apiOrigin, authOrigin = null, dev = false }) {
   const script = `'self' 'unsafe-inline'${dev ? " 'unsafe-eval'" : ""}`;
   return serialize([
-    ...baseDirectives(apiOrigin),
+    ...baseDirectives(apiOrigin, authOrigin),
     ["script-src", script],
     ["frame-ancestors", "'none'"],
   ]);
@@ -97,17 +124,26 @@ export function webMetaPolicy({ scriptHashes }) {
 }
 
 /** The per-document meta policy for the Capacitor export: the whole policy. */
-export function exportMetaPolicy({ apiOrigin, scriptHashes }) {
+export function exportMetaPolicy({ apiOrigin, authOrigin = null, scriptHashes }) {
   return serialize([
-    ...baseDirectives(apiOrigin),
+    ...baseDirectives(apiOrigin, authOrigin),
     ["script-src", ["'self'", ...scriptHashes].join(" ")],
   ]);
 }
 
-/** Every response header the web build sends. */
-export function securityHeaders({ apiOrigin, dev = false }) {
+/**
+ * Every response header the web build sends. `authOrigin` defaults to the
+ * one derived from `NEXT_PUBLIC_SUPABASE_URL`, so `next.config.mjs` needs no
+ * change of its own to carry it (and the config's own watcher does not
+ * restart a running dev server for it). Pass `null` to leave it out.
+ */
+export function securityHeaders({
+  apiOrigin,
+  authOrigin = authOriginFrom(process.env.NEXT_PUBLIC_SUPABASE_URL),
+  dev = false,
+}) {
   return [
-    { key: "Content-Security-Policy", value: headerPolicy({ apiOrigin, dev }) },
+    { key: "Content-Security-Policy", value: headerPolicy({ apiOrigin, authOrigin, dev }) },
     /* Stricter than strict-origin-when-cross-origin: the backend never reads
        Referer (CORS uses Origin), and outbound links already carry
        rel="noreferrer". Same-origin navigations keep the full referrer. */

@@ -5,7 +5,10 @@ required) so use cases never import a framework or a driver library."""
 from typing import Awaitable, Callable, Optional, Protocol
 
 from .entities import (
+    Account,
     AnalysisCompleteness,
+    ApiKey,
+    ApiKeyCreated,
     Capability,
     CaptionTrack,
     FreeRunClaim,
@@ -17,6 +20,7 @@ from .entities import (
     SavedUpload,
     SourceMetadata,
     VideoAnalysis,
+    Workspace,
 )
 
 StageCallback = Callable[[str], Awaitable[None]]
@@ -69,6 +73,12 @@ class RunRepository(Protocol):
         ...
 
     async def set_error(self, run_id: str, error: str) -> None: ...
+
+    async def delete_for_owner(self, owner_id: str) -> int:
+        """Remove every run the owner's index (or, in memory, the store)
+        holds for `owner_id`, and the index itself. Returns how many runs
+        were removed; an owner with none is 0, not an error."""
+        ...
 
     async def ping(self) -> bool: ...
 
@@ -228,7 +238,102 @@ class KeyVault(Protocol):
 
 
 class TokenVerifier(Protocol):
-    def decode(self, token: str) -> dict: ...
+    def decode(self, token: str) -> dict:
+        """Verified claims, or raises. `AuthNotConfiguredError` (domain) when
+        no identity provider is configured; anything else means the token is
+        not acceptable. Synchronous: a JWKS cache miss is a network call, so
+        callers run it off the event loop."""
+        ...
+
+
+class AccountDirectory(Protocol):
+    """Accounts and workspaces: who is signed in and which workspace they
+    act in. `enabled` is False on a deployment with no account store, where
+    a signed-in caller is a bare `user:<sub>` principal as before accounts
+    existed."""
+
+    @property
+    def enabled(self) -> bool: ...
+
+    async def resolve_account(self, external_id: str, email: str | None = None) -> Account:
+        """The account for an identity-provider subject, created (with its
+        default workspace) on first sight. Keeps `email` current."""
+        ...
+
+    async def get_workspace(self, workspace_id: str) -> Optional[Workspace]: ...
+
+    async def member_role(self, workspace_id: str, account_id: str) -> Optional[str]: ...
+
+    async def close(self) -> None: ...
+
+
+class ApiKeyRepository(Protocol):
+    """A workspace's API keys. Stores a hash of each secret, never the
+    secret, so a database read never yields a usable credential."""
+
+    async def issue(
+        self, workspace_id: str, name: str, scopes: list[str], *, max_active: int
+    ) -> ApiKeyCreated:
+        """Mint a key. Raises `ApiKeyLimitError` when the workspace already
+        holds `max_active` live keys (checked in the same transaction)."""
+        ...
+
+    async def authenticate(self, secret: str) -> Optional[ApiKey]:
+        """The live key this secret belongs to, or None. Records
+        `last_used_at`, at most once a minute per key."""
+        ...
+
+    async def list_for_workspace(self, workspace_id: str) -> list[ApiKey]: ...
+
+    async def revoke(self, workspace_id: str, key_id: str) -> bool:
+        """True when a live key in that workspace was revoked."""
+        ...
+
+    async def close(self) -> None: ...
+
+
+class IdentityProviderUsers(Protocol):
+    """Whether the identity provider still has a user for a subject.
+
+    An access token outlives its user: after `DELETE /api/me` it still
+    verifies for up to an hour. Without this check that token would re-create
+    the account on its next request and could mint an API key bound to a
+    subject nobody can sign in as again, so nobody could ever list or revoke
+    it. Asked only where rows would be created (first sight of a subject,
+    key creation), never on ordinary reads.
+
+    Stores with no identity provider to ask (SQLite, in-memory) answer True."""
+
+    async def exists(self, external_id: str) -> bool: ...
+
+
+class AccountDeleter(Protocol):
+    """Removes a signed-in person for good: their identity rows, then their
+    identity-provider user. Two steps on purpose, called in that order, so a
+    failure after the first leaves the provider user in place and a retry
+    with the same session still resolves the person. Once both steps have
+    succeeded the person is gone for good: `IdentityProviderUsers` refuses
+    their still-valid token (401), so there is no second deletion to make.
+
+    `enabled` matches the account directory's: False on a deployment with no
+    account store, where there is nothing to delete."""
+
+    @property
+    def enabled(self) -> bool: ...
+
+    async def delete_account(self, external_id: str) -> bool:
+        """Delete the account for this identity-provider subject with every
+        workspace it owns, those workspaces' memberships and API keys, and
+        its own memberships elsewhere, in one transaction. False when there
+        was no such account (rows already deleted by an earlier, part-way
+        attempt): not an error."""
+        ...
+
+    async def delete_identity(self, external_id: str) -> bool:
+        """Delete the identity-provider user. False when this store has no
+        provider to delete from (SQLite, in-memory) and the step was skipped;
+        raises when the provider refused."""
+        ...
 
 
 class CapabilityProbe(Protocol):

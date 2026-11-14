@@ -36,9 +36,11 @@ type BottomTabBarProps = {
   currentRoute?: LegalRoute;
   /** Supplied only on `/app`, where a tab switch can update the URL in place. */
   onSelectTab?: (tab: MainTab) => void;
+  /** Passed to the More sheet's Account row (auth phase 2). */
+  showAccount?: boolean;
 };
 
-export default function BottomTabBar({ activeTab, currentRoute, onSelectTab }: BottomTabBarProps) {
+export default function BottomTabBar({ activeTab, currentRoute, onSelectTab, showAccount = false }: BottomTabBarProps) {
   const sheetRef = useRef<HTMLDialogElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -116,6 +118,7 @@ export default function BottomTabBar({ activeTab, currentRoute, onSelectTab }: B
         themePreference={preference}
         onChooseTheme={handleChooseTheme}
         onClose={handleSheetClose}
+        showAccount={showAccount}
       />
     </>
   );
