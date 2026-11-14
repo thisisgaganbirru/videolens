@@ -165,7 +165,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      server's `billing` capability is `ok`, for whoever is signed in. With
      billing off nothing is requested and `billing` stays null, so every
      screen looks as it did before billing existed. */
-  const { billing, notice: checkoutReturn, pending: billingPending } = useBilling(
+  const { billing, notice: checkoutReturn, pending: billingPending, failed: billingFailed } = useBilling(
     authUser.ready ? (authUser.user?.id ?? null) : null,
     showAccount && billingCapability?.state === "ok"
   );
@@ -376,10 +376,8 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                   report lands and can announce it. A conditionally-rendered
                   live region announces nothing, and a permanently visible
                   "all systems operational" strip is chrome that tells the
-                  user nothing they can act on. A grid item of its own: first
-                  on a phone, top of the panel column on a wide screen, so it
-                  never sits between the lede and the card. First in the DOM
-                  too, so it is read before the form it is about. */}
+                  user nothing they can act on. A grid item of its own above
+                  the centred intake, read before the controls it describes. */}
               <div className="cap-slot" aria-live="polite">
                 {reachability !== "ok" ? (
                   <ReachabilityNotice state={reachability} />
@@ -389,7 +387,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
               </div>
               <div className="intake">
                 {/* Free runs (Phase 5b, IntakeFreeApp / IntakeLimitApp), above
-                    the eyebrow on every shell. The wrapper is always in the DOM
+                    the title on every shell. The wrapper is always in the DOM
                     so the polite status region exists before the count lands
                     and can announce it (and the switch to "used"); empty and
                     zero-height when a key is saved, the deployment has no
@@ -398,34 +396,28 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     22) it holds an invisible, inert stand-in strip with the
                     commonest sentence, so the real one lands in space already
                     taken at every width instead of pushing the page down. */}
-                <div className="free-runs-slot" role="status" data-pending={freeRuns.pending || undefined}>
-                  {freeRuns.banner && stripKnown ? (
-                    <FreeRunsBanner
-                      banner={freeRuns.banner}
-                      offerSignIn={showAccount && authUser.ready && !authUser.user}
-                      offerUpgrade={billing !== null && billing.plan === "free"}
-                      extraRunPrice={extraRunPrice}
-                    />
-                  ) : freeRuns.pending || freeRuns.banner ? (
-                    <div className="free-runs-ghost" aria-hidden="true" inert>
-                      <FreeRunsBanner banner={FREE_RUNS_GHOST} offerSignIn />
-                    </div>
-                  ) : null}
+                {/* Desktop (60rem up, 2026-11-14 owner): the allowance sits at
+                    the right end of the title's row, sized to its words; the
+                    title row's height is the title's, so the card does not
+                    move when the count lands. Phones keep the strip stacked
+                    above the title (DOM order: status first). */}
+                <div className="intake-head">
+                  <div className="free-runs-slot" role="status" data-pending={freeRuns.pending || undefined}>
+                    {freeRuns.banner && stripKnown ? (
+                      <FreeRunsBanner
+                        banner={freeRuns.banner}
+                        offerSignIn={showAccount && authUser.ready && !authUser.user}
+                        offerUpgrade={billing !== null && billing.plan === "free"}
+                        extraRunPrice={extraRunPrice}
+                      />
+                    ) : freeRuns.pending || freeRuns.banner ? (
+                      <div className="free-runs-ghost" aria-hidden="true" inert>
+                        <FreeRunsBanner banner={FREE_RUNS_GHOST} offerSignIn />
+                      </div>
+                    ) : null}
+                  </div>
+                  <h1 className="intake-title">New analysis</h1>
                 </div>
-                <p className="eyebrow">New analysis</p>
-                {/* Phone (below 32rem): the short title, no eyebrow, no lede
-                    (UX fix spec 3.5); CSS shows one span. */}
-                <h1 className="intake-title">
-                  <span className="intake-title__long">Turn any short video into clean notes.</span>
-                  <span className="intake-title__short">New analysis</span>
-                </h1>
-                <p className="intake-lede">
-                  {/* Same pointer/touch swap as the drop zone's title
-                      (globals.css): "drop" is a lie on a touch screen. */}
-                  <span className="only-pointer">Paste a link or drop a file.</span>
-                  <span className="only-touch">Paste a link or add a file.</span> You get a
-                  transcript, the text on screen, a short summary, and notes you can keep.
-                </p>
                 <UploadForm
                   onSubmit={submitFresh}
                   submitting={submitting}
@@ -453,54 +445,10 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                   limits={mediaLimits.limits}
                   signInForMinutes={signInForMinutes}
                 />
-              </div>
-
-              <aside className="wyg" aria-labelledby="wyg-title">
-                <h2 id="wyg-title" className="wyg-title">
-                  What you get
-                </h2>
-                <dl className="wyg-list">
-                  <div className="wyg-row">
-                    <dt className="chip">TL;DR</dt>
-                    <dd>
-                      <WhatYouGet
-                        short="A short read of what the video says."
-                        long="A short read of what the video says, so you can decide if it is worth your time."
-                      />
-                    </dd>
-                  </div>
-                  <div className="wyg-row">
-                    <dt className="chip">Notes</dt>
-                    <dd>
-                      <WhatYouGet
-                        short="Structured notes to copy or download."
-                        long="Structured notes to copy or download as Markdown."
-                      />
-                    </dd>
-                  </div>
-                  <div className="wyg-row">
-                    <dt className="chip">Transcript</dt>
-                    <dd>
-                      <WhatYouGet
-                        short="Timestamped, with speakers when clear."
-                        long="Timestamped, with speakers labeled when they can be told apart."
-                      />
-                    </dd>
-                  </div>
-                  <div className="wyg-row">
-                    <dt className="chip">On-screen</dt>
-                    <dd>
-                      <WhatYouGet
-                        short="Text, code, and charts from the frames."
-                        long="Text, code, and charts that appear in the frames, not just the audio."
-                      />
-                    </dd>
-                  </div>
-                </dl>
-                <p className="wyg-foot">
+                <p className="intake-retention">
                   Your video is deleted from our servers when the run finishes. The result is kept for up to an hour, then deleted.
                 </p>
-              </aside>
+              </div>
             </div>
           )}
 
@@ -661,6 +609,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
             freeRunsPending={freeRuns.pending}
             billing={billing}
             billingPending={billingPending}
+            billingFailed={billingFailed}
             checkoutReturn={checkoutReturn}
             limits={mediaLimits}
           />
@@ -689,19 +638,6 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
         }}
       />
     </div>
-  );
-}
-
-/* The "What you get" lines come in two lengths, as drawn: the phone board
-   (single column, panel under the card) uses the short ones, the desktop
-   board the long. Both are in the DOM and CSS shows one — `display: none`
-   keeps the other out of the accessibility tree, so it is read once. */
-function WhatYouGet({ short, long }: { short: string; long: string }) {
-  return (
-    <>
-      <span className="wyg-short">{short}</span>
-      <span className="wyg-long">{long}</span>
-    </>
   );
 }
 

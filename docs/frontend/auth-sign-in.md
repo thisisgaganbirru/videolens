@@ -457,28 +457,36 @@ Sign out everywhere, Delete account).
   or without billing:
   - Plan name: "Free account" or "Paid plan" (paid if `/api/billing` or
     `/api/free-runs` says so).
-  - "Runs left today" → "N of L" (from `/api/free-runs`; " on this device"
-    for a device-scoped count; `/api/billing`'s count if that read failed;
-    "Not available" if neither answered). "this month" only if `period` is.
+  - "N of L runs left today" is the card's strongest number (20px, weight
+    700), above the smaller reset time. From `/api/free-runs`, falling back
+    to `/api/billing`'s count; "Runs unavailable" if neither answered.
+    "this month" only if `period` is. A device-scoped count adds "This
+    browser" to the reset line.
   - "Video length" → "Up to 3 minutes" with the note "or 10 with your own
     Gemini key"; paid: "Up to 10 minutes" / "No Gemini key needed"; free
     with a saved key: "Up to 10 minutes" / "With your own Gemini key".
     Numbers are `/api/limits`' and are not quoted until that read and the
     plan have both answered (`useMediaLimits().settled`).
-  - "Resets at" → `resets_at` in the reader's own time zone
+  - "Resets at" below the count uses `resets_at` in the reader's own time zone
     (`formatClockTime`, e.g. "7:00 PM" in New York). Never "midnight" or
-    "tomorrow": the reset is UTC midnight. Unknown: an em dash, announced
-    as "Not available".
+    "tomorrow": the reset is UTC midnight. Unknown: "Reset time unavailable".
   - With a saved Gemini key no count is read, so the rows become "Runs" →
-    "On your own Gemini key" and "Daily limit" → "None with your key".
-  - The three rows are in the first paint and each value's line is held
-    (`min-height`) until its read lands; the rows are top-aligned, not
-    baseline-aligned, because an empty cell has no baseline.
+    "On your own Gemini key" and "No daily limit with your Gemini key".
+  - The count, reset and video-length slots are held from first paint.
+    Static muted placeholder lines replace blank pending values. Each slot
+    reserves one line from 20rem up (every value measured to fit one line
+    at 320px) and two below 20rem; Codex's two-line reservation under 40rem
+    left a blank line under each value on a 412px phone (fixed 2026-11-14).
+    No animation or bar. "Runs unavailable" is drawn muted at 600, not as
+    the bold figure. If the plan read failed and neither the count nor the
+    session's `/api/me` entitlement names the plan, the name is "Plan
+    unavailable", not "Free account".
 - **Upgrade / Billing:** `billing.md`.
-- **On this device** (`DeviceGroup`): "Recent history" / "Up to 20 runs
-  saved in this browser. Not synced between devices." (`HISTORY_LIMIT`,
-  re-exported from `useRunHistory`), and "Your Gemini key (optional)" / "A
-  Gemini key lets VideoLens use your own Google AI access." Signed in, the
+- **On this device** (`DeviceGroup`): "Recent history" / "Saved in this
+  browser · Up to 20 runs" (`HISTORY_LIMIT`,
+  re-exported from `useRunHistory`), and "Your Gemini key (optional)" /
+  Use your own Google AI access." "Not synced between devices" sits under
+  the rows in every state. Signed in, the
   note "Both stay in this browser when you sign out."
 - **Developer tools:** one collapsed row, "VideoLens API access" /
   "VideoLens API keys let other tools submit runs through your account."
@@ -487,7 +495,9 @@ Sign out everywhere, Delete account).
   does not arrive late; opened that early it says "Loading your account…".
   Body copy says "VideoLens API key(s)" throughout.
 - **Information** (was "Help"): Privacy policy, Terms of use, What's new.
-  No support or contact row.
+  No support or contact row. Its group heading is regular weight; Plan and
+  usage leads with a heavier heading and slightly more space below it.
+  A hairline and padding separate account-ending actions; delete stays muted.
 - **Signed out** (`SignedOut`): card heading "Get 10 free runs a day"
   (`ACCOUNT_FREE_RUNS_PER_DAY`), "Sign in or create an account with your
   email. No password needed.", the email field, help "We’ll email you a
@@ -498,9 +508,13 @@ Sign out everywhere, Delete account).
   key, and VideoLens API keys for scripts and other tools." (without a
   longer tier: "An account also gives you VideoLens API keys for scripts
   and other tools."). Then On this device and Information.
+  "Send code" spans the available width on phones (up to 40rem); Verify is
+  unchanged. Continue stays directly below the form.
 - **Props.** `capabilitiesSettled`, `freeRunsPending`, `billingPending`,
   `limits` (the whole `MediaLimitsState`) are new; `paidMinutes` and
   `signInMinutes` are gone.
+  `billingFailed` distinguishes a failed billing request from disabled
+  billing, retaining the reserved group with an unavailable message.
 - **Top gap.** `.acct-page` padding-top is `clamp(1.25rem, 0.75rem +
   2.4vw, 2.75rem)` (was the shared `clamp(1.875rem, …, 3.875rem)`).
 
@@ -526,6 +540,8 @@ appears). Not exercised: the code step, checkout, sign-out, key actions.
 
 ## Changelog
 
+- 2026-11-14 · Codex · emphasised runs left with reset below, shortened device descriptions, added static loading/failure feedback, separated ending actions, made Send code full width on phones, and adjusted section heading emphasis; browser verification unavailable this session
+
 - 2026-11-08 · frontend subagent (auth phase 2) · created: Supabase adapter (dynamic import, PKCE, 4 s token wait), `ApiClient` with bearer/client-id/device-token on every caller request, `AccountGateway`, the three hooks, history re-import on sign-in, the Account tab and panel (OTP 6 to 8 digits, resend after 60 s, run guard, API keys with one-time secret and revoke confirm), the auth origin in the CSP. Verified: validation, unreachable error and hidden tab in a browser; `signInWithOtp` fires `POST /auth/v1/otp`, blocked by the running dev server's pre-change CSP until it restarts. Code step and signed-in view not exercised (no inbox)
 - 2026-11-08 · frontend subagent (auth phase 2, review fixes) · `getToken` throws when a session exists but no token is available (load timeout, unrecovered stored session, failed refresh) and `ApiClient` turns it into a retryable `NetworkError`; bearer sent only when the server's `auth` capability is `ok` (`ServerAuthStatus`, fed by the capabilities adapter, bounded 4 s wait); History records `owner` and a 404 under a different identity is `other-owner` (screen message, History untouched) instead of expired; panel uses the same capability gate and keeps Sign out reachable when unavailable; one-time secret stripped from the key list; field errors are `role="alert"`. Signed-in view and key list confirmed rendering in the owner's signed-in browser profile
 - 2026-11-08 · Codex · refined Account-only hierarchy, identity alignment, API-key form spacing and mobile wrapping using existing tokens; browser visual QA blocked by computer-access timeout
@@ -550,3 +566,4 @@ appears). Not exercised: the code step, checkout, sign-out, key actions.
 - 2026-11-14 · frontend agent · daily account allowance: signed-out lede "Sign in for 10 free runs a day, ..."; identity line "Free runs left today: N of 10" (from `period`)
 - 2026-11-14 · frontend agent · Account refinement (six items): compact identity row with a text Sign out; Plan and usage card for every account (plan, runs left, video length, reset in local time; rows reserved); signed-out card leads with "Get 10 free runs a day" + "Continue without an account"; "VideoLens API access" under a collapsed Developer tools group; "Recent history" / "Your Gemini key (optional)" wording; Help renamed Information; lede removed; Loading state until capabilities settle; top gap trimmed
 - 2026-11-14 · frontend agent · delete-account note says "under History and Gemini key" (tab renamed); paid Billing card gains "Extra runs this month" (see billing.md); new pre-paint `data-session` stamp and `useStoredSessionHint()` (`infrastructure/authSessionStamp.ts`; `providerStorageKey` now shared with `SupabaseAuthSession`), used only to hold layout on the Gemini key page (see byok-api-key.md)
+- 2026-11-14 · frontend agent · reviewed Codex's Account refinements in the browser (320-1440, both themes, both shells, signed out / free / paid with and without `extra_runs` / loading / failed); one-line value reservations from 20rem, framed billing stand-in, muted "Runs unavailable", "Plan unavailable" instead of a false "Free account" when the plan read failed
