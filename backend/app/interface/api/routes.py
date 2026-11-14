@@ -14,6 +14,7 @@ from .schemas import (
     ApiKeyCreateRequest,
     ApiKeyListResponse,
     ApiKeyResponse,
+    BillingExtraRunsResponse,
     BillingPricesResponse,
     BillingResponse,
     BillingRunsResponse,
@@ -332,6 +333,16 @@ async def billing(request: Request, principal: Principal = Depends(get_signed_in
         current_period_end=view.current_period_end,
         cancel_at_period_end=view.cancel_at_period_end,
         runs=BillingRunsResponse(limit=view.runs_limit, used=view.runs_used, period=view.runs_period),
+        extra_runs=(
+            BillingExtraRunsResponse(
+                used=view.extra_runs.used,
+                limit=view.extra_runs.limit,
+                period=view.extra_runs.period,
+                resets_at=view.extra_runs.resets_at,
+            )
+            if view.extra_runs is not None
+            else None
+        ),
         prices=_prices(view.prices),
     )
 

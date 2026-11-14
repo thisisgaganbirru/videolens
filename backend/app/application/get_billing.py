@@ -18,10 +18,24 @@ class BillingView:
     cancel_at_period_end: bool = False
     runs_limit: int = 0
     runs_used: int = 0
-    # The counter `runs_limit`/`runs_used` are for: "day" on the free plan
-    # (since 2026-11-14), "month" on the paid plan.
+    # The counter `runs_limit`/`runs_used` are for: "day" on both plans
+    # since 2026-11-14.
     runs_period: str = FreeRunPeriod.DAY.value
     prices: BillingPrices | None = None
+    # Paid plan only (None otherwise): billed extra runs this UTC month.
+    extra_runs: "ExtraRunsView | None" = None
+
+
+@dataclass(frozen=True)
+class ExtraRunsView:
+    """Extra runs this UTC month, counted exactly as the safety cap counts
+    them (`BillingPlans.extra_runs_used`). `limit` is
+    `PAID_EXTRA_RUNS_MONTHLY_CAP`, or None when the cap is off (0)."""
+
+    used: int
+    limit: int | None
+    resets_at: datetime
+    period: str = "month"
 
 
 class GetBillingUseCase:
@@ -46,6 +60,15 @@ class GetBillingUseCase:
         if self._account_free_runs is not None:
             status = await self._account_free_runs.status(account_id, limit=limit, period=period)
             used, shown_limit = status.used, status.limit
+        extra_runs = None
+        if paid is not None:
+            now = self._plans.now()
+            cap = self._plans.extra_runs_monthly_cap
+            extra_runs = ExtraRunsView(
+                used=await self._plans.extra_runs_used(account_id, self._plans.extra_runs_period(now)),
+                limit=cap if cap > 0 else None,
+                resets_at=self._plans.extra_runs_resets_at(now),
+            )
         return BillingView(
             enabled=True,
             plan="paid" if paid is not None else "free",
@@ -57,4 +80,5 @@ class GetBillingUseCase:
             runs_used=used,
             runs_period=period.value,
             prices=await self._plans.gateway.prices(),
+            extra_runs=extra_runs,
         )

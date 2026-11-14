@@ -4,6 +4,7 @@ and idempotency, and billing-off parity. The real StripeBillingGateway runs
 over a mocked StripeClient (never the network); webhooks are signed locally
 with the test secret."""
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -84,9 +85,11 @@ class BillingRoutesTests(unittest.TestCase):
         keys = InMemoryApiKeyRepository()
         self.billing_accounts = InMemoryBillingAccounts(settings)
         ledger = InMemoryExtraRunLedger(settings)
+        self.ledger = ledger
         self.account_runs = InMemoryAccountFreeRuns(settings)
         plans = BillingPlans(
-            gateway=self.gateway, accounts=self.billing_accounts, ledger=ledger, paid_runs_per_day=30
+            gateway=self.gateway, accounts=self.billing_accounts, ledger=ledger, paid_runs_per_day=30,
+            extra_runs_monthly_cap=settings.paid_extra_runs_monthly_cap,
         )
         self.plans = plans
         replacements = {
@@ -179,6 +182,7 @@ class EnabledBillingRoutesTests(BillingRoutesTests):
                 "current_period_end": None,
                 "cancel_at_period_end": False,
                 "runs": {"limit": 10, "used": 0, "period": "day"},
+                "extra_runs": None,
                 "prices": {
                     "month": {"amount": 1200, "currency": "usd"},
                     "year": {"amount": 12000, "currency": "usd"},
@@ -203,6 +207,26 @@ class EnabledBillingRoutesTests(BillingRoutesTests):
         body = self.client.get("/api/billing", headers=TOKEN).json()
         self.assertEqual((body["plan"], body["status"], body["interval"]), ("paid", "active", "month"))
         self.assertEqual(body["runs"], {"limit": 30, "used": 0, "period": "day"})
+        self.assertEqual(body["extra_runs"]["used"], 0)
+        self.assertEqual((body["extra_runs"]["limit"], body["extra_runs"]["period"]), (200, "month"))
+
+    def test_paid_account_extra_runs_this_month(self) -> None:
+        self.client.post("/api/billing/checkout", headers=TOKEN, json={"interval": "month"})
+        self.stripe.v1.subscriptions.retrieve.return_value = self._subscription()
+        self.assertEqual(self._webhook("evt_1", "checkout.session.completed").status_code, 200)
+        account_id = self._account_id()
+        month = self.plans.extra_runs_period()
+        for run_id in ("r1", "r2", "r3"):
+            asyncio.run(self.ledger.hold(run_id, account_id=account_id, customer_id="cus_1", period=month))
+        asyncio.run(self.ledger.complete("r1"))  # due
+        asyncio.run(self.ledger.void("r3"))  # voided: not counted
+        body = self.client.get("/api/billing", headers=TOKEN).json()
+        now = datetime.now(timezone.utc)
+        next_month = datetime(now.year + (now.month == 12), now.month % 12 + 1, 1, tzinfo=timezone.utc)
+        extra = dict(body["extra_runs"])
+        resets_at = datetime.fromisoformat(extra.pop("resets_at").replace("Z", "+00:00"))
+        self.assertEqual(extra, {"used": 2, "limit": 200, "period": "month"})
+        self.assertEqual(resets_at, next_month)
 
     def test_an_invalid_interval_is_422(self) -> None:
         response = self.client.post("/api/billing/checkout", headers=TOKEN, json={"interval": "week"})
