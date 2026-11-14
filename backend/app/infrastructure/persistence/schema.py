@@ -17,6 +17,7 @@ Postgres-only types, so the tests run the same adapters on SQLite.
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
@@ -33,6 +34,17 @@ from sqlalchemy.dialects.postgresql import JSONB
 # jsonb on Postgres (smaller, indexable if it ever needs to be), plain JSON
 # on SQLite so the tests run the same adapters.
 JSON_DOCUMENT = JSON().with_variant(JSONB(), "postgresql")
+
+# The fixed-value checks of migration 0008 (the migration is the source of
+# truth for a deployed database; these keep the test schema in step). The
+# `period` formats use a Postgres regular expression, so they are created on
+# Postgres only.
+_DAY_OR_MONTH = "period ~ '^[0-9]{4}-[0-9]{2}(-[0-9]{2})?$'"
+_MONTH = "period ~ '^[0-9]{4}-[0-9]{2}$'"
+
+
+def _postgres_check(condition: str, name: str) -> CheckConstraint:
+    return CheckConstraint(condition, name=name).ddl_if(dialect="postgresql")
 
 metadata = MetaData()
 
@@ -90,6 +102,7 @@ workspace_members = Table(
         primary_key=True,
     ),
     Column("role", String(16), nullable=False, default="member"),
+    CheckConstraint("role IN ('owner', 'member')", name="ck_workspace_members_role"),
 )
 
 api_keys = Table(
@@ -125,6 +138,7 @@ account_free_runs = Table(
     Column("account_id", String(36), ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True),
     Column("period", String(10), primary_key=True),
     Column("used", Integer, nullable=False, default=0),
+    _postgres_check(_DAY_OR_MONTH, "ck_account_free_runs_period"),
 )
 
 # Which account run a queued run took, so the pipeline can hand it back
@@ -140,6 +154,7 @@ account_free_run_holds = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Index("ix_account_free_run_holds_created", "created_at"),
     Index("ix_account_free_run_holds_account", "account_id"),
+    _postgres_check(_DAY_OR_MONTH, "ck_account_free_run_holds_period"),
 )
 
 # The paid plan (`0004_billing`, docs/backend/billing.md). One row per
@@ -151,6 +166,9 @@ billing_accounts = Table(
     Column("account_id", String(36), ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True),
     Column("stripe_customer_id", String(255), nullable=False, unique=True),
     Column("stripe_subscription_id", String(255), nullable=True),
+    # `status` and `interval` are Stripe's, copied verbatim by the webhook:
+    # deliberately no check constraint (0008), so a value Stripe adds can
+    # never make the database reject a webhook.
     Column("status", String(32), nullable=True),
     Column("price_id", String(255), nullable=True),
     Column("interval", String(8), nullable=True),
@@ -186,6 +204,8 @@ billing_extra_runs = Table(
     Column("reported_at", DateTime(timezone=True), nullable=True),
     Index("ix_billing_extra_runs_account_period", "account_id", "period"),
     Index("ix_billing_extra_runs_state", "state"),
+    CheckConstraint("state IN ('held', 'due', 'reported', 'void')", name="ck_billing_extra_runs_state"),
+    _postgres_check(_MONTH, "ck_billing_extra_runs_period"),
 )
 
 # A paid account's saved run results (0006, docs/backend/saved-history.md).
@@ -208,6 +228,7 @@ saved_runs = Table(
     Column("thumbnail", Text, nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     UniqueConstraint("account_id", "run_id", name="uq_saved_runs_account_run"),
+    CheckConstraint("completeness IN ('full', 'captions_only')", name="ck_saved_runs_completeness"),
     # The list: newest first per account, keyset on (created_at, id).
     Index("ix_saved_runs_account_created", "account_id", "created_at", "id"),
 )

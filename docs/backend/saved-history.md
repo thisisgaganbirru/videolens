@@ -263,7 +263,7 @@ in-process mode (no worker): holds and windows simply never end there.
 | `run_id` | varchar(36) | unique with `account_id` (`uq_saved_runs_account_run`) |
 | `title` | varchar(500) | |
 | `summary_snippet` | varchar(400) null | |
-| `completeness` | varchar(16) | the run's `AnalysisCompleteness` value |
+| `completeness` | varchar(16) | the run's `AnalysisCompleteness` value; `ck_saved_runs_completeness`: `full` or `captions_only` (0008) |
 | `source` | JSONB | descriptor, nulls dropped |
 | `result` | JSONB | the `VideoAnalysis` |
 | `result_bytes` | integer | size of `result` as saved, for operators (the poster not included) |
@@ -326,3 +326,4 @@ on Postgres if `DATABASE_APP_ROLE` does not exist.
 
 - 2026-11-14 · backend agent · saved runs keep the poster: `saved_runs.thumbnail` (text null, in 0006 in place), `thumbnail` on every `GET /api/history` item and on `GET /api/history/{run_id}`, same shape as a live run's; size guard drops segments, then the poster, then skips; recorded the owner's confirmations on keys during the hold, no fresh account during the hold, no API-key history reads
 - 2026-11-14 · backend agent · created: paid saved history (migration 0006, saving on success, `/api/history*`, `saved_history` on `/api/me`), the post-cancel window, the 30-day deletion hold with `POST /api/me/restore`, and the hourly cleanup cron
+- 2026-11-14 · backend agent · migration `0008_value_checks`: `ck_saved_runs_completeness` (`full` | `captions_only`)

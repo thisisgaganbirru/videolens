@@ -214,6 +214,19 @@ Since 2026-11-13 two more tables sit beside them for signed-in free runs (migrat
 
 Since 2026-11-14 (`0007_identity_cascades`) the four identity foreign keys (`workspaces.owner_account_id`, `workspace_members.workspace_id` and `.account_id`, `api_keys.workspace_id`) are `ON DELETE CASCADE`, like every other key into `accounts`. Postgres only: 0001 declared them inline, so Postgres named them `<table>_<column>_fkey`, and 0007 drops and re-adds them under those names. On SQLite the migration does nothing (the test schema comes from `schema.py`, which declares the cascade). Offline render: `alembic upgrade 0006_saved_history:0007_identity_cascades --sql`.
 
+Since 2026-11-14 (`0008_value_checks`, Postgres only) the fixed-value text columns carry named check constraints: `ck_workspace_members_role` (`owner` | `member`, `WorkspaceRole`), `ck_account_free_runs_period` and `ck_account_free_run_holds_period` (`^[0-9]{4}-[0-9]{2}(-[0-9]{2})?$`: the daily key every writer uses now, and the monthly key of older rows), plus the billing and saved-run ones (`billing.md`, `saved-history.md`). A row that violates one fails the migration, so check first:
+
+```sql
+SELECT 'role' AS col, count(*) FROM workspace_members WHERE role NOT IN ('owner', 'member')
+UNION ALL SELECT 'state', count(*) FROM billing_extra_runs WHERE state NOT IN ('held', 'due', 'reported', 'void')
+UNION ALL SELECT 'completeness', count(*) FROM saved_runs WHERE completeness NOT IN ('full', 'captions_only')
+UNION ALL SELECT 'free_runs.period', count(*) FROM account_free_runs WHERE period !~ '^[0-9]{4}-[0-9]{2}(-[0-9]{2})?$'
+UNION ALL SELECT 'holds.period', count(*) FROM account_free_run_holds WHERE period !~ '^[0-9]{4}-[0-9]{2}(-[0-9]{2})?$'
+UNION ALL SELECT 'extra.period', count(*) FROM billing_extra_runs WHERE period !~ '^[0-9]{4}-[0-9]{2}$';
+```
+
+Every count must be 0.
+
 Runs and history are unchanged for free and anonymous callers. The server still holds runs for `RUN_TTL_SECONDS` only, and history stays in the browser. Since 2026-11-14 a paid account's results are also saved in `saved_runs`, and `accounts` gains `deleted_at`, `purge_at` and `saved_runs_expire_at` (migration `0006_saved_history`, `saved-history.md`).
 
 ### Which adapter is wired (`container.py`)
@@ -335,3 +348,4 @@ The application code has not yet run against a real Supabase project: the SQL ad
 - 2026-11-14 · backend agent · signed-in free runs are per UTC day (`FREE_RUNS_PER_ACCOUNT_DAILY`); migration `0005_account_daily_free_runs` widens `period` on the two counter tables
 - 2026-11-14 · backend agent · account deletion is a 30-day hold (`DELETE /api/me` returns 200 with `purge_at`; 410 `account_pending_deletion` everywhere but the new `POST /api/me/restore`; API keys 401 while held); the hourly worker cron removes the Supabase user then the rows after the hold; `saved_history` on `/api/me`; migration 0006 columns in Storage
 - 2026-11-14 · backend agent · migration `0007_identity_cascades`: the four identity foreign keys cascade on delete (Postgres; names kept); the purge keeps its explicit children-first deletes, which were already correct without the cascade
+- 2026-11-14 · backend agent · migration `0008_value_checks`: named check constraints on `workspace_members.role` and the two free-run `period` columns (plus billing and saved-run ones); pre-apply violation query in Storage
