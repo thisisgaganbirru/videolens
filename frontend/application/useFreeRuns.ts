@@ -3,6 +3,7 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import type { BillingPlan, FreeRunsPeriod, FreeRunsScope, FreeRunsStatus } from "@/domain/entities";
 import { apiKeyStore, freeRunsGateway, nativeShell } from "@/infrastructure/container";
+import { BYOK_ATTRIBUTE } from "@/infrastructure/apiKeyStore";
 import { forgetReadResult, isReadFailing, noteReadResult, onReconnectChance } from "@/application/serverReachability";
 
 /* Free runs (Phase 5b): an anonymous device gets a few runs per UTC day
@@ -35,9 +36,14 @@ type Snapshot = {
   /** The last allowance the server reported (or a 402 implied); `null` while
    *  unknown, after a failed read, or before the first one. */
   status: FreeRunsStatus | null;
+  /** A read (or a 402) has answered for the current identity, success or
+   *  failure (2026-11-14, Android QA run 22). False on launch and again on a
+   *  sign-in or sign-out until the next read lands: the intake keeps the
+   *  strip's height reserved meanwhile, so it does not push the page down. */
+  settled: boolean;
 };
 
-let snapshot: Snapshot = { status: null };
+let snapshot: Snapshot = { status: null, settled: false };
 const listeners = new Set<() => void>();
 let inFlight: Promise<FreeRunsStatus | null> | null = null;
 /* Set by a 402 and cleared by the next successful read. While set, a failed
@@ -78,7 +84,7 @@ export function refreshFreeRuns(): Promise<FreeRunsStatus | null> {
       if (epoch !== identityEpoch) return refreshFreeRuns();
       noteReadResult("free-runs");
       refusedSinceLastRead = false;
-      publish({ status });
+      publish({ status, settled: true });
       return status;
     },
     (err: unknown): null | Promise<FreeRunsStatus | null> => {
@@ -87,7 +93,8 @@ export function refreshFreeRuns(): Promise<FreeRunsStatus | null> {
       /* Quiet here; whether the server was reachable at all is reported to
          serverReachability, which says so on Analyze (refinement 4). */
       noteReadResult("free-runs", err);
-      if (!refusedSinceLastRead) publish({ status: null });
+      if (!refusedSinceLastRead) publish({ status: null, settled: true });
+      else if (!snapshot.settled) publish({ ...snapshot, settled: true });
       return null;
     }
   );
@@ -105,7 +112,7 @@ export function refreshFreeRuns(): Promise<FreeRunsStatus | null> {
 export function noteIdentityChanged(): void {
   identityEpoch += 1;
   refusedSinceLastRead = false;
-  publish({ status: null });
+  publish({ status: null, settled: false });
   if (apiKeyStore.get() === "") void refreshFreeRuns();
 }
 
@@ -140,6 +147,7 @@ export function markFreeRunsUsed(limit?: number, used?: number, scope?: string):
       resetsAt: prev && prev.scope === refusedScope ? prev.resetsAt : "",
       enabled: true,
     },
+    settled: true,
   });
   void refreshFreeRuns();
 }
@@ -185,11 +193,12 @@ const hasKeyServerSnapshot = () => false;
 export type FreeRunsBanner = {
   /** `device` (this device) or `account` (the signed-in account). */
   scope: FreeRunsScope;
-  /** `day` or `month` (2026-11-14): with the plan, drives the copy. Free
-   *  allowances (device or account) are daily, the paid one monthly. */
+  /** `day` or `month` (2026-11-14): with the plan, drives the copy. Every
+   *  allowance is daily now (device 3, free account 10, paid 30); `month`
+   *  only from an older server. */
   period: FreeRunsPeriod;
-  /** `paid` (2026-11-13): the paid plan's monthly allowance, worded as runs
-   *  rather than free runs. */
+  /** `paid` (2026-11-13): the paid plan's allowance (30 a day since
+   *  2026-11-14), worded as runs rather than free runs. */
   plan: BillingPlan;
   remaining: number;
   limit: number;
@@ -216,9 +225,30 @@ export type FreeRunsBanner = {
  * the new identity. The first value does not: the launch read already waits
  * for a stored session before it goes out (`ApiClient`).
  */
-export function useFreeRuns(identity: string | null = ""): { banner: FreeRunsBanner | null; blocked: boolean } {
-  const { status } = useSyncExternalStore(subscribe, () => snapshot, () => snapshot);
+export function useFreeRuns(identity: string | null = ""): {
+  banner: FreeRunsBanner | null;
+  blocked: boolean;
+  /** No key is saved and the allowance has not answered yet: the strip may
+   *  be about to appear, so the intake reserves its height (2026-11-14,
+   *  Android QA run 22: the late strip pushed the page down ~93px at 412). */
+  pending: boolean;
+} {
+  const { status, settled } = useSyncExternalStore(subscribe, () => snapshot, () => snapshot);
   const hasKey = useSyncExternalStore(subscribeKey, hasKeySnapshot, hasKeyServerSnapshot);
+
+  /* Keep the pre-paint `data-byok` stamp in step with the key, so the CSS
+     that drops the reserved strip height follows a key saved or removed
+     later. Not on the first (hydration) render, which always reads "no key"
+     and would wipe a correct stamp a frame before the real value lands. */
+  const sawKey = useRef(false);
+  useEffect(() => {
+    if (hasKey) {
+      sawKey.current = true;
+      document.documentElement.setAttribute(BYOK_ATTRIBUTE, "");
+    } else if (sawKey.current) {
+      document.documentElement.removeAttribute(BYOK_ATTRIBUTE);
+    }
+  }, [hasKey]);
 
   const knownIdentity = useRef<string | null>(null);
   useEffect(() => {
@@ -286,7 +316,7 @@ export function useFreeRuns(identity: string | null = ""): { banner: FreeRunsBan
     return () => clearTimeout(timer);
   }, [hasKey, resetsAt]);
 
-  if (hasKey || !status || !status.enabled) return { banner: null, blocked: false };
+  if (hasKey || !status || !status.enabled) return { banner: null, blocked: false, pending: !hasKey && !settled };
   const exhausted = status.remaining <= 0;
   const overage = status.plan === "paid" && status.overage;
   return {
@@ -302,5 +332,6 @@ export function useFreeRuns(identity: string | null = ""): { banner: FreeRunsBan
     /* Paid with overage: the allowance running out costs money per run, it
        does not stop anyone (the server sends no 402 then). */
     blocked: exhausted && !overage,
+    pending: false,
   };
 }

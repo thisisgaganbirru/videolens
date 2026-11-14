@@ -1,9 +1,10 @@
 # Billing (client half)
 
 The paid plan, owner's "Level 3, one paid plan" (2026-11-13): $12 a month (or
-a yearly price) for 100 runs a month on our Gemini key, videos up to 10
-minutes / 500 MB without a key of your own, extra runs past 100 billed per
-run. BYOK runs never count. History stays in the browser. The server half
+a yearly price) for **30 runs a day** (UTC; 100 a month until 2026-11-14) on
+our Gemini key, videos up to 10 minutes / 500 MB without a key of your own,
+extra runs past the 30 billed per run with a hard cap of **200 extra runs a
+calendar month**. Never described as unlimited. BYOK runs never count. History stays in the browser. The server half
 (Stripe, webhooks, the per-account run count) is the backend's doc; this one
 covers what the app shows and how it gets to Stripe.
 
@@ -20,8 +21,10 @@ signed in (the same gate as the Account tab) *and* `GET /api/billing` answers
 - `GET /api/billing` (bearer required; anonymous 401). Off: `{"enabled":
   false}`. On: `{"enabled": true, "plan": "free"|"paid", "status",
   "interval": "month"|"year"|null, "current_period_end", "cancel_at_period_end",
-  "runs": {"limit", "used"}, "prices": {"month", "year", "extra_run"}}`, each
-  price `{"amount", "currency"}` (minor units) or null.
+  "runs": {"limit", "used", "period"}, "prices": {"month", "year", "extra_run"}}`, each
+  price `{"amount", "currency"}` (minor units) or null. `runs.period`
+  (2026-11-14) is `day` on both plans; missing reads as `day`
+  (`BillingDetails.runs.period`).
 - `POST /api/billing/checkout` `{"interval"}` → `{"url"}`; 409
   `already_subscribed`.
 - `POST /api/billing/portal` → `{"url"}`; 404 `no_billing_account`.
@@ -48,23 +51,24 @@ signed in (the same gate as the Account tab) *and* `GET /api/billing` answers
 A group labelled "Plan" above "Your account" (option A grouped list, one
 padded card, no pricing table: there is one plan).
 
-- **Free.** "Free", then (2026-11-14) "The paid plan: videos up to 10
-  minutes without your own key, and runs past the daily limit." (without a
-  `paid` tier in `/api/limits`: "The paid plan: runs past the daily limit,
-  without your own key."), plus, when the extra-run price is known,
-  " Beyond its 100 included runs a month, each run is $0.xx.". Until
-  2026-11-14 it led with "100 runs a month on our key"; with the free account
-  at 10 a day (up to ~300 a month) that read as fewer runs for money, so the
-  pitch names what the plan adds and makes no run-count comparison. **The
-  paid offer itself needs an owner rethink** (100 a month is below a free
-  account's daily allowance over a month), then "Upgrade — $12/month" (primary) and "Yearly — $X/year"
+- **Free.** "Free", then (2026-11-14, paid 30 a day) "The paid plan: 30 runs
+  a day instead of 10, videos up to 10 minutes, and no Gemini key needed.
+  Past the 30, extra runs are $0.xx each, up to 200 a month." Without a
+  `paid` tier in `/api/limits` the video clause is left out; without an
+  extra-run price the second sentence is "Past the 30, extra runs are billed
+  per run, up to 200 a month." Counts come from `PAID_RUNS_PER_DAY`,
+  `ACCOUNT_FREE_RUNS_PER_DAY` and `PAID_EXTRA_RUNS_PER_MONTH`
+  (`application/accountAllowance.ts`). Earlier the same day the pitch avoided
+  a run-count comparison because 100 a month was below a free account's 10 a
+  day; at 30 a day the comparison is honest. Then "Upgrade — $12/month" (primary) and "Yearly — $X/year"
   (secondary). A null price hides its button; no prices, no buttons. Note
   under the card: "Billed through Stripe. Cancel anytime. Runs with your own
   Gemini key never count."
 - **Paid.** "Paid · Monthly|Yearly", "Renews <date>" or "Ends <date>" when
   `cancel_at_period_end`, "Payment failed — update your card in Manage
   billing." when `status` is `past_due` or `unpaid` (and Manage billing turns
-  primary), "N of L used this month." and "Extra runs are $0.xx each.", then
+  primary), "N of L used today." ("this month" only if `runs.period` says
+  `month`) and "Extra runs are $0.xx each, up to 200 a month.", then
   "Manage billing".
 - **Actions.** A press asks the server for the URL (label "Opening…",
   `aria-disabled` on both buttons), then `window.location.assign(url)`.
@@ -72,7 +76,7 @@ padded card, no pricing table: there is one plan).
   `no_billing_account` → a sentence + re-read; anything else through
   `classifyGatewayError`. A `pageshow` with `persisted` (back button from
   Stripe restoring the page from bfcache) clears "Opening…" and re-reads.
-- **Identity line.** Paid: "Runs left this month: N of L" (no "Free").
+- **Identity line.** Paid: "Runs left today: N of L" (no "Free").
 
 ## Returning from Checkout
 
@@ -95,11 +99,12 @@ app's resume, throttled to once per 1.5 s.
 
 ## Free-runs strip and limits
 
-- Paid, not exhausted: "**N of L runs left this month.**" with no pill.
-- Paid, past the allowance with `overage`: "**You have used this month's L
-  runs.** Extra runs are billed at $0.xx each." Not blocked.
-- Free account spent, billing on: the add-key sentence gains ", or upgrade."
-  linking to Account.
+- Paid, not exhausted: "**N of 30 runs left today.**" with no pill.
+- Paid, past the allowance with `overage`: "**You have used today's 30
+  runs.** Extra runs are billed at $0.xx each, up to 200 a month." Not
+  blocked.
+- Free account spent, billing on: the add-key sentence gains ", or upgrade
+  for 30 a day." ("upgrade" links to Account).
 - `useMediaLimits(signedIn, paid)`: `paid` tier when the plan is paid and the
   server reported one, else `signed_in_byok` with a key, else `standard`.
   `paid` comes from the billing read or the free-runs `plan`, whichever knows.
@@ -136,7 +141,8 @@ period; extra runs billed per run at the checkout price; BYOK runs do not
 count; no refunds for partial periods except where the law requires; price
 changes announced before renewal). Privacy gains "Payments" (Stripe processes
 payments; we never see or store the card number; we keep the Stripe customer
-and subscription IDs, plan status and renewal date, and a monthly run count),
+and subscription IDs, plan status and renewal date, a daily run count and,
+since 2026-11-14, a monthly extra-run count),
 and "Third-party services" names Stripe. **Both are drafts for the owner's
 legal review.** The media-terms key moved to `videolens-media-terms-v3`
 (v1 and v2 retired) so everyone re-accepts once.
@@ -145,7 +151,7 @@ legal review.** The media-terms key moved to `videolens-media-terms-v3`
 
 | Where | Response | What the app says |
 |---|---|---|
-| `POST /api/runs` | 402 `extra_runs_cap` (`limit`, default 200) | "You’ve reached this month’s limit of N extra runs. Runs reset next month." (`createRunFailureMessage` in `runsGateway.ts`; shown as the run's error line; no upgrade offer, the account is already paid; not treated as `free_runs_used`) |
+| `POST /api/runs` | 402 `extra_runs_cap` (`limit`, default 200) | "You’ve reached this month’s limit of N extra runs. Your included runs come back tomorrow." (2026-11-14; was "Runs reset next month.") (`createRunFailureMessage` in `runsGateway.ts`; shown as the run's error line; no upgrade offer, the account is already paid; not treated as `free_runs_used`) |
 | `DELETE /api/me` | 503 `subscription_cancel_failed` | Deletion problem `subscription` in `useAccount.ts`: "We couldn’t cancel your subscription, so your account was not deleted. Your account and subscription are unchanged. Try again in a moment." Checked before the generic 503 ("not available"); the form stays usable |
 | checkout / portal | 400 `invalid_interval`, 503 `billing_disabled` / `billing_unavailable` | "Billing is unavailable right now. Try again later." (`useBillingActions`) |
 
@@ -156,8 +162,10 @@ record for invoices and tax. Terms "Paid plan" and Privacy "Payments" say so
 
 ## Known limits
 
-- The pitch's "100 runs" is a constant (`PAID_RUNS_PER_MONTH`) until someone
-  is paid, because the free-plan body's `runs.limit` is the free allowance.
+- The pitch's "30 a day" and "200 a month" are constants (`PAID_RUNS_PER_DAY`,
+  `PAID_EXTRA_RUNS_PER_MONTH`), because the free-plan body's `runs.limit` is
+  the free allowance and no body carries the extra-run cap except the 402.
+  If the server's cap setting changes, change the constant too.
 - A user who pays in the browser and never signs in there sees the plan only
   after the app next reads billing (resume or tab visible).
 
@@ -166,3 +174,4 @@ record for invoices and tax. Terms "Paid plan" and Privacy "Payments" say so
 - 2026-11-13 · frontend agent · created: billing gateway + `useBilling`, Account Plan group, checkout-return notice, paid strip copy and "or upgrade" link, paid upload tier, Terms "Paid plan" and Privacy "Payments" drafts, terms key v3, CSP reviewed (no change)
 - 2026-11-13 · frontend agent · handled 402 `extra_runs_cap`, 503 `subscription_cancel_failed` on account deletion, and 400 `invalid_interval` / 503 `billing_disabled`/`billing_unavailable` on checkout and portal; Terms and Privacy say deleting the account cancels the subscription immediately
 - 2026-11-14 · frontend agent · free-plan pitch no longer leads with "100 runs a month" (the free account is now 10 a day): "videos up to 10 minutes without your own key, and runs past the daily limit", included runs and extra-run price as a trailing clause; offer flagged for an owner rethink
+- 2026-11-14 · frontend agent · paid plan is 30 runs a day: pitch "The paid plan: 30 runs a day instead of 10, videos up to 10 minutes, and no Gemini key needed. Past the 30, extra runs are $X each, up to 200 a month."; paid card "N of L used today." and "Extra runs are $X each, up to 200 a month."; identity "Runs left today"; `runs.period` read (missing = day); `PAID_RUNS_PER_MONTH` removed; Terms and Privacy follow

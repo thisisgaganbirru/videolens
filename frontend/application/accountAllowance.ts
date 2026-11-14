@@ -10,3 +10,14 @@
    component, and a constant exported from a client module reaches a server
    component as a client reference, not as the number. */
 export const ACCOUNT_FREE_RUNS_PER_DAY = 10;
+
+/* The paid plan's allowance, as the owner set it on 2026-11-14: 30 runs per
+   UTC day on our Gemini key (it was 100 a month from 2026-11-13, less than a
+   free account's 10 a day over a month). Runs past the 30 are billed per
+   run, with a hard cap on those extra runs per calendar month. Quoted only
+   where no paid read exists yet (the free plan's pitch, whose `runs.limit`
+   is the free allowance); a paid account's copy uses the server's own
+   `limit` and `period`. The extra-run cap is not in any response body until
+   a 402 `extra_runs_cap` names it, so the pitch quotes it from here. */
+export const PAID_RUNS_PER_DAY = 30;
+export const PAID_EXTRA_RUNS_PER_MONTH = 200;

@@ -795,6 +795,21 @@ fix to what is counted, not a new practice. Terms untouched, so the
 media-terms key is not bumped. The "Payments" paragraph's monthly run count
 is the paid plan's and stays. Static, no scripts: CSP hashes unchanged.
 
+## Paid plan is daily (2026-11-14, drafts)
+
+Terms "Paid plan": "Runs beyond the plan's monthly allowance are billed per
+run..." became "The plan includes a set number of runs each day (UTC). Runs
+beyond that daily allowance are billed per run, at the price shown at
+checkout, on your next invoice, up to a fixed number of extra runs each
+calendar month; past that limit, extra runs stop until the next month, and
+the included runs still come back each day." No numbers, so a later change
+to 30 or 200 does not edit the Terms. Privacy "Payments": "a count of your
+runs each month" -> "a count of your runs each day, and a count of your extra
+runs each month". Effective date unchanged (November 13, 2026) and the
+media-terms key not bumped: billing is not live and both sections are still
+drafts for the owner's legal review; bump both before launch if the owner
+wants a re-accept. Static, no scripts: CSP hashes unchanged.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported privacy/terms/offline off the Midnight Glass classes
@@ -822,3 +837,4 @@ is the paid plan's and stays. Static, no scripts: CSP hashes unchanged.
 - 2026-11-13 · frontend agent · Terms "Paid plan": deleting your account cancels your subscription immediately; Privacy "Payments": deletion cancels first (no refund), billing rows removed, Stripe keeps its customer record for invoices and tax (drafts)
 - 2026-11-14 · frontend agent · Privacy, Terms and 404 use `RouteNav`/`RouteTabBar` for the Account entry; `/offline` keeps plain `AppNav`/`BottomTabBar` (no network, the `auth` capability can never be read). See auth-sign-in.md
 - 2026-11-14 · frontend agent · Privacy "Signing in": the account's free-run count is kept "each day" (was "each month"); effective date and terms key unchanged
+- 2026-11-14 · frontend agent · Terms "Paid plan" states a daily included allowance and a monthly cap on extra runs; Privacy "Payments" keeps a daily run count and a monthly extra-run count (drafts; effective date and terms key unchanged, flagged)

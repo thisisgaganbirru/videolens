@@ -222,13 +222,82 @@ is unchanged (100 a month, extra runs billed).
 | Signed-out hints | "[Sign in] for 10 a day, or add your own key." / "...or [sign in] for 10 free runs a day." |
 | Blocked note | "No free runs left today, so analyzing is paused." |
 | Account identity line | "Free runs left today: N of 10" |
-| Paid strip / identity | unchanged: "N of 100 runs left this month." / "Runs left this month: N of L" |
+| Paid strip / identity | superseded the same day: see "Paid daily allowance" below |
 
 The spent account sentence is the frontend's own, not the 402 `detail`: the
 strip only renders from a status read or a 402, and "They reset tomorrow" is
 a fixed fact of the daily period. The "account reset is weeks out" note on
 the spent timer no longer applies to free accounts; their reset is hours
 out, the same path as the device.
+
+## Paid daily allowance (2026-11-14, owner)
+
+The paid plan's included runs are **30 per UTC day** (was 100 a month).
+Tiers: anonymous 3 a day, free account 10 a day, paid 30 a day with videos
+up to 10 minutes and no Gemini key needed; extra runs past the 30 are billed
+per run with a hard cap of 200 extra runs a calendar month.
+
+- **Contract.** `GET /api/free-runs` and `GET /api/billing` `runs.period`
+  answer `day` (limit 30) for paid. Both adapters now read a missing
+  `period` as `day` for every plan (`freeRunsGateway.normalise`,
+  `billingGateway.normalise`); only a literal `"month"` reads as a month.
+  `BillingDetails.runs.period` is new.
+- **Constants.** `PAID_RUNS_PER_DAY` (30) and `PAID_EXTRA_RUNS_PER_MONTH`
+  (200) next to `ACCOUNT_FREE_RUNS_PER_DAY` in
+  `application/accountAllowance.ts`. Quoted only where no paid read exists
+  (the free plan's pitch, the "upgrade" hint, the extra-run cap, which no
+  status body carries). `PAID_RUNS_PER_MONTH` in `AccountPanel` is gone.
+
+| Where | Paid copy |
+|---|---|
+| Analyze strip, runs left | "**N of 30 runs left today.**" (no pill) |
+| Analyze strip, past the 30 (`overage`) | "**You have used today's 30 runs.** Extra runs are billed at $X each, up to 200 a month." (no price known: "Extra runs are billed per run, up to 200 a month.") |
+| Free account spent, billing on | "...Add your own Gemini key to keep going, or [upgrade] for 30 a day." |
+| Account identity line | "Runs left today: N of 30" |
+| 402 `extra_runs_cap` | "You’ve reached this month’s limit of N extra runs. Your included runs come back tomorrow." (was "Runs reset next month.", wrong once the included runs are daily) |
+
+## Reserved strip height (2026-11-14, Android QA run 22)
+
+The strip used to be inserted when the read landed, with no space reserved,
+pushing the eyebrow, title, lede and intake card down ~93 css px at 412 and
+~115 at 320 (CLS 0.079-0.118). Now, like `LandingAllowance`:
+
+- `useFreeRuns` returns `pending`: no key saved and no read has answered for
+  the current identity yet (`Snapshot.settled`, set by a successful read, a
+  failed read or a 402; cleared on launch and by `noteIdentityChanged`).
+- While `pending`, `HomeScreen` renders an invisible, `inert`, `aria-hidden`
+  stand-in `FreeRunsBanner` (`FREE_RUNS_GHOST`: device, 3 of 3 left, sign-in
+  offered: the first-visit sentence and the longest "runs left" one) inside
+  the slot (`data-pending`). `.free-runs-ghost { visibility: hidden }`, so no
+  skeleton text is ever seen and the slot is sized by the real strip markup
+  at every width and font scale. The live region does not announce it.
+- A saved key never shows the strip, but the prerender cannot know that, so
+  a new pre-paint script (`BYOK_INIT_SCRIPT` in
+  `infrastructure/apiKeyStore.ts`, last in `PRE_PAINT_SCRIPT`) stamps
+  `<html data-byok>` when the key exists (presence only), and
+  `:root[data-byok] .free-runs-slot[data-pending] { display: none }`.
+  `useFreeRuns` keeps the stamp in step after hydration (never on the first
+  render, which always reads "no key"). Its CSP hash is computed by
+  `inject-csp.mjs` like the others (checked in `out/app.html`).
+
+Measured (Playwright, chromium-1217, dev server, `/api/free-runs` mocked with
+a 1.5 s delay, CLS summed from `layout-shift` entries):
+
+| Case | 412 web / app | 320 web / app |
+|---|---|---|
+| Device, runs left (first visit) | 0.0000 / 0.0021 | 0.0000 / 0.0015 |
+| Free account, runs left | 0.0000 / 0.0021 | 0.0179 / 0.0163 |
+| Paid, runs left (one line, shorter) | 0.0194 / 0.0185 | 0.0566 / 0.0489 |
+| Paid, past the 30 | 0.0000 / 0.0021 | 0.0179 / 0.0163 |
+| Key saved | 0.0034 / 0.0074 | 0.0041 / 0.0027 |
+| Free account spent (taller) | 0.1062 / 0.0912 | 0.1317 / 0.1099 |
+| Read failed (reservation collapses) | 0.0842 / 0.0738 | 0.1223 / 0.1045 |
+
+Known residue: a spent strip is taller than the stand-in, and a failed read
+gives the reserved space back. Both are rarer than the runs-left states and
+no worse than before; keeping a blank band up after a failure, or guessing a
+spent state before the read, would each be wrong more often than it helps.
+Not yet re-measured on the device (the QA run's own numbers were on Android).
 
 ## Changelog
 
@@ -243,3 +312,5 @@ out, the same path as the device.
 - 2026-11-13 · frontend agent · `plan`/`overage` on `FreeRunsStatus`; paid strip "N of L runs left this month." (no pill), past the allowance with overage "Extra runs are billed at $X each." (not blocked); a spent free account adds ", or upgrade." (link to Account) when billing is on. See `billing.md`
 - 2026-11-14 · frontend agent · device strip says "today"; signed out where sign-in is offered it adds one inline "Sign in for 10 a month, or add your own key." so the device and account tiers read as two tiers (Android QA); `ACCOUNT_FREE_RUNS_PER_MONTH` moved to `application/accountAllowance.ts`
 - 2026-11-14 · frontend agent · free account allowance is daily (10/day): `period` (`day`|`month`) on `FreeRunsStatus`/`FreeRunsBanner`, inferred by plan when the server omits it; copy keyed on period ("N free runs left today", spent "You have used today's 10 free runs. They reset tomorrow.", hints "Sign in for 10 a day"); `blockedScope` -> `blockedPeriod`; `ACCOUNT_FREE_RUNS_PER_MONTH` -> `ACCOUNT_FREE_RUNS_PER_DAY`
+- 2026-11-14 · frontend agent · paid plan is 30 runs a day: missing `period` reads as `day` for every plan; paid strip "N of 30 runs left today.", past the 30 "Extra runs are billed at $X each, up to 200 a month."; spent free account "...or upgrade for 30 a day."; 402 `extra_runs_cap` "Your included runs come back tomorrow."; `PAID_RUNS_PER_DAY` / `PAID_EXTRA_RUNS_PER_MONTH` in `accountAllowance.ts`
+- 2026-11-14 · frontend agent · Android QA run 22: strip height reserved before the first read (invisible inert stand-in, `useFreeRuns().pending`, `Snapshot.settled`) and dropped pre-paint for key holders (`BYOK_INIT_SCRIPT` stamps `data-byok`); CLS at 412/320 ~0 for runs-left states, numbers and residue under "Reserved strip height"

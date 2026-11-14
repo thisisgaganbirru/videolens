@@ -28,7 +28,7 @@ export default function PrivacyPage() {
       </LegalSection>
       {/* Draft for the owner's legal review (docs/frontend/billing.md). */}
       <LegalSection heading="Payments">
-        The paid plan is optional. Payments are processed by Stripe; we never see or store your card number. You enter your card on Stripe&apos;s own checkout page, and Stripe keeps its payment records under its own privacy policy. For a paid account our server keeps your Stripe customer and subscription IDs, your plan status and renewal date, and a count of your runs each month. Deleting your account first cancels any subscription immediately, with no refund for the rest of the period, and then removes these billing records from our server; Stripe keeps its customer record of your payments, as it needs to for invoices and tax.
+        The paid plan is optional. Payments are processed by Stripe; we never see or store your card number. You enter your card on Stripe&apos;s own checkout page, and Stripe keeps its payment records under its own privacy policy. For a paid account our server keeps your Stripe customer and subscription IDs, your plan status and renewal date, a count of your runs each day, and a count of your extra runs each month. Deleting your account first cancels any subscription immediately, with no refund for the rest of the period, and then removes these billing records from our server; Stripe keeps its customer record of your payments, as it needs to for invoices and tax.
       </LegalSection>
       <LegalSection heading="Third-party services">
         Media analysis uses Google Gemini; payments for the paid plan use Stripe. Public-link processing may contact the website hosting the submitted URL. Those providers process data under their own policies.
