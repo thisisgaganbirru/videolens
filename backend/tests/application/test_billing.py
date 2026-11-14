@@ -662,7 +662,7 @@ class DeletionCancelsTheSubscriptionTests(unittest.IsolatedAsyncioTestCase):
     async def test_cancels_before_deleting_anything(self) -> None:
         await self._use_case().execute(self.person)
         self.assertEqual(self.billing.gateway.cancelled, ["sub_1"])
-        self.assertEqual(self.log, ["rows:sub-1", "identity:sub-1"])
+        self.assertEqual(self.log, ["hold:sub-1"])
 
     async def test_due_extra_runs_are_reported_first(self) -> None:
         await self.billing.ledger.hold("run-x", account_id=self.person.account_id, customer_id=CUSTOMER, period="2026-11")
@@ -688,7 +688,7 @@ class DeletionCancelsTheSubscriptionTests(unittest.IsolatedAsyncioTestCase):
         fresh = _Billing()
         await self._use_case(fresh).execute(self.person)
         self.assertEqual(fresh.gateway.cancelled, [])
-        self.assertEqual(self.log, ["rows:sub-1", "identity:sub-1"])
+        self.assertEqual(self.log, ["hold:sub-1"])
 
 
 class BillingOffParityTests(unittest.IsolatedAsyncioTestCase):

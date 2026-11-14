@@ -333,6 +333,9 @@ class CreateRunUseCase:
                 # Recorded so the worker never runs it on the shared key: it
                 # skipped the free-run and daily-cap checks above.
                 admitted_byok=bool(gemini_api_key),
+                # So the worker can save a paid account's result once the run
+                # completes (docs/backend/saved-history.md).
+                account_id=principal.account_id,
             )
             await self._queue.enqueue(
                 run_id,
