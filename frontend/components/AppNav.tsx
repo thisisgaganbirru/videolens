@@ -6,6 +6,7 @@ import { ChevronRight, Menu, UserRound, X } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import { isPlainLeftClick } from "@/components/navClick";
 import { mainTabHref, navTabs, type MainTab } from "@/application/useMainTab";
+import type { AccountState } from "@/application/useAccountEntry";
 
 /* Hallmark · theme: editorial (app/tokens.css) · nav: flat top bar
  *
@@ -51,20 +52,19 @@ type AppNavProps = {
   onSelectTab?: (tab: MainTab) => void;
   /** True only on the landing page, where the brand link is the current page. */
   landing?: boolean;
-  /** Draw the Account tab (auth phase 2). Only `/app` knows whether sign-in
-   *  is available, so every other route leaves it off. */
+  /** Draw the Account entry (auth phase 2): sign-in configured and the
+   *  server's `auth` capability `ok`. From HomeScreen on `/app`, from
+   *  `useAccountEntry` (via `RouteNav`) everywhere else. */
   showAccount?: boolean;
   /** Where the session stands, for the Account control: "loading" draws
    *  nothing in the bar (the phone menu row says "Account"), "signed-out" the
-   *  "Sign in" pill, "signed-in" the round initial button. Supplied by `/app`,
-   *  which has the session. */
+   *  "Sign in" pill, "signed-in" the round initial button. `/app` derives it
+   *  in HomeScreen; every other route through `RouteNav`. */
   accountState?: AccountState;
   /** The signed-in person's initial for the Account button; null or absent
    *  draws the person glyph. */
   accountInitial?: string | null;
 };
-
-export type AccountState = "loading" | "signed-out" | "signed-in";
 
 /** What the Account entry says where it is a text label. */
 const SIGN_IN_LABEL = "Sign in";

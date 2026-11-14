@@ -138,9 +138,23 @@ session.
   `accountState: "loading" | "signed-out" | "signed-in"` to `AppNav`. The web
   phone menu's Account row reads "Sign in" while signed out ("Account"
   loading or signed in). The dock item stays "Account" (owner-approved
-  4-item dock). Other routes do not pass `showAccount`, so the landing page
-  keeps its own "Start analyzing" CTAs and gains nothing. With auth off
+  4-item dock). With auth off
   nothing renders, as before.
+- **Every route (2026-11-14, follow-up).** Landing, Privacy, Terms and 404
+  render the same entry: `RouteNav` / `RouteTabBar` (client wrappers around
+  `AppNav` / `BottomTabBar`) call `useAccountEntry()` in
+  `application/useAccountEntry.ts`, which applies the same gate (provider
+  configured *and* `auth` capability `ok`) and the same state
+  (`accountEntryFrom`, also used by HomeScreen on `/app`). The `auth` row is
+  read once per page load through a module-level promise shared by nav and
+  dock (one `/api/capabilities` request); a failed read hides the entry and
+  is retried on a later mount. Prerendered and first client render show no
+  entry, so no hydration mismatch; it appears once both reads answer. Links
+  go to `/app?view=account`. Landing's "Start analyzing" CTAs are unchanged.
+  Offline (`/offline`) keeps plain `AppNav`: it is served with no network,
+  so the capability can never be read and the entry could never show. The
+  Routes-without-`showAccount` note in the Dock entry bullet above is
+  superseded: those routes now get the 4-item dock too.
 - **Signed-out lede (2026-11-14).** "Sign in for 10 free runs a month,
   videos up to N minutes with your own key, and API keys for your scripts.
   An account is optional." The 10 is `ACCOUNT_FREE_RUNS_PER_MONTH` (now
@@ -425,3 +439,4 @@ cannot be resized); check them on the bundled APK.
 - 2026-11-13 · frontend agent · account deletion: 503 `subscription_cancel_failed` gets its own message (nothing deleted, account and subscription unchanged), form stays usable. See `billing.md`
 - 2026-11-14 · frontend agent · Account moves into the installed-app dock as a 4th item (Analyze / History / Account / More, `CircleUserRound`, `aria-current` on `?view=account`) under the same `showAccount` gate; the More sheet's Account row is removed; top-bar round button unchanged
 - 2026-11-14 · frontend agent · signed out, the ≥48rem top-bar Account control is a labelled "Sign in" pill (secondary voice, 44px); signed in keeps the round initial; nothing drawn until the session is known (`accountState` prop); phone-menu row reads "Sign in" signed out; dock unchanged; signed-out Account lede now lists 10 free runs a month, longer videos with your own key (minutes from limits), and API keys
+- 2026-11-14 · frontend agent · Account entry (Sign in pill / initial / phone-menu row / dock item) on landing, Privacy, Terms and 404 via `RouteNav`/`RouteTabBar` + `useAccountEntry` (same gate, one shared capability read); `/offline` left out (no network)

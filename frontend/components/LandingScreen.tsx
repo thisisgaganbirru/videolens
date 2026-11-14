@@ -1,6 +1,6 @@
 import Link from "next/link";
-import AppNav from "@/components/AppNav";
-import BottomTabBar from "@/components/BottomTabBar";
+import RouteNav from "@/components/RouteNav";
+import RouteTabBar from "@/components/RouteTabBar";
 import SiteFooter from "@/components/SiteFooter";
 import SampleResult from "@/components/SampleResult";
 import { APP_PATH } from "@/application/useMainTab";
@@ -14,7 +14,9 @@ import { APP_PATH } from "@/application/useMainTab";
  * action goes there.
  *
  * Chrome is the app's chrome, not a marketing variant: the same `.shell`,
- * `<AppNav />`, `<SiteFooter />` and `<BottomTabBar />` every route renders,
+ * `<AppNav />`, `<SiteFooter />` and `<BottomTabBar />` every route renders
+ * (through `RouteNav` / `RouteTabBar`, which add the Account entry where
+ * sign-in is available, 2026-11-14),
  * and the same `.view-scroll` band, so the nav and footer stay put and only
  * the content scrolls. None of the four tabs is current here (none of them is
  * where you are); the brand link is. The installed app never shows this page
@@ -28,7 +30,7 @@ import { APP_PATH } from "@/application/useMainTab";
 export default function LandingScreen() {
   return (
     <div className="shell" data-view="landing">
-      <AppNav activeTab={null} landing />
+      <RouteNav activeTab={null} landing />
 
       <main className="view-scroll" data-view="landing" aria-label="VideoLens AI">
         <div className="landing">
@@ -128,7 +130,7 @@ export default function LandingScreen() {
       </main>
 
       <SiteFooter />
-      <BottomTabBar activeTab={null} />
+      <RouteTabBar activeTab={null} />
     </div>
   );
 }

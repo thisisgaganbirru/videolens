@@ -1,6 +1,6 @@
 import AppBackLink from "@/components/AppBackLink";
-import AppNav from "@/components/AppNav";
-import BottomTabBar from "@/components/BottomTabBar";
+import RouteNav from "@/components/RouteNav";
+import RouteTabBar from "@/components/RouteTabBar";
 import SiteFooter from "@/components/SiteFooter";
 
 /* Hallmark · theme: editorial (tokens.css) · macrostructure: Long Document
@@ -14,7 +14,8 @@ import SiteFooter from "@/components/SiteFooter";
  *
  * Chrome is the app's chrome, not a legal-page variant: the same `.shell`
  * frame, the same `<AppNav />`, and the same `<SiteFooter />` (browser tab) or
- * `<BottomTabBar />` (installed app) — literally the components HomeScreen
+ * `<BottomTabBar />` (installed app; both through `RouteNav` / `RouteTabBar`,
+ * which add the Account entry where sign-in is available) — literally the components HomeScreen
  * renders. A standalone route is still the same application, so it does not
  * get its own furniture. The tabs work here because they address the URL
  * (`/app?view=history`), not HomeScreen's React state; none of them is
@@ -38,7 +39,7 @@ type LegalShellProps = {
 export default function LegalShell({ title, effective, current, children }: LegalShellProps) {
   return (
     <div className="shell" data-view="legal">
-      <AppNav activeTab={null} />
+      <RouteNav activeTab={null} />
 
       <main className="view-scroll" data-view="legal" aria-label={title}>
         <div className="legal-page">
@@ -54,7 +55,7 @@ export default function LegalShell({ title, effective, current, children }: Lega
       </main>
 
       <SiteFooter current={current} />
-      <BottomTabBar activeTab={null} currentRoute={current} />
+      <RouteTabBar activeTab={null} currentRoute={current} />
     </div>
   );
 }

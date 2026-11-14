@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
-import AppNav, { type AccountState } from "@/components/AppNav";
+import AppNav from "@/components/AppNav";
+import { accountEntryFrom } from "@/application/useAccountEntry";
 import BottomTabBar from "@/components/BottomTabBar";
 import SiteFooter from "@/components/SiteFooter";
 import CapabilityNotice from "@/components/CapabilityNotice";
@@ -127,7 +128,11 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      provider is configured in this build *and* the server says it verifies
      tokens. */
   useHistoryBoot({ ready: authUser.ready, userId: authUser.user?.id ?? null });
-  const showAccount = authUser.enabled && authCapability?.state === "ok";
+  /* Shared with every other route (useAccountEntry): the gate, plus the top
+     bar's control: a "Sign in" pill signed out, the signed-in person's
+     initial (null, no email: the person glyph), nothing until the session is
+     known. */
+  const { showAccount, accountState, accountInitial } = accountEntryFrom(authUser, authCapability);
   /* The paid plan (2026-11-13): read only where sign-in works and the
      server's `billing` capability is `ok`, for whoever is signed in. With
      billing off nothing is requested and `billing` stays null, so every
@@ -148,11 +153,6 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   const mediaLimits = useMediaLimits(Boolean(authUser.user), paid);
   const signInForMinutes =
     showAccount && authUser.ready && !authUser.user && mediaLimits.hasKey ? mediaLimits.upgradeMinutes : null;
-  /* The top bar's Account control: a "Sign in" pill signed out, the
-     signed-in person's initial (null, no email: the person glyph), nothing
-     until the session is known. */
-  const accountState: AccountState = !authUser.ready ? "loading" : authUser.user ? "signed-in" : "signed-out";
-  const accountInitial = authUser.user?.email?.trim().charAt(0).toUpperCase() || null;
   /* Signing in or out changes who owns runs on the server, so a run being
      watched would stop answering. The Account panel holds both meanwhile. */
   const runInProgress = submitting || status === "queued" || status === "processing";
