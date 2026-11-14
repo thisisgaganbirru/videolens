@@ -1,7 +1,7 @@
 import unittest
 
 from app.application.create_run import CreateRunUseCase
-from app.domain.entities import AuthMethod, Principal
+from app.domain.entities import AuthMethod, FreeRunPeriod, Principal
 from app.domain.errors import (
     DeviceTokenInvalidError,
     FreeRunsExhaustedError,
@@ -326,8 +326,8 @@ BARE_USER = Principal(subject="user:sub-2", authenticated=True, method=AuthMetho
 
 class AccountFreeRunAdmissionTests(unittest.IsolatedAsyncioTestCase):
     """Signed-in free runs (owner decision 2026-11-13): a signed-in account
-    without its own key is admitted against its monthly account counter
-    instead of the device counter."""
+    without its own key is admitted against its account counter instead of
+    the device counter; per UTC day since 2026-11-14."""
 
     def _make(self, *, spend_allowed: bool = True, limit: int = 10, enabled: bool = True, wired: bool = True):
         self.free_runs = FakeFreeRunAllowance(per_device=3, per_ip=10)
@@ -374,8 +374,12 @@ class AccountFreeRunAdmissionTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(FreeRunsExhaustedError) as caught:
             await self._run(use_case)
         error = caught.exception
-        self.assertEqual((error.limit, error.used, error.scope), (10, 10, "account"))
-        self.assertEqual(str(error), "You have used this month's free runs. Add your own Gemini key to keep going.")
+        self.assertEqual((error.limit, error.used, error.scope, error.period), (10, 10, "account", "day"))
+        self.assertEqual(
+            str(error),
+            "You have used today's free runs. Add your own Gemini key to keep going, or come back tomorrow.",
+        )
+        self.assertEqual(set(self.accounts.consume_periods), {FreeRunPeriod.DAY})
         self.assertEqual(len(self.queue.enqueued), 10)
         # Refused before the daily budget is touched.
         self.assertEqual(self.spend_cap.consume_calls, 10)
@@ -408,7 +412,7 @@ class AccountFreeRunAdmissionTests(unittest.IsolatedAsyncioTestCase):
             await self._run(use_case, principal=PRINCIPAL, token="good:dev-a")
         with self.assertRaises(FreeRunsExhaustedError) as caught:
             await self._run(use_case, principal=PRINCIPAL, token="good:dev-a")
-        self.assertEqual(caught.exception.scope, "device")
+        self.assertEqual((caught.exception.scope, caught.exception.period), ("device", "day"))
 
     async def test_disabled_account_allowance_falls_back_to_the_device_rule(self) -> None:
         use_case = self._make(enabled=False)
@@ -444,15 +448,17 @@ class AccountFreeRunAdmissionTests(unittest.IsolatedAsyncioTestCase):
             await self._run(use_case, file=FakeUploadedFile(), url=None)
         self.assertEqual(self.accounts.used("acct-1"), 0)
 
-    async def test_a_new_month_starts_a_fresh_allowance(self) -> None:
+    async def test_a_new_day_starts_a_fresh_allowance(self) -> None:
         use_case = self._make(limit=1)
         await self._run(use_case)
         with self.assertRaises(FreeRunsExhaustedError):
             await self._run(use_case)
-        self.accounts.period = "2026-12"
+        self.accounts.day = "2026-11-15"
         await self._run(use_case)
-        self.assertEqual(self.accounts.used("acct-1", "2026-11"), 1)
-        self.assertEqual(self.accounts.used("acct-1", "2026-12"), 1)
+        self.assertEqual(self.accounts.counts[("acct-1", "2026-11-14")], 1)
+        self.assertEqual(self.accounts.counts[("acct-1", "2026-11-15")], 1)
+        # The monthly key is not the free plan's counter.
+        self.assertNotIn(("acct-1", "2026-11"), self.accounts.counts)
 
 
 if __name__ == "__main__":

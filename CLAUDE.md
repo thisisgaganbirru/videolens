@@ -46,7 +46,8 @@ Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
   server-side persistence for runs or results, not even for paid accounts.
   The only server-side tables are the four identity tables
   (`accounts`, `workspaces`, `workspace_members`, `api_keys`), the two
-  monthly run counters (`account_free_runs`, `account_free_run_holds`) and
+  run counters (`account_free_runs`, `account_free_run_holds`; daily rows
+  for free accounts, monthly rows for paid) and
   the three billing tables (`billing_accounts`, `billing_events`,
   `billing_extra_runs`) in `infrastructure/persistence/`, owned by Alembic in
   `backend/migrations/`.

@@ -22,6 +22,7 @@ from app.domain.entitlements import MediaTier, Plan
 from app.domain.entities import (
     AuthMethod,
     BillingWebhookEvent,
+    FreeRunPeriod,
     Principal,
     RunStatus,
     SubscriptionSnapshot,
@@ -193,20 +194,24 @@ class GetBillingTests(unittest.IsolatedAsyncioTestCase):
     async def test_free_account(self) -> None:
         billing = _Billing()
         runs = FakeAccountFreeRunAllowance(limit=10)
-        runs.counts[(ACCOUNT, runs.period)] = 3
+        runs.counts[(ACCOUNT, runs.day)] = 3
+        # A monthly row (the paid counter, or one written before 2026-11-14)
+        # is not the free plan's.
+        runs.counts[(ACCOUNT, runs.month)] = 7
         view = await GetBillingUseCase(plans=billing.plans, account_free_runs=runs).execute(_person())
         self.assertEqual((view.enabled, view.plan, view.status), (True, "free", None))
-        self.assertEqual((view.runs_limit, view.runs_used), (10, 3))
+        self.assertEqual((view.runs_limit, view.runs_used, view.runs_period), (10, 3, "day"))
         self.assertEqual(view.prices.month.amount, 1200)
 
     async def test_paid_account_counts_against_the_plan(self) -> None:
         billing = _Billing()
         await billing.subscribe(interval="year")
         runs = FakeAccountFreeRunAllowance(limit=10)
-        runs.counts[(ACCOUNT, runs.period)] = 42
+        runs.counts[(ACCOUNT, runs.month)] = 42
+        runs.counts[(ACCOUNT, runs.day)] = 5
         view = await GetBillingUseCase(plans=billing.plans, account_free_runs=runs).execute(_person())
         self.assertEqual((view.plan, view.status, view.interval), ("paid", "active", "year"))
-        self.assertEqual((view.runs_limit, view.runs_used), (100, 42))
+        self.assertEqual((view.runs_limit, view.runs_used, view.runs_period), (100, 42, "month"))
 
     async def test_past_due_reads_as_free(self) -> None:
         billing = _Billing()
@@ -364,8 +369,8 @@ class _Pipeline:
         await self.process.execute(run_id, source_url=URL, gemini_api_key=key)
         return run_id
 
-    def used(self) -> int:
-        return self.account_runs.used(ACCOUNT)
+    def used(self, period: FreeRunPeriod = FreeRunPeriod.MONTH) -> int:
+        return self.account_runs.used(ACCOUNT, period)
 
 
 class PaidAdmissionTests(unittest.IsolatedAsyncioTestCase):
@@ -378,16 +383,39 @@ class PaidAdmissionTests(unittest.IsolatedAsyncioTestCase):
         await self.pipeline.intake()
         self.assertEqual(self.pipeline.used(), 1)
         self.assertEqual(self.pipeline.account_runs.consume_limits, [3])
+        # The paid plan's counter is monthly, never the free plan's daily one.
+        self.assertEqual(self.pipeline.account_runs.consume_periods, [FreeRunPeriod.MONTH])
+        self.assertEqual(self.pipeline.used(FreeRunPeriod.DAY), 0)
         # Not an extra run, and the daily cap (here: exhausted) is not asked.
         self.assertEqual(await self.billing.ledger.due(), [])
         self.assertEqual(self.pipeline.spend_cap.consume_calls, 0)
 
-    async def test_free_runs_used_before_upgrading_count_toward_the_plan(self) -> None:
-        self.pipeline.account_runs.counts[(ACCOUNT, self.pipeline.account_runs.period)] = 2
+    async def test_runs_already_on_this_months_row_count_toward_the_plan(self) -> None:
+        # e.g. free runs taken under the monthly rule before 2026-11-14.
+        self.pipeline.account_runs.counts[(ACCOUNT, self.pipeline.account_runs.month)] = 2
         first = await self.pipeline.intake()
         second = await self.pipeline.intake()
         self.assertIsNone(self.billing.ledger.state(first))
         self.assertEqual(self.billing.ledger.state(second), HELD)
+
+    async def test_upgrading_mid_day_does_not_count_todays_free_runs_twice(self) -> None:
+        # Free plan earlier today: 2 runs on the daily row.
+        self.pipeline.account_runs.counts[(ACCOUNT, self.pipeline.account_runs.day)] = 2
+        within = [await self.pipeline.intake() for _ in range(3)]
+        self.assertEqual([self.billing.ledger.state(run_id) for run_id in within], [None, None, None])
+        self.assertEqual(self.billing.ledger.state(await self.pipeline.intake()), HELD)
+        # Each run on exactly one row: the daily one untouched by paid runs.
+        self.assertEqual((self.pipeline.used(FreeRunPeriod.DAY), self.pipeline.used()), (2, 3))
+
+    async def test_downgrading_mid_month_goes_back_to_todays_free_runs(self) -> None:
+        for _ in range(3):
+            await self.pipeline.intake()
+        await self.billing.subscribe("canceled")
+        self.pipeline.spend_cap.allow = True  # the free plan asks the daily cap
+        await self.pipeline.intake()
+        self.assertEqual(self.pipeline.account_runs.consume_periods[-1], FreeRunPeriod.DAY)
+        self.assertEqual(self.pipeline.account_runs.consume_limits[-1], None)
+        self.assertEqual((self.pipeline.used(FreeRunPeriod.DAY), self.pipeline.used()), (1, 3))
 
     async def test_over_the_limit_is_admitted_as_an_extra_run_then_capped(self) -> None:
         for _ in range(3):
@@ -502,13 +530,16 @@ class PaidStandingTests(unittest.IsolatedAsyncioTestCase):
         billing = _Billing()
         await billing.subscribe()
         runs = FakeAccountFreeRunAllowance(limit=10)
-        runs.counts[(ACCOUNT, runs.period)] = 12
+        runs.counts[(ACCOUNT, runs.month)] = 12
+        runs.counts[(ACCOUNT, runs.day)] = 4
         use_case = GetFreeRunsUseCase(
             free_runs=FakeFreeRunAllowance(), device_tokens=FakeDeviceTokens(), account_free_runs=runs, billing=billing.plans
         )
         standing = await use_case.standing(None, _person())
         self.assertEqual((standing.plan, standing.overage), ("paid", True))
         self.assertEqual((standing.status.limit, standing.status.used, standing.status.remaining), (100, 12, 88))
+        self.assertEqual(standing.status.period, FreeRunPeriod.MONTH)
+        self.assertEqual(standing.status.resets_at, datetime(2026, 12, 1, tzinfo=timezone.utc))
 
     async def test_anonymous_has_no_plan(self) -> None:
         use_case = GetFreeRunsUseCase(

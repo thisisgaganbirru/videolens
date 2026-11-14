@@ -12,7 +12,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Callable
 
-from ..domain.entities import BillingAccount, ExtraRunCharge
+from ..domain.entities import BillingAccount, ExtraRunCharge, FreeRunPeriod
 from ..domain.policies import subscription_grants_paid
 from ..domain.ports import BillingAccounts, BillingGateway, ExtraRunLedger
 
@@ -26,6 +26,13 @@ def _utcnow() -> datetime:
 
 
 class BillingPlans:
+    # The period the paid plan's included runs count over (the account
+    # counter's key, "YYYY-MM"). One place to change it: admission,
+    # GET /api/free-runs and GET /api/billing all read it from here. The
+    # extra-run ledger and its cap stay per month regardless (Stripe bills
+    # the meter monthly).
+    PAID_RUNS_PERIOD = FreeRunPeriod.MONTH
+
     def __init__(
         self,
         *,
@@ -40,6 +47,7 @@ class BillingPlans:
         self.accounts = accounts
         self.ledger = ledger
         self.paid_runs_per_month = max(0, paid_runs_per_month)
+        self.paid_runs_period = self.PAID_RUNS_PERIOD
         self.extra_runs_monthly_cap = extra_runs_monthly_cap
         self._clock = clock or _utcnow
 

@@ -205,7 +205,8 @@ subscription work.
 without a Gemini key now gets `FREE_RUNS_PER_ACCOUNT_MONTHLY` (10) runs per
 UTC calendar month against the account, instead of the device counter, so
 they follow the person across devices. Implemented in `_admit`; see
-`docs/backend/free-runs.md`, "Signed-in free runs". The original text,
+`docs/backend/free-runs.md`, "Signed-in free runs". Since 2026-11-14 it is
+`FREE_RUNS_PER_ACCOUNT_DAILY` (10) per UTC day instead. The original text,
 kept for the record:
 
 Free runs and sign-in do not interact in this phase. A signed-in caller
@@ -591,6 +592,45 @@ old branch, and decides what signing in buys at `_admit`. Nothing in phases
 6. Old branch: tag it `archive/paid-tier-clerk` and delete it after phase 5,
    so the subscription work can still read the billing parts.
 
+## Future: ads on the free tiers (not planned for launch)
+
+Recorded 2026-11-14 as a direction to revisit after launch, not work to
+schedule. Nothing here is built, and nothing should be built from this
+section without a new owner decision.
+
+**Idea (owner, 2026-11-14).** Fund the generous free allowance (3 runs a day
+per device signed out, 10 a day signed in, so up to about 900 three-minute
+videos a month for a heavy account) with ads on the free tiers. The paid plan
+is ad-free, and "no ads" becomes one of its selling points next to 10-minute
+videos without a key.
+
+**Why not at launch.**
+- Banner ads on a small tool site earn very roughly $1–5 per 1,000 page
+  views (industry ballpark, not measured here). A heavy free account costs
+  roughly $9–18 a month in Gemini. Banners might cover light users but not
+  the heavy ones.
+- The hash-based CSP (`docs/frontend/security-headers.md`) would have to
+  allow many third-party ad domains and scripts.
+- Personalised ads need a consent banner for EU visitors and a Privacy page
+  rewrite; neither exists today.
+- Ad networks often reject new, low-traffic sites. Android needs AdMob (a
+  separate SDK and Play policy), not web ads.
+- Banners work against the editorial visual system and add page weight.
+- Until then, `DAILY_RUN_CAP` bounds total free spend.
+
+**If revisited.**
+1. First measure real usage after launch: runs per user, average duration,
+   the actual Gemini bill, and how often the daily allowance runs out.
+2. Prefer rewarded ads first: "watch a short ad for one extra run", offered
+   only after the day's free runs are used. The viewer opts in, it never
+   interrupts a normal run, and rewarded video pays far more than banners
+   (very roughly $10–30 per 1,000 views on mobile; a ballpark).
+3. If banners at all, show them on the results view only, never during
+   upload or processing, and never for paid accounts or BYOK runs.
+4. Before shipping, update the CSP, the Privacy page and Terms (with a
+   consent flow where required) and the Android build. Add a capability row
+   so ads can be switched off per environment, the same way billing is.
+
 ## Documents to update when this lands
 
 `docs/backend/auth.md` (becomes the reference for the implemented half;
@@ -617,3 +657,5 @@ Alembic release step), `CLAUDE.md` (Product direction, the lint count, the
 - 2026-11-13 · main session · status line: Account option A layout and sign out everywhere committed; PR #125 (launch metadata) merged into feat/auth-supabase
 - 2026-11-13 · backend agent · free runs and sign-in now interact (owner decision 2026-11-13): signed-in accounts get 10 free runs per UTC month instead of the device count; the "do not interact" paragraph marked superseded
 - 2026-11-13 · backend agent · status: billing (one paid plan) built on this branch; see `docs/backend/billing.md`
+- 2026-11-14 · main session · recorded "Future: ads on the free tiers" (owner idea: ads on free tiers, an ad-free paid plan; deferred until after launch, rewarded ads first); owner set signed-in free accounts to 10 runs a day (build in progress)
+- 2026-11-14 · backend agent · superseded note: signed-in free runs are now 10 per UTC day (`FREE_RUNS_PER_ACCOUNT_DAILY`)

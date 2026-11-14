@@ -1,5 +1,6 @@
 """AccountFreeRunAllowance adapters: signed-in free runs, counted per account
-per UTC calendar month (`FREE_RUNS_PER_ACCOUNT_MONTHLY`).
+per UTC day (`FREE_RUNS_PER_ACCOUNT_DAILY`, since 2026-11-14; it was per
+month before), and the paid plan's included runs, per UTC month.
 
 They live with the identity tables rather than in Redis because they belong
 to the account: they follow the person across devices, have to survive a
@@ -8,14 +9,18 @@ CASCADE`, plus an explicit delete in `SqlAccountDeleter`).
 
 `SqlAccountFreeRuns` takes a run with one statement,
 `INSERT ... ON CONFLICT (account_id, period) DO UPDATE SET used = used + 1
-WHERE used < :limit RETURNING used`: no row back means the month is used up.
+WHERE used < :limit RETURNING used`: no row back means the period is used up.
 On Postgres the conflict path locks the row, so concurrent requests are
 serialised on it and can never take an account past its limit. SQLite (tests)
 runs the same statement.
 
-The paid plan's included runs (`PAID_RUNS_PER_MONTH`, docs/backend/billing.md)
-are counted on the same row with a bigger `limit`: one counter of shared-key
-runs per account per month, whichever plan granted them.
+`period` is the counter's key: "YYYY-MM-DD" for the free plan's daily
+runs, "YYYY-MM" for the paid plan's included runs (`PAID_RUNS_PER_MONTH`,
+docs/backend/billing.md, passed in as `limit` and `period` by the caller).
+The keys differ in length, so the free and the paid counter of one account
+are always different rows: a run is counted on exactly one of them, and an
+upgrade or downgrade mid-day or mid-month never double counts. `period` is
+varchar(10) since `0005_account_daily_free_runs`.
 
 `InMemoryAccountFreeRuns` is the counterpart for the in-memory account store
 a local `uvicorn` without `DATABASE_URL` gets: there is no await between the
@@ -29,8 +34,8 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from ...domain.entities import AccountFreeRunClaim, FreeRunScope, FreeRunStatus
-from ...domain.policies import start_of_next_utc_month, utc_month
+from ...domain.entities import AccountFreeRunClaim, FreeRunPeriod, FreeRunScope, FreeRunStatus
+from ...domain.policies import period_key, period_resets_at
 from ..config import Settings
 from .database import Database, utcnow
 from .schema import account_free_run_holds, account_free_runs
@@ -42,15 +47,16 @@ _HOLD_MAX_AGE = timedelta(days=2)
 Clock = Callable[[], datetime]
 
 
-def _status(limit: int, used: int, now: datetime) -> FreeRunStatus:
-    resets_at = start_of_next_utc_month(now)
+def _status(limit: int, used: int, now: datetime, period: FreeRunPeriod) -> FreeRunStatus:
+    resets_at = period_resets_at(period, now)
+    scope = FreeRunScope.ACCOUNT
     if limit <= 0:
         return FreeRunStatus(
-            enabled=False, limit=0, used=0, remaining=0, resets_at=resets_at, scope=FreeRunScope.ACCOUNT
+            enabled=False, limit=0, used=0, remaining=0, resets_at=resets_at, scope=scope, period=period
         )
     used = max(0, min(used, limit))
     return FreeRunStatus(
-        enabled=True, limit=limit, used=used, remaining=limit - used, resets_at=resets_at, scope=FreeRunScope.ACCOUNT
+        enabled=True, limit=limit, used=used, remaining=limit - used, resets_at=resets_at, scope=scope, period=period
     )
 
 
@@ -62,11 +68,11 @@ class SqlAccountFreeRuns:
 
     @property
     def enabled(self) -> bool:
-        return self._db.enabled and self._settings.free_runs_per_account_monthly > 0
+        return self._db.enabled and self._settings.free_runs_per_account_daily > 0
 
     @property
     def _limit(self) -> int:
-        return self._settings.free_runs_per_account_monthly
+        return self._settings.free_runs_per_account_daily
 
     def _insert(self):
         return postgres_insert if self._db.dialect == "postgresql" else sqlite_insert
@@ -79,29 +85,33 @@ class SqlAccountFreeRuns:
             return limit if self._db.enabled else 0
         return self._limit if self.enabled else 0
 
-    async def status(self, account_id: str, *, limit: int | None = None) -> FreeRunStatus:
+    async def status(
+        self, account_id: str, *, limit: int | None = None, period: FreeRunPeriod = FreeRunPeriod.DAY
+    ) -> FreeRunStatus:
         now = self._clock()
         limit = self._limit_for(limit)
         if limit <= 0:
-            return _status(0, 0, now)
+            return _status(0, 0, now, period)
         async with self._db.connect() as conn:
             used = await conn.scalar(
                 select(account_free_runs.c.used).where(
                     account_free_runs.c.account_id == account_id,
-                    account_free_runs.c.period == utc_month(now),
+                    account_free_runs.c.period == period_key(period, now),
                 )
             )
-        return _status(limit, used or 0, now)
+        return _status(limit, used or 0, now, period)
 
-    async def try_consume(self, account_id: str, *, limit: int | None = None) -> AccountFreeRunClaim | None:
+    async def try_consume(
+        self, account_id: str, *, limit: int | None = None, period: FreeRunPeriod = FreeRunPeriod.DAY
+    ) -> AccountFreeRunClaim | None:
         limit = self._limit_for(limit)
         if limit <= 0:
             return None
-        period = utc_month(self._clock())
+        key = period_key(period, self._clock())
         table = account_free_runs
         statement = (
             self._insert()(table)
-            .values(account_id=account_id, period=period, used=1)
+            .values(account_id=account_id, period=key, used=1)
             .on_conflict_do_update(
                 index_elements=[table.c.account_id, table.c.period],
                 set_={"used": table.c.used + 1},
@@ -113,7 +123,7 @@ class SqlAccountFreeRuns:
             taken = (await conn.execute(statement)).first()
         if taken is None:
             return None
-        return AccountFreeRunClaim(account_id=account_id, period=period)
+        return AccountFreeRunClaim(account_id=account_id, period=key)
 
     async def refund(self, claim: AccountFreeRunClaim) -> None:
         async with self._db.connect() as conn:
@@ -177,26 +187,30 @@ class InMemoryAccountFreeRuns:
 
     @property
     def enabled(self) -> bool:
-        return self._enabled and self._settings.free_runs_per_account_monthly > 0
+        return self._enabled and self._settings.free_runs_per_account_daily > 0
 
     def _limit_for(self, limit: int | None) -> int:
         # As SqlAccountFreeRuns._limit_for.
         if limit is not None:
             return limit if self._enabled else 0
-        return self._settings.free_runs_per_account_monthly if self.enabled else 0
+        return self._settings.free_runs_per_account_daily if self.enabled else 0
 
-    async def status(self, account_id: str, *, limit: int | None = None) -> FreeRunStatus:
+    async def status(
+        self, account_id: str, *, limit: int | None = None, period: FreeRunPeriod = FreeRunPeriod.DAY
+    ) -> FreeRunStatus:
         now = self._clock()
         limit = self._limit_for(limit)
         if limit <= 0:
-            return _status(0, 0, now)
-        return _status(limit, self._used.get((account_id, utc_month(now)), 0), now)
+            return _status(0, 0, now, period)
+        return _status(limit, self._used.get((account_id, period_key(period, now)), 0), now, period)
 
-    async def try_consume(self, account_id: str, *, limit: int | None = None) -> AccountFreeRunClaim | None:
+    async def try_consume(
+        self, account_id: str, *, limit: int | None = None, period: FreeRunPeriod = FreeRunPeriod.DAY
+    ) -> AccountFreeRunClaim | None:
         limit = self._limit_for(limit)
         if limit <= 0:
             return None
-        key = (account_id, utc_month(self._clock()))
+        key = (account_id, period_key(period, self._clock()))
         if self._used.get(key, 0) >= limit:
             return None
         self._used[key] = self._used.get(key, 0) + 1

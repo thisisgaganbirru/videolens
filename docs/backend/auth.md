@@ -253,7 +253,7 @@ The deployed `DATABASE_URL` then uses `videolens_api`, not `postgres`. The Docke
 - An anonymous caller gets `ip:<ip>`.
 - A request with no resolved principal falls back to the old header key: the token hash, else the IP.
 
-Since 2026-11-13 a signed-in caller with an account (JWT or API key) and no BYOK key is admitted against the account's monthly free runs (`FREE_RUNS_PER_ACCOUNT_MONTHLY`, default 10) instead of the device counter, in `CreateRunUseCase._admit`. See `free-runs.md`, "Signed-in free runs". BYOK and `DAILY_RUN_CAP` are unchanged. See `cost-abuse-protection.md`.
+Since 2026-11-13 a signed-in caller with an account (JWT or API key) and no BYOK key is admitted against the account's free runs (`FREE_RUNS_PER_ACCOUNT_DAILY`, default 10 per UTC day since 2026-11-14; it was 10 per month) instead of the device counter, in `CreateRunUseCase._admit`. See `free-runs.md`, "Signed-in free runs". BYOK and `DAILY_RUN_CAP` are unchanged. See `cost-abuse-protection.md`.
 
 Since 2026-11-13 the same principal also picks the media limits: signed in (JWT or account API key) and sending `X-Gemini-Api-Key` allows 10 minutes / 500 MB (`SIGNED_IN_BYOK_MAX_*`), everyone else 3 minutes / 200 MB. At most one run above the standard limits per account is in flight, keyed on `account_id` (else the subject); a second is 429 `long_run_in_progress`. `GET /api/limits` (no auth) reports both sets. See `media-validation.md`, "Limits per caller".
 
@@ -310,3 +310,4 @@ The application code has not yet run against a real Supabase project: the SQL ad
 - 2026-11-13 · backend agent · signed-in free runs: the two `0003_account_free_runs` tables in Storage and in the deletion table, `_admit` now reads the account, `/api/free-runs` resolves an optional principal (known issue narrowed)
 - 2026-11-13 · backend agent · signed-in BYOK media limits (600 s / 500 MB) and the one-long-run-per-account guard, both keyed on the resolved principal
 - 2026-11-13 · backend agent · account deletion cancels the Stripe subscription first and refuses (503 `subscription_cancel_failed`) when it cannot; `Plan.PAID` on `/api/me` for a paid account; migration 0004 adds the three billing tables beside the identity tables
+- 2026-11-14 · backend agent · signed-in free runs are per UTC day (`FREE_RUNS_PER_ACCOUNT_DAILY`); migration `0005_account_daily_free_runs` widens `period` on the two counter tables

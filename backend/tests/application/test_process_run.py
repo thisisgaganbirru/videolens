@@ -725,6 +725,17 @@ class AccountFreeRunRefundTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.accounts.used("acct-1"), 1)
         self.assertEqual(self.accounts.held, {})
 
+    async def test_a_refund_after_utc_midnight_goes_back_to_the_day_it_was_taken(self) -> None:
+        run_id = await self._intake()
+        self.accounts.day = "2026-11-15"  # the job runs after midnight
+        self.media.download_error = MediaValidationError("This post is not public.")
+
+        await self.use_case.execute(run_id, source_url=self.URL)
+
+        self.assertEqual(self.accounts.refunds[0].period, "2026-11-14")
+        self.assertEqual(self.accounts.counts[("acct-1", "2026-11-14")], 0)
+        self.assertNotIn(("acct-1", "2026-11-15"), self.accounts.counts)
+
     async def test_a_retried_job_never_refunds_twice(self) -> None:
         run_id = await self._intake()
         self.media.download_error = MediaValidationError("This post is not public.")

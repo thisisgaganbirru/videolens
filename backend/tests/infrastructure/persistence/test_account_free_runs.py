@@ -1,7 +1,8 @@
 """The AccountFreeRunAllowance adapters (signed-in free runs, per account per
-UTC month): SQL (SQLite through aiosqlite, standing in for Postgres) and
-in-memory share one behaviour suite, so their rules cannot drift apart.
-Also: account deletion clears the usage, and migration 0003."""
+UTC day since 2026-11-14; the paid plan's included runs, per UTC month): SQL
+(SQLite through aiosqlite, standing in for Postgres) and in-memory share one
+behaviour suite, so their rules cannot drift apart. Also: account deletion
+clears the usage, and migrations 0003 and 0005."""
 
 import asyncio
 import importlib.util
@@ -14,8 +15,15 @@ from unittest import mock
 
 from sqlalchemy import func, insert, inspect, select
 
-from app.domain.entities import AccountFreeRunClaim, FreeRunScope
-from app.domain.policies import start_of_next_utc_month, utc_month
+from app.domain.entities import AccountFreeRunClaim, FreeRunPeriod, FreeRunScope
+from app.domain.policies import (
+    period_key,
+    period_resets_at,
+    start_of_next_utc_day,
+    start_of_next_utc_month,
+    utc_day,
+    utc_month,
+)
 from app.infrastructure.config import Settings
 from app.infrastructure.persistence.account_deleter import InMemoryAccountDeleter, SqlAccountDeleter
 from app.infrastructure.persistence.account_directory import InMemoryAccountDirectory, SqlAccountDirectory
@@ -55,6 +63,28 @@ class PolicyTests(unittest.TestCase):
         east = timezone(timedelta(hours=5))
         self.assertEqual(utc_month(datetime(2026, 12, 1, 2, tzinfo=east)), "2026-11")
 
+    def test_day_and_next_day(self) -> None:
+        self.assertEqual(utc_day(datetime(2026, 11, 14, 23, 59, 59, tzinfo=timezone.utc)), "2026-11-14")
+        self.assertEqual(
+            start_of_next_utc_day(datetime(2026, 11, 14, 8, tzinfo=timezone.utc)),
+            datetime(2026, 11, 15, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            start_of_next_utc_day(datetime(2026, 12, 31, 23, tzinfo=timezone.utc)),
+            datetime(2027, 1, 1, tzinfo=timezone.utc),
+        )
+        east = timezone(timedelta(hours=5))
+        self.assertEqual(utc_day(datetime(2026, 11, 15, 2, tzinfo=east)), "2026-11-14")
+
+    def test_period_keys_never_collide(self) -> None:
+        now = datetime(2026, 11, 14, 9, tzinfo=timezone.utc)
+        self.assertEqual(period_key(FreeRunPeriod.DAY, now), "2026-11-14")
+        self.assertEqual(period_key(FreeRunPeriod.MONTH, now), "2026-11")
+        self.assertEqual(period_resets_at(FreeRunPeriod.DAY, now), datetime(2026, 11, 15, tzinfo=timezone.utc))
+        self.assertEqual(period_resets_at(FreeRunPeriod.MONTH, now), datetime(2026, 12, 1, tzinfo=timezone.utc))
+        # Both fit the column (varchar(10) since 0005).
+        self.assertLessEqual(max(len(period_key(p, now)) for p in FreeRunPeriod), 10)
+
 
 class _AllowanceBehaviour:
     """Mixed into a TestCase whose asyncSetUp sets self.clock, self.store
@@ -66,30 +96,62 @@ class _AllowanceBehaviour:
         self.assertIsNone(await self.store.try_consume(self.account_id))
         status = await self.store.status(self.account_id)
         self.assertEqual((status.enabled, status.limit, status.used, status.remaining), (True, 10, 10, 0))
-        self.assertEqual(status.scope, FreeRunScope.ACCOUNT)
-        self.assertEqual(status.resets_at, datetime(2026, 12, 1, tzinfo=timezone.utc))
+        self.assertEqual((status.scope, status.period), (FreeRunScope.ACCOUNT, FreeRunPeriod.DAY))
+        # Daily: it resets at the next UTC midnight.
+        self.assertEqual(status.resets_at, datetime(2026, 11, 14, tzinfo=timezone.utc))
 
     async def test_status_is_read_only(self) -> None:
         for _ in range(3):
             status = await self.store.status(self.account_id)
         self.assertEqual((status.used, status.remaining), (0, 10))
 
-    async def test_a_new_month_is_a_fresh_allowance(self) -> None:
+    async def test_a_new_utc_day_is_a_fresh_allowance(self) -> None:
+        self.clock.now = datetime(2026, 11, 13, 23, 59, 59, tzinfo=timezone.utc)
         for _ in range(10):
             await self.store.try_consume(self.account_id)
-        self.clock.now = datetime(2026, 12, 1, 0, 0, 1, tzinfo=timezone.utc)
-        self.assertEqual((await self.store.status(self.account_id)).used, 0)
+        self.assertIsNone(await self.store.try_consume(self.account_id))
+        self.clock.now = datetime(2026, 11, 14, 0, 0, 1, tzinfo=timezone.utc)
+        status = await self.store.status(self.account_id)
+        self.assertEqual((status.used, status.remaining), (0, 10))
+        self.assertEqual(status.resets_at, datetime(2026, 11, 15, tzinfo=timezone.utc))
         claim = await self.store.try_consume(self.account_id)
-        self.assertEqual(claim, AccountFreeRunClaim(account_id=self.account_id, period="2026-12"))
+        self.assertEqual(claim, AccountFreeRunClaim(account_id=self.account_id, period="2026-11-14"))
 
-    async def test_a_refund_after_the_month_turns_goes_to_the_claims_month(self) -> None:
+    async def test_a_refund_after_utc_midnight_goes_to_the_claims_day(self) -> None:
+        self.clock.now = datetime(2026, 11, 13, 23, 59, tzinfo=timezone.utc)
         claim = await self.store.try_consume(self.account_id)
-        self.clock.now = datetime(2026, 12, 2, tzinfo=timezone.utc)
+        await self.store.hold("run-1", claim)
+        self.clock.now = datetime(2026, 11, 14, 0, 1, tzinfo=timezone.utc)
         await self.store.try_consume(self.account_id)
-        await self.store.refund(claim)
-        self.assertEqual((await self.store.status(self.account_id)).used, 1)  # December untouched
-        self.clock.now = datetime(2026, 11, 20, tzinfo=timezone.utc)
+        self.assertTrue(await self.store.release("run-1", refund=True))
+        self.assertEqual((await self.store.status(self.account_id)).used, 1)  # the 14th untouched
+        self.clock.now = datetime(2026, 11, 13, 12, tzinfo=timezone.utc)
+        self.assertEqual((await self.store.status(self.account_id)).used, 0)  # back on the 13th
+
+    async def test_the_paid_counter_is_monthly_and_separate_from_the_daily_one(self) -> None:
+        month = FreeRunPeriod.MONTH
+        for _ in range(4):
+            await self.store.try_consume(self.account_id)  # free plan, today
+        claim = await self.store.try_consume(self.account_id, limit=100, period=month)
+        self.assertEqual(claim, AccountFreeRunClaim(account_id=self.account_id, period="2026-11"))
+        paid = await self.store.status(self.account_id, limit=100, period=month)
+        self.assertEqual((paid.limit, paid.used, paid.remaining, paid.period), (100, 1, 99, month))
+        self.assertEqual(paid.resets_at, datetime(2026, 12, 1, tzinfo=timezone.utc))
+        self.assertEqual((await self.store.status(self.account_id)).used, 4)
+        # Days pass within the month: the paid count carries, the free one resets.
+        self.clock.now = datetime(2026, 11, 28, tzinfo=timezone.utc)
+        self.assertEqual((await self.store.status(self.account_id, limit=100, period=month)).used, 1)
         self.assertEqual((await self.store.status(self.account_id)).used, 0)
+        # And it refunds to its month.
+        await self.store.refund(claim)
+        self.assertEqual((await self.store.status(self.account_id, limit=100, period=month)).used, 0)
+
+    async def test_the_paid_counter_stops_at_its_own_limit(self) -> None:
+        for _ in range(3):
+            self.assertIsNotNone(await self.store.try_consume(self.account_id, limit=3, period=FreeRunPeriod.MONTH))
+        self.assertIsNone(await self.store.try_consume(self.account_id, limit=3, period=FreeRunPeriod.MONTH))
+        # The free daily allowance is still all there.
+        self.assertIsNotNone(await self.store.try_consume(self.account_id))
 
     async def test_a_refund_never_goes_below_zero(self) -> None:
         claim = await self.store.try_consume(self.account_id)
@@ -143,7 +205,7 @@ class SqlAllowanceTests(_AllowanceBehaviour, unittest.IsolatedAsyncioTestCase):
 
     def _make(self, limit: int) -> SqlAccountFreeRuns:
         return SqlAccountFreeRuns(
-            _settings(database_url="sqlite://", free_runs_per_account_monthly=limit), self.database, clock=self.clock
+            _settings(database_url="sqlite://", free_runs_per_account_daily=limit), self.database, clock=self.clock
         )
 
     async def test_concurrent_takes_never_exceed_the_limit(self) -> None:
@@ -208,7 +270,7 @@ class InMemoryAllowanceTests(_AllowanceBehaviour, unittest.IsolatedAsyncioTestCa
         self.store = self._make(10)
 
     def _make(self, limit: int) -> InMemoryAccountFreeRuns:
-        return InMemoryAccountFreeRuns(_settings(free_runs_per_account_monthly=limit), clock=self.clock)
+        return InMemoryAccountFreeRuns(_settings(free_runs_per_account_daily=limit), clock=self.clock)
 
     async def test_disabled_with_the_account_store(self) -> None:
         store = InMemoryAccountFreeRuns(_settings(), enabled=False)
@@ -260,6 +322,78 @@ class AlembicAccountFreeRunsTests(unittest.TestCase):
                     tables = set(inspect(engine).get_table_names())
                     self.assertFalse({"account_free_runs", "account_free_run_holds"} & tables)
                     self.assertIn("accounts", tables)
+                finally:
+                    engine.dispose()
+
+
+class AlembicDailyPeriodTests(unittest.TestCase):
+    """0005: `period` widened to varchar(10) on both tables; downgrade drops
+    the daily rows (they do not fit varchar(7)) and keeps the monthly ones."""
+
+    def test_upgrade_widens_and_downgrade_keeps_only_monthly_rows(self) -> None:
+        from alembic import command
+        from alembic.config import Config
+        from sqlalchemy import create_engine, text
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "migrate.sqlite3").as_posix()
+            config = Config(str(BACKEND / "alembic.ini"))
+            config.set_main_option("script_location", str(BACKEND / "migrations"))
+            config.set_main_option("sqlalchemy.url", f"sqlite+aiosqlite:///{path}")
+            config.attributes["configure_logger"] = False
+
+            def widths() -> dict[str, int]:
+                inspector = inspect(engine)
+                return {
+                    table: next(c["type"].length for c in inspector.get_columns(table) if c["name"] == "period")
+                    for table in ("account_free_runs", "account_free_run_holds")
+                }
+
+            with mock.patch.dict(os.environ, {"DATABASE_URL": ""}):
+                command.upgrade(config, "0004_billing")
+                engine = create_engine(f"sqlite:///{path}")
+                try:
+                    self.assertEqual(widths(), {"account_free_runs": 7, "account_free_run_holds": 7})
+                    command.upgrade(config, "head")
+                    self.assertEqual(widths(), {"account_free_runs": 10, "account_free_run_holds": 10})
+                    inspector = inspect(engine)
+                    # Batch mode kept the keys, the cascade and the indexes.
+                    self.assertEqual(
+                        set(inspector.get_pk_constraint("account_free_runs")["constrained_columns"]),
+                        {"account_id", "period"},
+                    )
+                    for table in ("account_free_runs", "account_free_run_holds"):
+                        fk = inspector.get_foreign_keys(table)[0]
+                        self.assertEqual((fk["referred_table"], fk["options"].get("ondelete")), ("accounts", "CASCADE"))
+                    self.assertEqual(
+                        {index["name"] for index in inspector.get_indexes("account_free_run_holds")},
+                        {"ix_account_free_run_holds_created", "ix_account_free_run_holds_account"},
+                    )
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text("INSERT INTO accounts (id, external_id, created_at) VALUES ('a1', 's1', '2026-11-14')")
+                        )
+                        conn.execute(
+                            text(
+                                "INSERT INTO account_free_runs (account_id, period, used) "
+                                "VALUES ('a1', '2026-11-14', 3), ('a1', '2026-11', 5)"
+                            )
+                        )
+                        conn.execute(
+                            text(
+                                "INSERT INTO account_free_run_holds (run_id, account_id, period, created_at) "
+                                "VALUES ('r1', 'a1', '2026-11-14', '2026-11-14'), ('r2', 'a1', '2026-11', '2026-11-14')"
+                            )
+                        )
+                    command.downgrade(config, "0004_billing")
+                    self.assertEqual(widths(), {"account_free_runs": 7, "account_free_run_holds": 7})
+                    with engine.connect() as conn:
+                        rows = conn.execute(text("SELECT period, used FROM account_free_runs")).all()
+                        holds = conn.execute(text("SELECT run_id FROM account_free_run_holds")).scalars().all()
+                    self.assertEqual([tuple(row) for row in rows], [("2026-11", 5)])
+                    self.assertEqual(holds, ["r2"])
+                    command.upgrade(config, "head")
+                    self.assertEqual(widths(), {"account_free_runs": 10, "account_free_run_holds": 10})
                 finally:
                     engine.dispose()
 

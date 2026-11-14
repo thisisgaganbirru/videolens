@@ -313,10 +313,22 @@ class CaptionTrack:
 class FreeRunScope(str, Enum):
     """Which counter a caller's free runs come from. DEVICE: anonymous (and
     signed-in callers when the account allowance is off), per UTC day.
-    ACCOUNT: a signed-in account, per UTC calendar month, across devices."""
+    ACCOUNT: a signed-in account, across devices: per UTC day on the free
+    plan (since 2026-11-14), per UTC calendar month on the paid plan."""
 
     DEVICE = "device"
     ACCOUNT = "account"
+
+
+class FreeRunPeriod(str, Enum):
+    """How long a counter runs before it resets. DAY: a UTC day, keyed
+    "YYYY-MM-DD" (the device allowance, and the free plan's account
+    allowance). MONTH: a UTC calendar month, keyed "YYYY-MM" (the paid
+    plan's included runs). The two key formats never overlap, so a free and
+    a paid counter of one account can share a table without colliding."""
+
+    DAY = "day"
+    MONTH = "month"
 
 
 @dataclass(frozen=True)
@@ -335,6 +347,7 @@ class FreeRunStatus:
     remaining: int
     resets_at: datetime
     scope: FreeRunScope = FreeRunScope.DEVICE
+    period: FreeRunPeriod = FreeRunPeriod.DAY
 
 
 @dataclass(frozen=True)
@@ -350,9 +363,10 @@ class FreeRunClaim:
 
 @dataclass(frozen=True)
 class AccountFreeRunClaim:
-    """One free run taken from an account's monthly allowance. `period`
-    ("YYYY-MM", UTC) pins a refund to the month it was taken from, even if
-    the month turns in between."""
+    """One run taken from an account's counter. `period` is the counter's
+    key: "YYYY-MM-DD" (UTC day, the free plan) or "YYYY-MM" (UTC month, the
+    paid plan's included runs). It pins a refund to the day or month the
+    run was taken from, even if midnight or the month turns in between."""
 
     account_id: str
     period: str

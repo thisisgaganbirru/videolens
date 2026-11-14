@@ -3,7 +3,7 @@ import math
 import re
 from datetime import datetime, time, timedelta, timezone
 
-from .entities import AuthMethod, Principal
+from .entities import AuthMethod, FreeRunPeriod, Principal
 
 CLIENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
 
@@ -139,16 +139,38 @@ def _as_utc(now: datetime) -> datetime:
 
 def utc_month(now: datetime) -> str:
     """The UTC calendar month `now` falls in, as "YYYY-MM": the period the
-    account free-run allowance counts against."""
+    paid plan's included runs and the extra-run ledger count against."""
     return f"{_as_utc(now):%Y-%m}"
 
 
 def start_of_next_utc_month(now: datetime) -> datetime:
     """00:00 UTC on the first day of the month after `now`'s: when an
-    account's monthly free runs reset."""
+    paid plan's monthly included runs reset."""
     current = _as_utc(now)
     year, month = (current.year + 1, 1) if current.month == 12 else (current.year, current.month + 1)
     return datetime(year, month, 1, tzinfo=timezone.utc)
+
+
+def utc_day(now: datetime) -> str:
+    """The UTC day `now` falls in, as "YYYY-MM-DD": the period the free
+    plan's account allowance counts against (since 2026-11-14)."""
+    return f"{_as_utc(now):%Y-%m-%d}"
+
+
+def start_of_next_utc_day(now: datetime) -> datetime:
+    """The next 00:00 UTC after `now`: when a daily counter resets."""
+    return datetime.combine(_as_utc(now).date() + timedelta(days=1), time.min, tzinfo=timezone.utc)
+
+
+def period_key(period: FreeRunPeriod, now: datetime) -> str:
+    """The counter key `now` falls in for `period`: "YYYY-MM-DD" for a day,
+    "YYYY-MM" for a month. Different lengths, so never equal."""
+    return utc_day(now) if period is FreeRunPeriod.DAY else utc_month(now)
+
+
+def period_resets_at(period: FreeRunPeriod, now: datetime) -> datetime:
+    """When the counter `now` falls in for `period` resets."""
+    return start_of_next_utc_day(now) if period is FreeRunPeriod.DAY else start_of_next_utc_month(now)
 
 
 # ------------------------------------------------------------------ billing
