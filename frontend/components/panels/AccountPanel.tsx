@@ -705,6 +705,7 @@ const GHOST_FREE_BILLING: BillingDetails = {
   currentPeriodEnd: null,
   cancelAtPeriodEnd: false,
   runs: { limit: ACCOUNT_FREE_RUNS_PER_DAY, used: 0, period: "day" },
+  extraRuns: null,
   prices: { month: { amount: 1200, currency: "usd" }, year: null, extraRun: { amount: 15, currency: "usd" } },
 };
 const GHOST_PAID_BILLING: BillingDetails = {
@@ -714,6 +715,9 @@ const GHOST_PAID_BILLING: BillingDetails = {
   interval: "month",
   currentPeriodEnd: "2026-12-13T00:00:00Z",
   runs: { limit: PAID_RUNS_PER_DAY, used: 0, period: "day" },
+  /* Reserves the "Extra runs this month" row; a server without the field
+     drops it once, when the real card lands. */
+  extraRuns: { used: 0, limit: PAID_EXTRA_RUNS_PER_MONTH, period: "month", resetsAt: null },
 };
 
 function extraRunTerms(included: number, extraRun: string | null): string {
@@ -900,6 +904,18 @@ function BillingGroup({ billing }: { billing: BillingDetails }) {
             <div className="acct-fact">
               <dt>{billing.cancelAtPeriodEnd ? "Ends" : "Renews"}</dt>
               <dd>{periodEnd}</dd>
+            </div>
+          )}
+          {/* The server's own count and cap (2026-11-14). No limit means the
+              cap is off: the count alone, never an invented number. */}
+          {billing.extraRuns && (
+            <div className="acct-fact">
+              <dt>Extra runs this month</dt>
+              <dd>
+                {billing.extraRuns.limit === null
+                  ? billing.extraRuns.used
+                  : `${billing.extraRuns.used} of ${billing.extraRuns.limit}`}
+              </dd>
             </div>
           )}
         </dl>
@@ -1421,7 +1437,7 @@ function DeleteAccountSection({
             </ul>
             <p className="key-help acct-delete-note">
               Deleting your account does not clear this browser’s saved History or Gemini key.
-              You can remove them under History and API key.
+              You can remove them under History and Gemini key.
             </p>
           </div>
         </div>

@@ -291,6 +291,17 @@ export interface BillingPrices {
   extraRun: BillingPrice | null;
 }
 
+/** The paid plan's extra runs over the calendar month (UTC). `used` is what
+ *  the monthly cap counts; `limit` is that cap, or null when the server has
+ *  the cap off. */
+export interface BillingExtraRuns {
+  used: number;
+  limit: number | null;
+  period: "month";
+  /** ISO 8601: 00:00 UTC on the first of next month. */
+  resetsAt: string | null;
+}
+
 /** `GET /api/billing`. `enabled: false` means the server has billing off,
  *  and the app then looks exactly as it did before billing existed. */
 export type BillingStatus =
@@ -309,6 +320,10 @@ export type BillingStatus =
       /** `period` (2026-11-14): `day` on both plans now; a body without it
        *  reads as `day`. */
       runs: { limit: number; used: number; period: FreeRunsPeriod };
+      /** Billed extra runs this UTC month (2026-11-14). Null on the free
+       *  plan, and when an older server sends no field or an unreadable one,
+       *  so the Billing card simply leaves the row out. */
+      extraRuns: BillingExtraRuns | null;
       prices: BillingPrices;
     };
 

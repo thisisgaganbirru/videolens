@@ -22,10 +22,16 @@ Plan and usage card stays: it is not billing's).
 - `GET /api/billing` (bearer required; anonymous 401). Off: `{"enabled":
   false}`. On: `{"enabled": true, "plan": "free"|"paid", "status",
   "interval": "month"|"year"|null, "current_period_end", "cancel_at_period_end",
-  "runs": {"limit", "used", "period"}, "prices": {"month", "year", "extra_run"}}`, each
+  "runs": {"limit", "used", "period"}, "extra_runs", "prices": {"month", "year", "extra_run"}}`, each
   price `{"amount", "currency"}` (minor units) or null. `runs.period`
   (2026-11-14) is `day` on both plans; missing reads as `day`
-  (`BillingDetails.runs.period`).
+  (`BillingDetails.runs.period`). `extra_runs` (2026-11-14, backend commit
+  12d30d0) is `{"used", "limit", "period": "month", "resets_at"}` on a paid
+  account and null on a free one; `limit` is null when the monthly cap is
+  off. Read into `BillingDetails.extraRuns` (`BillingExtraRuns`): only for
+  `plan: "paid"`, and a missing, null or unreadable field (unreadable count,
+  or a limit that is neither a count nor null) becomes null, so an older
+  backend leaves the Billing card exactly as it was.
 - `POST /api/billing/checkout` `{"interval"}` → `{"url"}`; 409
   `already_subscribed`.
 - `POST /api/billing/portal` → `{"url"}`; 404 `no_billing_account`.
@@ -37,7 +43,7 @@ Plan and usage card stays: it is not billing's).
 
 | Layer | File | What |
 |---|---|---|
-| domain | `domain/entities.ts` | `BillingPlan`, `BillingInterval`, `BillingPrice(s)`, `BillingStatus`, `BillingDetails` (the enabled variant); `FreeRunsStatus.plan/overage`; `MediaLimitsTable.paid` |
+| domain | `domain/entities.ts` | `BillingPlan`, `BillingInterval`, `BillingPrice(s)`, `BillingExtraRuns`, `BillingStatus`, `BillingDetails` (the enabled variant); `FreeRunsStatus.plan/overage`; `MediaLimitsTable.paid` |
 | domain | `domain/ports.ts` | `BillingGateway` (`fetchBilling`, `startCheckout`, `openPortal`) |
 | infrastructure | `infrastructure/billingGateway.ts` | `FetchBillingGateway` over the shared `ApiClient` (bearer rides along). Normalises: only a literal `enabled: true` turns billing on; unreadable run counts throw; a price needs a count and a 3-letter currency or it is null; the redirect URL must be `https:` |
 | infrastructure | `infrastructure/container.ts` | `billingGateway` |
@@ -79,16 +85,20 @@ Gemini key needed") is gone: it read as if a free account needed a key.
   year" ("Billed monthly|yearly" if that price is null) and "Renews" /
   "Ends" (`cancel_at_period_end`) → the date; "Payment failed. Update your
   card in Manage billing." when `status` is `past_due` or `unpaid` (Manage
-  billing turns primary); the extra-run terms line; "Manage billing". Runs
-  left today is in the Plan and usage card directly above and is not
-  repeated. **Extra runs used this month is not shown: `GET /api/billing`
-  does not return it** (only the 402 `extra_runs_cap` knows the cap).
+  billing turns primary); "Extra runs this month" → "37 of 200" (the
+  server's `extra_runs.used` and `limit`; just "37" when the limit is null,
+  never an invented cap; no row when the field is absent or null); the
+  extra-run terms line, unchanged; "Manage billing". Runs left today is in
+  the Plan and usage card directly above and is not repeated.
 - **Reserved height.** `useBilling().pending` is true from the moment an
   owner is set until the read answers (`Snapshot.settled`, success or
   failure). Meanwhile the panel lays out the group it expects (Upgrade, or
   Billing if `/api/free-runs` already said `paid`) with stand-in values,
   `visibility: hidden`, `aria-hidden`, `inert`, so the groups below do not
-  drop when the real one lands. With billing off nothing is reserved.
+  drop when the real one lands. With billing off nothing is reserved. The
+  paid stand-in carries an extra-runs row (0 of 200), so the row is reserved
+  too; only an older backend without the field drops it once, when the card
+  lands.
 - **Actions.** A press asks the server for the URL (label "Opening…",
   `aria-disabled` on every control), then `window.location.assign(url)`.
   `already_subscribed` → "You are already on the paid plan." + re-read;
@@ -182,8 +192,14 @@ record for invoices and tax. Terms "Paid plan" and Privacy "Payments" say so
 
 - The comparison's "30 a day" and the terms line's "200 a month" are constants (`PAID_RUNS_PER_DAY`,
   `PAID_EXTRA_RUNS_PER_MONTH`), because the free-plan body's `runs.limit` is
-  the free allowance and no body carries the extra-run cap except the 402.
-  If the server's cap setting changes, change the constant too.
+  the free allowance and the free body carries no extra-run cap
+  (`extra_runs` is null there). The paid card's "Extra runs this month" row
+  uses the server's own `extra_runs.limit`; the terms sentence beside it
+  still uses the constant. If the server's cap setting changes, change the
+  constant too.
+- `extra_runs.used` counts runs still in flight past the included ones
+  (backend `held` rows), so it can be one or two ahead of what Stripe has
+  billed. `resets_at` is read but not shown.
 - A user who pays in the browser and never signs in there sees the plan only
   after the app next reads billing (resume or tab visible).
 
@@ -194,3 +210,4 @@ record for invoices and tax. Terms "Paid plan" and Privacy "Payments" say so
 - 2026-11-14 · frontend agent · free-plan pitch no longer leads with "100 runs a month" (the free account is now 10 a day): "videos up to 10 minutes without your own key, and runs past the daily limit", included runs and extra-run price as a trailing clause; offer flagged for an owner rethink
 - 2026-11-14 · frontend agent · paid plan is 30 runs a day: pitch "The paid plan: 30 runs a day instead of 10, videos up to 10 minutes, and no Gemini key needed. Past the 30, extra runs are $X each, up to 200 a month."; paid card "N of L used today." and "Extra runs are $X each, up to 200 a month."; identity "Runs left today"; `runs.period` read (missing = day); `PAID_RUNS_PER_MONTH` removed; Terms and Privacy follow
 - 2026-11-14 · frontend agent · Account refinement: the Plan group is split into Plan and usage (always, see auth-sign-in.md), Upgrade (two-column comparison, price, one "Upgrade to paid" action, yearly as a quiet link, extra-run terms on their own line) and Billing (price, renews/ends, terms, Manage billing); pitch sentence removed; `useBilling().pending` + an inert stand-in reserve the group's height; extra runs used this month not shown (not in the API)
+- 2026-11-14 · frontend agent · paid Billing card shows "Extra runs this month" ("N of L", or "N" when the cap is off) from the new `extra_runs` field (`BillingExtraRuns`, normalised to null when absent/unreadable or on a free plan); the reserved paid stand-in includes the row; terms sentence unchanged
