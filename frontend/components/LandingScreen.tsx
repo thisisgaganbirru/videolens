@@ -30,10 +30,8 @@ import { APP_PATH } from "@/application/useMainTab";
 export default function LandingScreen() {
   return (
     <div className="shell" data-view="landing">
-      {/* "Get started", not "Sign in": this page is for new visitors. Kept
-          in the outlined voice: the hero's green "Start analyzing" is on
-          screen with it, and a view gets one green fill. */}
-      <RouteNav activeTab={null} landing signedOutLabel="Get started" />
+      {/* Account access is distinct from the no-account analysis action. */}
+      <RouteNav activeTab={null} landing />
 
       <main className="view-scroll" data-view="landing" aria-label="VideoLens AI">
         <div className="landing">
@@ -43,7 +41,7 @@ export default function LandingScreen() {
               <h1 className="landing-title">Turn any short video into clean notes.</h1>
               <p className="landing-lede">
                 Paste a link or add a file. You get a transcript, the text on screen, a short summary
-                and notes you can keep. A few free runs to start, no account needed.
+                and notes you can keep.
               </p>
               <div className="landing-actions">
                 <Link href={APP_PATH} className="btn btn-primary btn-pill landing-btn">
@@ -53,6 +51,10 @@ export default function LandingScreen() {
                   See how it works
                 </a>
               </div>
+              <p className="landing-reassurance">Free runs to start. No account needed.</p>
+              <p className="landing-limit-note">
+                Check your available runs and video-length limits in Analyze before you begin.
+              </p>
             </div>
 
             <SampleResult />
@@ -115,10 +117,23 @@ export default function LandingScreen() {
                 <dd>Text, code and charts from the frames.</dd>
               </div>
             </dl>
-            <p className="landing-wyg-foot">
-              Files are deleted from our servers as soon as a run finishes. Your History stays in this
-              browser. When the free runs are used up, add your own Gemini key and keep going.
-            </p>
+            <dl className="landing-wyg-foot landing-details">
+              <div>
+                <dt>Your files</dt>
+                <dd>Deleted from our servers as soon as a run finishes.</dd>
+              </div>
+              <div>
+                <dt>Your history</dt>
+                <dd>Saved in this browser, so you can come back to your notes.</dd>
+              </div>
+              <div>
+                <dt>After the free runs</dt>
+                <dd>
+                  Add your own Gemini key to keep going.{' '}
+                  <Link href={`${APP_PATH}?view=api-key`} className="text-link">Set up a key</Link>
+                </dd>
+              </div>
+            </dl>
           </section>
 
           <section className="landing-band" aria-labelledby="landing-band-title">

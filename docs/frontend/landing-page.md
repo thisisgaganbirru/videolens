@@ -95,7 +95,7 @@ The copy claims only what the app does today:
   configuration.
 - What you get: the four result tabs, in the intake's own words (`.wyg-row`,
   `.chip`), so the two pages say it the same way.
-- The foot of "What you get" says: files are deleted from the servers when a
+- The details at the foot of "What you get" explain: files are deleted from the servers when a
   run finishes; History stays in this browser; when the free runs are used up,
   add your own Gemini key. All three are true (see `CLAUDE.md` "How a run
   flows", `run-history.md`, `byok-api-key.md`).
@@ -137,12 +137,24 @@ height, so the CTAs are never pushed off-screen. Measured in dev (iframe
 probes): 1366×768, 1440×900, 1920×1080 and 1024×700, hero = band and `#how`
 below the band; 1280×600 and 390×844 unchanged.
 
-`#how` ("How it works") is the second screen under the same query: it is also
-`min-height: 100cqb`, a centred flex column, with `margin-top: 0` and
-`scroll-margin-top: 0`. "See how it works" therefore lands it exactly on the
-band with the heading and steps centred (equal space above and below: 291px at
-1920×955, 198px at 1366×768), and "What you get" starts below the fold instead
-of being cut off by the footer.
+`#how` now uses its natural content height, with a modest top inset and
+scroll margin. The hero still fills the first desktop screen, but the process
+steps no longer reserve another entire screen before the benefits.
+
+## Landing clarity refinement (2026-11-14)
+
+- The account entry uses the shared "Sign in" label on desktop and in the
+  phone menu. "Start analyzing" continues to open `/app` without an account.
+- Free runs and no-account reassurance sit directly below the hero actions.
+  The next line directs visitors to Analyze for available runs and video-length
+  limits. These values are server-controlled and are deliberately not hard-coded.
+- The former benefits footnote is now a three-part definition list: files,
+  browser-local History, and continuing with a Gemini key. It stacks on phones
+  and uses three columns from 48rem; the key setup link opens `/app?view=api-key`.
+- The sample remains an illustrative, labeled example. No verified source
+  video/result pair was found in the repository; replacing it with real proof
+  requires that content, rather than relabeling authored text as a real run.
+
 
 ## Measured (2026-11-01, `next build` + `next start -p 3015`, Playwright, `/api/*` mocked)
 

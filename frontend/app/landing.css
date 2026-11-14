@@ -57,6 +57,35 @@
   min-height: 3.125rem;
   padding-inline: 1.5rem;
   text-decoration: none;
+  white-space: nowrap;
+}
+.landing-reassurance {
+  margin: var(--space-sm) 0 0;
+  color: var(--color-ink);
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+.landing-limit-note {
+  margin: var(--space-2xs) 0 0;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  max-width: 34rem;
+}
+.landing-details {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-md);
+}
+.landing-details dt {
+  font-weight: 600;
+  color: var(--color-ink);
+}
+.landing-details dd {
+  margin: var(--space-2xs) 0 0;
+}
+.landing-details .text-link {
+  white-space: nowrap;
 }
 
 /* The sample card: the results card in miniature. */
@@ -237,6 +266,9 @@
 
 /* ---- wider ---- */
 @media (min-width: 48rem) {
+  .landing-details {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
   .landing {
     padding-block: var(--space-xl) 4rem;
   }
@@ -291,15 +323,11 @@
   .landing-hero {
     min-height: 100cqb;
   }
-  /* "How it works" is the second screen: "See how it works" lands it exactly
-     on the band, with the heading and steps centred in it, and "What you get"
-     starting below the fold rather than cut off by the footer. */
+  /* Keep the process content-sized so the benefits follow without a full
+     screen of whitespace. The scroll container already clears the nav. */
   .landing > #how {
-    min-height: 100cqb;
     margin-top: 0;
-    scroll-margin-top: 0;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
+    padding-top: var(--space-lg);
+    scroll-margin-top: var(--space-md);
   }
 }
