@@ -114,6 +114,16 @@ and `try_consume` take optional `limit=` and `period=` (default the free
 daily one) for this; with an explicit limit the store answers whenever it
 exists, even with `FREE_RUNS_PER_ACCOUNT_DAILY <= 0`.
 
+**Complimentary Plus** (`billing.md`, since 2026-11-14; `accounts.complimentary_plus`
+set by hand in SQL): the same daily row and `PAID_RUNS_PER_DAY` limit with
+or without Stripe, and `DAILY_RUN_CAP` skipped, but never an extra run.
+Past the limit it gets the free account's refusal, `402 {"code":
+"free_runs_used", "scope": "account", "period": "day", "limit", "used"}`
+with "You have used today's Plus runs..."; BYOK stays exempt.
+`GET /api/free-runs` says `plan: "paid"`, `overage: false`,
+`complimentary: true` (`complimentary` is false for every other signed-in
+caller and left out for anonymous ones).
+
 ## How easy is it to bypass
 
 - **Clearing storage or a private window** gives a new device token and a fresh device count. This is bounded by the per-IP counter (10/day by default). `GET /api/free-runs` (which issues the token) is also rate-limited per IP since 2026-11-07 (`READ_RATE_LIMIT_PER_MINUTE`).
@@ -141,3 +151,4 @@ The purpose is to stop casual overuse of the shared key, not to authenticate any
 - 2026-11-13 · backend agent · paid plan: the account counter doubles as the paid plan's included runs (`limit=`), `plan`/`overage` on `GET /api/free-runs` for signed-in callers, `extra_runs_cap` 402
 - 2026-11-14 · backend agent · signed-in free accounts: 10 per UTC day (`FREE_RUNS_PER_ACCOUNT_DAILY`, replaces `FREE_RUNS_PER_ACCOUNT_MONTHLY`), day keys "YYYY-MM-DD" beside the paid plan's monthly "YYYY-MM" (separate rows, no double counting), `period` on every `GET /api/free-runs` response and 402, account 402 says "today", migration `0005_account_daily_free_runs` (period varchar(10)), refunds pinned to the claim's day
 - 2026-11-14 · backend agent · the paid plan's included runs are daily too: `PAID_RUNS_PER_DAY` (30) replaces `PAID_RUNS_PER_MONTH` (100), on the same daily row as the free plan (each run counted once, each plan its own limit); paid `period` "day", `resets_at` next UTC midnight; extra-run cap still monthly; no migration
+- 2026-11-14 · backend agent · complimentary Plus (`billing.md`): counted on the same daily account row with `PAID_RUNS_PER_DAY`; past it 402 `free_runs_used` (scope `account`, period `day`), never billed; `GET /api/free-runs` reads `plan: "paid"`, `overage: false`, `complimentary: true` (the field is `false` for every other signed-in caller, absent for anonymous)

@@ -110,6 +110,9 @@ type AccountPanelProps = {
   /** A billing request failed; keep its reservation with an unavailable
    *  message, rather than treating the deployment as billing-disabled. */
   billingFailed: boolean;
+  /** Complimentary Plus (2026-11-14), as the plan or the run count says:
+   *  paid with nothing to buy or manage, so no Upgrade or Billing group. */
+  complimentary?: boolean;
   /** Set when this load came back from Stripe Checkout
    *  (`?billing=success|cancel`, already stripped from the address). */
   checkoutReturn: CheckoutReturn | null;
@@ -137,6 +140,7 @@ export default function AccountPanel({
   billing,
   billingPending,
   billingFailed,
+  complimentary = false,
   checkoutReturn,
   limits,
   savedHistory = "off",
@@ -205,6 +209,7 @@ export default function AccountPanel({
           billing={billing}
           billingPending={billingPending}
           billingFailed={billingFailed}
+          complimentary={complimentary}
           limits={limits}
           onDeleted={markDeleted}
           savedHistory={savedHistory}
@@ -451,6 +456,7 @@ function SignedIn({
   billing,
   billingPending,
   billingFailed,
+  complimentary: complimentaryRead,
   limits,
   onDeleted,
   savedHistory,
@@ -464,6 +470,7 @@ function SignedIn({
   billing: BillingDetails | null;
   billingPending: boolean;
   billingFailed: boolean;
+  complimentary: boolean;
   limits: MediaLimitsState;
   onDeleted: (signedOut: Promise<void>, purgeAt: string | null) => void;
   savedHistory: SavedHistoryMode;
@@ -481,7 +488,11 @@ function SignedIn({
   /* `/api/me` saying paid is remembered for the next visit's stand-in too
      (HomeScreen remembers the plan and count reads), so a paid account
      whose plan read fails still gets the Billing stand-in next time. */
-  useRememberPlan(account?.entitlement?.plan === "paid" ? "paid" : null, false);
+  useRememberPlan(
+    account?.entitlement?.plan === "paid" ? "paid" : null,
+    false,
+    account?.entitlement?.complimentary === true
+  );
 
   if (held && restore.state.phase !== "restored") {
     return (
@@ -516,6 +527,10 @@ function SignedIn({
      card (which moved every group under it). */
   const entitledPaid = account?.entitlement?.plan === "paid";
   const paid = billing?.plan === "paid" || freeRuns?.plan === "paid" || entitledPaid;
+  /* Complimentary Plus (2026-11-14): any read saying so makes it Plus with
+     nothing to buy or manage, whatever billing's `enabled` says. No Upgrade,
+     no Billing group, no stand-in for one. */
+  const complimentary = complimentaryRead || account?.entitlement?.complimentary === true;
   /* Some read has said which plan this is (free or paid). */
   const planNamed = billing !== null || freeRuns !== null || Boolean(account?.entitlement);
 
@@ -557,10 +572,11 @@ function SignedIn({
         billingPending={billingPending}
         billingFailed={billingFailed}
         entitledPaid={entitledPaid}
+        complimentary={complimentary}
         limits={limits}
       />
 
-      {billing && !billingFailed ? (
+      {complimentary ? null : billing && !billingFailed ? (
         billing.plan === "paid" ? (
           <BillingGroup billing={billing} />
         ) : (
@@ -569,7 +585,13 @@ function SignedIn({
       ) : billingPending || billingFailed ? (
         /* Keep the existing stand-in's dimensions. Static loading lines or
            a failure message are painted over it without entering flow. */
-        <div className="acct-loading-group" aria-busy={billingPending || undefined}>
+        <div
+          className="acct-loading-group"
+          aria-busy={billingPending || undefined}
+          /* Nothing has named the plan: the pre-paint stamp picks the
+             stand-in, and a complimentary stamp means none (CSS). */
+          data-plan-unnamed={(!paid && !planNamed) || undefined}
+        >
           <div className="acct-ghost" aria-hidden="true" inert>
             {paid ? (
               <BillingGroup billing={billing ?? GHOST_PAID_BILLING} />
@@ -689,6 +711,7 @@ function PlanUsageGroup({
   billingPending,
   billingFailed,
   entitledPaid,
+  complimentary,
   limits,
 }: {
   freeRuns: FreeRunsBanner | null;
@@ -698,9 +721,11 @@ function PlanUsageGroup({
   billingFailed: boolean;
   /** The session's own entitlement (`/api/me`) says the plan is paid. */
   entitledPaid: boolean;
+  /** Complimentary Plus: paid, nothing to pay. */
+  complimentary: boolean;
   limits: MediaLimitsState;
 }) {
-  const paid = billing?.plan === "paid" || freeRuns?.plan === "paid" || entitledPaid;
+  const paid = complimentary || billing?.plan === "paid" || freeRuns?.plan === "paid" || entitledPaid;
   /* Either read can name the plan; with both settled and silent (billing
      off, or a saved key so no count is read) the account is a free one.
      A failed plan read with no count is not silence: the plan is not known,
@@ -782,6 +807,15 @@ function PlanUsageGroup({
         <p className="acct-plan-name">
           {planFailed ? "Plan unavailable" : planKnown ? (paid ? "Plus" : "Free account") : <PlaceholderLine />}
         </p>
+        {/* Complimentary Plus (2026-11-14): one quiet line in place of the
+            price and renewal a subscription shows below. While the plan is
+            unknown its line is held only when the pre-paint stamp says the
+            last read was complimentary (CSS), so it never moves the rows. */}
+        {complimentary && !planFailed ? (
+          <p className="acct-plan-sub">Complimentary. Nothing to pay.</p>
+        ) : !planKnown ? (
+          <p className="acct-plan-sub acct-plan-sub-held" aria-hidden="true" />
+        ) : null}
         <dl className="acct-facts">
           <div className="acct-usage" aria-busy={waiting || undefined}>
             <dt className="sr-only">Runs</dt>
@@ -819,6 +853,8 @@ function PlaceholderLine() {
    they would fill. */
 const GHOST_FREE_BILLING: BillingDetails = {
   enabled: true,
+  stripe: true,
+  complimentary: false,
   plan: "free",
   status: null,
   interval: null,

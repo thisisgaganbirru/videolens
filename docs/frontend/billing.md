@@ -39,6 +39,11 @@ nothing. The Plan and usage card remains independent of billing.
   `already_subscribed`.
 - `POST /api/billing/portal` → `{"url"}`; 404 `no_billing_account`.
 - Both return to `/app?view=account&billing=success|cancel`.
+- `complimentary` (2026-11-14): top-level boolean on `GET /api/billing`
+  (full body even with Stripe off for a complimentary account),
+  `entitlement.complimentary` on `GET /api/me`, `complimentary` on a signed-in
+  `GET /api/free-runs`; 409 `complimentary_plan` from checkout and portal.
+  See "Complimentary Plus" below.
 - `GET /api/free-runs` gains `plan` and `overage`; `GET /api/limits` gains an
   optional `paid` tier; the capabilities report gains a `billing` row.
 
@@ -216,6 +221,57 @@ record for invoices and tax. Terms "Plus" and Privacy "Payments" say so
 - A user who pays in the browser and never signs in there sees the plan only
   after the app next reads billing (resume or tab visible).
 
+## Complimentary Plus (2026-11-14)
+
+An account the owner flags by hand in the database is on the paid plan with
+no Stripe subscription, even on a server with Stripe unconfigured (backend:
+`docs/backend/billing.md`). Rule in the client: **if any read says
+`complimentary: true`, the account is Plus, whatever `enabled` says**, and
+nothing is offered to buy or manage.
+
+- **Where it is read.** `GET /api/free-runs` `complimentary` →
+  `FreeRunsStatus.complimentary` / `FreeRunsBanner.complimentary` (forces
+  `plan: "paid"` and `overage: false`); `GET /api/me`
+  `entitlement.complimentary` (`AccountEntitlement.complimentary`, optional);
+  `GET /api/billing` `complimentary` → `BillingDetails.complimentary`.
+  `HomeScreen` ORs the plan and run-count reads; `AccountPanel` adds `/api/me`.
+- **The billing body.** `normalise` now returns a details object for
+  `enabled: true` *or* `complimentary: true`. `BillingDetails.stripe` carries
+  the server's own `enabled`; `enabled: true` on the client type means "the
+  body describes a plan". Complimentary bodies never carry `extraRuns`.
+  `/api/billing` is still only requested when the `billing` capability is
+  `ok` (Stripe on): with Stripe off nothing new is fetched, and the
+  run-count and `/api/me` reads carry the flag instead. So an ordinary
+  account on a Stripe-off server makes exactly the requests it did before.
+- **Account.** Plan and usage reads "Plus" with one muted line under the
+  name, "Complimentary. Nothing to pay." (`.acct-plan-sub`). No Upgrade
+  group, no Billing group (so no price, renewal, extra-runs row or Manage
+  billing), no stand-in for either. Runs come from the run count (30 a day).
+- **Layout hold.** The pre-paint stamp `data-plan-paid` is now
+  `"complimentary"` (stored `videolens-plan-paid = c`) when the last read
+  said complimentary, empty for a subscription (stored `1`, unchanged).
+  With that stamp, CSS hides the unnamed-plan stand-in
+  (`.acct-loading-group[data-plan-unnamed]`) and holds the
+  "Complimentary" line's height while the plan is unknown
+  (`.acct-plan-sub-held`). Measured return-visit layout shift on Account:
+  0 at 412, 0.0009 at 1280 (Stripe on and off). The first visit on a
+  device (no stamp) still lays out the Upgrade stand-in and drops it, like
+  any first visit.
+- **Out of runs.** Past the 30 the server answers 402 `free_runs_used`.
+  `markFreeRunsUsed` keeps the last read's plan and `complimentary` for the
+  same scope (it used to force `free`), so the strip says "You've used
+  today's 30 runs. They reset at <time>." and the block offers only "Use
+  your own Gemini key" (`blockedOffer` is `key`: the plan is never `free`).
+  No "Upgrade to Plus" anywhere.
+- **409 `complimentary_plan`** on checkout or portal: no control asks for
+  either, so it can only follow a stale screen. `useBillingActions` shows
+  "Your account has complimentary Plus. There is nothing to pay for." and
+  re-reads the plan.
+- **Saved History** is gated on sign-in and the server's `saved_history`
+  answer, never on billing, so it shows for complimentary exactly as for a
+  subscriber, Stripe on or off (`saved-history.md`). Landing reads the run
+  count's `plan`, which is `paid`: "30 runs a day on Plus."
+
 ## Saved history and the plan (2026-11-14)
 
 The Upgrade comparison has a third row group, History: "Last 20 in this
@@ -239,3 +295,4 @@ back on the free plan. See `saved-history.md`.
 2026-11-14 · frontend agent · Upgrade comparison gains a History row (last 20 in this browser vs saved to your account, on every device); restoring a held account re-reads the plan (`refreshBilling`); the plan-ended window for saved runs is shown on History and the Account History row (see saved-history.md)
 - 2026-11-14 · frontend agent · Account stand-in: until a read names the plan both stand-ins are rendered and the pre-paint `data-plan-paid` hint (last plan read, `videolens-plan-paid`; written from billing/free-runs in HomeScreen and from a paid `/api/me` entitlement in AccountPanel, cleared by a free read and on sign-out) picks Billing vs Upgrade: paid at 412 0.0239 -> 0.0000 with the hint (first visit and a stale hint still 0.0239 once). Paid plan with failed reads shows "Length unavailable" instead of the free length
 - 2026-11-14 · frontend agent · paid plan is named Plus in the UI
+- 2026-11-14 · frontend agent · complimentary Plus: `complimentary` read from billing, free-runs and `/api/me` (a complimentary billing body reads as paid even with `enabled: false`); Account shows Plus with "Complimentary. Nothing to pay." and no Upgrade/Billing group; `data-plan-paid="complimentary"` stamp holds the layout; a 402 past the 30 keeps the plan (no upgrade offer); 409 `complimentary_plan` handled

@@ -240,7 +240,13 @@ export function useBillingActions() {
       busyRef.current = false;
       setBusy(null);
       const code = err instanceof ApiError ? err.code : undefined;
-      if (code === "already_subscribed") {
+      if (code === "complimentary_plan") {
+        /* 409 (2026-11-14): complimentary Plus has nothing to buy or
+           manage. The panel draws no control that asks, so this only
+           follows a stale screen; re-read so the right card replaces it. */
+        setError("Your account has complimentary Plus. There is nothing to pay for.");
+        void refreshBilling();
+      } else if (code === "already_subscribed") {
         setError("You are already on Plus.");
         void refreshBilling();
       } else if (

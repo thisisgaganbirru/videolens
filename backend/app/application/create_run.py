@@ -10,6 +10,7 @@ from ..domain.entities import (
     FreeRunClaim,
     FreeRunPeriod,
     FreeRunScope,
+    PlanStanding,
     Principal,
     Run,
 )
@@ -46,6 +47,11 @@ from .entitlements import EntitlementResolver
 FREE_RUNS_USED_MESSAGE = "You have used your free runs. Add your own Gemini key to keep going."
 ACCOUNT_FREE_RUNS_USED_MESSAGE = (
     "You have used today's free runs. Add your own Gemini key to keep going, or come back tomorrow."
+)
+# Complimentary Plus past its included runs: refused like a free account
+# out of runs (402 `free_runs_used`), never billed (docs/backend/billing.md).
+PLUS_RUNS_USED_MESSAGE = (
+    "You have used today's Plus runs. Add your own Gemini key to keep going, or come back tomorrow."
 )
 EXTRA_RUNS_CAP_MESSAGE = (
     "You have reached this month's limit on extra runs. Add your own Gemini key to keep going, "
@@ -156,9 +162,10 @@ class CreateRunUseCase:
                 await file.close()
             raise InvalidSourceError("Provide exactly one source: either a media file or a public URL.")
 
-        # The paid plan decides the counter, the media limits and the daily
-        # cap below, with or without the caller's own key.
-        paid = await self._paid_account(principal)
+        # The paid plan (a subscription or complimentary Plus) decides the
+        # counter, the media limits and the daily cap below, with or
+        # without the caller's own key.
+        plan = await self._plan(principal)
         # Nothing below this line may run for a caller who isn't allowed to
         # start one: no download, no FFmpeg, no budget spent.
         admission = await self._admit(
@@ -166,7 +173,7 @@ class CreateRunUseCase:
             gemini_api_key=gemini_api_key,
             device_token=device_token,
             client_ip=client_ip,
-            paid=paid,
+            plan=plan,
         )
         try:
             if admission is not None:
@@ -177,7 +184,7 @@ class CreateRunUseCase:
             # Signed in + own key: the bigger set; anyone else: standard, with
             # a plain-words hint about what signing in / a key would unlock.
             limits = (
-                self._entitlements.media_limits(principal, byok=bool(gemini_api_key), paid=paid is not None)
+                self._entitlements.media_limits(principal, byok=bool(gemini_api_key), paid=plan.paid)
                 if self._entitlements is not None
                 else None
             )
@@ -190,8 +197,9 @@ class CreateRunUseCase:
                 limits=limits,
                 # Paid runs are paid for (included in the plan, or billed as
                 # an extra run), so the shared cap on free spend does not
-                # apply to them (docs/backend/billing.md).
-                exempt_daily_cap=paid is not None,
+                # apply to them (docs/backend/billing.md). Complimentary Plus
+                # is the paid plan too, bounded by its included runs.
+                exempt_daily_cap=plan.paid,
             )
         except Exception:
             # A rejected intake (over the daily cap, too long, unschedulable)
@@ -202,10 +210,10 @@ class CreateRunUseCase:
                 await admission.allowance.refund(admission.claim)
             raise
 
-    async def _paid_account(self, principal: Principal) -> BillingAccount | None:
+    async def _plan(self, principal: Principal) -> PlanStanding:
         if self._billing is None or not principal.authenticated or not principal.account_id:
-            return None
-        return await self._billing.paid_account(principal.account_id)
+            return PlanStanding()
+        return await self._billing.standing(principal.account_id)
 
     async def _admit(
         self,
@@ -214,7 +222,7 @@ class CreateRunUseCase:
         gemini_api_key: str | None,
         device_token: str | None,
         client_ip: str,
-        paid: BillingAccount | None = None,
+        plan: PlanStanding = PlanStanding(),
     ) -> _Admission | None:
         """Whether this caller may start a run on the shared Gemini key.
 
@@ -229,8 +237,10 @@ class CreateRunUseCase:
         if gemini_api_key:
             return None
         accounts = self._account_free_runs
-        if paid is not None and self._billing is not None and accounts is not None:
-            return await self._admit_paid(paid, accounts)
+        if plan.subscription is not None and self._billing is not None and accounts is not None:
+            return await self._admit_paid(plan.subscription, accounts)
+        if plan.complimentary and principal.account_id and self._billing is not None and accounts is not None:
+            return await self._admit_complimentary(principal.account_id, accounts)
         if principal.authenticated and principal.account_id and accounts is not None and accounts.enabled:
             # Instead of the device counter, never on top of it: no device
             # token needed, the device count is not touched, and no IP
@@ -283,6 +293,26 @@ class CreateRunUseCase:
         if cap > 0 and await billing.extra_runs_used(paid.account_id, period) >= cap:
             raise ExtraRunsCapReachedError(EXTRA_RUNS_CAP_MESSAGE, limit=cap)
         return _Admission(allowance=_ExtraRunHold(billing.ledger, paid, period), claim=None)
+
+    async def _admit_complimentary(self, account_id: str, accounts: AccountFreeRunAllowance) -> _Admission:
+        """Complimentary Plus: the same daily counter and limit as the paid
+        plan's included runs (`PAID_RUNS_PER_DAY`), but never an extra run:
+        past the limit it is refused exactly as a free account out of runs
+        is (402 `free_runs_used`, scope account). There is no Stripe
+        customer to bill, so no ledger row is ever written for it."""
+        billing = self._billing
+        assert billing is not None
+        claim = await accounts.try_consume(account_id, limit=billing.paid_runs_per_day, period=billing.paid_runs_period)
+        if claim is not None:
+            return _Admission(allowance=accounts, claim=claim)
+        status = await accounts.status(account_id, limit=billing.paid_runs_per_day, period=billing.paid_runs_period)
+        raise FreeRunsExhaustedError(
+            PLUS_RUNS_USED_MESSAGE,
+            limit=status.limit,
+            used=status.used,
+            scope=FreeRunScope.ACCOUNT.value,
+            period=billing.paid_runs_period.value,
+        )
 
     async def _accept(
         self,

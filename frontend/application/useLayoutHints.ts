@@ -39,10 +39,12 @@ export function useRememberRunsSpent({
 /**
  * `plan`: the signed-in account's plan once a read has named it, else null.
  * `signedOut`: the session is known and nobody is signed in.
+ * `complimentary`: that read said complimentary Plus (2026-11-14), which has
+ * no Billing card, so its stand-in is no card at all.
  */
-export function useRememberPlan(plan: BillingPlan | null, signedOut: boolean): void {
+export function useRememberPlan(plan: BillingPlan | null, signedOut: boolean, complimentary = false): void {
   useEffect(() => {
     if (signedOut) rememberPlan(false);
-    else if (plan) rememberPlan(plan === "paid");
-  }, [plan, signedOut]);
+    else if (plan) rememberPlan(plan === "paid", plan === "paid" && complimentary);
+  }, [plan, signedOut, complimentary]);
 }

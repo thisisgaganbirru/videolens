@@ -10,12 +10,15 @@ class FreeRunStanding:
     """`GET /api/free-runs`. `plan` is None for an anonymous caller, so the
     route leaves the field out for them exactly as before; "free" or "paid"
     for a signed-in account. `overage`: runs past `limit` are billed
-    as extra runs instead of refused (the paid plan)."""
+    as extra runs instead of refused (the paid plan through a subscription;
+    false for complimentary Plus, which is refused past `limit`).
+    `complimentary`: on the paid plan through complimentary Plus."""
 
     device_token: str
     status: FreeRunStatus
     plan: str | None = None
     overage: bool = False
+    complimentary: bool = False
 
 
 class GetFreeRunsUseCase:
@@ -64,14 +67,17 @@ class GetFreeRunsUseCase:
             assert principal is not None and accounts is not None and principal.account_id
             # Same rules as CreateRunUseCase._admit, so the number shown is
             # the counter a run would be taken from.
-            paid = await self._billing.paid_account(principal.account_id) if self._billing is not None else None
-            if paid is not None:
+            plan = await self._billing.standing(principal.account_id) if self._billing is not None else None
+            if plan is not None and plan.paid:
                 status = await accounts.status(
                     principal.account_id,
                     limit=self._billing.paid_runs_per_day,
                     period=self._billing.paid_runs_period,
                 )
-                return FreeRunStanding(token, status, plan="paid", overage=True)
+                # Complimentary Plus is never billed, so no overage.
+                return FreeRunStanding(
+                    token, status, plan="paid", overage=plan.billable, complimentary=plan.complimentary
+                )
             if accounts.enabled:
                 status = await accounts.status(principal.account_id, period=FreeRunPeriod.DAY)
                 return FreeRunStanding(token, status, plan="free")

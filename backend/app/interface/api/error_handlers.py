@@ -20,6 +20,7 @@ from ...domain.errors import (
     BillingIntervalError,
     BillingNotConfiguredError,
     BillingProviderError,
+    ComplimentaryPlanError,
     ExtraRunsCapReachedError,
     NoBillingAccountError,
     SubscriptionCancelFailedError,
@@ -46,6 +47,7 @@ logger = logging.getLogger("videolens")
 _BILLING_STATUS = {
     BillingNotConfiguredError: 503,
     AlreadySubscribedError: 409,
+    ComplimentaryPlanError: 409,
     NoBillingAccountError: 404,
     BillingIntervalError: 400,
     BillingProviderError: 503,

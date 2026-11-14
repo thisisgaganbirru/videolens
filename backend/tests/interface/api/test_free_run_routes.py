@@ -178,13 +178,14 @@ class AccountFreeRunRouteTests(unittest.TestCase):
                 "resets_at",
                 "plan",
                 "overage",
+                "complimentary",
             },
         )
         self.assertEqual(
             (body["enabled"], body["scope"], body["period"], body["limit"], body["used"], body["remaining"]),
             (True, "account", "day", 10, 0, 10),
         )
-        self.assertEqual((body["plan"], body["overage"]), ("free", False))
+        self.assertEqual((body["plan"], body["overage"], body["complimentary"]), ("free", False, False))
         # Still issued, so the person keeps a device token after signing out.
         self.assertIsNotNone(container.device_tokens.verify(body["device_token"]))
         # Daily since 2026-11-14: the next UTC midnight.
