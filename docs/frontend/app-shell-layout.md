@@ -936,6 +936,23 @@ video", queued/processing/lost "Analyzing", failed "Run failed", expired "Run
 expired", result the result title (or "Result"); "History", "Gemini key",
 "Releases", "Account". No render-time DOM read, no localStorage.
 
+## Phone menu order (UX fix spec 6.1, 2026-11-14)
+
+- `.menu-panel` rows are picked from `navTabs(showAccount)` in the order
+  Analyze, History, Account (when offered), Gemini key, Releases (`menuTabs` in
+  `AppNav`). `MAIN_TABS`, `navTabs`, the desktop inline tabs (Analyze,
+  History, Gemini key, Releases), the dock and the More sheet are unchanged.
+- The Gemini key row carries `.menu-item--minor-first` (`margin-top:
+  var(--space-md)`, declared after `.menu-item` because of its `all: unset`),
+  so the menu reads as two groups.
+- Signed out, the Account row reads "Sign in for 10 runs a day"
+  (`ACCOUNT_FREE_RUNS_PER_DAY`) on every route, the landing included. The bar
+  pill still uses `signedOutLabel` ("Sign in"; "Get 10 free runs" on `/`).
+- Measured at 320 and 412 on `/`, `/app`, every tab, the legal pages and
+  404: the same five rows, each 60px; `/offline` has no Account row (its
+  plain `AppNav`, by design). The variant that drops Gemini key and Releases
+  when Account exists was not built (needs the owner's yes).
+
 ## Changelog
 
 - 2026-08-15 · frontend agent (foundation) · rebuilt the shell to the Terminal direction: one-viewport flex chain, pill nav, mobile drawer, 4 tabs, theme toggle
@@ -974,3 +991,4 @@ expired", result the result title (or "Result"); "History", "Gemini key",
 - 2026-11-14 · frontend agent · landing, legal and 404 render `RouteNav`/`RouteTabBar` (AppNav/BottomTabBar plus the Account entry from `useAccountEntry`); `/offline` keeps plain AppNav/BottomTabBar. See auth-sign-in.md
 - 2026-11-14 · frontend agent · the `api-key` tab is labelled "Gemini key" in the top bar, phone menu and More sheet; id and URL unchanged (UX fix spec batch a)
 - 2026-11-14 · frontend agent · UX fix spec batch c: per-view document titles via `useDocumentTitle`
+- 2026-11-14 · frontend agent · UX fix spec batch e: phone menu order Analyze, History, Account, Gemini key, Releases with a gap before the minor pair; signed-out menu row "Sign in for 10 runs a day" on every route

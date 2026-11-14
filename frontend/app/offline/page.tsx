@@ -65,7 +65,7 @@ export default function OfflinePage() {
           </p>
           <div className="offline-actions">
             <a href="/app" className="btn btn-ink btn-pill offline-action">
-              Try again
+              Open the app
             </a>
             <a href="/app?view=history" className="btn btn-secondary btn-pill offline-action">
               Open History

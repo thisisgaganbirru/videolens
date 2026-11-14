@@ -512,6 +512,12 @@ h3 {
   .menu-item:not([aria-current="page"]):active {
     background: var(--color-tint);
   }
+  /* The first of the two minor rows (Gemini key): extra space above it so the
+     menu reads as two groups (UX fix spec 6.1). After `.menu-item`, whose
+     `all: unset` would otherwise clear it. */
+  .menu-item--minor-first {
+    margin-top: var(--space-md);
+  }
 
   /* `.icon-action` is the results view's copy/share button — not part of the
      bar, kept on its own rule so restyling the bar can't move it. */
