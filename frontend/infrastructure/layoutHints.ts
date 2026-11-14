@@ -12,7 +12,10 @@
      offered (`sign-in`, `upgrade` or `key`), because the block's height
      depends on it. Cleared as soon as a read says runs are available.
    - `data-plan-paid`: the last plan read for the signed-in account was the
-     paid plan. Cleared by a free-plan read and on sign-out.
+     paid plan. Cleared by a free-plan read and on sign-out. Its value is
+     `complimentary` (2026-11-14) when that read said complimentary Plus,
+     which draws no Billing card and one extra line in the plan card; empty
+     for a subscription.
 
    Every storage access is wrapped: blocked storage means no hint, which is
    the first-visit layout. */
@@ -59,14 +62,15 @@ export function forgetRunsSpent(): void {
   root()?.removeAttribute(RUNS_SPENT_ATTRIBUTE);
 }
 
-export function rememberPlan(paid: boolean): void {
+/** Stored `c` for complimentary Plus, `1` for a subscription. */
+export function rememberPlan(paid: boolean, complimentary = false): void {
   try {
-    if (paid) window.localStorage.setItem(PLAN_PAID_KEY, "1");
+    if (paid) window.localStorage.setItem(PLAN_PAID_KEY, complimentary ? "c" : "1");
     else window.localStorage.removeItem(PLAN_PAID_KEY);
   } catch {
     /* storage unavailable */
   }
-  if (paid) root()?.setAttribute(PLAN_PAID_ATTRIBUTE, "");
+  if (paid) root()?.setAttribute(PLAN_PAID_ATTRIBUTE, complimentary ? "complimentary" : "");
   else root()?.removeAttribute(PLAN_PAID_ATTRIBUTE);
 }
 
@@ -80,6 +84,6 @@ export const LAYOUT_HINTS_INIT_SCRIPT = `(function(){var r=document.documentElem
   RUNS_SPENT_KEY
 )});if(v){var p=v.split(" "),o=p[1];var se=r.hasAttribute(${JSON.stringify(SESSION_ATTRIBUTE)});if(+p[0]>Date.now()&&(o==="key"||(o==="sign-in"&&!se)||(o==="upgrade"&&se)))r.setAttribute(${JSON.stringify(
   RUNS_SPENT_ATTRIBUTE
-)},o);else localStorage.removeItem(${JSON.stringify(RUNS_SPENT_KEY)});}if(localStorage.getItem(${JSON.stringify(
+)},o);else localStorage.removeItem(${JSON.stringify(RUNS_SPENT_KEY)});}var pp=localStorage.getItem(${JSON.stringify(
   PLAN_PAID_KEY
-)}))r.setAttribute(${JSON.stringify(PLAN_PAID_ATTRIBUTE)},"");}catch(e){}})();`;
+)});if(pp)r.setAttribute(${JSON.stringify(PLAN_PAID_ATTRIBUTE)},pp==="c"?"complimentary":"");}catch(e){}})();`;

@@ -237,6 +237,10 @@ export interface FreeRunsStatus {
   /** Paid only: runs past `limit` are allowed and billed per run, so a spent
    *  allowance does not block. `false` everywhere else. */
   overage: boolean;
+  /** Complimentary Plus (2026-11-14): the account was put on the paid plan
+   *  by hand, with no subscription. `plan` is then `paid`, `overage` false,
+   *  and nothing is for sale to it. `false` from older servers. */
+  complimentary: boolean;
   /** The random, server-issued token that counts this device's runs. Not tied
    *  to a person. Replaced whenever the server answers with a different one. */
   deviceToken: string;
@@ -302,12 +306,22 @@ export interface BillingExtraRuns {
   resetsAt: string | null;
 }
 
-/** `GET /api/billing`. `enabled: false` means the server has billing off,
- *  and the app then looks exactly as it did before billing existed. */
+/** `GET /api/billing`. `enabled: false` means there is no plan to describe
+ *  (the server has billing off and the account is an ordinary one), and the
+ *  app then looks exactly as it did before billing existed. `enabled: true`
+ *  here means the body describes a plan: Stripe billing is on (`stripe`), or
+ *  the account has complimentary Plus (2026-11-14), which the server
+ *  describes even with Stripe off. */
 export type BillingStatus =
   | { enabled: false }
   | {
       enabled: true;
+      /** The server's own `enabled`: Stripe billing is on, so the plan can
+       *  be bought and managed. False only on a complimentary body. */
+      stripe: boolean;
+      /** Complimentary Plus: on the paid plan with no subscription. Nothing
+       *  to buy, manage or bill; `plan` is `paid`. */
+      complimentary: boolean;
       plan: BillingPlan;
       /** Stripe's subscription status (`active`, `past_due`, `canceled`, ...);
        *  null on the free plan. Kept as a string: an unknown value renders
@@ -357,6 +371,9 @@ export interface AccountEntitlement {
   metered: boolean;
   api_access: boolean;
   library: boolean;
+  /** Complimentary Plus (2026-11-14): `plan` reads `paid` with no
+   *  subscription. Absent on older servers. */
+  complimentary?: boolean;
 }
 
 /** `GET /api/me`. Identity and entitlement, no usage and no plan cards. */

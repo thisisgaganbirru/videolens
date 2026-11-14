@@ -34,7 +34,10 @@ function normalise(raw: unknown): FreeRunsStatus {
   if (typeof body.device_token !== "string" || limit === null || used === null || remaining === null) {
     throw new ApiError(UNREADABLE);
   }
-  const plan = body.plan === "paid" ? "paid" : "free";
+  /* Complimentary Plus (2026-11-14): a literal `true` is the paid plan,
+     never billed, so it has no overage whatever the body says. */
+  const complimentary = body.complimentary === true;
+  const plan = complimentary || body.plan === "paid" ? "paid" : "free";
   return {
     /* Only a literal "account" is the account allowance; missing (a server
        from before 2026-11-13) or anything else is this device's. */
@@ -46,7 +49,8 @@ function normalise(raw: unknown): FreeRunsStatus {
        UTC day (device, free account, and the paid plan's 30), so a body
        without the field reads as `day`; a literal "month" is still honoured. */
     period: body.period === "month" ? "month" : "day",
-    overage: body.plan === "paid" && body.overage === true,
+    overage: plan === "paid" && !complimentary && body.overage === true,
+    complimentary,
     deviceToken: body.device_token,
     limit,
     used,

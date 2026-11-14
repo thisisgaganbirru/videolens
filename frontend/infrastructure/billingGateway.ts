@@ -52,8 +52,12 @@ function extraRuns(raw: unknown): BillingExtraRuns | null {
 function normalise(raw: unknown): BillingStatus {
   const body = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
   /* Only a literal `true` turns billing on: the failure to avoid is drawing
-     a Plan group on a server that cannot sell one. */
-  if (body.enabled !== true) return { enabled: false };
+     a Plan group on a server that cannot sell one. The one exception is
+     complimentary Plus (2026-11-14): a literal `complimentary: true` is a
+     plan the server describes even with Stripe off, and it is always Plus,
+     whatever `enabled` says. */
+  const complimentary = body.complimentary === true;
+  if (body.enabled !== true && !complimentary) return { enabled: false };
   const runs = (typeof body.runs === "object" && body.runs !== null ? body.runs : {}) as Record<string, unknown>;
   const limit = count(runs.limit);
   const used = count(runs.used);
@@ -64,7 +68,9 @@ function normalise(raw: unknown): BillingStatus {
   >;
   return {
     enabled: true,
-    plan: body.plan === "paid" ? "paid" : "free",
+    stripe: body.enabled === true,
+    complimentary,
+    plan: complimentary || body.plan === "paid" ? "paid" : "free",
     status: typeof body.status === "string" && body.status ? body.status : null,
     interval: body.interval === "month" || body.interval === "year" ? body.interval : null,
     currentPeriodEnd:
@@ -75,7 +81,8 @@ function normalise(raw: unknown): BillingStatus {
     /* 2026-11-14: both plans count a UTC day (free 10, paid 30); only a
        literal "month" (an older server) reads otherwise. */
     runs: { limit, used, period: runs.period === "month" ? "month" : "day" },
-    extraRuns: body.plan === "paid" ? extraRuns(body.extra_runs) : null,
+    /* Never on complimentary Plus: it is never billed for extra runs. */
+    extraRuns: body.plan === "paid" && !complimentary ? extraRuns(body.extra_runs) : null,
     prices: { month: price(prices.month), year: price(prices.year), extraRun: price(prices.extra_run) },
   };
 }
