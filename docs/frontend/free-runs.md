@@ -54,7 +54,7 @@ hydration agree.
 ## UI (IntakeFreeApp.png, IntakeLimitApp.png, IntakeWeb.png)
 
 - One white strip above the "New analysis" eyebrow on **every** shell (installed app, phone web, desktop web; in the left column on desktop). The sentence is on the left and the near-black `btn btn-ink btn-pill` "Add key" is on the right.
-- Copy: "**3 free runs left today.** Add your own key for more." The singular is "**1 free run left today.**". Signed out where sign-in is offered, the second sentence is "[Sign in] for 10 a month, or add your own key." (2026-11-14). When spent: "**You have used your free runs.**" with "Add your own key to keep going." on its own line, and the strip gets a `--color-danger-border` hairline. Nothing else turns red.
+- Copy: "**3 free runs left today.** Add your own key for more." The singular is "**1 free run left today.**". Signed out where sign-in is offered, the second sentence is "[Sign in] for 10 a day, or add your own key." (2026-11-14; "a month" until the daily account allowance the same day). When spent: "**You have used your free runs.**" with "Add your own key to keep going." on its own line, and the strip gets a `--color-danger-border` hairline. Nothing else turns red.
 - "Add key" is a real link to `/app?view=api-key` (was `/?view=api-key` before Phase 5c moved the tool) (plain click goes through `goToMainTab`; middle-click opens a new tab).
 - Blocked: Analyze link uses the existing `.btn-primary:disabled` grey. **Browse files is disabled too, and drop is refused** (`dropEffect = "none"`, no highlight). The board draws Browse looking normal, but a control that cannot succeed should not look pressable. The link field and the terms box stay usable, so a typed link survives saving a key and coming back.
 - Accessibility: the `.free-runs-slot` wrapper is always rendered with `role="status"` (implicitly polite), so the count and the switch to "used" are announced without moving focus. It is `display: none` while empty.
@@ -193,6 +193,43 @@ Not verified in a browser: the signed-out spent strip with the sign-in link
 (it needs signing the owner out, which was off limits); typecheck and build
 cover it.
 
+## Daily account allowance (2026-11-14)
+
+Owner decision: a signed-in **free** account gets **10 runs per UTC day**,
+not 10 a month (3 a day anonymous against 10 a month signed in made signing
+in look like a downgrade). Anonymous devices stay at 3 a day; the paid plan
+is unchanged (100 a month, extra runs billed).
+
+- **Contract.** `GET /api/free-runs` gains `period: "day" | "month"` on
+  every response: device `day`, free account `day` (`limit: 10`,
+  `resets_at` next UTC midnight), paid `month`. `FreeRunsStatus.period` and
+  `FreeRunsBanner.period` (`domain/entities.ts` `FreeRunsPeriod`). A server
+  that does not send it yet is read by plan in `freeRunsGateway.normalise`:
+  paid `month`, anything else `day`. A 402 `free_runs_used` is only ever the
+  free plan, so `markFreeRunsUsed` publishes `day`.
+- **Copy follows `period`, not `scope`.** The strip, the blocked note
+  (`UploadForm` prop renamed `blockedScope` -> `blockedPeriod`), the Account
+  identity line and the landing allowance line say "today" / "a day" for
+  `day` and "this month" / "a month" for `month`.
+- **Constant.** `ACCOUNT_FREE_RUNS_PER_MONTH` -> `ACCOUNT_FREE_RUNS_PER_DAY`
+  (10) in `application/accountAllowance.ts`; importers: `FreeRunsBanner`,
+  `LandingAllowance`, `LandingScreen`, `AccountPanel`.
+
+| Where | free account (supersedes the "account" column above) |
+|---|---|
+| Analyze strip, runs left | "**7 free runs left today.** Add your own key for more." |
+| Analyze strip, spent | "**You have used today's 10 free runs.** They reset tomorrow. Add your own Gemini key to keep going[, or upgrade]." (`limit` from the server; "today's free runs" if a 402 carried no limit) |
+| Signed-out hints | "[Sign in] for 10 a day, or add your own key." / "...or [sign in] for 10 free runs a day." |
+| Blocked note | "No free runs left today, so analyzing is paused." |
+| Account identity line | "Free runs left today: N of 10" |
+| Paid strip / identity | unchanged: "N of 100 runs left this month." / "Runs left this month: N of L" |
+
+The spent account sentence is the frontend's own, not the 402 `detail`: the
+strip only renders from a status read or a 402, and "They reset tomorrow" is
+a fixed fact of the daily period. The "account reset is weeks out" note on
+the spent timer no longer applies to free accounts; their reset is hours
+out, the same path as the device.
+
 ## Changelog
 
 - 2026-11-01 · frontend agent (Phase 5b) · created: device token store, free-runs gateway/port, `useFreeRuns` store, 401 retry-once and 402 limit state in `useAnalysisRun`, `FreeRunsBanner` on all shells, `UploadForm` `blocked`, API key lede and Privacy sentence
@@ -205,3 +242,4 @@ cover it.
 - 2026-11-13 · frontend agent · account allowance: `scope` on `FreeRunsStatus`/`ApiError` (missing = device), re-read on sign-in/sign-out with an identity epoch so a stale read is never published, scope-aware copy on the strip, blocked note and Account panel, and a quiet "sign in for 10 free runs a month" link on the spent device strip where sign-in is offered
 - 2026-11-13 · frontend agent · `plan`/`overage` on `FreeRunsStatus`; paid strip "N of L runs left this month." (no pill), past the allowance with overage "Extra runs are billed at $X each." (not blocked); a spent free account adds ", or upgrade." (link to Account) when billing is on. See `billing.md`
 - 2026-11-14 · frontend agent · device strip says "today"; signed out where sign-in is offered it adds one inline "Sign in for 10 a month, or add your own key." so the device and account tiers read as two tiers (Android QA); `ACCOUNT_FREE_RUNS_PER_MONTH` moved to `application/accountAllowance.ts`
+- 2026-11-14 · frontend agent · free account allowance is daily (10/day): `period` (`day`|`month`) on `FreeRunsStatus`/`FreeRunsBanner`, inferred by plan when the server omits it; copy keyed on period ("N free runs left today", spent "You have used today's 10 free runs. They reset tomorrow.", hints "Sign in for 10 a day"); `blockedScope` -> `blockedPeriod`; `ACCOUNT_FREE_RUNS_PER_MONTH` -> `ACCOUNT_FREE_RUNS_PER_DAY`

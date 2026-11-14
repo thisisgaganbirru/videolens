@@ -4,12 +4,12 @@ import type { MouseEvent } from "react";
 import type { FreeRunsBanner as FreeRunsBannerState } from "@/application/useFreeRuns";
 import { goToMainTab, mainTabHref } from "@/application/useMainTab";
 import { isPlainLeftClick } from "@/components/navClick";
-import { ACCOUNT_FREE_RUNS_PER_MONTH } from "@/application/accountAllowance";
+import { ACCOUNT_FREE_RUNS_PER_DAY } from "@/application/accountAllowance";
 
 /* Hallmark · component: banner · genre: editorial · theme: custom (app/tokens.css)
  * boards: design/shots/IntakeFreeApp.png (runs left), IntakeLimitApp.png (spent)
  * states: hidden · runs left (plural / singular) · spent · link hover · focus-visible · active
- *         × scope device (per day) / account (per month, 2026-11-13)
+ *         × scope device / account (2026-11-13) × period day / month (2026-11-14)
  * contrast: ink on surface 17.6:1 light / 15.4:1 dark; danger-border is a
  *           decorative outline only — the words carry the state, not the red.
  *
@@ -26,9 +26,11 @@ import { ACCOUNT_FREE_RUNS_PER_MONTH } from "@/application/accountAllowance";
  * The live region is the always-present wrapper in HomeScreen, not this
  * component: a region that appears with its content announces nothing.
  *
- * Account scope (2026-11-13): a signed-in person is counted per UTC month
- * instead, so the count reads "this month" and the spent line is the server's
- * own 402 sentence. Signed out and spent, where sign-in is offered, one quiet
+ * Account scope (2026-11-13): a signed-in person is counted on the account
+ * instead of the device. Since 2026-11-14 the free account counts a UTC day
+ * (10), like the device (3), so the count reads "today" either way and the
+ * spent account line says when it comes back ("They reset tomorrow."). The
+ * period comes from the server's `period` (inferred by plan when absent). Signed out and spent, where sign-in is offered, one quiet
  * inline link says what signing in would give; no new chrome.
  *
  * Paid plan (2026-11-13): the same strip counts the paid monthly runs
@@ -40,7 +42,7 @@ import { ACCOUNT_FREE_RUNS_PER_MONTH } from "@/application/accountAllowance";
  *
  * Signed out with runs left (2026-11-14, Android QA): the device line says
  * "today" and, where sign-in is offered, one inline "Sign in for 10 a
- * month", so the device tier and the account tier read as two tiers. The
+ * day", so the device tier and the account tier read as two tiers. The
  * constant lives in application/accountAllowance.ts. */
 
 function openApiKey(event: MouseEvent<HTMLAnchorElement>) {
@@ -72,8 +74,9 @@ export default function FreeRunsBanner({
    *  null when billing has not said. */
   extraRunPrice?: string | null;
 }) {
-  const { remaining, exhausted, scope, limit, plan, overage } = banner;
+  const { remaining, exhausted, scope, limit, plan, overage, period } = banner;
   const account = scope === "account";
+  const monthly = period === "month";
 
   if (plan === "paid") {
     /* Spent without overage would block; it is not expected (the server
@@ -84,16 +87,16 @@ export default function FreeRunsBanner({
         <p className="free-runs__text">
           {!exhausted ? (
             <strong>
-              {remaining} of {limit} {limit === 1 ? "run" : "runs"} left this month.
+              {remaining} of {limit} {limit === 1 ? "run" : "runs"} left {monthly ? "this month" : "today"}.
             </strong>
           ) : overage ? (
             <>
-              <strong>You have used this month&apos;s {limit} runs.</strong>{" "}
+              <strong>You have used {monthly ? "this month" : "today"}&apos;s {limit} runs.</strong>{" "}
               {extraRunPrice ? `Extra runs are billed at ${extraRunPrice} each.` : "Extra runs are billed per run."}
             </>
           ) : (
             <>
-              <strong>You have used this month&apos;s {limit} runs.</strong> Add your own Gemini key to keep going.
+              <strong>You have used {monthly ? "this month" : "today"}&apos;s {limit} runs.</strong> Add your own Gemini key to keep going.
             </>
           )}
         </p>
@@ -111,27 +114,34 @@ export default function FreeRunsBanner({
       <p className="free-runs__text">
         {exhausted ? (
           account ? (
-            offerUpgrade ? (
-              <>
-                <strong>You have used this month&apos;s free runs.</strong> Add your own Gemini key to keep going,
-                or{" "}
-                <a className="text-link" href={mainTabHref("account")} onClick={openAccount}>
-                  upgrade
-                </a>
-                .
-              </>
-            ) : (
-              <>
-                <strong>You have used this month&apos;s free runs.</strong> Add your own Gemini key to keep going.
-              </>
-            )
+            <>
+              <strong>
+                {monthly
+                  ? "You have used this month's free runs."
+                  : limit > 0
+                    ? `You have used today's ${limit} free runs.`
+                    : "You have used today's free runs."}
+              </strong>{" "}
+              {monthly ? "" : "They reset tomorrow. "}
+              {offerUpgrade ? (
+                <>
+                  Add your own Gemini key to keep going, or{" "}
+                  <a className="text-link" href={mainTabHref("account")} onClick={openAccount}>
+                    upgrade
+                  </a>
+                  .
+                </>
+              ) : (
+                "Add your own Gemini key to keep going."
+              )}
+            </>
           ) : offerSignIn ? (
             <>
               <strong>You have used your free runs.</strong> Add your own key, or{" "}
               <a className="text-link" href={mainTabHref("account")} onClick={openAccount}>
                 sign in
               </a>{" "}
-              for {ACCOUNT_FREE_RUNS_PER_MONTH} free runs a month.
+              for {ACCOUNT_FREE_RUNS_PER_DAY} free runs a day.
             </>
           ) : (
             <>
@@ -141,14 +151,14 @@ export default function FreeRunsBanner({
         ) : (
           <>
             <strong>
-              {remaining} free {remaining === 1 ? "run" : "runs"} left {account ? "this month" : "today"}.
+              {remaining} free {remaining === 1 ? "run" : "runs"} left {monthly ? "this month" : "today"}.
             </strong>{" "}
             {!account && offerSignIn ? (
               <>
                 <a className="text-link" href={mainTabHref("account")} onClick={openAccount}>
                   Sign in
                 </a>{" "}
-                for {ACCOUNT_FREE_RUNS_PER_MONTH} a month, or add your own key.
+                for {ACCOUNT_FREE_RUNS_PER_DAY} a day, or add your own key.
               </>
             ) : (
               "Add your own key for more."

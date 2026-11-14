@@ -48,10 +48,16 @@ signed in (the same gate as the Account tab) *and* `GET /api/billing` answers
 A group labelled "Plan" above "Your account" (option A grouped list, one
 padded card, no pricing table: there is one plan).
 
-- **Free.** "Free", then "The paid plan: 100 runs a month on our key, videos
-  up to 10 minutes, no key needed." (the minutes clause only when
-  `/api/limits` reports a `paid` tier; the extra-run price appended when
-  known), then "Upgrade — $12/month" (primary) and "Yearly — $X/year"
+- **Free.** "Free", then (2026-11-14) "The paid plan: videos up to 10
+  minutes without your own key, and runs past the daily limit." (without a
+  `paid` tier in `/api/limits`: "The paid plan: runs past the daily limit,
+  without your own key."), plus, when the extra-run price is known,
+  " Beyond its 100 included runs a month, each run is $0.xx.". Until
+  2026-11-14 it led with "100 runs a month on our key"; with the free account
+  at 10 a day (up to ~300 a month) that read as fewer runs for money, so the
+  pitch names what the plan adds and makes no run-count comparison. **The
+  paid offer itself needs an owner rethink** (100 a month is below a free
+  account's daily allowance over a month), then "Upgrade — $12/month" (primary) and "Yearly — $X/year"
   (secondary). A null price hides its button; no prices, no buttons. Note
   under the card: "Billed through Stripe. Cancel anytime. Runs with your own
   Gemini key never count."
@@ -159,3 +165,4 @@ record for invoices and tax. Terms "Paid plan" and Privacy "Payments" say so
 
 - 2026-11-13 · frontend agent · created: billing gateway + `useBilling`, Account Plan group, checkout-return notice, paid strip copy and "or upgrade" link, paid upload tier, Terms "Paid plan" and Privacy "Payments" drafts, terms key v3, CSP reviewed (no change)
 - 2026-11-13 · frontend agent · handled 402 `extra_runs_cap`, 503 `subscription_cancel_failed` on account deletion, and 400 `invalid_interval` / 503 `billing_disabled`/`billing_unavailable` on checkout and portal; Terms and Privacy say deleting the account cancels the subscription immediately
+- 2026-11-14 · frontend agent · free-plan pitch no longer leads with "100 runs a month" (the free account is now 10 a day): "videos up to 10 minutes without your own key, and runs past the daily limit", included runs and extra-run price as a trailing clause; offer flagged for an owner rethink

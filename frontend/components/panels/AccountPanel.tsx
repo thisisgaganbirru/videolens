@@ -19,7 +19,7 @@ import { formatDay, formatLongDay, formatPrice } from "@/components/format";
 import type { ApiKeySummary, BillingDetails, Capability } from "@/domain/entities";
 import type { FreeRunsBanner } from "@/application/useFreeRuns";
 import { useBillingActions, type BillingAction, type CheckoutReturn } from "@/application/useBilling";
-import { ACCOUNT_FREE_RUNS_PER_MONTH } from "@/application/accountAllowance";
+import { ACCOUNT_FREE_RUNS_PER_DAY } from "@/application/accountAllowance";
 
 /* Hallmark · component: account panel · genre: editorial · theme: custom
  * (owner handoff, app/tokens.css) · layout: option A, grouped list (owner's
@@ -62,8 +62,9 @@ type AccountPanelProps = {
    *  holds both actions until it settles. */
   runInProgress: boolean;
   /** The free-run allowance, from HomeScreen's one `useFreeRuns` read: the
-   *  account's for the month when the server counts it (`scope: "account"`),
-   *  else this device's for the day. Null when unknown, unlimited, or beside
+   *  account's when the server counts it (`scope: "account"`; for the day on
+   *  the free plan, the month on the paid one, per `period`), else this
+   *  device's for the day. Null when unknown, unlimited, or beside
    *  the point (a Gemini key is saved): the identity line then says nothing
    *  about free runs. */
   freeRuns: FreeRunsBanner | null;
@@ -126,8 +127,8 @@ export default function AccountPanel({
           {auth.user
             ? "Your sign-in, connected tools, and data on this device."
             : signInMinutes
-              ? `Sign in for ${ACCOUNT_FREE_RUNS_PER_MONTH} free runs a month, videos up to ${signInMinutes} minutes with your own key, and API keys for your scripts. An account is optional.`
-              : `Sign in for ${ACCOUNT_FREE_RUNS_PER_MONTH} free runs a month and API keys for your scripts. An account is optional.`}
+              ? `Sign in for ${ACCOUNT_FREE_RUNS_PER_DAY} free runs a day, videos up to ${signInMinutes} minutes with your own key, and API keys for your scripts. An account is optional.`
+              : `Sign in for ${ACCOUNT_FREE_RUNS_PER_DAY} free runs a day and API keys for your scripts. An account is optional.`}
         </p>
       </header>
 
@@ -469,9 +470,9 @@ function IdentityCard({
               {" · "}
               <span className="acct-nowrap">
                 {freeRuns.plan === "paid"
-                  ? `Runs left this month: ${freeRuns.remaining} of ${freeRuns.limit}`
+                  ? `Runs left ${freeRuns.period === "day" ? "today" : "this month"}: ${freeRuns.remaining} of ${freeRuns.limit}`
                   : freeRuns.scope === "account"
-                    ? `Free runs left this month: ${freeRuns.remaining} of ${freeRuns.limit}`
+                    ? `Free runs left ${freeRuns.period === "month" ? "this month" : "today"}: ${freeRuns.remaining} of ${freeRuns.limit}`
                     : `Free runs left on this device: ${freeRuns.remaining}`}
               </span>
             </>
@@ -559,10 +560,14 @@ function PlanGroup({ billing, paidMinutes }: { billing: BillingDetails; paidMinu
         ) : (
           <>
             <p className="acct-plan-name">Free</p>
+            {/* 2026-11-14: the free account now gets 10 runs a day, which over
+                a month is more than the paid plan's 100, so the pitch names
+                what the plan adds rather than comparing run counts. */}
             <p className="key-help">
-              The paid plan: {PAID_RUNS_PER_MONTH} runs a month on our key
-              {paidMinutes !== null && `, videos up to ${paidMinutes} minutes`}, no key needed.
-              {extraRun && ` Extra runs after that are ${extraRun} each.`}
+              {paidMinutes !== null
+                ? `The paid plan: videos up to ${paidMinutes} minutes without your own key, and runs past the daily limit.`
+                : "The paid plan: runs past the daily limit, without your own key."}
+              {extraRun && ` Beyond its ${PAID_RUNS_PER_MONTH} included runs a month, each run is ${extraRun}.`}
             </p>
             {(month || year) && (
               <div className="key-actions">

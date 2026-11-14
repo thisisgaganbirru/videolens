@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
-import type { Capability, MediaLimits, MediaSource, FreeRunsScope } from "@/domain/entities";
+import type { Capability, MediaLimits, MediaSource, FreeRunsPeriod } from "@/domain/entities";
 import type { SharedUrl } from "@/application/useSharedUrl";
 import { ArrowUpFromLine } from "lucide-react";
 import { CapabilityCallout } from "@/components/CapabilityNotice";
@@ -32,10 +32,10 @@ interface UploadFormProps {
    *  all refused — none of them could succeed — but the link field stays
    *  editable, so a typed link survives saving a key and coming back. */
   blocked?: boolean;
-  /** Which allowance is spent when `blocked`: this device's for the day
-   *  (default), or the signed-in account's for the month (2026-11-13). Only
-   *  changes the wording of the blocked note. */
-  blockedScope?: FreeRunsScope;
+  /** The period of the allowance that is spent when `blocked`: `day`
+   *  (default; a device or, since 2026-11-14, a free account) or `month`.
+   *  Only changes the wording of the blocked note. */
+  blockedPeriod?: FreeRunsPeriod;
   /** The most recent link shared into the app, or null. A new object per
    *  arrival, so re-sharing the same link still fills the field. `HomeScreen`
    *  owns the listener and has already returned the shell to a fresh intake by
@@ -118,7 +118,7 @@ export default function UploadForm({
   disabled,
   submitting,
   blocked,
-  blockedScope = "device",
+  blockedPeriod = "day",
   sharedUrl,
   urlCapability,
   submitError,
@@ -351,7 +351,7 @@ export default function UploadForm({
       ) : null}
       {blocked ? (
         <p id="intake-blocked" className="intake-blocked">
-          No free runs left {blockedScope === "account" ? "this month" : "today"}, so analyzing is paused.{" "}
+          No free runs left {blockedPeriod === "month" ? "this month" : "today"}, so analyzing is paused.{" "}
           <a className="text-link" href={mainTabHref("api-key")} onClick={openApiKey}>
             Add key
           </a>{" "}

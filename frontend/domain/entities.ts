@@ -208,15 +208,21 @@ export interface CapabilityReport {
 }
 
 /** Whose allowance a free-run count is. `device`: this device's few runs
- *  per UTC day (anonymous). `account`: the signed-in account's runs per UTC
- *  calendar month, shared across that person's devices and used *instead of*
- *  the device's while signed in (2026-11-13). A server that predates the
- *  account allowance sends no scope, which reads as `device`. */
+ *  per UTC day (anonymous). `account`: the signed-in account's runs, shared
+ *  across that person's devices and used *instead of* the device's while
+ *  signed in (2026-11-13); per UTC day on the free plan since 2026-11-14,
+ *  per month on the paid one. A server that predates the account allowance
+ *  sends no scope, which reads as `device`. */
 export type FreeRunsScope = "device" | "account";
+
+/** The period a run allowance counts over (2026-11-14). `day`: resets at
+ *  the next UTC midnight (anonymous devices and free accounts). `month`:
+ *  the paid plan's allowance. */
+export type FreeRunsPeriod = "day" | "month";
 
 /** The free-run allowance the server counts this caller against, from
  *  `GET /api/free-runs`: this device's for the UTC day, or (signed in) the
- *  account's for the UTC month. Only meaningful without a bring-your-own key:
+ *  account's: for the UTC day on the free plan, the month on the paid one. Only meaningful without a bring-your-own key:
  *  a caller with their own Gemini key has no limit and never sees it. */
 export interface FreeRunsStatus {
   /** `device` or `account`; see `FreeRunsScope`. */
@@ -225,6 +231,10 @@ export interface FreeRunsStatus {
    *  against the paid monthly allowance (`limit`, 100 at launch). A server
    *  without billing sends no plan, which reads as `free`. */
   plan: BillingPlan;
+  /** What the count resets over (`period` on the response, 2026-11-14). A
+   *  server that does not send it is read by scope and plan: paid is
+   *  `month`, everything else `day`. */
+  period: FreeRunsPeriod;
   /** Paid only: runs past `limit` are allowed and billed per run, so a spent
    *  allowance does not block. `false` everywhere else. */
   overage: boolean;
@@ -234,8 +244,8 @@ export interface FreeRunsStatus {
   limit: number;
   used: number;
   remaining: number;
-  /** ISO 8601 UTC instant the count resets: next UTC midnight (device), or
-   *  the first of next month at 00:00Z (account). */
+  /** ISO 8601 UTC instant the count resets: next UTC midnight (`day`), or
+   *  the start of the next billing month (`month`, paid). */
   resetsAt: string;
   /** `false`: the deployment has no free-run limit — show nothing. */
   enabled: boolean;

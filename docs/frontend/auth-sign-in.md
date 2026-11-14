@@ -180,10 +180,11 @@ session.
   free runs" (full-width row). Phones also get a visible entry without opening
   the menu: the inline "Sign in" in the hero's allowance line (see
   `landing-page.md`). `/app`, Privacy, Terms and 404 keep "Sign in".
-- **Signed-out lede (2026-11-14).** "Sign in for 10 free runs a month,
+- **Signed-out lede (2026-11-14).** "Sign in for 10 free runs a day,
   videos up to N minutes with your own key, and API keys for your scripts.
-  An account is optional." The 10 is `ACCOUNT_FREE_RUNS_PER_MONTH` (now
-  exported from `FreeRunsBanner.tsx`); N is `useMediaLimits().upgradeMinutes`
+  An account is optional." The 10 is `ACCOUNT_FREE_RUNS_PER_DAY` (from
+  `application/accountAllowance.ts`; "a month" until the daily allowance,
+  later on 2026-11-14); N is `useMediaLimits().upgradeMinutes`
   passed as the panel's `signInMinutes` prop. When that is null (limits not
   read, or no larger tier) the video clause is left out rather than promised.
 - The panel uses the **same gate** for its sign-in form: capability still
@@ -205,8 +206,9 @@ session.
   changing users. Inside: create, Copy/Done for the one-time secret, and the
   list with inline revoke confirmation.
 - **Free runs line (2026-11-13).** The identity card's meta line reads
-  "Free runs left this month: N of 10" when the server counts the account's
-  monthly allowance (`scope: "account"`), and keeps "Free runs left on this
+  "Free runs left today: N of 10" when the server counts the account's
+  allowance (`scope: "account"`; daily since 2026-11-14, worded from
+  `period`, so a `month` period would read "this month"), and keeps "Free runs left on this
   device: N" otherwise (including an older server that sends no scope). The
   panel takes the `FreeRunsBanner` object from HomeScreen's one `useFreeRuns`
   (prop `freeRuns`, was `freeRunsLeft`), and HomeScreen re-reads the
@@ -468,3 +470,4 @@ cannot be resized); check them on the bundled APK.
 - 2026-11-14 · frontend agent · landing's signed-out entry reads "Get started" (`signedOutLabel` prop on AppNav/RouteNav, outlined, not green beside the hero's green CTA); other routes keep "Sign in"; sign-in card heading "Sign in or create an account", help line "New here? Verifying your first code sets it up."
 - 2026-11-14 · codex · landing nav and phone menu back to the default "Sign in", so the account entry reads differently from the no-account "Start analyzing"; the `signedOutLabel` prop stays
 - 2026-11-14 · frontend agent · landing signed-out entry reads "Get 10 free runs" (10 from `ACCOUNT_FREE_RUNS_PER_MONTH`, now in `application/accountAllowance.ts`), bar pill and phone-menu row; new `signedOutShortLabel` prop: the bar pill says "Sign up free" from 48rem to 50rem, where the long label overran the gutter by 13px; other routes keep "Sign in"
+- 2026-11-14 · frontend agent · daily account allowance: signed-out lede "Sign in for 10 free runs a day, ..."; identity line "Free runs left today: N of 10" (from `period`)
