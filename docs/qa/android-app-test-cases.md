@@ -863,6 +863,46 @@ No runs submitted; no sign-in, key, account or checkout actions.
 - **Account card. PASS.** "Sign in or create an account" and "New here? Verifying your first code sets it up." are one line each at 412 and two lines each at 320 (37–283 px), with no split words. Same in the app and on the web.
 - **First-visitor notes.** Free-run counts differ across screens: landing "Free runs to start", the app strip "3 free runs left", the Account lede "Sign in for 10 free runs a month". The landing's only sign-in path on a phone is inside the hamburger. The Next dev indicator overlaps the footer brand (dev server only).
 
+### 2026-11-14 · android-66 (device QA) · run 21 (allowance lines, hero, menu row and Analyze strip, feat/auth-supabase at 2eb2bbe)
+
+**Setup**
+- **Build.** Clean tree at 2eb2bbe. The APK was rebuilt and installed for the app strip.
+- **Landing.** Checked in the emulator's Chrome against :3005, with `adb reverse` for 3005 and 8000.
+- **Widths.** 412, 360, 320, 768 and 784 (`wm size`).
+- **Layout shift.** Read from buffered `layout-shift` entries after a reload.
+- **Evidence.** In `%TEMP%\qa20\` (50–60). Probe scripts: `land21.js`, `cls.js`, `how.js`, `strip.js`, `allow.js`, `navact.js`.
+- **Session.** Signed out.
+
+**Results**
+- **Allowance lines. PASS.**
+  - With the API up, the line reads "3 free runs a day, no account needed." over "Videos up to 3 minutes. Sign in for 10 a month."
+  - With reverse 8000 removed, it reads "Free runs to start. No account needed." over "Videos up to 3 minutes."
+  - The block is 67px tall in both states at 412 and 320, with zero layout-shift entries, so there is no visible jump.
+  - The "Sign in" link is an underlined inline link of 41×18 css px, href `/app?view=account`. A real tap at 320 opened `/app?view=account`.
+  - The link's own box is under 44px tall. Nothing tappable sits within one line of it, so a mis-tap only lands on plain text.
+- **Hero. PASS.**
+  - "Start analyzing" (156×50, rgb 26,127,55) is the only green fill in the hero. "See how it works" is outlined.
+  - The same green "Start analyzing" appears once more, in the closing `.landing-band` near the foot of the page.
+  - The two buttons sit side by side at 412/768/784 and stack at 360/320.
+  - No uncontained overflow at any width (docSW equals the viewport).
+- **Phone menu row. PASS.** At 320 the menu reads Analyze, History, API key, Releases, "Get 10 free runs", each row 60px tall. Tapping the row opens `/app?view=account`.
+- **Bar pill at 768/784. PASS.** It shows the short label "Sign up free" (80px) next to the theme button, on one line beside the four nav tabs.
+  - One small layout shift on `.nav-actions` about 2.5s after load: 0.0067 at 768, 0.0066 at 784.
+  - Both values are well under the 0.1 "good" threshold. It is probably the label settling once auth state resolves.
+- **Analyze strip. PASS**, in the app (`/app.html`) and on the web (`/app`).
+  - It reads "3 free runs left today. Sign in for 10 a month, or add your own key." The hint appears exactly once.
+  - It wraps to 3 lines at 320 and 360 and to 2 lines at 412, beside "Add key". No overflow.
+- **How it works and the details list. PASS.**
+  - Steps: Newsreader 26px titles over 16px Hanken body, three 171px items.
+  - "What you get" list: 13px terms in a 96px column, beside 16px descriptions.
+  - Details list: Newsreader 19px terms ("Your files", "Your history", "After the free runs") over 15px descriptions.
+  - No clipped text at 320.
+- **First-visitor notes.**
+  - The offline fallback drops the "Sign in for 10 a month" half of line two, which is expected with no API.
+  - The allowance link and the menu row now both point to the 10-a-month offer, so the counts read consistently: 3 a day anonymous, 10 a month signed in.
+  - The Next dev indicator still overlaps the footer brand (dev server only).
+- **Tooling note.** The first offline attempt hung because the CDP helper had no timeout and Chrome was backgrounded behind the app. The 8000 reverse was restored by hand, and the retest ran with a guaranteed restore.
+
 ## Changelog
 
 - 2026-11-02 · android-66 (device QA) · added section 19 (update banner, UPD-01..07) and run 9 (UPD partial on the mock: UPD-01/03 PASS, UPD-04 partial, rest PAUSED) and run 10 (real runs: terms persistence, RUN-01 retry with a YouTube link, RUN-02/02b/03/04/05/07/08, ORI-02, HIS-01, FREE-01..05, RUN-06b/06c/06d/06e, LCH-06b/06c, FREE-02b PASS; FREE-02c not exercised (YouTube 403 mid-download); stale free-runs count after a refund logged as known (R9); stage timings incl. Normalizing ~60 s for a 170 s file); added FREE-02b/02c rows to section 6
@@ -888,3 +928,4 @@ No runs submitted; no sign-in, key, account or checkout actions.
 - 2026-11-14 · android-66 (device QA) · run 18: accounts/free-runs/billing UI on local feat/auth-supabase (c494698), API 36 emulator, signed out: Account reachable via the More sheet (top-bar button hidden below 48rem by design); free-runs strip, drop hint, API key wrap, terms gate v3 and the new Terms/Privacy sections PASS; signed-in items not tested (no session)
 - 2026-11-14 · android-66 (device QA) · run 19: four-item phone dock (Analyze/History/Account/More) PASS at 412/360/320 (66px items at 320, labels on one line, above the gesture bar); Account tab opens the signed-out panel and shows as current; /app More sheet has no Account row; /terms and /privacy keep the three-item dock
 - 2026-11-14 · android-66 (device QA) · run 20: Sign in / Get started entries at 9b3b466: the app never shows the landing page (redirect to /app.html); landing checked in emulator Chrome against :3005, entry sits only in the phone menu and reads Sign in (uncommitted LandingScreen edits drop Get started); 4-item dock on /app, legal and 404 pages; new Account heading and help line wrap cleanly at 320
+- 2026-11-14 · android-66 (device QA) · run 21: landing at 2eb2bbe in emulator Chrome (412/360/320/768/784) plus rebuilt APK: allowance lines swap from the fallback with no layout shift (67px both states, offline fallback clean); Sign in link (41x18 inline) and the "Get 10 free runs" menu row open /app?view=account; Start analyzing the only green in the hero (repeated in the closing band); 768/784 pill reads "Sign up free" with a 0.007 shift; Analyze strip "3 free runs left today." plus one sign-in hint wraps cleanly at 320 in app and web; How it works and details list PASS
