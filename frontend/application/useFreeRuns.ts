@@ -208,6 +208,10 @@ export type FreeRunsBanner = {
   exhausted: boolean;
   /** Paid only: runs past the allowance are allowed and billed. */
   overage: boolean;
+  /** ISO 8601 UTC instant the count resets (next UTC midnight for `day`),
+   *  or "" when unknown (a 402 that came before any read). The Account
+   *  panel shows it in the reader's local time. */
+  resetsAt: string;
 };
 
 /**
@@ -328,6 +332,7 @@ export function useFreeRuns(identity: string | null = ""): {
       limit: status.limit,
       exhausted,
       overage,
+      resetsAt: status.resetsAt,
     },
     /* Paid with overage: the allowance running out costs money per run, it
        does not stop anyone (the server sends no 402 then). */

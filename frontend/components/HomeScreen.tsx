@@ -53,6 +53,7 @@ const FREE_RUNS_GHOST: FreeRunsBannerState = {
   limit: 3,
   exhausted: false,
   overage: false,
+  resetsAt: "",
 };
 
 export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
@@ -107,7 +108,14 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      calls in three conditionally-rendered children would be one request per
      tab visit. The two contextual notices therefore take props instead of
      reaching for the hook themselves. */
-  const { notice, urlDownload, dailyBudget, auth: authCapability, billing: billingCapability } = useCapabilities();
+  const {
+    notice,
+    urlDownload,
+    dailyBudget,
+    auth: authCapability,
+    billing: billingCapability,
+    settled: capabilitiesSettled,
+  } = useCapabilities();
 
   const sharedUrl = useSharedUrl();
 
@@ -153,7 +161,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      server's `billing` capability is `ok`, for whoever is signed in. With
      billing off nothing is requested and `billing` stays null, so every
      screen looks as it did before billing existed. */
-  const { billing, notice: checkoutReturn } = useBilling(
+  const { billing, notice: checkoutReturn, pending: billingPending } = useBilling(
     authUser.ready ? (authUser.user?.id ?? null) : null,
     showAccount && billingCapability?.state === "ok"
   );
@@ -556,11 +564,13 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
           <AccountPanel
             authCapability={authCapability}
             runInProgress={runInProgress}
+            capabilitiesSettled={capabilitiesSettled}
             freeRuns={freeRuns.banner}
+            freeRunsPending={freeRuns.pending}
             billing={billing}
+            billingPending={billingPending}
             checkoutReturn={checkoutReturn}
-            paidMinutes={mediaLimits.paidMinutes}
-            signInMinutes={mediaLimits.upgradeMinutes}
+            limits={mediaLimits}
           />
         </main>
       )}
