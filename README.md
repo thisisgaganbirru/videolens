@@ -192,6 +192,19 @@ never a deployment manifest. See `docs/container-workflows.md`.
   `analyzing_captions`; `completeness` is `full` | `captions_only`.
 - `GET /api/runs` — the caller's runs still on the server, newest first,
   capped at 20.
+- `GET /api/history?limit=&cursor=` — a paid account's saved results
+  (signed-in person only), newest first: `{ saving, expires_at, items:
+  [{ run_id, title, summary_snippet, completeness, created_at, source }],
+  next_cursor }`. `GET /api/history/{run_id}` adds `result`;
+  `DELETE /api/history/{run_id}` (204) and `DELETE /api/history`
+  (`{ deleted }`). Free accounts get `items: []`, `saving: false`; after the
+  plan ends `expires_at` says when they go (30 days).
+  `docs/backend/saved-history.md`.
+- `GET /api/me`, `DELETE /api/me`, `POST /api/me/restore` — the signed-in
+  account (with `saved_history`); deletion is a 30-day hold (`200 {status:
+  "pending_deletion", purge_at}`), during which every account endpoint is
+  `410 account_pending_deletion` and the restore takes it back.
+  `docs/backend/auth.md`.
 - `GET /api/capabilities` — which parts of this deployment work right now,
   always `200`. `GET /api/releases` — the app's release index, read from
   GitHub server-side. `GET /api/health`, `GET /api/readiness`. The read

@@ -41,17 +41,23 @@ Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
   unmerged branch `feature/mcp-server` on purpose (see
   `docs/engineering-standards.md`). Their absence is not a bug; do not
   recreate them here. `feat/paid-tier-integration` is parked the same way.
-- History lives in the browser (IndexedDB), not on the server. The server
-  forgets a run `RUN_TTL_SECONDS` (1 hour) after its last write. Do not add
-  server-side persistence for runs or results, not even for paid accounts.
+- History lives in the browser (IndexedDB) for everyone. The server
+  forgets a run `RUN_TTL_SECONDS` (1 hour) after its last write. The one
+  exception (owner decision 2026-11-14, `docs/backend/saved-history.md`):
+  a **paid** account's successful results are also saved in `saved_runs`
+  (result text and a source descriptor only; never media, the poster or a
+  key), kept 30 days after the plan ends, then removed. Do not add
+  server-side persistence for free or anonymous runs, and do not save
+  anything else. `DELETE /api/me` is a 30-day hold (`accounts.purge_at`;
+  410 `account_pending_deletion` everywhere but `POST /api/me/restore`),
+  and the worker's hourly cron removes the account for good after it.
   The only server-side tables are the four identity tables
   (`accounts`, `workspaces`, `workspace_members`, `api_keys`), the two
   run counters (`account_free_runs`, `account_free_run_holds`; daily rows
   for free and paid accounts; paid extras are counted monthly in
-  `billing_extra_runs`) and
-  the three billing tables (`billing_accounts`, `billing_events`,
-  `billing_extra_runs`) in `infrastructure/persistence/`, owned by Alembic in
-  `backend/migrations/`.
+  `billing_extra_runs`), the three billing tables (`billing_accounts`,
+  `billing_events`, `billing_extra_runs`) and `saved_runs`, in
+  `infrastructure/persistence/`, owned by Alembic in `backend/migrations/`.
 - Sign-in is optional and anonymous use is first-class. The `AUTH_*` settings
   verify Supabase-issued JWTs by JWKS only (RS256/ES256; never add HS256 or a
   Supabase SDK to the backend); with them and `DATABASE_URL` blank the API

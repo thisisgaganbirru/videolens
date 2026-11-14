@@ -38,7 +38,11 @@ arq worker), `get_run` (ownership plus the abandoned-run backstop),
 `billing` (`BillingPlans`: is this account paid now; `ExtraRunBilling`:
 held -> due -> reported, billed once on success), `get_billing`,
 `start_checkout`, `open_billing_portal`, `handle_billing_webhook`
-(`docs/backend/billing.md`).
+(`docs/backend/billing.md`). Saved history (`docs/backend/saved-history.md`):
+`saved_history` (`SavedHistory`: save a paid result once on success, the
+post-cancel window; `SavedHistoryQueries`: the `/api/history*` reads),
+`delete_account` (the 30-day hold), `restore_account`, `cleanup` (the
+worker's hourly removal of held accounts and expired saved runs).
 
 **`infrastructure/`** — one adapter per port.
 
@@ -60,7 +64,8 @@ held -> due -> reported, billed once on success), `get_billing`,
 | `AccountDirectory` | `persistence/account_directory.py` | SQL (Postgres via asyncpg, SQLite in tests) or in-memory; disabled in distributed mode without `DATABASE_URL` |
 | `ApiKeyRepository` | `persistence/api_key_repository.py` | SHA-256 only, cap enforced in the insert transaction, `last_used_at` at most once a minute |
 | `IdentityProviderUsers` | `persistence/identity_users.py` | Whether Supabase still has a user (`auth_user_exists`); asked on first sight of a subject and before key issue, so a token that outlived its deleted user cannot re-create rows. SQLite and in-memory: always yes |
-| `AccountDeleter` | `persistence/account_deleter.py` | Account deletion: identity rows in one transaction, then the Supabase user via the `SECURITY DEFINER` function from `0002_auth_user_deleter` (skipped on SQLite and in memory) |
+| `AccountDeleter` | `persistence/account_deleter.py` | The deletion hold (`schedule_deletion`, `restore`, `due_for_purge`) and the final removal: the Supabase user via the `SECURITY DEFINER` function from `0002_auth_user_deleter` (skipped on SQLite and in memory), then the rows in one transaction, re-checked against `purge_at` |
+| `SavedRunRepository` | `persistence/saved_run_repository.py` | A paid account's saved results (migration `0006_saved_history`): insert-once on `(account_id, run_id)`, keyset pages, the post-cancel expiry on `accounts`; SQL or in-memory |
 | — | `persistence/database.py`, `schema.py` | One async engine; schema owned by Alembic (`backend/migrations/`, a release step) |
 | `BillingGateway` | `billing/stripe_gateway.py` | Stripe-hosted Checkout and Portal, Price reads (cached), webhook signature check, subscription re-fetch, cancel, meter events (identifier = run id); stripe-python `StripeClient` in a thread; off unless `STRIPE_*` is set |
 | `BillingAccounts`, `ExtraRunLedger` | `persistence/billing_store.py` | SQL (migration `0004_billing`) or in-memory (local only); conditional `held -> due` / `held -> void` writes make billing exactly-once |
@@ -81,7 +86,10 @@ global; the client IP comes from `policies.client_ip_from_forwarded` with
 `TRUSTED_PROXY_HOPS`), `api/security_headers.py` (pure-ASGI middleware,
 added last so every response, preflights and refusals included, carries the
 hardening headers), `worker/settings.py` (arq `WorkerSettings`; takes the BYOK key out of
-the vault before calling the use case; cron `flush_extra_runs` every 10 minutes).
+the vault before calling the use case; cron `flush_extra_runs` every 10 minutes,
+`account_cleanup` hourly at minute 25). `routes.py` also serves `/api/history*`
+and `POST /api/me/restore`; `dependencies.py` has `require_person_even_if_deleted`,
+used by the restore only.
 
 **`container.py`** — composition root. Builds every adapter once, wires the
 use cases, fixes the probe order. `app/main.py` and `app/worker.py` are
@@ -102,7 +110,12 @@ one-line shims so the Dockerfile, compose file and Railway configs reference
 - Unexpected pipeline exceptions are stored as one fixed message; the real
   cause goes to the worker log only.
 - The run store is a delivery buffer, not a system of record; history is the
-  browser's.
+  browser's. The one system of record for results is `saved_runs`, for paid
+  accounts only, written once after a run succeeds and is billed; a save
+  failure never fails the run.
+- A held account (deleted, inside its hold) is refused by `identify_caller`
+  everywhere except the restore route; nothing is removed for good outside
+  the worker's cleanup.
 - `ListRunsUseCase` never writes; the staleness check lives in `get_run` only.
 - An extra run is billed only after its result is stored, at most once; a
   billing failure never fails a run, and a Stripe type never leaves
@@ -143,3 +156,4 @@ one-line shims so the Dockerfile, compose file and Railway configs reference
 - 2026-11-13 · backend agent · paid plan: `BillingGateway` (Stripe) and `BillingAccounts`/`ExtraRunLedger` ports and adapters, the billing use cases, paid admission in `create_run`, billing on completion in `process_run`, the `billing` probe, `flush_extra_runs` cron
 - 2026-11-14 · backend agent · `AccountFreeRunAllowance` takes `period` (`FreeRunPeriod` day/month); free accounts count per UTC day, the paid plan per month
 - 2026-11-14 · backend agent · the paid plan's included runs count per UTC day (`BillingPlans.PAID_RUNS_PERIOD = DAY`, `PAID_RUNS_PER_DAY`); the extra-run ledger stays monthly
+- 2026-11-14 · backend agent · saved history and the deletion hold: `SavedRunRepository` port and adapters, `saved_history`/`restore_account`/`cleanup` use cases, the hold on `AccountDeleter`, `/api/history*` and `POST /api/me/restore`, the `account_cleanup` cron; two invariants

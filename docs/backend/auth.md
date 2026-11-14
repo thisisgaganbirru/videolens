@@ -72,11 +72,18 @@ A 401 carries `WWW-Authenticate: Bearer`.
 
 | Route | Who | Returns |
 |---|---|---|
-| `GET /api/me` | person or key | `subject`, `method`, `email`, `account_id`, `workspace {workspace_id, name}`, `entitlement {plan, max_duration_seconds, max_file_size_mb, metered, api_access, library}`, `accounts_enabled` |
+| `GET /api/me` | person or key | `subject`, `method`, `email`, `account_id`, `workspace {workspace_id, name}`, `entitlement {plan, max_duration_seconds, max_file_size_mb, metered, api_access, library}`, `accounts_enabled`, `saved_history {saving, expires_at}` (`saved-history.md`) |
 | `GET /api/keys` | person (workspace owner) | `{keys: [...]}`, newest first, including revoked keys (`active: false`, `revoked_at`) |
 | `POST /api/keys` `{name}` | person (workspace owner) | 201 with the key and its `secret`, shown once. Names are trimmed to 80 characters and default to "Unnamed key" |
 | `DELETE /api/keys/{key_id}` | person (workspace owner) | 204. A key from another workspace or an unknown key gets 404 |
-| `DELETE /api/me` | person only | 204, no body. Anonymous 401, API key 403, no account store 503, a failure part-way 500 (see *Account deletion*) |
+| `DELETE /api/me` | person only | 200 `{"status": "pending_deletion", "purge_at"}` (was 204 before 2026-11-14). Anonymous 401, API key 403, no account store 503, a failure 500 (see *Account deletion*) |
+| `POST /api/me/restore` | person only, even while held | `{"restored": bool}`; 410 `restore_window_closed` after `purge_at` |
+
+**A held account** (deleted, inside its 30-day hold) gets
+`410 {"detail", "code": "account_pending_deletion", "purge_at"}` from every
+route that resolves a bearer token, except `POST /api/me/restore`
+(`require_person_even_if_deleted`); its API keys get `401 Invalid API key.`
+(`IdentifyCallerUseCase`, `docs/backend/saved-history.md`).
 
 The entitlement is the single free plan at the deployment's limits (`MAX_VIDEO_DURATION_SECONDS`, `MAX_FILE_SIZE_MB`), with `metered=false`, `api_access=true` and `library=false`. There is no plan gate on API keys.
 
@@ -84,7 +91,20 @@ CORS lists `Authorization`, `Content-Type`, `X-Api-Key`, `X-Client-ID`, `X-Gemin
 
 ## Account deletion (`DELETE /api/me`, phase 3)
 
-`DeleteAccountUseCase` removes a signed-in person for good. The order is the design:
+**Since 2026-11-14 this is a 30-day hold, then the removal below**
+(`docs/backend/saved-history.md`, owner decision). `DeleteAccountUseCase`
+now cancels the subscription (step 0), deletes the Redis runs (step 1) and
+sets `accounts.deleted_at` / `purge_at`; the Supabase user and every row
+stay, hidden, so the person can sign in and `POST /api/me/restore`. After
+`purge_at` the worker's hourly `account_cleanup` cron does the removal:
+the Supabase user first (step 3, the same `SECURITY DEFINER` function),
+then the rows (step 2, re-checked `purge_at <= now` under a row lock, and
+now including `saved_runs`). So the order below is reversed at purge time:
+identity first, so nobody can sign in to a half-removed account; a failure
+leaves the account row and the next tick retries. The rest of this section
+describes the steps themselves, which are unchanged.
+
+The steps, as originally designed for an immediate removal:
 
 1. **Server-side runs.** `RunRepository.delete_for_owner` for `user:<sub>` and for `key:<id>` of every key in the person's workspace (runs an agent created belong to the same person). In Redis the owner index (`videolens:owner:<owner>:runs`, at most 50 ids) is the only way to find them; the run keys and the index go. Best effort: a run-store failure is logged and the deletion carries on, because runs expire within `RUN_TTL_SECONDS` anyway. A run a worker is still processing stays gone (`_update` reads before it writes and skips a missing run).
 2. **Identity rows, one transaction.** `AccountDeleter.delete_account`: `api_keys` of the workspaces the account owns, then `workspace_members` (of those workspaces, and the account's own memberships elsewhere), then `workspaces`, then `accounts`. Children first, since the foreign keys have no `ON DELETE CASCADE`. A failure rolls the whole transaction back and is a 500; the Supabase user is untouched.
@@ -151,7 +171,7 @@ Researched 2026-11-09 against `videolens-dev` (ref `pjekwwiaocywdbwqgtgl`, org `
 
 | Location | What remains after `DELETE /api/me` | How long | Status and evidence |
 |---|---|---|---|
-| Our tables (`accounts`, `workspaces`, `workspace_members`, `api_keys`, and since 2026-11-13 `account_free_runs`, `account_free_run_holds`) | Nothing in the live database | Gone at once (one transaction) | **Verified** in code: `account_deleter.py` `delete_account` (free-run rows deleted explicitly and by `ON DELETE CASCADE`) |
+| Our tables (`accounts`, `workspaces`, `workspace_members`, `api_keys`, and since 2026-11-13 `account_free_runs`, `account_free_run_holds`) | Nothing in the live database | Gone at once (one transaction). **Since 2026-11-14:** kept, hidden, for the 30-day hold, then removed by the hourly cleanup together with `saved_runs` (`saved-history.md`); the Supabase user rows below likewise go at purge, not at `DELETE /api/me` | **Verified** in code: `account_deleter.py` `delete_account` (free-run rows deleted explicitly and by `ON DELETE CASCADE`) |
 | `auth.users` + `identities`, `sessions` (and through it `refresh_tokens`, `mfa_amr_claims`), `mfa_factors`, `one_time_tokens`, `oauth_authorizations`, `oauth_consents`, `webauthn_*`, `mfa_recovery_code_sets` | Nothing: each references `auth.users` (directly or via `sessions`/`mfa_factors`) with `ON DELETE CASCADE` | Gone at once | **Verified**: `pg_constraint` query on the project. Only `auth.scim_users` is `SET NULL` (SSO/SCIM, unused here) |
 | `auth.flow_state` | One row per email sign-up/sign-in flow: `user_id` (UUID), provider type, timestamps. No email column. No FK to `auth.users`, so not cascaded | Until Supabase Auth's cleanup removes rows older than 24 h | **Verified**: column list and absent FK (catalog); cleanup rule in `supabase/auth` `internal/models/cleanup.go`: "created_at < now() - interval '24 hours'". That the hosted cleanup actually runs on this project is **unverified** (the only row is under 24 h old) |
 | `auth.audit_log_entries` (table) | Nothing is written: 0 rows although a sign-up happened | n/a | **Verified**: `count(*) = 0`; dashboard Authentication → Audit Logs shows "Write audit logs to the database" switched off. If switched on: no FK to `auth.users`, `payload` would hold `actor_id` and `actor_username` (the email), and no cleanup rule touches it, so rows would stay until deleted by hand |
@@ -192,7 +212,7 @@ The identity data lives in Postgres (Supabase), not in Redis. The four tables ar
 
 Since 2026-11-13 two more tables sit beside them for signed-in free runs (migration `0003_account_free_runs`, see `free-runs.md`): `account_free_runs` (`account_id` FK cascade, `period` `YYYY-MM`, `used`; PK `(account_id, period)`) and `account_free_run_holds` (`run_id` PK, `account_id` FK cascade, `period`, `created_at`). RLS and the backend role's policy and grants as for the four above.
 
-Runs and history are unchanged. The server still holds runs for `RUN_TTL_SECONDS` only, and history stays in the browser.
+Runs and history are unchanged for free and anonymous callers. The server still holds runs for `RUN_TTL_SECONDS` only, and history stays in the browser. Since 2026-11-14 a paid account's results are also saved in `saved_runs`, and `accounts` gains `deleted_at`, `purge_at` and `saved_runs_expire_at` (migration `0006_saved_history`, `saved-history.md`).
 
 ### Which adapter is wired (`container.py`)
 
@@ -311,3 +331,4 @@ The application code has not yet run against a real Supabase project: the SQL ad
 - 2026-11-13 · backend agent · signed-in BYOK media limits (600 s / 500 MB) and the one-long-run-per-account guard, both keyed on the resolved principal
 - 2026-11-13 · backend agent · account deletion cancels the Stripe subscription first and refuses (503 `subscription_cancel_failed`) when it cannot; `Plan.PAID` on `/api/me` for a paid account; migration 0004 adds the three billing tables beside the identity tables
 - 2026-11-14 · backend agent · signed-in free runs are per UTC day (`FREE_RUNS_PER_ACCOUNT_DAILY`); migration `0005_account_daily_free_runs` widens `period` on the two counter tables
+- 2026-11-14 · backend agent · account deletion is a 30-day hold (`DELETE /api/me` returns 200 with `purge_at`; 410 `account_pending_deletion` everywhere but the new `POST /api/me/restore`; API keys 401 while held); the hourly worker cron removes the Supabase user then the rows after the hold; `saved_history` on `/api/me`; migration 0006 columns in Storage

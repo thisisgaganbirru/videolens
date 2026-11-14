@@ -248,7 +248,7 @@ subscription work decides is what signing in buys there. Until then,
 |---|---|---|
 | Users, sessions, OAuth identities | Supabase Auth (`auth` schema) | Provider's job |
 | `accounts`, `workspaces`, `workspace_members`, `api_keys` | Supabase Postgres, `public`, owned by `backend/migrations/` (Alembic) | From the branch, minus plan and Stripe columns, which return with billing |
-| Runs and results | Redis, as today | The branch's Postgres archive and `TieredRunRepository` stay on the branch; durable paid history is subscription work |
+| Runs and results | Redis, as today | The branch's Postgres archive and `TieredRunRepository` stay on the branch. Since 2026-11-14 a paid account's results are also saved in `saved_runs` (`backend/saved-history.md`) |
 | BYOK Gemini key | Browser `localStorage` | Unchanged |
 | Supabase session | Browser `localStorage` via `supabase-js` | A static export has no server to hold it |
 
@@ -660,3 +660,4 @@ Alembic release step), `CLAUDE.md` (Product direction, the lint count, the
 - 2026-11-14 · main session · recorded "Future: ads on the free tiers" (owner idea: ads on free tiers, an ad-free paid plan; deferred until after launch, rewarded ads first); owner set signed-in free accounts to 10 runs a day (build in progress)
 - 2026-11-14 · backend agent · superseded note: signed-in free runs are now 10 per UTC day (`FREE_RUNS_PER_ACCOUNT_DAILY`)
 - 2026-11-14 · backend agent · status line: the paid plan includes 30 runs a UTC day (`PAID_RUNS_PER_DAY`), not 100 a month
+- 2026-11-14 · backend agent · paid saved history (`saved_runs`, migration 0006) and the 30-day account deletion hold with restore are built; see `docs/backend/saved-history.md`

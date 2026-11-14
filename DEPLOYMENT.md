@@ -137,6 +137,15 @@ Complete these items before making the application publicly available.
       `PAID_RUNS_PER_MONTH` set, delete it and set `PAID_RUNS_PER_DAY`
       instead (or leave it unset for 30), on the backend **and** worker.
       No migration: 0005 already widened `period`.
+- [ ] Paid saved history and the 30-day deletion hold (added 2026-11-14,
+      `docs/backend/saved-history.md`). Apply Alembic `0006_saved_history`
+      to the environment's database **before** deploying the code: the
+      code reads the new `accounts` columns on every signed-in request.
+      Deploy backend and worker together (the worker saves results and
+      runs the hourly `account_cleanup` cron). Optional variables:
+      `PAID_SAVED_RUNS_GRACE_DAYS`, `PAID_SAVED_RUN_MAX_BYTES`,
+      `ACCOUNT_DELETION_HOLD_DAYS` (defaults 30 / 2097152 / 30). Not yet
+      applied or deployed in any environment.
 - [x] Abandoned runs are reported as failed instead of polling forever
       (`GetRunUseCase` staleness backstop, arq cancellation handling).
 - [x] `GET /api/capabilities` reports which dependencies work, and the app
@@ -375,6 +384,14 @@ PAID_RUNS_PER_DAY=30
 PAID_EXTRA_RUNS_MONTHLY_CAP=200
 PAID_MAX_DURATION_SECONDS=0
 PAID_MAX_FILE_SIZE_MB=0
+# Saved history (paid) and the deletion hold, docs/backend/saved-history.md.
+# Needs migration 0006_saved_history applied first. Same values on both.
+# Days a paid account's saved runs stay after the plan ends.
+PAID_SAVED_RUNS_GRACE_DAYS=30
+# Largest result saved (JSON bytes); segments are dropped first, then skipped.
+PAID_SAVED_RUN_MAX_BYTES=2097152
+# Days a deleted account can be restored before the worker removes it.
+ACCOUNT_DELETION_HOLD_DAYS=30
 ```
 
 Do not set the local Windows `FFMPEG_LOCATION` value in production. The
@@ -533,6 +550,13 @@ code that needs the new revision. Full detail, including the offline
       signed-in free run fails at admission. Needs `0004_billing` first.
       Offline SQL: `alembic upgrade 0004_billing:0005_account_daily_free_runs --sql`
       (or `0003_account_free_runs:0005_account_daily_free_runs` from 0003).
+- [ ] `0006_saved_history` (paid saved history and the deletion hold:
+      `saved_runs` with RLS, the `videolens_api` policy and grants, plus
+      `accounts.deleted_at`, `purge_at`, `saved_runs_expire_at`, nullable,
+      catalog-only on Postgres; fails if `DATABASE_APP_ROLE` is missing)
+      **before** the code, or every signed-in request fails (column does
+      not exist). Offline SQL:
+      `alembic upgrade 0005_account_daily_free_runs:0006_saved_history --sql`.
 - [ ] `GET /api/capabilities` shows `database: ok` (and `auth: ok`).
 
 ## Phase 3: Installable PWA
@@ -761,7 +785,9 @@ The release is complete when:
 - Uploaded and downloaded media is deleted according to the published
   policy; BYOK keys are never persisted beyond their single use.
 - Run history is scoped correctly per caller, expires per
-  `RUN_TTL_SECONDS` on the server, and persists in the browser.
+  `RUN_TTL_SECONDS` on the server, and persists in the browser; a paid
+  account's results are also saved on the server until 30 days after the
+  plan ends.
 - The PWA is installable and usable across supported mobile and desktop
   browsers.
 - The Android application passes physical-device testing and Play
@@ -777,3 +803,4 @@ The release is complete when:
 - 2026-11-13 · backend agent · paid plan: `STRIPE_*`, `BILLING_RETURN_ORIGIN` and `PAID_*` variables (both services); release checklist item and migration step for `0004_billing`; deploy order (migration, code with billing off, Stripe objects, variables, webhook)
 - 2026-11-14 · backend agent · `FREE_RUNS_PER_ACCOUNT_DAILY` replaces `FREE_RUNS_PER_ACCOUNT_MONTHLY` (remove the old variable); migration step for `0005_account_daily_free_runs` before the daily code
 - 2026-11-14 · backend agent · `PAID_RUNS_PER_DAY` (30/UTC day) replaces `PAID_RUNS_PER_MONTH` (100/month, no longer read): rename the variable on both services if set; no migration
+- 2026-11-14 · backend agent · paid saved history and the 30-day deletion hold: migration `0006_saved_history` (release checklist and migration step, before the code), `PAID_SAVED_RUNS_GRACE_DAYS`, `PAID_SAVED_RUN_MAX_BYTES`, `ACCOUNT_DELETION_HOLD_DAYS` (both services), backend and worker deployed together
