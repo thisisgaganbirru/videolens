@@ -63,15 +63,32 @@ workspaces = Table(
     metadata,
     Column("id", String(36), primary_key=True),
     Column("name", String(120), nullable=False),
-    Column("owner_account_id", String(36), ForeignKey("accounts.id"), nullable=False),
+    # ON DELETE CASCADE since 0007 for this and the three keys below; the
+    # Postgres names are the ones 0001's inline keys got.
+    Column(
+        "owner_account_id",
+        String(36),
+        ForeignKey("accounts.id", name="workspaces_owner_account_id_fkey", ondelete="CASCADE"),
+        nullable=False,
+    ),
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
 workspace_members = Table(
     "workspace_members",
     metadata,
-    Column("workspace_id", String(36), ForeignKey("workspaces.id"), primary_key=True),
-    Column("account_id", String(36), ForeignKey("accounts.id"), primary_key=True),
+    Column(
+        "workspace_id",
+        String(36),
+        ForeignKey("workspaces.id", name="workspace_members_workspace_id_fkey", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "account_id",
+        String(36),
+        ForeignKey("accounts.id", name="workspace_members_account_id_fkey", ondelete="CASCADE"),
+        primary_key=True,
+    ),
     Column("role", String(16), nullable=False, default="member"),
 )
 
@@ -79,7 +96,12 @@ api_keys = Table(
     "api_keys",
     metadata,
     Column("id", String(36), primary_key=True),
-    Column("workspace_id", String(36), ForeignKey("workspaces.id"), nullable=False),
+    Column(
+        "workspace_id",
+        String(36),
+        ForeignKey("workspaces.id", name="api_keys_workspace_id_fkey", ondelete="CASCADE"),
+        nullable=False,
+    ),
     Column("name", String(80), nullable=False),
     Column("prefix", String(24), nullable=False),
     # sha256 hex of the full secret. Unique, and the only lookup path.
