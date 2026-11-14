@@ -903,6 +903,40 @@ No runs submitted; no sign-in, key, account or checkout actions.
   - The Next dev indicator still overlaps the footer brand (dev server only).
 - **Tooling note.** The first offline attempt hung because the CDP helper had no timeout and Chrome was backgrounded behind the app. The 8000 reverse was restored by hand, and the retest ran with a guaranteed restore.
 
+### 2026-11-14 · android-66 (device QA) · run 22 (free runs are 10 a day for signed-in accounts, feat/auth-supabase at c49c4bf)
+
+**Setup**
+- **Build.** Clean tree at c49c4bf. APK rebuilt, synced and installed; the backend on :8000 had been restarted by the requester.
+- **Where.** App checks on the installed APK. The landing was checked in emulator Chrome on :3005, because the APK redirects `/` to `/app.html`.
+- **Widths.** 412 and 320.
+- **Layout shift.** Measured with buffered `layout-shift` entries, including source rects. Rects are in device px; ÷2.625 gives css px.
+- **Evidence.** In `%TEMP%\qa22\` (01–07). Probe scripts: `words22.js` (free-run lines, any visible or hidden "month", dock), `cls2.js`, `acct22.js`, `priv22.js`.
+- **Session.** Signed out. Nothing was signed in or out, and no runs were submitted.
+
+**Results**
+- **1. Landing. PASS.**
+  - Allowance lines: "3 free runs a day, no account needed." over "Videos up to 3 minutes. Sign in for 10 a day.", 67px tall, CLS 0.
+  - Signed-out nav: the long label is "Get 10 free runs" (the phone menu row), and the short label is "Sign up free".
+  - A menu-row tap at 320 opens `/app?view=account`.
+  - No "month" anywhere on the page, visible or hidden.
+- **2. Analyze strip (FreeRunsBanner). Wording PASS; layout jump FAIL.**
+  - Text, in the app and on the web: "3 free runs left today. Sign in for 10 a day, or add your own key." 2 lines at 412, 3 at 320. No "month", no overflow.
+  - The jump: the banner (70 css px at 412, 91 at 320, plus its gap) is inserted once the free-runs fetch returns, with no space reserved for it.
+  - It pushes the eyebrow, title, lede and intake card down by about 93 css px at 412 and 115 at 320.
+  - Shift scores: app 0.079 at 412 (433 ms) and 0.098 at 320 (319 ms); web 0.095 at 412 (1284 ms) and 0.118 at 320 (957 ms).
+  - The web score at 320 is past the 0.1 "good" threshold. Run 21 did not measure this, so the jump is likely not new to c49c4bf.
+- **3. Account. PARTIAL** (signed out, so the signed-in view could not be seen).
+  - Signed-out lede: "Sign in for 10 free runs a day, videos up to 10 minutes with your own key, and API keys for your scripts." No "month".
+  - The dock is Analyze / History / Account / More, with Account current, at 412 and 320.
+  - Source check only, not seen on screen (`AccountPanel.tsx`):
+    - The free account's count reads "Free runs left today: N of 10".
+    - The paid pitch reads "The paid plan: videos up to N minutes without your own key, and runs past the daily limit." It does not compare counts against the free account.
+    - It does add "Beyond its 100 included runs a month, each run is X." when an extra-run price exists. Next to 10 a day, that 100 can read as smaller. Question for the owner.
+- **4. Privacy. PASS** at 412 and 320 in the app.
+  - The device token is used "only to count that device's free runs each day".
+  - The account keeps "a count of the free runs your account has used each day".
+  - "Each month" appears only for the paid account's run count, which is correct.
+
 ## Changelog
 
 - 2026-11-02 · android-66 (device QA) · added section 19 (update banner, UPD-01..07) and run 9 (UPD partial on the mock: UPD-01/03 PASS, UPD-04 partial, rest PAUSED) and run 10 (real runs: terms persistence, RUN-01 retry with a YouTube link, RUN-02/02b/03/04/05/07/08, ORI-02, HIS-01, FREE-01..05, RUN-06b/06c/06d/06e, LCH-06b/06c, FREE-02b PASS; FREE-02c not exercised (YouTube 403 mid-download); stale free-runs count after a refund logged as known (R9); stage timings incl. Normalizing ~60 s for a 170 s file); added FREE-02b/02c rows to section 6
@@ -929,3 +963,4 @@ No runs submitted; no sign-in, key, account or checkout actions.
 - 2026-11-14 · android-66 (device QA) · run 19: four-item phone dock (Analyze/History/Account/More) PASS at 412/360/320 (66px items at 320, labels on one line, above the gesture bar); Account tab opens the signed-out panel and shows as current; /app More sheet has no Account row; /terms and /privacy keep the three-item dock
 - 2026-11-14 · android-66 (device QA) · run 20: Sign in / Get started entries at 9b3b466: the app never shows the landing page (redirect to /app.html); landing checked in emulator Chrome against :3005, entry sits only in the phone menu and reads Sign in (uncommitted LandingScreen edits drop Get started); 4-item dock on /app, legal and 404 pages; new Account heading and help line wrap cleanly at 320
 - 2026-11-14 · android-66 (device QA) · run 21: landing at 2eb2bbe in emulator Chrome (412/360/320/768/784) plus rebuilt APK: allowance lines swap from the fallback with no layout shift (67px both states, offline fallback clean); Sign in link (41x18 inline) and the "Get 10 free runs" menu row open /app?view=account; Start analyzing the only green in the hero (repeated in the closing band); 768/784 pill reads "Sign up free" with a 0.007 shift; Analyze strip "3 free runs left today." plus one sign-in hint wraps cleanly at 320 in app and web; How it works and details list PASS
+- 2026-11-14 · android-66 (device QA) · run 22: 10 free runs a day at c49c4bf (412/320, rebuilt APK plus emulator Chrome): landing lines, "Get 10 free runs" nav, Analyze strip and Privacy all say a day / today / each day with no free-account "month"; dock 4 items; Account checked signed out (signed-in count and paid pitch source-checked only; paid pitch still cites 100 runs a month); FAIL: FreeRunsBanner pops in after the fetch and shifts the intake content about 93-115 css px (CLS 0.08-0.12)
