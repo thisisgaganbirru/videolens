@@ -43,12 +43,20 @@ function openAccount(event: MouseEvent<HTMLAnchorElement>) {
 export default function ApiKeyPanel({
   budgetCapability,
   signInForMinutes = null,
+  signInPending = false,
+  signInStandInMinutes = 10,
 }: {
   budgetCapability?: Capability | null;
   /** Minutes a signed-in person on their own key may send, offered only
    *  where sign-in works and nobody is signed in, and only when the server
    *  reports a larger tier (HomeScreen decides). Null hides the line. */
   signInForMinutes?: number | null;
+  /** Whether the sign-in line applies is not known yet (session, the
+   *  capabilities report or `/api/limits` still on its way). Its space is
+   *  then held so the actions and the guide do not drop when it lands. */
+  signInPending?: boolean;
+  /** Minutes the held line is sized with; never seen. */
+  signInStandInMinutes?: number;
 }) {
   const { value, stored, saved, update, save, clear } = useGeminiApiKey();
   const [revealed, setRevealed] = useState(false);
@@ -186,6 +194,14 @@ export default function ApiKeyPanel({
             <a className="text-link" href={mainTabHref("account")} onClick={openAccount}>
               Sign in
             </a>
+          </p>
+        ) : signInPending ? (
+          /* Same sentence, same box, held unseen while it is not known
+             whether the line applies (UX fix follow-up: it used to arrive
+             late and push Save and the guide down). Not a link, not read. */
+          <p className="key-help key-signin key-signin-ghost" aria-hidden="true" inert>
+            Signed in with your own key, you can analyze videos up to {signInStandInMinutes} minutes.{" "}
+            <span className="text-link">Sign in</span>
           </p>
         ) : null}
         <div className="key-actions">
