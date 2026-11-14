@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Response, UploadFile
+from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
 from ...container import container
-from ...domain.entities import ApiKey, CapabilityReport, Principal, ReleaseIndex, Run
+from ...domain.entities import ApiKey, BillingPrices, CapabilityReport, Price, Principal, ReleaseIndex, Run
+from ...domain.errors import WebhookSignatureError
 from ...domain.run_facts import describe_run
-from .dependencies import get_principal, get_signed_in_principal, require_person
+from .dependencies import get_optional_signed_in_principal, get_principal, get_signed_in_principal, require_person
 from .rate_limiter import client_ip, limiter
 from .schemas import (
     AccountResponse,
@@ -12,8 +14,16 @@ from .schemas import (
     ApiKeyCreateRequest,
     ApiKeyListResponse,
     ApiKeyResponse,
+    BillingPricesResponse,
+    BillingResponse,
+    BillingRunsResponse,
+    BillingUrlResponse,
+    CheckoutRequest,
     EntitlementResponse,
     FreeRunsResponse,
+    LimitsResponse,
+    MediaLimitsResponse,
+    PriceResponse,
     RunCreateResponse,
     RunListResponse,
     RunStatusResponse,
@@ -74,19 +84,56 @@ _READ_LIMIT = f"{container.settings.read_rate_limit_per_minute}/minute"
 _READS_LIMITED = container.settings.read_rate_limit_per_minute > 0
 
 
-@router.get("/api/free-runs", response_model=FreeRunsResponse)
+@router.get("/api/free-runs", response_model=FreeRunsResponse, response_model_exclude_none=True)
 @limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
-async def free_runs(request: Request) -> FreeRunsResponse:
-    """Today's free-run standing for this device. Never spends a run, and
-    needs no X-Client-ID: it is the first call a fresh install makes."""
-    token, status = await container.get_free_runs_use_case.execute(request.headers.get("x-device-token"))
+async def free_runs(
+    request: Request, principal: Principal | None = Depends(get_optional_signed_in_principal)
+) -> FreeRunsResponse:
+    """Free-run standing: this device's for today, or, with a valid bearer
+    (JWT or API key) and the account allowance on, the account's for this
+    month (`scope`). Never spends a run, and needs no X-Client-ID: it is the
+    first call a fresh install makes. An invalid bearer is a 401."""
+    # Signed in, also `plan` and `overage` (docs/backend/billing.md); on the
+    # paid plan `limit` is the plan's included runs. Anonymous callers get
+    # exactly the fields they always did.
+    standing = await container.get_free_runs_use_case.standing(request.headers.get("x-device-token"), principal)
+    status = standing.status
     return FreeRunsResponse(
-        device_token=token,
+        device_token=standing.device_token,
         enabled=status.enabled,
+        scope=status.scope.value,
         limit=status.limit,
         used=status.used,
         remaining=status.remaining,
         resets_at=status.resets_at,
+        plan=standing.plan,
+        overage=standing.overage if standing.plan is not None else None,
+    )
+
+
+@router.get("/api/limits", response_model=LimitsResponse)
+@limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
+async def limits(request: Request, response: Response) -> LimitsResponse:
+    """The media limits per caller, from settings, so the client can say
+    "up to 10:00 when signed in with your own key" without hard-coding it.
+    No auth: the same answer for everyone. Cacheable briefly; its own
+    `Cache-Control` wins over the security headers' `no-store` default."""
+    resolver = container.entitlements
+    response.headers["Cache-Control"] = "public, max-age=300"
+    return LimitsResponse(
+        standard=MediaLimitsResponse(
+            max_duration_seconds=resolver.standard.max_duration_seconds,
+            max_file_size_mb=resolver.standard.max_file_size_mb,
+        ),
+        signed_in_byok=MediaLimitsResponse(
+            max_duration_seconds=resolver.signed_in_byok.max_duration_seconds,
+            max_file_size_mb=resolver.signed_in_byok.max_file_size_mb,
+        ),
+        # Listed whether or not billing is on: the paid plan's own numbers.
+        paid=MediaLimitsResponse(
+            max_duration_seconds=resolver.paid.max_duration_seconds,
+            max_file_size_mb=resolver.paid.max_file_size_mb,
+        ),
     )
 
 
@@ -249,3 +296,83 @@ async def revoke_api_key(
 ) -> Response:
     await container.revoke_api_key_use_case.execute(principal, key_id)
     return Response(status_code=204)
+
+
+# ---------------------------------------------------------------- billing
+# docs/backend/billing.md. Stripe-hosted Checkout and Customer Portal: the
+# API only hands out their URLs and learns the outcome from the webhook.
+
+
+def _price(price: Price | None) -> PriceResponse | None:
+    return PriceResponse(amount=price.amount, currency=price.currency) if price is not None else None
+
+
+def _prices(prices: BillingPrices | None) -> BillingPricesResponse:
+    prices = prices or BillingPrices()
+    return BillingPricesResponse(
+        month=_price(prices.month), year=_price(prices.year), extra_run=_price(prices.extra_run)
+    )
+
+
+@router.get("/api/billing", response_model=BillingResponse)
+@limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
+async def billing(request: Request, principal: Principal = Depends(get_signed_in_principal)) -> Response:
+    """The caller's plan and this month's runs. Anonymous is 401; with
+    billing off (or no account store) just `{"enabled": false}`. Prices are
+    read from Stripe (cached) and are null when Stripe could not be read."""
+    view = await container.get_billing_use_case.execute(principal)
+    if not view.enabled:
+        return JSONResponse({"enabled": False})
+    return BillingResponse(
+        enabled=True,
+        plan=view.plan,
+        status=view.status,
+        interval=view.interval if view.interval in ("month", "year") else None,
+        current_period_end=view.current_period_end,
+        cancel_at_period_end=view.cancel_at_period_end,
+        runs=BillingRunsResponse(limit=view.runs_limit, used=view.runs_used),
+        prices=_prices(view.prices),
+    )
+
+
+@router.post("/api/billing/checkout", response_model=BillingUrlResponse)
+@limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
+async def billing_checkout(
+    request: Request, body: CheckoutRequest, principal: Principal = Depends(require_person)
+) -> BillingUrlResponse:
+    """A Stripe Checkout URL for the paid plan. A signed-in session only
+    (an API key is 403). 409 `already_subscribed` when the account already
+    holds a live subscription: send the person to the portal instead."""
+    url = await container.start_checkout_use_case.execute(principal, body.interval)
+    return BillingUrlResponse(url=url)
+
+
+@router.post("/api/billing/portal", response_model=BillingUrlResponse)
+@limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
+async def billing_portal(request: Request, principal: Principal = Depends(require_person)) -> BillingUrlResponse:
+    """A Stripe Customer Portal URL (cancel, card, invoices). 404
+    `no_billing_account` for an account that never started a checkout."""
+    url = await container.open_billing_portal_use_case.execute(principal)
+    return BillingUrlResponse(url=url)
+
+
+# Stripe's events are a few KB; anything far bigger is not from Stripe.
+_WEBHOOK_MAX_BYTES = 1024 * 1024
+
+
+@router.post("/api/billing/webhook")
+@limiter.exempt
+async def billing_webhook(request: Request, stripe_signature: str = Header(default="")) -> dict:
+    """Stripe's webhook. No auth and no rate limit: the signature
+    (`STRIPE_WEBHOOK_SECRET`) is the authentication, verified against the
+    raw body before anything in it is read. Idempotent per event id; a
+    handling failure is a 5xx so Stripe retries. Only ids are logged."""
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > _WEBHOOK_MAX_BYTES:
+        raise WebhookSignatureError("Payload too large.")
+    payload = await request.body()
+    if len(payload) > _WEBHOOK_MAX_BYTES:
+        raise WebhookSignatureError("Payload too large.")
+    # The use case logs the event id and outcome.
+    await container.handle_billing_webhook_use_case.execute(payload, stripe_signature)
+    return {"received": True}

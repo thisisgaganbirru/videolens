@@ -444,3 +444,58 @@ class DatabaseProbe:
             detail="Accounts are available.",
             probed=True,
         )
+
+
+class BillingProbe:
+    """Whether the paid plan can be bought on this deployment
+    (docs/backend/billing.md). This is how the frontend learns whether to
+    offer it at all.
+
+    Unconfigured (any required `STRIPE_*` blank) or with no account store is
+    `disabled`: free-only is a deployment shape, not a fault. Configured, it
+    reads the plan's Price objects through the gateway's own cache - free
+    (a read, never a charge), and at most one Stripe round trip an hour - so
+    `probed=True` means Stripe really answered. A monthly price Stripe would
+    not return is `degraded`: checkout cannot be offered, but everything a
+    run needs still works.
+    """
+
+    def __init__(self, gateway, accounts) -> None:
+        self._gateway = gateway
+        self._accounts = accounts
+
+    @property
+    def name(self) -> str:
+        return "billing"
+
+    async def check(self) -> Capability:
+        if not self._gateway.enabled or not self._accounts.enabled:
+            return Capability(
+                name=self.name,
+                state=CapabilityState.DISABLED,
+                detail="The paid plan is not offered on this server.",
+                probed=False,
+            )
+        mode = "test mode" if getattr(self._gateway, "test_mode", False) else "live mode"
+        try:
+            prices = await self._gateway.prices()
+        except Exception as exc:  # noqa: BLE001 - prices() should not raise; belt and braces
+            prices = None
+            failure = type(exc).__name__
+        else:
+            failure = None
+        if prices is None or prices.month is None:
+            return Capability(
+                name=self.name,
+                state=CapabilityState.DEGRADED,
+                detail="Upgrading is unavailable right now. Everything else works as usual.",
+                probed=True,
+                log_detail=f"Stripe ({mode}): monthly price unreadable" + (f" ({failure})" if failure else ""),
+            )
+        return Capability(
+            name=self.name,
+            state=CapabilityState.OK,
+            detail="The paid plan is available.",
+            probed=True,
+            log_detail=f"Stripe ({mode}): prices read",
+        )

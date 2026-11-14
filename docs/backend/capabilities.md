@@ -48,6 +48,16 @@ A probe that raises becomes an `unavailable` row with a fixed message, and the r
 
 Results are cached for 10s behind an `asyncio.Lock`. The probes spawn subprocesses and open sockets, so an uncached public endpoint would hand any caller a way to spawn processes at will.
 
+## `billing` (2026-11-13)
+
+`BillingProbe` (`docs/backend/billing.md`): `disabled` without the required
+`STRIPE_*` settings or an account store (not probed); `ok` when the plan's
+Price objects read back through the gateway's one-hour cache (`probed=true`;
+a read never charges anything); `degraded` when the monthly price cannot be
+read (checkout cannot be offered; runs are unaffected). Like `auth`, a
+`degraded` billing row does drag the overall state to `degraded`.
+`log_detail` says test or live mode; the key never appears.
+
 ## Relationship to the existing health endpoints
 
 Unchanged and still separate:
@@ -68,3 +78,4 @@ Unchanged and still separate:
 - 2026-10-28 · claude (session ccr-ee9ca9d3) · `ObjectStoreProbe` now actually logs the head_bucket failure and puts the S3 code/status in `log_detail`; before, it said "see the logged exception" but nothing was logged
 - 2026-11-08 · backend subagent (auth phase 1) · added the `auth` capability (`AuthProbe`, seventh probe, appended last): disabled when sign-in is unconfigured, ok/degraded from a real JWKS fetch
 - 2026-11-09 · backend subagent (auth phase 3) · added the `database` capability (`DatabaseProbe`, eighth probe, after `auth`): disabled without `DATABASE_URL`, ok on `SELECT 1`, degraded on failure
+- 2026-11-13 · backend agent · `billing` row (`BillingProbe`): disabled / ok (prices read, cached) / degraded

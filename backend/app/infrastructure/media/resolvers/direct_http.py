@@ -17,8 +17,10 @@ import urllib.request
 from urllib.parse import urlparse
 
 from ....domain.entities import SavedUpload
+from ....domain.entitlements import MediaLimits, size_over_limit_message
 from ....domain.errors import MediaValidationError
 from ...config import Settings
+from ..limits import effective_limits
 from ..net import ValidatingRedirectHandler, build_public_opener, validate_public_url
 from ..uploads import _cleanup_dir, create_run_dir
 
@@ -30,6 +32,13 @@ _USER_AGENT = "VideoLens/1.0 (+https://github.com/thisisgaganbirru/videolens)"
 # Kept under its old name: the handler moved to net.py so the thumbnail
 # fetch shares the one copy.
 _ValidatingRedirectHandler = ValidatingRedirectHandler
+
+
+def _size_of(path: str) -> int | None:
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return None
 
 
 class DirectHttpResolver:
@@ -49,11 +58,12 @@ class DirectHttpResolver:
             return False
         return any(path.endswith(extension) for extension in self._settings.allowed_extensions)
 
-    async def fetch(self, run_id: str, url: str) -> SavedUpload:
+    async def fetch(self, run_id: str, url: str, limits: MediaLimits | None = None) -> SavedUpload:
+        limits = effective_limits(self._settings, limits)
         await asyncio.to_thread(validate_public_url, url)
         run_dir = create_run_dir(self._settings, run_id)
         try:
-            path = await asyncio.to_thread(self._download, url, run_dir)
+            path = await asyncio.to_thread(self._download, url, run_dir, limits)
         except MediaValidationError:
             _cleanup_dir(run_dir)
             raise
@@ -66,10 +76,11 @@ class DirectHttpResolver:
         # No metadata: a bare file on a web server carries no publisher
         # information, which is exactly why this is the fallback and not the
         # primary path.
-        return SavedUpload(path=path, run_dir=run_dir)
+        return SavedUpload(path=path, run_dir=run_dir, size_bytes=_size_of(path))
 
-    def _download(self, url: str, run_dir: str) -> str:
-        max_bytes = self._settings.max_file_size_mb * 1024 * 1024
+    def _download(self, url: str, run_dir: str, limits: MediaLimits | None = None) -> str:
+        limits = effective_limits(self._settings, limits)
+        max_bytes = limits.max_file_size_bytes
         extension = os.path.splitext(urlparse(url).path)[1].lower()
         destination = os.path.join(run_dir, f"download{extension}")
 
@@ -88,18 +99,14 @@ class DirectHttpResolver:
         with response:
             declared = response.headers.get("Content-Length")
             if declared and declared.isdigit() and int(declared) > max_bytes:
-                raise MediaValidationError(
-                    f"That file is over the {self._settings.max_file_size_mb}MB limit."
-                )
+                raise MediaValidationError(size_over_limit_message(limits))
 
             total = 0
             with open(destination, "wb") as out_file:
                 while chunk := response.read(_CHUNK_SIZE):
                     total += len(chunk)
                     if total > max_bytes:
-                        raise MediaValidationError(
-                            f"That file is over the {self._settings.max_file_size_mb}MB limit."
-                        )
+                        raise MediaValidationError(size_over_limit_message(limits))
                     out_file.write(chunk)
 
         if total == 0:

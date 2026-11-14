@@ -53,17 +53,84 @@ class RunSummary(BaseModel):
     height: Optional[int] = None
 
 
+class MediaLimitsResponse(BaseModel):
+    max_duration_seconds: int
+    max_file_size_mb: int
+
+
+class LimitsResponse(BaseModel):
+    """`GET /api/limits`. The media-limit sets: `standard` for everyone,
+    `signed_in_byok` for a signed-in caller who sends their own Gemini key,
+    `paid` for a paid-plan account (with or without a key;
+    docs/backend/billing.md)."""
+
+    standard: MediaLimitsResponse
+    signed_in_byok: MediaLimitsResponse
+    paid: MediaLimitsResponse
+
+
 class FreeRunsResponse(BaseModel):
     """`device_token` is always present: the one sent, if it was genuine,
     else a newly issued one the client should store and send back as
-    `X-Device-Token`. `enabled=False` means no free-run limit applies."""
+    `X-Device-Token`. `enabled=False` means no free-run limit applies.
+    `scope` says which counter the numbers are: "device" (per UTC day) or
+    "account" (a signed-in account, per UTC calendar month).
+
+    Signed in only (left out for anonymous callers, so their response is
+    unchanged): `plan` "free" or "paid"; `overage` true on the paid plan,
+    where runs past `limit` are billed as extra runs instead of refused."""
 
     device_token: str
     enabled: bool
+    scope: str = "device"
     limit: int
     used: int
     remaining: int
     resets_at: datetime
+    plan: Optional[Literal["free", "paid"]] = None
+    overage: Optional[bool] = None
+
+
+class PriceResponse(BaseModel):
+    """An amount in the currency's smallest unit (cents), as Stripe has it."""
+
+    amount: int
+    currency: str
+
+
+class BillingPricesResponse(BaseModel):
+    month: Optional[PriceResponse] = None
+    year: Optional[PriceResponse] = None
+    extra_run: Optional[PriceResponse] = None
+
+
+class BillingRunsResponse(BaseModel):
+    limit: int
+    used: int
+
+
+class BillingResponse(BaseModel):
+    """`GET /api/billing`. With billing off only `{"enabled": false}` is
+    sent (every other field is left out)."""
+
+    enabled: bool
+    plan: Optional[Literal["free", "paid"]] = None
+    status: Optional[str] = None
+    interval: Optional[Literal["month", "year"]] = None
+    current_period_end: Optional[datetime] = None
+    cancel_at_period_end: Optional[bool] = None
+    runs: Optional[BillingRunsResponse] = None
+    prices: Optional[BillingPricesResponse] = None
+
+
+class CheckoutRequest(BaseModel):
+    interval: Literal["month", "year"] = "month"
+
+
+class BillingUrlResponse(BaseModel):
+    """A Stripe-hosted page to send the browser to."""
+
+    url: str
 
 
 class RunListResponse(BaseModel):

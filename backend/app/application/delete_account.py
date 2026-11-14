@@ -2,6 +2,12 @@
 
 Order matters, and is the whole design:
 
+0. The account's Stripe subscription, cancelled now (docs/backend/billing.md):
+   no proration credit, and usage not yet invoiced (completed extra runs)
+   invoiced immediately. Before anything else, because once the rows are
+   gone nobody could find the subscription to stop it. If Stripe cannot be
+   reached the deletion is refused (503 `subscription_cancel_failed`) with
+   nothing removed, rather than leave a paying orphan.
 1. Server-side runs owned by the person (`user:<sub>`) and by each of their
    workspace's API keys (`key:<id>`). Best effort: runs expire within
    `RUN_TTL_SECONDS` anyway, so a Redis hiccup here is logged and does not
@@ -24,8 +30,15 @@ when `resolve_account` would create rows, so a second `DELETE /api/me` is a
 import logging
 
 from ..domain.entities import AuthMethod, Principal
-from ..domain.errors import AccountDeletionError, AccountsNotConfiguredError, ForbiddenError
+from ..domain.errors import (
+    AccountDeletionError,
+    AccountsNotConfiguredError,
+    ForbiddenError,
+    SubscriptionCancelFailedError,
+)
+from ..domain.policies import subscription_is_live
 from ..domain.ports import AccountDeleter, AccountDirectory, ApiKeyRepository, RunRepository
+from .billing import BillingPlans, ExtraRunBilling
 
 logger = logging.getLogger("videolens")
 
@@ -41,7 +54,9 @@ class DeleteAccountUseCase:
         deleter: AccountDeleter,
         api_keys: ApiKeyRepository,
         runs: RunRepository,
+        billing: BillingPlans | None = None,
     ) -> None:
+        self._billing = billing
         self._accounts = accounts
         self._deleter = deleter
         self._api_keys = api_keys
@@ -56,6 +71,7 @@ class DeleteAccountUseCase:
             raise AccountsNotConfiguredError("Accounts are not available on this server.")
         external_id = principal.subject[len(_SUBJECT_PREFIX):]
 
+        await self._cancel_subscription(principal.account_id)
         await self._delete_runs(principal)
 
         try:
@@ -80,6 +96,33 @@ class DeleteAccountUseCase:
             "removed" if existed else "already gone",
             "removed" if removed_identity else "skipped",
         )
+
+    async def _cancel_subscription(self, account_id: str | None) -> None:
+        billing = self._billing
+        if billing is None or account_id is None or not billing.accounts.enabled:
+            return
+        try:
+            account = await billing.accounts.get(account_id)
+        except Exception as exc:  # noqa: BLE001 - cannot tell whether it pays: stop
+            logger.exception("Account deletion could not read the billing account (account %s)", account_id)
+            raise SubscriptionCancelFailedError(log_detail=f"billing read: {type(exc).__name__}") from exc
+        if account is None or not account.stripe_subscription_id:
+            return
+        if not billing.gateway.enabled:
+            if subscription_is_live(account.status):
+                # Billing was switched off with a live subscription on file.
+                logger.error("Account deletion refused: live subscription but billing is off (account %s)", account_id)
+                raise SubscriptionCancelFailedError(log_detail="live subscription on file, STRIPE_* not configured")
+            return
+        # Completed extra runs first, so the final invoice carries them.
+        await ExtraRunBilling(plans=billing).flush_due()
+        try:
+            # Whatever the row says: a missed webhook must not leave one running.
+            await billing.gateway.cancel_subscription(account.stripe_subscription_id)
+        except Exception as exc:  # noqa: BLE001 - refused, logged in full
+            logger.exception("Account deletion could not cancel the subscription (account %s)", account_id)
+            raise SubscriptionCancelFailedError(log_detail=f"stripe cancel: {type(exc).__name__}") from exc
+        logger.info("Account deletion cancelled subscription %s (account %s)", account.stripe_subscription_id, account_id)
 
     async def _delete_runs(self, principal: Principal) -> None:
         owners = [principal.owner_id]

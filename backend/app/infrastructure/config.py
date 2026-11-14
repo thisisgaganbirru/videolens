@@ -34,6 +34,12 @@ class Settings(BaseSettings):
 
     max_file_size_mb: int = 200
     max_duration_seconds: int = 180
+    # The bigger set for a caller who is signed in (JWT or account API key)
+    # AND brings their own Gemini key on the run. Everyone else gets the two
+    # above. A value at or below the standard one means the standard one:
+    # this tier can only ever be bigger (application/entitlements.py).
+    signed_in_byok_max_duration_seconds: int = 600
+    signed_in_byok_max_file_size_mb: int = 500
     rate_limit_per_hour: int = 20
     # Per-IP limit on the read endpoints (run polling, run list, free-run
     # status). Generous: the web app polls one run every 3 s. <= 0 disables.
@@ -58,6 +64,13 @@ class Settings(BaseSettings):
     # because shared networks (offices, campuses, carrier NAT) put many
     # people behind one IP. <= 0 disables the IP backstop only.
     free_runs_per_ip: int = 10
+    # Free runs per signed-in account per UTC calendar month, for callers
+    # without their own Gemini key. Counted against the account (so they
+    # follow the person across devices) INSTEAD of the device counter, not
+    # on top of it. Needs an account store (DATABASE_URL, or the in-memory
+    # one in local mode). <= 0 turns it off: signed-in callers then fall back
+    # to the device rule above.
+    free_runs_per_account_monthly: int = 10
     # HMAC key for device tokens. Required in distributed mode (REDIS_URL
     # set) while free runs are on, or replicas would reject each other's
     # tokens; generated per process (with a warning) in local mode.
@@ -69,6 +82,12 @@ class Settings(BaseSettings):
     run_ttl_seconds: int = 3600
     worker_max_jobs: int = 2
     worker_job_timeout_seconds: int = 600
+    # arq timeout for runs admitted under the signed-in + BYOK limits (a
+    # separate job function, `process_long_run`), whose media can be ~3x
+    # longer: download + FFmpeg re-encode + Gemini upload/processing of a
+    # 10-minute video does not fit in 600 s on a small worker. Standard runs
+    # keep WORKER_JOB_TIMEOUT_SECONDS. Never below it.
+    worker_long_job_timeout_seconds: int = 1800
 
     temp_dir: str = "/tmp/videolens"
     allowed_origins: str = "http://localhost:3000,http://localhost:3005"
@@ -103,6 +122,41 @@ class Settings(BaseSettings):
     database_url: str = ""
     # Live API keys a workspace may hold at once.
     api_keys_per_workspace: int = 10
+
+    # The paid plan (docs/backend/billing.md). Billing is on only when the
+    # secret key, the webhook secret, the monthly price and the extra-run
+    # price are all set; blank any of them and everything behaves as it did
+    # before billing existed. Test-mode keys (`sk_test_`) for all work until
+    # the owner says otherwise. Amounts live in the Stripe Prices, never here.
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    # Recurring licensed prices of the one plan. Yearly is optional: blank =
+    # monthly only (`prices.year` null, a yearly checkout is a 400).
+    stripe_price_monthly: str = ""
+    stripe_price_yearly: str = ""
+    # The per-extra-run price: recurring, monthly, usage_type=metered, tied
+    # to the Billing Meter below. Rides on every subscription, the yearly
+    # one included (a mixed-interval subscription, flexible billing mode).
+    stripe_price_extra_run: str = ""
+    # Optional yearly metered price on the same meter. Set it and yearly
+    # subscribers carry it instead, billed once a year in arrears, for a
+    # Stripe account where mixed intervals are not available.
+    stripe_price_extra_run_yearly: str = ""
+    # The Billing Meter's `event_name`.
+    stripe_meter_event_name: str = "videolens_extra_run"
+    # Where Checkout and the Customer Portal send the person back. Blank =
+    # the first ALLOWED_ORIGINS entry. Paths are fixed:
+    # /app?view=account&billing=success|cancel.
+    billing_return_origin: str = ""
+    # Shared-key runs included per UTC calendar month on the paid plan.
+    paid_runs_per_month: int = 100
+    # Media limits on the paid plan, with or without the person's own key.
+    # <= 0 = the SIGNED_IN_BYOK_* values; never below the standard limits.
+    paid_max_duration_seconds: int = 0
+    paid_max_file_size_mb: int = 0
+    # Safety net on extra runs per account per UTC month: past it a paid run
+    # is refused (402 extra_runs_cap) instead of growing the bill. <= 0 = no cap.
+    paid_extra_runs_monthly_cap: int = 200
 
     github_repo: str = "thisisgaganbirru/videolens"
     github_token: str = ""
@@ -160,6 +214,50 @@ class Settings(BaseSettings):
                 "(Supabase) URL, or leave DATABASE_URL blank."
             )
         return None
+
+    @property
+    def billing_configured(self) -> bool:
+        """Every required STRIPE_* setting is present."""
+        return all(
+            value.strip()
+            for value in (
+                self.stripe_secret_key,
+                self.stripe_webhook_secret,
+                self.stripe_price_monthly,
+                self.stripe_price_extra_run,
+                self.stripe_meter_event_name,
+            )
+        )
+
+    @property
+    def billing_return_base(self) -> str:
+        """The origin Checkout and the portal return to, without a slash."""
+        configured = self.billing_return_origin.strip()
+        if not configured:
+            configured = next(
+                (o.strip() for o in self.allowed_origins.split(",") if o.strip() and o.strip() != "*"),
+                "http://localhost:3005",
+            )
+        return configured.rstrip("/")
+
+    def distributed_billing_error(self) -> str | None:
+        """Why this billing configuration must not start, or None. Without a
+        database a distributed deployment has no account store, so there is
+        no account to hang a subscription on, and a webhook would be dropped."""
+        if not self.queue_enabled or not self.billing_configured:
+            return None
+        if not self.database_url.strip():
+            return (
+                "Billing is configured (STRIPE_*) in a distributed deployment (REDIS_URL is set) "
+                "without DATABASE_URL. Subscriptions need the account store. Set DATABASE_URL, or "
+                "blank STRIPE_SECRET_KEY to turn billing off."
+            )
+        return None
+
+    @property
+    def long_job_timeout_seconds(self) -> int:
+        """WORKER_LONG_JOB_TIMEOUT_SECONDS, floored at the standard timeout."""
+        return max(self.worker_long_job_timeout_seconds, self.worker_job_timeout_seconds)
 
     @property
     def queue_enabled(self) -> bool:

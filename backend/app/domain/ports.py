@@ -6,6 +6,12 @@ from typing import Awaitable, Callable, Optional, Protocol
 
 from .entities import (
     Account,
+    AccountFreeRunClaim,
+    BillingAccount,
+    BillingPrices,
+    BillingWebhookEvent,
+    ExtraRunCharge,
+    SubscriptionSnapshot,
     AnalysisCompleteness,
     ApiKey,
     ApiKeyCreated,
@@ -22,6 +28,7 @@ from .entities import (
     VideoAnalysis,
     Workspace,
 )
+from .entitlements import MediaLimits
 
 StageCallback = Callable[[str], Awaitable[None]]
 
@@ -46,6 +53,8 @@ class RunRepository(Protocol):
         source_kind: str | None = None,
         platform: str | None = None,
         duration_seconds: float | None = None,
+        media_tier: str | None = None,
+        admitted_byok: bool = False,
     ) -> Run: ...
 
     async def get(self, run_id: str) -> Optional[Run]: ...
@@ -61,7 +70,11 @@ class RunRepository(Protocol):
         run_id: str,
         result: VideoAnalysis,
         completeness: AnalysisCompleteness = AnalysisCompleteness.FULL,
-    ) -> None: ...
+    ) -> bool:
+        """Mark the run complete. False when nothing was written: the run is
+        gone, or it already ended (complete or failed). An ended run is
+        final; every write to it is skipped, not only this one."""
+        ...
 
     async def set_source_metadata(self, run_id: str, metadata: SourceMetadata) -> None: ...
 
@@ -72,7 +85,10 @@ class RunRepository(Protocol):
         left as they were."""
         ...
 
-    async def set_error(self, run_id: str, error: str) -> None: ...
+    async def set_error(self, run_id: str, error: str) -> bool:
+        """Mark the run failed. False when the run is gone or already ended,
+        as for `set_result`."""
+        ...
 
     async def delete_for_owner(self, owner_id: str) -> int:
         """Remove every run the owner's index (or, in memory, the store)
@@ -92,16 +108,20 @@ class MediaProcessor(Protocol):
 
     def cleanup_run_dir(self, run_id: str) -> None: ...
 
-    async def save_upload(self, run_id: str, upload: UploadedFile) -> SavedUpload: ...
+    # `limits` is the run's own (application/entitlements.py); None means
+    # the deployment's standard limits.
+    async def save_upload(
+        self, run_id: str, upload: UploadedFile, limits: Optional[MediaLimits] = None
+    ) -> SavedUpload: ...
 
-    async def enforce_duration_cap(self, run_id: str, path: str) -> float:
+    async def enforce_duration_cap(self, run_id: str, path: str, limits: Optional[MediaLimits] = None) -> float:
         """Probe the file, reject it if over the cap, and return the probed
         length in seconds so the caller can record it."""
         ...
 
-    async def download_url(self, run_id: str, url: str) -> SavedUpload: ...
+    async def download_url(self, run_id: str, url: str, limits: Optional[MediaLimits] = None) -> SavedUpload: ...
 
-    async def fetch_captions(self, url: str) -> Optional[CaptionTrack]: ...
+    async def fetch_captions(self, url: str, limits: Optional[MediaLimits] = None) -> Optional[CaptionTrack]: ...
 
     async def normalize_media(self, src_path: str, run_dir: str) -> str: ...
 
@@ -131,7 +151,7 @@ class SourceResolver(Protocol):
 
     def can_handle(self, url: str) -> bool: ...
 
-    async def fetch(self, run_id: str, url: str) -> SavedUpload: ...
+    async def fetch(self, run_id: str, url: str, limits: Optional[MediaLimits] = None) -> SavedUpload: ...
 
 
 class AnalysisEngine(Protocol):
@@ -171,7 +191,27 @@ class JobQueue(Protocol):
         source_url: str | None = None,
         source_key: str | None = None,
         gemini_api_key: str | None = None,
-    ) -> None: ...
+        limits: Optional[MediaLimits] = None,
+    ) -> None:
+        """`limits` travels with the job (never the key: that goes through
+        the KeyVault), so the worker enforces what the API admitted."""
+        ...
+
+    async def close(self) -> None: ...
+
+
+class LongRunGuard(Protocol):
+    """At most one run above the standard media limits in flight per
+    account. A slot is held by one run id; acquiring again for the same run
+    succeeds (and re-arms the expiry), so intake and worker can both claim it.
+    It expires on its own after a whole long job could have taken, so a dead
+    worker never leaves an account locked out."""
+
+    async def try_acquire(self, key: str, run_id: str) -> bool: ...
+
+    async def release(self, key: str, run_id: str) -> None:
+        """Free the slot if `run_id` holds it; otherwise a no-op."""
+        ...
 
     async def close(self) -> None: ...
 
@@ -224,6 +264,42 @@ class FreeRunAllowance(Protocol):
         run acts, so a run is never refunded twice. True when a run was
         handed back; False when nothing was held (BYOK, allowance off,
         already released, expired) or `refund` was false."""
+        ...
+
+    async def close(self) -> None: ...
+
+
+class AccountFreeRunAllowance(Protocol):
+    """How many runs a signed-in account without its own Gemini key may
+    start per UTC calendar month. Replaces the device counter for that
+    caller (never adds to it), so the runs follow the person across devices.
+    Same hold/release contract as `FreeRunAllowance`, so the pipeline can
+    hand a run back the same way."""
+
+    @property
+    def enabled(self) -> bool: ...
+
+    async def status(self, account_id: str, *, limit: int | None = None) -> FreeRunStatus:
+        """Read-only: never consumes. `scope` is ACCOUNT. `limit` overrides
+        the free monthly limit (the paid plan's included runs count on the
+        same counter, docs/backend/billing.md)."""
+        ...
+
+    async def try_consume(self, account_id: str, *, limit: int | None = None) -> AccountFreeRunClaim | None:
+        """Atomically take one run if this month's count is below the
+        limit (`limit`, else the free monthly one), or None (taking
+        nothing). Concurrent calls can never take the account past it."""
+        ...
+
+    async def refund(self, claim: AccountFreeRunClaim) -> None:
+        """Hand one run back to the claim's month, never below zero."""
+        ...
+
+    async def hold(self, run_id: str, claim: AccountFreeRunClaim) -> None: ...
+
+    async def release(self, run_id: str, *, refund: bool) -> bool:
+        """Forget the run held for `run_id`, refunding first when `refund`.
+        Only the first call for a run acts. True when a run was handed back."""
         ...
 
     async def close(self) -> None: ...
@@ -354,3 +430,105 @@ class ReleaseCatalog(Protocol):
     """
 
     async def fetch(self) -> ReleaseIndex: ...
+
+
+class BillingGateway(Protocol):
+    """The payment provider (Stripe). Every call is a network call; the
+    application never sees a Stripe object, only the domain records.
+    `enabled` is False when a required setting is blank, and every other
+    method then raises `BillingNotConfiguredError`."""
+
+    @property
+    def enabled(self) -> bool: ...
+
+    @property
+    def yearly_available(self) -> bool: ...
+
+    async def create_customer(self, account_id: str, email: str | None) -> str:
+        """A new customer id. Idempotent per account for a day (Stripe
+        idempotency key), so two racing checkouts make one customer."""
+        ...
+
+    async def create_checkout_session(self, *, customer_id: str, account_id: str, interval: str) -> str:
+        """The hosted Checkout URL for the plan at `interval`."""
+        ...
+
+    async def create_portal_session(self, customer_id: str) -> str: ...
+
+    async def prices(self) -> BillingPrices:
+        """Cached; never raises (an unreadable price is None)."""
+        ...
+
+    def parse_webhook(self, payload: bytes, signature: str) -> BillingWebhookEvent:
+        """Verify the signature and reduce the event. Raises
+        `WebhookSignatureError` when it does not verify. No network."""
+        ...
+
+    async def get_subscription(self, subscription_id: str) -> SubscriptionSnapshot: ...
+
+    async def cancel_subscription(self, subscription_id: str) -> None:
+        """Cancel now, no proration credit, outstanding usage invoiced now.
+        An already-cancelled subscription is not an error."""
+        ...
+
+    async def report_extra_run(self, charge: ExtraRunCharge) -> None:
+        """One meter event (value 1) with the run id as its identifier, so a
+        resend inside Stripe's dedup window cannot bill twice."""
+        ...
+
+
+class BillingAccounts(Protocol):
+    """Which Stripe customer and subscription belong to which account
+    (`billing_accounts`, or memory locally), plus webhook idempotency."""
+
+    @property
+    def enabled(self) -> bool: ...
+
+    async def get(self, account_id: str) -> Optional[BillingAccount]: ...
+
+    async def by_customer(self, customer_id: str) -> Optional[BillingAccount]: ...
+
+    async def link_customer(self, account_id: str, customer_id: str) -> BillingAccount:
+        """Record the account's customer, unless it already has one: the
+        stored one wins and is returned."""
+        ...
+
+    async def apply_subscription(self, account_id: str, snapshot: SubscriptionSnapshot) -> bool:
+        """Store the subscription's state on the account. False (nothing
+        written) when the account has no billing row, or holds a different
+        live subscription and this one is not live."""
+        ...
+
+    async def event_seen(self, event_id: str) -> bool: ...
+
+    async def mark_event(self, event_id: str, event_type: str) -> None:
+        """Record a processed event (idempotent)."""
+        ...
+
+    async def close(self) -> None: ...
+
+
+class ExtraRunLedger(Protocol):
+    """Runs a paid account started past its included runs, from admission
+    to the Stripe report. States: held (admitted) -> due (completed) ->
+    reported; held -> void (failed, refunded, rejected). Only `due` rows are
+    ever reported, and each transition happens at most once."""
+
+    async def hold(self, run_id: str, *, account_id: str, customer_id: str, period: str) -> None: ...
+
+    async def count(self, account_id: str, period: str) -> int:
+        """Extra runs not voided this period (the monthly safety cap)."""
+        ...
+
+    async def complete(self, run_id: str) -> Optional[ExtraRunCharge]:
+        """held -> due. The charge when this call moved it, else None (not
+        an extra run, or already settled)."""
+        ...
+
+    async def void(self, run_id: str) -> bool:
+        """held -> void. True when this call voided it."""
+        ...
+
+    async def due(self, *, limit: int = 50) -> list[ExtraRunCharge]: ...
+
+    async def mark_reported(self, run_id: str) -> None: ...

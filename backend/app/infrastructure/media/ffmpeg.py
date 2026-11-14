@@ -2,8 +2,10 @@ import asyncio
 import os
 import shutil
 
+from ...domain.entitlements import MediaLimits, clock, duration_over_limit_message
 from ...domain.errors import MediaValidationError
 from ..config import Settings
+from .limits import effective_limits
 from .uploads import cleanup_run_dir
 
 
@@ -40,11 +42,9 @@ def validate_media_tools(settings: Settings) -> None:
 
 
 def _clock(seconds: float) -> str:
-    """`m:ss`, matching how the frontend prints every other timestamp. "240s
-    exceeds the 180s limit" is a measurement; "4:00, the limit is 3:00" is the
-    same fact in the units the person was looking at."""
-    total = max(0, round(seconds))
-    return f"{total // 60}:{total % 60:02d}"
+    """`m:ss`. Kept under its old name; the formatter lives in the domain now
+    so the over-limit messages share it (`domain/entitlements.py`)."""
+    return clock(seconds)
 
 
 async def probe_duration_seconds(settings: Settings, path: str) -> float:
@@ -75,18 +75,18 @@ async def probe_duration_seconds(settings: Settings, path: str) -> float:
         ) from exc
 
 
-async def enforce_duration_cap(settings: Settings, run_id: str, path: str) -> float:
+async def enforce_duration_cap(
+    settings: Settings, run_id: str, path: str, limits: MediaLimits | None = None
+) -> float:
+    limits = effective_limits(settings, limits)
     try:
         duration = await probe_duration_seconds(settings, path)
     except MediaValidationError:
         cleanup_run_dir(settings, run_id)
         raise
-    if duration > settings.max_duration_seconds:
+    if duration > limits.max_duration_seconds:
         cleanup_run_dir(settings, run_id)
-        raise MediaValidationError(
-            f"This video is {_clock(duration)} long. The limit is "
-            f"{_clock(settings.max_duration_seconds)}."
-        )
+        raise MediaValidationError(duration_over_limit_message(duration, limits))
     return duration
 
 

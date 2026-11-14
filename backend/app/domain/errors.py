@@ -88,13 +88,16 @@ class DeviceTokenInvalidError(Exception):
 
 
 class FreeRunsExhaustedError(Exception):
-    """This device (or its network) has used today's free runs. `limit` and
-    `used` are always the device's own numbers, whichever counter tripped."""
+    """This device (or its network) has used today's free runs, or, with
+    `scope="account"`, this account has used this month's. `limit` and
+    `used` are always the device's (or account's) own numbers, whichever
+    counter tripped."""
 
-    def __init__(self, message: str, *, limit: int, used: int) -> None:
+    def __init__(self, message: str, *, limit: int, used: int, scope: str = "device") -> None:
         super().__init__(message)
         self.limit = limit
         self.used = used
+        self.scope = scope
 
 
 class AuthenticationError(Exception):
@@ -136,3 +139,134 @@ class AccountDeletionError(UserFacingError):
     """Deleting an account failed part-way (500). Whatever was already
     removed stays removed; the provider user goes last, so retrying with the
     same session finishes the job."""
+
+
+LONG_RUN_IN_PROGRESS_MESSAGE = "You already have a long video processing. Wait for it to finish."
+
+
+class LongRunInProgressError(UserFacingError):
+    """This account already has a run above the standard limits queued or
+    processing (429, `code: long_run_in_progress`). At most one at a time;
+    standard-length runs are never refused for it. A user-facing error so a
+    link run that only turns out long in the worker fails with the same
+    sentence."""
+
+    def __init__(self, message: str = LONG_RUN_IN_PROGRESS_MESSAGE, *, log_detail: str | None = None) -> None:
+        super().__init__(message, log_detail=log_detail)
+
+
+RUN_INTERRUPTED_MESSAGE = "Analysis was interrupted before it finished. Please try again."
+BYOK_KEY_EXPIRED_MESSAGE = "This run waited too long to start. Please try again."
+
+
+class OwnKeyUnavailableError(UserFacingError):
+    """A run admitted on the caller's own Gemini key reached the worker with
+    no key in the single-use vault. It is failed rather than run on the
+    shared key, which it was never counted against (docs/backend/byok.md).
+
+    `started`: an earlier attempt of the job already took the key (an arq
+    retry after its worker died), so the person sees "interrupted" rather
+    than "waited too long"."""
+
+    def __init__(self, *, started: bool = False) -> None:
+        super().__init__(
+            RUN_INTERRUPTED_MESSAGE if started else BYOK_KEY_EXPIRED_MESSAGE,
+            log_detail=(
+                "admitted on the caller's own Gemini key, but the BYOK vault had no key ("
+                + (
+                    "an earlier attempt of this job took it; arq retry"
+                    if started
+                    else "the 15-minute vault entry expired while the job was queued"
+                )
+                + "); refused rather than use the shared GEMINI_API_KEY"
+            ),
+        )
+        self.started = started
+
+
+# ------------------------------------------------------------------ billing
+# docs/backend/billing.md. Each carries a machine-readable `code` the API
+# sends next to `detail`, because the client acts on it.
+
+
+class BillingError(Exception):
+    code = "billing_error"
+
+
+class BillingNotConfiguredError(BillingError):
+    """Billing is off on this deployment (a required STRIPE_* setting is
+    blank, or there is no account store). 503 `billing_disabled`."""
+
+    code = "billing_disabled"
+
+    def __init__(self, message: str = "Subscriptions are not available on this server.") -> None:
+        super().__init__(message)
+
+
+class AlreadySubscribedError(BillingError):
+    """The account already holds a live subscription (409)."""
+
+    code = "already_subscribed"
+
+    def __init__(self, message: str = "You already have a subscription. Manage it from Billing.") -> None:
+        super().__init__(message)
+
+
+class NoBillingAccountError(BillingError):
+    """The account has never started a checkout, so there is no Stripe
+    customer to open the portal for (404)."""
+
+    code = "no_billing_account"
+
+    def __init__(self, message: str = "There is no billing account for you yet.") -> None:
+        super().__init__(message)
+
+
+class BillingIntervalError(BillingError):
+    """`interval` is not one this deployment sells (400): not "month" or
+    "year", or "year" with no yearly price configured."""
+
+    code = "invalid_interval"
+
+
+class BillingProviderError(BillingError):
+    """Stripe refused or could not be reached (503). The message is for the
+    phone; the cause goes to the log only."""
+
+    code = "billing_unavailable"
+
+    def __init__(
+        self, message: str = "Payments are unavailable right now. Try again in a moment.", *, log_detail: str | None = None
+    ) -> None:
+        super().__init__(message)
+        self.log_detail = log_detail
+
+
+class WebhookSignatureError(Exception):
+    """A webhook whose `Stripe-Signature` does not verify (400). Nothing in
+    it is read."""
+
+
+class ExtraRunsCapReachedError(Exception):
+    """A paid account reached `PAID_EXTRA_RUNS_MONTHLY_CAP` extra runs this
+    UTC month (402 `extra_runs_cap`): a safety net against a runaway bill,
+    not a price point."""
+
+    def __init__(self, message: str, *, limit: int) -> None:
+        super().__init__(message)
+        self.limit = limit
+
+
+SUBSCRIPTION_CANCEL_FAILED_MESSAGE = (
+    "We couldn't cancel your subscription, so your account was not deleted. Please try again."
+)
+
+
+class SubscriptionCancelFailedError(AccountDeletionError):
+    """Account deletion stopped before anything was removed: the account's
+    Stripe subscription could not be cancelled, and deleting the rows would
+    leave a subscription billing nobody we could still find (503
+    `subscription_cancel_failed`)."""
+
+    def __init__(self, *, log_detail: str | None = None) -> None:
+        super().__init__(SUBSCRIPTION_CANCEL_FAILED_MESSAGE, log_detail=log_detail)

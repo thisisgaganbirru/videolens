@@ -131,3 +131,52 @@ def seconds_until(reset_at_epoch: float, now_epoch: float) -> int:
     """Whole seconds from `now_epoch` until `reset_at_epoch`, never below 1
     (rounded up, for the same reason as above)."""
     return max(1, math.ceil(reset_at_epoch - now_epoch))
+
+
+def _as_utc(now: datetime) -> datetime:
+    return now.astimezone(timezone.utc) if now.tzinfo else now.replace(tzinfo=timezone.utc)
+
+
+def utc_month(now: datetime) -> str:
+    """The UTC calendar month `now` falls in, as "YYYY-MM": the period the
+    account free-run allowance counts against."""
+    return f"{_as_utc(now):%Y-%m}"
+
+
+def start_of_next_utc_month(now: datetime) -> datetime:
+    """00:00 UTC on the first day of the month after `now`'s: when an
+    account's monthly free runs reset."""
+    current = _as_utc(now)
+    year, month = (current.year + 1, 1) if current.month == 12 else (current.year, current.month + 1)
+    return datetime(year, month, 1, tzinfo=timezone.utc)
+
+
+# ------------------------------------------------------------------ billing
+
+# Stripe subscription statuses that grant the paid plan. `past_due`,
+# `unpaid`, `canceled`, `incomplete`, `incomplete_expired` and `paused` do
+# not: the account is on the free plan until Stripe reports it paid again.
+PAID_SUBSCRIPTION_STATUSES = frozenset({"active", "trialing"})
+
+# Statuses of a subscription that still exists in Stripe and may bill again.
+# A new checkout is refused while one of these is held (no second
+# subscription), and account deletion cancels it first.
+LIVE_SUBSCRIPTION_STATUSES = frozenset({"active", "trialing", "past_due", "unpaid", "incomplete", "paused"})
+
+# How long past `current_period_end` a subscription still reads as paid
+# without a webhook saying it renewed. Covers Stripe's renewal and retry
+# timing; stops a missed `customer.subscription.deleted` from leaving an
+# account paid for ever.
+SUBSCRIPTION_RENEWAL_GRACE = timedelta(days=3)
+
+
+def subscription_grants_paid(status: str | None, current_period_end: datetime | None, now: datetime) -> bool:
+    if status not in PAID_SUBSCRIPTION_STATUSES:
+        return False
+    if current_period_end is None:
+        return True
+    return now <= current_period_end + SUBSCRIPTION_RENEWAL_GRACE
+
+
+def subscription_is_live(status: str | None) -> bool:
+    return status in LIVE_SUBSCRIPTION_STATUSES

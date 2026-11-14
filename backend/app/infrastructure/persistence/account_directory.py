@@ -205,6 +205,10 @@ class InMemoryAccountDirectory:
             return None
         return self._members.get((workspace_id, account_id))
 
+    def account_id_for(self, external_id: str) -> str | None:
+        account = self._accounts.get(external_id)
+        return account.account_id if account else None
+
     def forget_account(self, external_id: str) -> set[str] | None:
         """Account deletion (`InMemoryAccountDeleter`): drop the account, the
         workspaces it owns and every membership in them or held by it. Returns

@@ -1,6 +1,7 @@
 import logging
 
 from ....domain.entities import SavedUpload
+from ....domain.entitlements import MediaLimits
 from ....domain.errors import MediaValidationError
 from ....domain.ports import SourceResolver
 
@@ -27,7 +28,7 @@ class ResolverChain:
             raise ValueError("A resolver chain needs at least one resolver.")
         self._resolvers = resolvers
 
-    async def fetch(self, run_id: str, url: str) -> SavedUpload:
+    async def fetch(self, run_id: str, url: str, limits: MediaLimits | None = None) -> SavedUpload:
         primary_error: MediaValidationError | None = None
         attempted: list[str] = []
 
@@ -36,7 +37,8 @@ class ResolverChain:
                 continue
             attempted.append(resolver.name)
             try:
-                saved = await resolver.fetch(run_id, url)
+                # Every route enforces the run's own limits, not the deployment's.
+                saved = await resolver.fetch(run_id, url, limits)
             except MediaValidationError as exc:
                 logger.info("Resolver %s could not fetch run %s: %s", resolver.name, run_id, exc)
                 if primary_error is None:
