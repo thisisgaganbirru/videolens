@@ -3,6 +3,8 @@ import math
 import re
 from datetime import datetime, time, timedelta, timezone
 
+from .entities import AuthMethod, FreeRunPeriod, Principal
+
 CLIENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
 
 
@@ -10,11 +12,64 @@ def is_valid_client_id(value: str) -> bool:
     return bool(CLIENT_ID_PATTERN.fullmatch(value))
 
 
+# Every VideoLens API key starts with this. It is what lets a bearer header be
+# routed to the key lookup without a database read: an identity-provider JWT
+# starts with "eyJ" (base64 of `{"`), never with this.
+API_KEY_PREFIX = "vl_live_"
+
+
+# The `role` claim on a Supabase access token for a real signed-in user
+# (anonymous sign-ins are `authenticated` too, but flagged `is_anonymous`).
+SIGNED_IN_ROLE = "authenticated"
+
+
+def bearer_credential(authorization: str) -> str:
+    """The credential in an `Authorization: Bearer <credential>` header, or
+    "" for any other scheme or an empty credential. The scheme name is
+    case-insensitive (RFC 9110 section 11.1), so `bearer x` counts."""
+    scheme, _, credential = authorization.strip().partition(" ")
+    if scheme.lower() != "bearer":
+        return ""
+    return credential.strip()
+
+
+def looks_like_api_key(value: str) -> bool:
+    return value.startswith(API_KEY_PREFIX)
+
+
+def can_access_run(principal: Principal, run) -> bool:
+    """The one ownership rule: a run is visible to the owner it was created
+    for and to nobody else. `run` is anything with an `owner_id`."""
+    return run is not None and run.owner_id == principal.owner_id
+
+
+def quota_key(principal: Principal, client_ip: str) -> str:
+    """Which rate-limit bucket a resolved caller spends from.
+
+    A signed-in person is keyed by account, not by token: the token rotates
+    every time the client refreshes it (hourly with supabase-js), and keying
+    on its hash reset the hourly window with it. An API key spends from the
+    account that owns its workspace, so ten keys are one quota, not ten.
+    Anonymous callers stay keyed by IP, never by the self-reported
+    X-Client-ID, which is free to regenerate.
+    """
+    if principal.method in (AuthMethod.TOKEN, AuthMethod.API_KEY):
+        if principal.account_id:
+            return f"account:{principal.account_id}"
+        # No account directory (DATABASE_URL blank in a deployed API): the
+        # subject is still stable across token refreshes, unlike the token.
+        return principal.subject
+    return f"ip:{client_ip}" if client_ip else "anonymous"
+
+
 def quota_key_from_headers(authorization: str, client_ip: str) -> str:
-    # Keyed by IP, not the client-supplied X-Client-ID: that header is
-    # self-reported and free to regenerate, so it carries no quota weight.
-    if authorization.startswith("Bearer "):
-        digest = hashlib.sha256(authorization.encode()).hexdigest()[:32]
+    """Fallback bucket for a request whose caller was not resolved (a route
+    without `get_principal`, or resolution failing). Keyed by IP, not the
+    client-supplied X-Client-ID: that header is self-reported and free to
+    regenerate, so it carries no quota weight."""
+    credential = bearer_credential(authorization)
+    if credential:
+        digest = hashlib.sha256(credential.encode()).hexdigest()[:32]
         return f"token:{digest}"
     return f"ip:{client_ip}" if client_ip else "anonymous"
 
@@ -76,3 +131,76 @@ def seconds_until(reset_at_epoch: float, now_epoch: float) -> int:
     """Whole seconds from `now_epoch` until `reset_at_epoch`, never below 1
     (rounded up, for the same reason as above)."""
     return max(1, math.ceil(reset_at_epoch - now_epoch))
+
+
+def _as_utc(now: datetime) -> datetime:
+    return now.astimezone(timezone.utc) if now.tzinfo else now.replace(tzinfo=timezone.utc)
+
+
+def utc_month(now: datetime) -> str:
+    """The UTC calendar month `now` falls in, as "YYYY-MM": the period the
+    extra-run ledger and its safety cap count against (the paid plan's
+    included runs count per day since 2026-11-14)."""
+    return f"{_as_utc(now):%Y-%m}"
+
+
+def start_of_next_utc_month(now: datetime) -> datetime:
+    """00:00 UTC on the first day of the month after `now`'s: when a
+    monthly counter resets."""
+    current = _as_utc(now)
+    year, month = (current.year + 1, 1) if current.month == 12 else (current.year, current.month + 1)
+    return datetime(year, month, 1, tzinfo=timezone.utc)
+
+
+def utc_day(now: datetime) -> str:
+    """The UTC day `now` falls in, as "YYYY-MM-DD": the period the free
+    plan's account allowance and the paid plan's included runs count
+    against (since 2026-11-14)."""
+    return f"{_as_utc(now):%Y-%m-%d}"
+
+
+def start_of_next_utc_day(now: datetime) -> datetime:
+    """The next 00:00 UTC after `now`: when a daily counter resets."""
+    return datetime.combine(_as_utc(now).date() + timedelta(days=1), time.min, tzinfo=timezone.utc)
+
+
+def period_key(period: FreeRunPeriod, now: datetime) -> str:
+    """The counter key `now` falls in for `period`: "YYYY-MM-DD" for a day,
+    "YYYY-MM" for a month. Different lengths, so never equal."""
+    return utc_day(now) if period is FreeRunPeriod.DAY else utc_month(now)
+
+
+def period_resets_at(period: FreeRunPeriod, now: datetime) -> datetime:
+    """When the counter `now` falls in for `period` resets."""
+    return start_of_next_utc_day(now) if period is FreeRunPeriod.DAY else start_of_next_utc_month(now)
+
+
+# ------------------------------------------------------------------ billing
+
+# Stripe subscription statuses that grant the paid plan. `past_due`,
+# `unpaid`, `canceled`, `incomplete`, `incomplete_expired` and `paused` do
+# not: the account is on the free plan until Stripe reports it paid again.
+PAID_SUBSCRIPTION_STATUSES = frozenset({"active", "trialing"})
+
+# Statuses of a subscription that still exists in Stripe and may bill again.
+# A new checkout is refused while one of these is held (no second
+# subscription), and account deletion cancels it first.
+LIVE_SUBSCRIPTION_STATUSES = frozenset({"active", "trialing", "past_due", "unpaid", "incomplete", "paused"})
+
+# How long past `current_period_end` a subscription still reads as paid
+# without a webhook saying it renewed. Covers Stripe's renewal and retry
+# timing; stops a missed `customer.subscription.deleted` from leaving an
+# account paid for ever.
+SUBSCRIPTION_RENEWAL_GRACE = timedelta(days=3)
+
+
+def subscription_grants_paid(status: str | None, current_period_end: datetime | None, now: datetime) -> bool:
+    if status not in PAID_SUBSCRIPTION_STATUSES:
+        return False
+    if current_period_end is None:
+        return True
+    return now <= current_period_end + SUBSCRIPTION_RENEWAL_GRACE
+
+
+def subscription_is_live(status: str | None) -> bool:
+    return status in LIVE_SUBSCRIPTION_STATUSES

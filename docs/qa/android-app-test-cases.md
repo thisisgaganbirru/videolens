@@ -348,7 +348,7 @@ PAUSED (the mock was swapped for the real backend; resumes on a separate GO): re
 
 Build: unchanged. Emulator API 35, swiftshader, laptop restarted before the run. Backend: the lead's real :8000 via `adb reverse` (HEAD 4e2ef7e). Evidence in `%TEMP%\qa11\`. Stage times come from an in-page `fetch` hook polled through CDP, so they are accurate to the app's 3 s poll.
 PASS:
-- **INT-07 / terms persistence.** Starting state: unticked, key empty. Ticked → `videolens-media-terms-v1` = "accepted" → force-stop → cold launch: still ticked and still "accepted".
+- **INT-07 / terms persistence.** Starting state: unticked, key empty. Ticked → `videolens-media-terms-v3` = "accepted" → force-stop → cold launch: still ticked and still "accepted".
 - **RUN-02 (R2, `test-15s.mp4`).** Sending… then POST 202, Normalizing at +4 s (about 3 s), Uploading at +7 s, Analyzing from +13 s, complete at +25 s.
 - **RUN-02b (R3, `test-12s.mp3`).** Already at Analyzing by +3 s; complete at +13 s.
 - **RUN-01 retry.** Link `https://www.youtube.com/watch?v=jNQXAC9IVRw` ("Me at the zoo", public, 19 s): Downloading at +3 s, Uploading at +6 s (Download and Normalize took ≤6 s together), Analyzing from +12 s, complete at +24 s.
@@ -799,6 +799,171 @@ No real runs spent. I made one R13 control install for item 7 and then reinstall
 
 No real runs spent. The device was restored afterwards: font 1.0, wm size reset, auto-rotate on, light theme, CDP forward removed, adb reverse 8000 kept.
 
+### 2026-11-14 · android-66 (device QA) · run 18 (accounts, free runs and billing UI, local `feat/auth-supabase` at c494698, local backend in memory mode, billing off)
+
+**Setup**
+- **Build.** `npm run android:sync`, `gradlew.bat assembleDebug`, `adb install -r videolens-ai-v2.2.0-code1-local-debug.apk`. Bundled; no `server` block.
+- **Device.** New emulator AVD `medium_phone`, API 36, WebView 133, 412×867 css.
+- **Evidence.** In `%TEMP%\qa20\`. `adb screencap` returns all white on this AVD, even on the launcher, so screenshots are CDP `Page.captureScreenshot`. Taps are real `adb input tap` (offset 63 device px, calibrated with a pointerdown logger).
+- **Session.** Signed out (no Supabase session in storage).
+
+**Results**
+- **Nav: Account entry. PASS against the doc, but not as the request was worded.** The round `.nav-account` button is `display:none` below 48rem by design (`globals.css` ~396, `auth-sign-in.md` "phone menu, More sheet and dock unchanged"). The dock is Analyze / History / More. Account is a More-sheet row (16,548, 380×56), which hit-tests to itself; a real tap opens `?view=account`.
+- **Analyze, signed out. PASS.** The free-runs strip shows "3 free runs left. Add your own key for more." with Add key, 16–396 px. The drop hint reads "MP3, MP4, or MOV. Up to 200 MB and 3 minutes.". Document and band scrollWidth are both 412, and nothing overflows.
+- **Signed in. NOT TESTED.** There was no session, and signing in was out of scope.
+- **API key panel. PASS.** The consent paragraph and "Signed in with your own key, you can analyze videos up to 10 minutes. Sign in" wrap inside 37–375 px (scrollWidth 338/338).
+- **Terms gate. PASS.** It showed unticked with no v3 key. A real tap ticked it, and `videolens-media-terms-v3=accepted` was stored; v1 and v2 were absent. Nothing was submitted, and the gate was left ticked.
+- **Terms and Privacy. PASS.** Terms has "Your own Gemini key" and "Paid plan". Privacy has "Your own Gemini key", "Signing in" and "Payments". Body text is 14/21 px, with no overflow and no wide elements at 412.
+- **Observation.** The Privacy "Contact" section still reads "Before public release, replace this section with …".
+
+No runs submitted; no sign-in, key, account or checkout actions.
+
+### 2026-11-14 · android-66 (device QA) · run 19 (four-item dock, working copy at c494698 plus uncommitted BottomTabBar/MoreSheet changes)
+
+**Setup**
+- **Build.** Same pipeline and device as run 18.
+- **Graphics.** The AVD now uses Software graphics (`hw.gpu.mode = lavapipe`), so `adb screencap` works again and screenshots are real device captures.
+- **Evidence.** In `%TEMP%\qa20\` (20–24). Probe script: `dock4.js` (item rects, icon, current, clip/overlap/small flags, gap to the bottom).
+- **Session.** Signed out; the backend reports auth ok.
+
+**Results**
+- **Dock. PASS at 412, 360 and 320.**
+  - Items: Analyze / History / Account / More, each with a 20px icon and a one-line label.
+  - Sizes: 89×52 at 412, 76×52 at 360, 66×52 at 320, with a 4px gap. The widest label, "Account", is 45px, so nothing is clipped or overlapping.
+  - Position: the dock sits 16px above the WebView bottom, which is itself above the gesture bar.
+- **Account tab. PASS.** A real tap opens `?view=account` with the signed-out "Sign in with email" panel, and Account is `aria-current`. Tapping Analyze returns to `/app` with Analyze current.
+- **More sheet on /app. PASS.** The rows are API key, Releases, Theme, Privacy, Terms; there is no Account row.
+- **/terms and /privacy. PASS.**
+  - Dock: Analyze / History / More, each 120×52.
+  - Pages: unchanged from run 18 (sections present, no overflow).
+- **Observation.** The /terms More sheet is API key, Releases, Privacy, Terms (no Theme and no Account), so Account is reached through Analyze from there.
+
+### 2026-11-14 · android-66 (device QA) · run 20 (Sign in / Get started entries and the landing page, feat/auth-supabase at 9b3b466)
+
+**Setup**
+- **APK.** Built from a clean tree at 9b3b466.
+- **Landing.** Checked in the emulator's Chrome against the dev server on :3005 (`adb reverse tcp:3005`). By then the working copy had uncommitted LandingScreen/landing.css edits from another session, so the dev server served those.
+- **Taps.** Real adb taps: offset 63 in the app, 211 in Chrome (under the URL bar).
+- **Evidence.** In `%TEMP%\qa20\` (30–48). Probe scripts: `entry.js` (Sign in / Get started entries, dock) and `acct.js` (heading and help-line wrap, words split across lines).
+- **Session.** Signed out.
+
+**Results**
+- **Landing in the installed app. N/A by design.** The app never shows `/`: `location.href='/'` inside the WebView lands on `/app.html` (redirect in the root layout `<head>`, `application/landingRedirect.ts`). The first-launch "Notes from any short video" screen is the in-app welcome (`videolens-welcome-v1`), not the landing page.
+- **Landing, signed out (Chrome). PASS on layout; wording changed.**
+  - Phone bar: brand, theme and Menu. The bar pill is hidden below 48rem.
+  - Menu rows: Analyze, History, API key, Releases, then the entry.
+  - Entry label: "Sign in", not "Get started". The uncommitted working-copy LandingScreen drops `signedOutLabel="Get started"`; commit 9b3b466 had it.
+  - Tapping the entry opens `/app?view=account` with the new heading.
+  - "Start analyzing" is 156×50 at 412 and 320 (stacked over "See how it works" at 320).
+  - No document overflow. The sample-result tabs scroll inside their own `overflow-x:auto` row.
+- **/app, /terms, /privacy and 404. PASS.**
+  - App, phone width: the bar pill and menu row exist and read "Sign in" but are hidden in the app shell, as designed. The dock is Analyze / History / Account / More (89px each) on all four routes, including the legal pages and 404.
+  - Account tap: from /terms, /privacy and 404 it opens `/app.html?view=account` with Account current.
+  - Web menu: on /terms and /privacy the row reads "Sign in".
+- **Account card. PASS.** "Sign in or create an account" and "New here? Verifying your first code sets it up." are one line each at 412 and two lines each at 320 (37–283 px), with no split words. Same in the app and on the web.
+- **First-visitor notes.** Free-run counts differ across screens: landing "Free runs to start", the app strip "3 free runs left", the Account lede "Sign in for 10 free runs a month". The landing's only sign-in path on a phone is inside the hamburger. The Next dev indicator overlaps the footer brand (dev server only).
+
+### 2026-11-14 · android-66 (device QA) · run 21 (allowance lines, hero, menu row and Analyze strip, feat/auth-supabase at 2eb2bbe)
+
+**Setup**
+- **Build.** Clean tree at 2eb2bbe. The APK was rebuilt and installed for the app strip.
+- **Landing.** Checked in the emulator's Chrome against :3005, with `adb reverse` for 3005 and 8000.
+- **Widths.** 412, 360, 320, 768 and 784 (`wm size`).
+- **Layout shift.** Read from buffered `layout-shift` entries after a reload.
+- **Evidence.** In `%TEMP%\qa20\` (50–60). Probe scripts: `land21.js`, `cls.js`, `how.js`, `strip.js`, `allow.js`, `navact.js`.
+- **Session.** Signed out.
+
+**Results**
+- **Allowance lines. PASS.**
+  - With the API up, the line reads "3 free runs a day, no account needed." over "Videos up to 3 minutes. Sign in for 10 a month."
+  - With reverse 8000 removed, it reads "Free runs to start. No account needed." over "Videos up to 3 minutes."
+  - The block is 67px tall in both states at 412 and 320, with zero layout-shift entries, so there is no visible jump.
+  - The "Sign in" link is an underlined inline link of 41×18 css px, href `/app?view=account`. A real tap at 320 opened `/app?view=account`.
+  - The link's own box is under 44px tall. Nothing tappable sits within one line of it, so a mis-tap only lands on plain text.
+- **Hero. PASS.**
+  - "Start analyzing" (156×50, rgb 26,127,55) is the only green fill in the hero. "See how it works" is outlined.
+  - The same green "Start analyzing" appears once more, in the closing `.landing-band` near the foot of the page.
+  - The two buttons sit side by side at 412/768/784 and stack at 360/320.
+  - No uncontained overflow at any width (docSW equals the viewport).
+- **Phone menu row. PASS.** At 320 the menu reads Analyze, History, API key, Releases, "Get 10 free runs", each row 60px tall. Tapping the row opens `/app?view=account`.
+- **Bar pill at 768/784. PASS.** It shows the short label "Sign up free" (80px) next to the theme button, on one line beside the four nav tabs.
+  - One small layout shift on `.nav-actions` about 2.5s after load: 0.0067 at 768, 0.0066 at 784.
+  - Both values are well under the 0.1 "good" threshold. It is probably the label settling once auth state resolves.
+- **Analyze strip. PASS**, in the app (`/app.html`) and on the web (`/app`).
+  - It reads "3 free runs left today. Sign in for 10 a month, or add your own key." The hint appears exactly once.
+  - It wraps to 3 lines at 320 and 360 and to 2 lines at 412, beside "Add key". No overflow.
+- **How it works and the details list. PASS.**
+  - Steps: Newsreader 26px titles over 16px Hanken body, three 171px items.
+  - "What you get" list: 13px terms in a 96px column, beside 16px descriptions.
+  - Details list: Newsreader 19px terms ("Your files", "Your history", "After the free runs") over 15px descriptions.
+  - No clipped text at 320.
+- **First-visitor notes.**
+  - The offline fallback drops the "Sign in for 10 a month" half of line two, which is expected with no API.
+  - The allowance link and the menu row now both point to the 10-a-month offer, so the counts read consistently: 3 a day anonymous, 10 a month signed in.
+  - The Next dev indicator still overlaps the footer brand (dev server only).
+- **Tooling note.** The first offline attempt hung because the CDP helper had no timeout and Chrome was backgrounded behind the app. The 8000 reverse was restored by hand, and the retest ran with a guaranteed restore.
+
+### 2026-11-14 · android-66 (device QA) · run 22 (free runs are 10 a day for signed-in accounts, feat/auth-supabase at c49c4bf)
+
+**Setup**
+- **Build.** Clean tree at c49c4bf. APK rebuilt, synced and installed; the backend on :8000 had been restarted by the requester.
+- **Where.** App checks on the installed APK. The landing was checked in emulator Chrome on :3005, because the APK redirects `/` to `/app.html`.
+- **Widths.** 412 and 320.
+- **Layout shift.** Measured with buffered `layout-shift` entries, including source rects. Rects are in device px; ÷2.625 gives css px.
+- **Evidence.** In `%TEMP%\qa22\` (01–07). Probe scripts: `words22.js` (free-run lines, any visible or hidden "month", dock), `cls2.js`, `acct22.js`, `priv22.js`.
+- **Session.** Signed out. Nothing was signed in or out, and no runs were submitted.
+
+**Results**
+- **1. Landing. PASS.**
+  - Allowance lines: "3 free runs a day, no account needed." over "Videos up to 3 minutes. Sign in for 10 a day.", 67px tall, CLS 0.
+  - Signed-out nav: the long label is "Get 10 free runs" (the phone menu row), and the short label is "Sign up free".
+  - A menu-row tap at 320 opens `/app?view=account`.
+  - No "month" anywhere on the page, visible or hidden.
+- **2. Analyze strip (FreeRunsBanner). Wording PASS; layout jump FAIL.**
+  - Text, in the app and on the web: "3 free runs left today. Sign in for 10 a day, or add your own key." 2 lines at 412, 3 at 320. No "month", no overflow.
+  - The jump: the banner (70 css px at 412, 91 at 320, plus its gap) is inserted once the free-runs fetch returns, with no space reserved for it.
+  - It pushes the eyebrow, title, lede and intake card down by about 93 css px at 412 and 115 at 320.
+  - Shift scores: app 0.079 at 412 (433 ms) and 0.098 at 320 (319 ms); web 0.095 at 412 (1284 ms) and 0.118 at 320 (957 ms).
+  - The web score at 320 is past the 0.1 "good" threshold. Run 21 did not measure this, so the jump is likely not new to c49c4bf.
+- **3. Account. PARTIAL** (signed out, so the signed-in view could not be seen).
+  - Signed-out lede: "Sign in for 10 free runs a day, videos up to 10 minutes with your own key, and API keys for your scripts." No "month".
+  - The dock is Analyze / History / Account / More, with Account current, at 412 and 320.
+  - Source check only, not seen on screen (`AccountPanel.tsx`):
+    - The free account's count reads "Free runs left today: N of 10".
+    - The paid pitch reads "The paid plan: videos up to N minutes without your own key, and runs past the daily limit." It does not compare counts against the free account.
+    - It does add "Beyond its 100 included runs a month, each run is X." when an extra-run price exists. Next to 10 a day, that 100 can read as smaller. Question for the owner.
+- **4. Privacy. PASS** at 412 and 320 in the app.
+  - The device token is used "only to count that device's free runs each day".
+  - The account keeps "a count of the free runs your account has used each day".
+  - "Each month" appears only for the paid account's run count, which is correct.
+
+### 2026-11-14 · android-66 (device QA) · run 23 (reserved FreeRunsBanner space and paid plan at 30 a day, feat/auth-supabase at 4cff3dc)
+
+**Setup**
+- **Build.** Clean tree at 4cff3dc. APK rebuilt and installed at 02:48; the backend had been restarted by the requester.
+- **Where.** App checks on the installed APK; web checks in emulator Chrome on :3005.
+- **Widths.** 412 and 320.
+- **Session.** Signed out. No Gemini key is saved: no matching localStorage key name (values were not read), and the strip shows "Add key".
+- **Evidence.** In `%TEMP%\qa23\` (01–04). Probe scripts: `cls3.js` (total layout shift after load, banner height and text), `keynames.js`, `legal23.js`, `words22.js`.
+
+**Results**
+- **1. FreeRunsBanner layout shift. PASS.** Three reloads per width and surface, with 3 runs left:
+  - APK: total 0.0022 at 412 and 0.0016 at 320, the same on all three reloads. The only entry is the dock tab items settling at about 300–400 ms (the same 0.002 seen in run 22). Nothing in the intake moves any more.
+  - Chrome: 0.0000 at both widths, on all reloads.
+  - Banner: 70px at 412 and 91px at 320, with the same text as run 22.
+  - Saved-key case: not tested, because no key is saved and keys may not be added.
+  - The accepted spent-account and failed-read shift was not exercised, since there were runs left and the read succeeded.
+- **2. Paid wording. PASS** (source check at 4cff3dc; no paid account is signed in).
+  - Account pitch: "The paid plan: 30 runs a day instead of 10[, videos up to N minutes], and no Gemini key needed. Past the 30, extra runs are {price} each, up to 200 a month." The constants are 10, 30 and 200 in `accountAllowance.ts`, and the minutes part shows only when the server reports a paid length.
+  - No "100" and no "runs a month" for included runs anywhere in the frontend source. "Each month" is left only for the capped extra runs.
+  - Terms (on device too): "The plan includes a set number of runs each day (UTC)."
+  - Privacy (on device too): "a count of your runs each day, and a count of your extra runs each month."
+  - Neither legal page contains "100" (on device, 412 and 320).
+- **3. Dock and regressions. PASS.**
+  - The dock is Analyze / History / Account / More on /app, /terms, /privacy and Account, with Account current after a real tap.
+  - Landing: "3 free runs a day, no account needed." / "Sign in for 10 a day.", 67px, CLS 0, no "month".
+  - Analyze strip: unchanged wording, no overflow at 320 or 412.
+
 ## Changelog
 
 - 2026-11-02 · android-66 (device QA) · added section 19 (update banner, UPD-01..07) and run 9 (UPD partial on the mock: UPD-01/03 PASS, UPD-04 partial, rest PAUSED) and run 10 (real runs: terms persistence, RUN-01 retry with a YouTube link, RUN-02/02b/03/04/05/07/08, ORI-02, HIS-01, FREE-01..05, RUN-06b/06c/06d/06e, LCH-06b/06c, FREE-02b PASS; FREE-02c not exercised (YouTube 403 mid-download); stale free-runs count after a refund logged as known (R9); stage timings incl. Normalizing ~60 s for a 170 s file); added FREE-02b/02c rows to section 6
@@ -821,3 +986,9 @@ No real runs spent. The device was restored afterwards: font 1.0, wm size reset,
 - 2026-11-02 · android-66 (device QA) · run 15: refinement 13 retest on refine13-debug.apk (a69c188): header fits at 320/360 for fonts 1.0–2.0 with no clip and a 44×44 toggle, but the 22px wordmark cap FAILS (38px at 2.0; WebView text zoom multiplies px after min()); More-sheet theme control FAIL (em container queries never fire, so it stays an indented row and "System" overflows its segment from 320/1.5, 8–33 px); Dark selection PASS; footer N/A on Android (.page-end hidden in the app shell), band 706px steady; smoke at 412 PASS
 - 2026-11-02 · android-66 (device QA) · run 16: refinement 14 retest on refine14-debug.apk (7318f53): root font-size follows the system scale (16–32px, 22px probe stays 22), wordmark caps at 22px, bar 68 portrait and 56 landscape at every scale, theme control layouts match all 15 expected cells with padded labels and ≥44 targets, Dark works, live change keeps the result, no cold-launch jump at 1.5/2.0, /privacy and /terms get the scale, fallback unused, smoke PASS; pinch zoom NOT VERIFIED (Capacitor zoomEnabled defaults false); MINOR intake cards break words at 2.0 (and 320/1.5); COSMETIC More-sheet Releases/Privacy labels hit their chevrons at 320/2.0; question on the uncapped dock (landscape band 167px at 2.0)
 - 2026-11-02 · android-66 (device QA) · run 17: refinement 15 retest on refine15-debug.apk (9605e43): intake cards stack (320/360 from 1.3, 412 from 1.5) with no mid-word breaks; More-sheet labels clear their chevrons (Releases +33px at 320/2.0) with icons fixed at 40px and labels aligned; dock 64px portrait at every scale, 52px landscape with a 235px band at 2.0; header, wordmark and theme-control numbers unchanged apart from the expected 48px rise of the stacked control; live change and smoke PASS; pinch still NOT VERIFIED
+- 2026-11-14 · android-66 (device QA) · run 18: accounts/free-runs/billing UI on local feat/auth-supabase (c494698), API 36 emulator, signed out: Account reachable via the More sheet (top-bar button hidden below 48rem by design); free-runs strip, drop hint, API key wrap, terms gate v3 and the new Terms/Privacy sections PASS; signed-in items not tested (no session)
+- 2026-11-14 · android-66 (device QA) · run 19: four-item phone dock (Analyze/History/Account/More) PASS at 412/360/320 (66px items at 320, labels on one line, above the gesture bar); Account tab opens the signed-out panel and shows as current; /app More sheet has no Account row; /terms and /privacy keep the three-item dock
+- 2026-11-14 · android-66 (device QA) · run 20: Sign in / Get started entries at 9b3b466: the app never shows the landing page (redirect to /app.html); landing checked in emulator Chrome against :3005, entry sits only in the phone menu and reads Sign in (uncommitted LandingScreen edits drop Get started); 4-item dock on /app, legal and 404 pages; new Account heading and help line wrap cleanly at 320
+- 2026-11-14 · android-66 (device QA) · run 21: landing at 2eb2bbe in emulator Chrome (412/360/320/768/784) plus rebuilt APK: allowance lines swap from the fallback with no layout shift (67px both states, offline fallback clean); Sign in link (41x18 inline) and the "Get 10 free runs" menu row open /app?view=account; Start analyzing the only green in the hero (repeated in the closing band); 768/784 pill reads "Sign up free" with a 0.007 shift; Analyze strip "3 free runs left today." plus one sign-in hint wraps cleanly at 320 in app and web; How it works and details list PASS
+- 2026-11-14 · android-66 (device QA) · run 22: 10 free runs a day at c49c4bf (412/320, rebuilt APK plus emulator Chrome): landing lines, "Get 10 free runs" nav, Analyze strip and Privacy all say a day / today / each day with no free-account "month"; dock 4 items; Account checked signed out (signed-in count and paid pitch source-checked only; paid pitch still cites 100 runs a month); FAIL: FreeRunsBanner pops in after the fetch and shifts the intake content about 93-115 css px (CLS 0.08-0.12)
+- 2026-11-14 · android-66 (device QA) · run 23: reserved FreeRunsBanner space and paid plan at 30 a day (4cff3dc, 412/320, rebuilt APK plus emulator Chrome, signed out, no key saved): banner shift PASS (APK 0.0022/0.0016 from the dock only, web 0.0000, three reloads each); paid pitch, Terms "each day (UTC)" and Privacy "runs each day" PASS with no 100 or included "runs a month"; 4-item dock and landing/Analyze unchanged; saved-key case not testable

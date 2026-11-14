@@ -14,6 +14,8 @@ Boards: `design/shots/Landing.png` (phone, 390) and `LandingWeb.png` (desktop, 1
 | `frontend/app/app/page.tsx` | `/app`: the tool (Suspense, fallback `<HomeScreen activeTab="analyze" />`, then `<RoutedHomeScreen />`), plus the 5d splash and Welcome (see `first-run.md`) |
 | `frontend/components/LandingScreen.tsx` | Server component: hero, sample card, How it works, What you get, closing band, footer, dock |
 | `frontend/components/SampleResult.tsx` | Client: the sample results card with working ARIA tabs (TL;DR, Notes, Transcript, On-screen) |
+| `frontend/components/LandingAllowance.tsx` | Client: the two allowance lines under the hero actions (fallback prerendered; server numbers after the reads) |
+| `frontend/application/accountAllowance.ts` | `ACCOUNT_FREE_RUNS_PER_MONTH` (plain module, readable from the server-component landing) |
 | `frontend/app/landing.css` | Landing-only styles, unlayered; `:root[data-redirecting] body { visibility: hidden }` |
 | `frontend/application/landingRedirect.ts` | `LANDING_REDIRECT_SCRIPT` (inline, blocking) and `TOOL_QUERY_PARAMS` |
 | `frontend/application/useMainTab.ts` | `APP_PATH = "/app"`, `isAppPath()`, `mainTabHref(tab, base)`; `goToMainTab` pushes onto `/app` |
@@ -90,12 +92,15 @@ client-side navigation to `/` would render it without this script.
 
 The copy claims only what the app does today:
 
-- "A few free runs to start, no account needed." Free runs exist (Phase 5b),
-  per device per day. No number is promised, because the limit is server
-  configuration.
+- The free-run line under the hero actions (`LandingAllowance`). The
+  prerendered HTML says "Free runs to start. No account needed.", true on any
+  deployment; once the server has answered, it states the server's own
+  numbers (free runs per device per day, video length). The only number not
+  read from the server is the account allowance (10 a day since 2026-11-14,
+  `ACCOUNT_FREE_RUNS_PER_DAY`), as everywhere else signed-out copy quotes it.
 - What you get: the four result tabs, in the intake's own words (`.wyg-row`,
   `.chip`), so the two pages say it the same way.
-- The foot of "What you get" says: files are deleted from the servers when a
+- The details at the foot of "What you get" explain: files are deleted from the servers when a
   run finishes; History stays in this browser; when the free runs are used up,
   add your own Gemini key. All three are true (see `CLAUDE.md` "How a run
   flows", `run-history.md`, `byok-api-key.md`).
@@ -137,12 +142,61 @@ height, so the CTAs are never pushed off-screen. Measured in dev (iframe
 probes): 1366×768, 1440×900, 1920×1080 and 1024×700, hero = band and `#how`
 below the band; 1280×600 and 390×844 unchanged.
 
-`#how` ("How it works") is the second screen under the same query: it is also
-`min-height: 100cqb`, a centred flex column, with `margin-top: 0` and
-`scroll-margin-top: 0`. "See how it works" therefore lands it exactly on the
-band with the heading and steps centred (equal space above and below: 291px at
-1920×955, 198px at 1366×768), and "What you get" starts below the fold instead
-of being cut off by the footer.
+`#how` now uses its natural content height, with a modest top inset and
+scroll margin. The hero still fills the first desktop screen, but the process
+steps no longer reserve another entire screen before the benefits.
+
+## Landing clarity refinement (2026-11-14)
+
+Codex's pass (ab351ad) made `#how` content-sized, put a reassurance line under
+the hero actions and turned the "What you get" footnote into a three-part
+definition list. The frontend agent's refinement on top kept those structural
+changes and brought the new pieces into the editorial system:
+
+- **Allowance line** (`components/LandingAllowance.tsx`, client). Replaces
+  Codex's 600-weight ink "Free runs to start. No account needed." and the
+  muted "Check your available runs and video-length limits in Analyze before
+  you begin." (read as a disclaimer in Android QA). Two lines in the Analyze
+  free-runs strip's own vocabulary: an ink-2 0.9375rem sentence with the count
+  in a 600-weight ink `strong`, then a muted 0.875rem line.
+
+  | State | Line one | Line two |
+  |---|---|---|
+  | Prerender, before the reads, server unreachable, limit off | Free runs to start. No account needed. | (blank, height reserved) |
+  | Signed out, device allowance known | **3 free runs a day**, no account needed. | Videos up to 3 minutes. [Sign in] for 10 a day. |
+  | Signed in, account allowance | **10 free runs a day** with your account. | Videos up to N minutes. |
+  | Paid plan | **30 runs a day** on your plan. (2026-11-14; was 100 a month) | Videos up to N minutes. |
+  | Key saved on this device | Runs use the Gemini key saved on this device. | Videos up to N minutes. |
+
+  "3 a day" and "10 a day" side by side make the two tiers read as two
+  tiers (both daily since 2026-11-14, so signing in reads as more; the period
+  word comes from the server's `period`, by plan when absent) (Android QA: newcomers saw 3 on Analyze and 10 on Account and could
+  not tell which was true). Numbers come from the same reads `/app` makes:
+  `useFreeRuns` (`GET /api/free-runs`), `useMediaLimits` (`GET /api/limits`,
+  new `known` flag so a failed read never quotes the fallback minutes) and the
+  auth gate (`useAccountEntry`); the "Sign in" clause shows only where sign-in
+  is available and nobody is signed in. Line two has `min-height: 1lh` (2lh
+  below 30rem, where it wraps), so filling it in moves nothing: measured
+  allowance height identical before and after at 320, 390, 412 and 1536.
+  Visiting the landing now issues the free-run device token (the same read
+  `/app` makes on load).
+- **Phone account entry.** Below 48rem the bar pill is hidden and the entry
+  was only the last menu row. The inline ink "Sign in" link in line two is the
+  phone's visible entry: a text link under the CTAs, not a third button, so the
+  green "Start analyzing" stays the one call to action. Chosen over making
+  "See how it works" an account button (it would lose the page's own
+  explainer jump) and over a separate link line (repeats the tier sentence).
+- **Nav label** "Get 10 free runs" (signed out), "Sign up free" from 48rem to
+  50rem; see `auth-sign-in.md`, "Landing label, final".
+- **Details list** (`.landing-details`). Terms are serif 400 at 1.1875rem,
+  like every other heading on the page, instead of Codex's 600 sans; bodies
+  keep the foot's ink-2 0.9375rem; the hairline above is the existing
+  `.landing-wyg-foot` rule. Phones stack, three columns from 48rem.
+- `#how` keeps Codex's natural height (top inset `--space-lg`, scroll margin
+  `--space-md`): "See how it works" lands the heading 24px under the bar and
+  "What you get" starts 48px below the steps.
+- The sample remains an illustrative, labelled example. No verified source
+  video/result pair is in the repository; a real one needs owner-supplied media.
 
 ## Measured (2026-11-01, `next build` + `next start -p 3015`, Playwright, `/api/*` mocked)
 
@@ -194,3 +248,13 @@ of being cut off by the footer.
 - 2026-11-01 · videolens-ff (lead) · `#how` fills the band and centres its content on desktop, so "See how it works" no longer leaves "What you get" cut off above the footer
 - 2026-11-01 · frontend agent (refinement 1) · redirect script moved into the root layout head (no React script warning), Capacitor hop limited to the asset-server origin, storage-crash known issue closed, escape-trap note; verified in `next start`, a separate `next dev`, and an emulated asset server over `out/`
 - 2026-11-02 · frontend agent (refinement 8) · NF-01: on the asset-server origin, an unknown extensionless path goes to `/404.html` instead of showing the landing; 404's home-page link hidden in the installed shell; verified on an emulated asset server over `out/`, `node --check` on all 7 exported head scripts
+- 2026-11-12 · launch-checklist session · `/` gets its own `<title>` (absolute, not templated), description and canonical; site-wide Open Graph/Twitter card and `og.png` rendered from the hero copy (`docs/frontend/seo-and-discovery.md`)
+- 2026-11-14 · frontend agent · top bar and dock gain the Account entry ("Sign in" pill signed out, round initial signed in, nothing until known) via `RouteNav`/`RouteTabBar`; hero CTAs unchanged. See auth-sign-in.md
+- 2026-11-14 · frontend agent · signed-out nav entry reads "Get started" (bar pill and phone-menu row) via `signedOutLabel`; outlined secondary so the hero's "Start analyzing" stays the page's one green fill; dock keeps "Account". See auth-sign-in.md
+
+### Browser verification follow-up (2026-11-14)
+LandingScreen uses literal /app route hrefs: useMainTab is a client module, so interpolating its APP_PATH export in this server component produced a serialized function URL for Set up a key. Browser verification confirmed the corrected link opens /app?view=api-key. Desktop dark hero, process and benefits sections were visually inspected; mobile not checked.
+- 2026-11-14 · codex · `#how` content-sized; reassurance and limit lines under the hero actions; "What you get" foot as a three-part `<dl>`; nav back to "Sign in"
+- 2026-11-14 · frontend agent · refinement on codex's pass: `LandingAllowance` states the server's free runs and video length (fallback sentence prerendered, line height reserved, no layout shift) with an inline "Sign in for 10 a month" that is also the phone's visible account entry; details terms in serif to match the page; nav "Get 10 free runs" ("Sign up free" at 48–50rem); stray blank lines tidied
+- 2026-11-14 · frontend agent · daily account allowance: signed-out line two "Sign in for 10 a day.", signed-in line "10 free runs a day with your account." (period from the server's `period`); fallback and reserved height unchanged; nav label "Get 10 free runs" / short "Sign up free" kept ("Get 10 free runs a day" would not fit the measured 768-799 bar, and the hero line under it carries the period)
+- 2026-11-14 · frontend agent · paid line reads "30 runs a day on your plan." from the server's `limit`/`period` (no change in `LandingAllowance`; a missing `period` now reads as a day for paid too)

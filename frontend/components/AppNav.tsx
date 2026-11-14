@@ -2,19 +2,28 @@
 
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import Link from "next/link";
-import { ChevronRight, Menu, X } from "lucide-react";
+import { ChevronRight, Menu, UserRound, X } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import { isPlainLeftClick } from "@/components/navClick";
-import { MAIN_TABS, mainTabHref, type MainTab } from "@/application/useMainTab";
+import { mainTabHref, navTabs, type MainTab } from "@/application/useMainTab";
+import type { AccountState } from "@/application/useAccountEntry";
 
 /* Hallmark · theme: editorial (app/tokens.css) · nav: flat top bar
  *
  * The top bar every route renders, in both shells. What it carries depends on
  * the display mode `<html data-shell>` names (see components/shell.ts):
  *
- *  - web, 48rem and up: brand · four destinations · theme toggle (Desktop boards)
+ *  - web, 48rem and up: brand · the destinations · theme toggle (Desktop boards)
  *  - web, below 48rem:  brand · theme toggle · menu toggle, and the four
  *                       destinations in a full-screen menu (Web "Menu" board)
+ *
+ * Account (auth phase 2) is a fifth destination, drawn only when `showAccount`.
+ * From 48rem it is not a text tab but a control at the far right of the bar
+ * (after the theme toggle): signed out, a labelled "Sign in" pill (owner,
+ * 2026-11-14: the bare person glyph did not say what it did); signed in, a
+ * round button with the email's initial. Until the session is known it draws
+ * nothing, so neither flashes. The phone menu keeps it as a text row, labelled
+ * "Sign in" while signed out.
  *  - app:               brand · theme toggle; the destinations live in the
  *                       bottom tab bar instead (BottomTabBar)
  *
@@ -28,6 +37,7 @@ export const TAB_LABEL: Record<MainTab, string> = {
   history: "History",
   "api-key": "API key",
   releases: "Releases",
+  account: "Account",
 };
 
 type AppNavProps = {
@@ -42,7 +52,30 @@ type AppNavProps = {
   onSelectTab?: (tab: MainTab) => void;
   /** True only on the landing page, where the brand link is the current page. */
   landing?: boolean;
+  /** Draw the Account entry (auth phase 2): sign-in configured and the
+   *  server's `auth` capability `ok`. From HomeScreen on `/app`, from
+   *  `useAccountEntry` (via `RouteNav`) everywhere else. */
+  showAccount?: boolean;
+  /** Where the session stands, for the Account control: "loading" draws
+   *  nothing in the bar (the phone menu row says "Account"), "signed-out" the
+   *  "Sign in" pill, "signed-in" the round initial button. `/app` derives it
+   *  in HomeScreen; every other route through `RouteNav`. */
+  accountState?: AccountState;
+  /** The signed-in person's initial for the Account button; null or absent
+   *  draws the person glyph. */
+  accountInitial?: string | null;
+  /** The signed-out label of the Account entry (bar pill and phone-menu
+   *  row). "Sign in" by default; the landing page, for new visitors, passes
+   *  "Get 10 free runs" (2026-11-14). The dock keeps "Account". */
+  signedOutLabel?: string;
+  /** A shorter bar-pill label for the narrow end of the inline bar
+   *  (48rem to 50rem), where a long `signedOutLabel` would run into the
+   *  page gutter. The phone-menu row always uses `signedOutLabel`. */
+  signedOutShortLabel?: string;
 };
+
+/** What the Account entry says, signed out, where it is a text label. */
+const SIGN_IN_LABEL = "Sign in";
 
 /** The ring-and-dot mark from the boards. Decorative: the word beside it is the
  *  name. Exported for the installed app's splash and Welcome (Phase 5d), which
@@ -56,7 +89,20 @@ export function BrandMark({ className = "brand-mark" }: { className?: string }) 
   );
 }
 
-export default function AppNav({ activeTab, onSelectTab, landing = false }: AppNavProps) {
+export default function AppNav({
+  activeTab,
+  onSelectTab,
+  landing = false,
+  showAccount = false,
+  accountState = "loading",
+  accountInitial = null,
+  signedOutLabel = SIGN_IN_LABEL,
+  signedOutShortLabel,
+}: AppNavProps) {
+  const signedOut = accountState === "signed-out";
+  const tabs = navTabs(showAccount);
+  /* Inline text tabs leave Account out: it is the round button instead. */
+  const inlineTabs = tabs.filter((tab) => tab !== "account");
   const [menuOpen, setMenuOpen] = useState(false);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
@@ -106,7 +152,7 @@ export default function AppNav({ activeTab, onSelectTab, landing = false }: AppN
 
           <div className="nav-actions">
             <nav className="nav-links" aria-label="Main">
-              {MAIN_TABS.map((tab) => (
+              {inlineTabs.map((tab) => (
                 <Link
                   key={tab}
                   className="nav-tab"
@@ -120,6 +166,48 @@ export default function AppNav({ activeTab, onSelectTab, landing = false }: AppN
             </nav>
 
             <ThemeToggle />
+
+            {/* Shown only where the inline tabs are (CSS, from 48rem). Same
+                href and in-place switch as the text tab it replaces. Signed
+                out it is a labelled pill, a call to action; signed in, the
+                round initial. Nothing while the session loads: the bar is
+                right-aligned, so a pill that turned into a circle (or the
+                reverse) would jump the theme toggle and the tabs. */}
+            {showAccount && signedOut && (
+              <Link
+                className="nav-account nav-account--signin"
+                href={mainTabHref("account")}
+                aria-current={activeTab === "account" ? "page" : undefined}
+                onClick={handleTabClick("account")}
+              >
+                {signedOutShortLabel ? (
+                  <>
+                    <span className="nav-account__long">{signedOutLabel}</span>
+                    <span className="nav-account__short">{signedOutShortLabel}</span>
+                  </>
+                ) : (
+                  signedOutLabel
+                )}
+              </Link>
+            )}
+            {showAccount && accountState === "signed-in" && (
+              <Link
+                className="nav-account"
+                href={mainTabHref("account")}
+                aria-label={TAB_LABEL.account}
+                title={TAB_LABEL.account}
+                aria-current={activeTab === "account" ? "page" : undefined}
+                onClick={handleTabClick("account")}
+              >
+                {accountInitial ? (
+                  <span className="nav-account__initial" aria-hidden="true">
+                    {accountInitial}
+                  </span>
+                ) : (
+                  <UserRound aria-hidden="true" />
+                )}
+              </Link>
+            )}
 
             <button
               ref={toggleRef}
@@ -141,7 +229,7 @@ export default function AppNav({ activeTab, onSelectTab, landing = false }: AppN
           Labelled "Main" like the inline links: below 48rem it is the main
           navigation, and the two are never on screen together. */}
       <nav id="site-menu" className="menu-panel" aria-label="Main">
-        {MAIN_TABS.map((tab) => (
+        {tabs.map((tab) => (
           <Link
             key={tab}
             className="menu-item"
@@ -149,7 +237,7 @@ export default function AppNav({ activeTab, onSelectTab, landing = false }: AppN
             aria-current={activeTab === tab ? "page" : undefined}
             onClick={handleTabClick(tab)}
           >
-            {TAB_LABEL[tab]}
+            {tab === "account" && signedOut ? signedOutLabel : TAB_LABEL[tab]}
             <ChevronRight aria-hidden="true" />
           </Link>
         ))}

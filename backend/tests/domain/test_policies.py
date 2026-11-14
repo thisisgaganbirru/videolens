@@ -1,7 +1,18 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from app.domain.policies import client_ip_from_forwarded, quota_key_from_headers, seconds_until, seconds_until_next_utc_day
+from types import SimpleNamespace
+
+from app.domain.entities import AuthMethod, Principal
+from app.domain.policies import (
+    can_access_run,
+    client_ip_from_forwarded,
+    looks_like_api_key,
+    quota_key,
+    quota_key_from_headers,
+    seconds_until,
+    seconds_until_next_utc_day,
+)
 
 
 class QuotaIdentityTests(unittest.TestCase):
@@ -18,8 +29,59 @@ class QuotaIdentityTests(unittest.TestCase):
         key = quota_key_from_headers("Bearer private-token", "203.0.113.7")
         self.assertNotIn("203.0.113.7", key)
 
+    def test_bearer_scheme_is_case_insensitive(self) -> None:
+        keys = {quota_key_from_headers(f"{scheme} private-token", "203.0.113.7") for scheme in ("Bearer", "bearer", "BEARER")}
+        self.assertEqual(len(keys), 1)
+        self.assertTrue(next(iter(keys)).startswith("token:"))
+
+    def test_other_schemes_and_empty_bearers_use_the_ip(self) -> None:
+        for header in ("Basic dXNlcjpwYXNz", "Bearer ", "Bearer"):
+            with self.subTest(header=header):
+                self.assertEqual(quota_key_from_headers(header, "203.0.113.7"), "ip:203.0.113.7")
+
     def test_falls_back_to_anonymous_without_ip(self) -> None:
         self.assertEqual(quota_key_from_headers("", ""), "anonymous")
+
+
+class PrincipalQuotaKeyTests(unittest.TestCase):
+    def test_anonymous_is_keyed_by_ip_never_by_client_id(self) -> None:
+        anon = Principal(subject="client:abc0123456789xyz", authenticated=False)
+        self.assertEqual(quota_key(anon, "203.0.113.7"), "ip:203.0.113.7")
+        self.assertEqual(quota_key(anon, ""), "anonymous")
+
+    def test_signed_in_person_is_keyed_by_account_not_token(self) -> None:
+        person = Principal(subject="user:u1", authenticated=True, method=AuthMethod.TOKEN, account_id="acct-1")
+        self.assertEqual(quota_key(person, "203.0.113.7"), "account:acct-1")
+
+    def test_api_key_spends_from_the_owning_account(self) -> None:
+        key = Principal(subject="key:k1", authenticated=True, method=AuthMethod.API_KEY, account_id="acct-1")
+        self.assertEqual(quota_key(key, "203.0.113.7"), "account:acct-1")
+
+    def test_token_without_an_account_store_falls_back_to_the_subject(self) -> None:
+        person = Principal(subject="user:u1", authenticated=True, method=AuthMethod.TOKEN)
+        self.assertEqual(quota_key(person, "203.0.113.7"), "user:u1")
+
+
+class RunAccessTests(unittest.TestCase):
+    def test_only_the_owner_sees_a_run(self) -> None:
+        owner = Principal(subject="client:abc0123456789xyz", authenticated=False)
+        other = Principal(subject="client:zzz0123456789xyz", authenticated=False)
+        run = SimpleNamespace(owner_id="client:abc0123456789xyz")
+        self.assertTrue(can_access_run(owner, run))
+        self.assertFalse(can_access_run(other, run))
+        self.assertFalse(can_access_run(owner, None))
+
+    def test_signed_in_owner_is_matched_by_subject_in_this_phase(self) -> None:
+        person = Principal(subject="user:u1", authenticated=True, method=AuthMethod.TOKEN, account_id="a", workspace_id="w")
+        self.assertTrue(can_access_run(person, SimpleNamespace(owner_id="user:u1")))
+        self.assertFalse(can_access_run(person, SimpleNamespace(owner_id="w")))
+
+
+class ApiKeyShapeTests(unittest.TestCase):
+    def test_recognises_the_prefix(self) -> None:
+        self.assertTrue(looks_like_api_key("vl_live_abc"))
+        self.assertFalse(looks_like_api_key("eyJhbGciOi.x.y"))
+        self.assertFalse(looks_like_api_key(""))
 
 
 class ForwardedClientIpTests(unittest.TestCase):

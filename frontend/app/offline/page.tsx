@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { WifiOff } from "lucide-react";
 import AppNav from "@/components/AppNav";
 import BottomTabBar from "@/components/BottomTabBar";
@@ -37,9 +38,19 @@ import SiteFooter from "@/components/SiteFooter";
  * the worker answers it.
  * pre-emit critique: P5 H5 E5 S5 R5 V4
  */
+/* The service worker's fallback document, never a search result. */
+export const metadata: Metadata = {
+  title: "You're offline",
+  robots: { index: false, follow: false },
+};
+
 export default function OfflinePage() {
   return (
     <div className="shell" data-view="offline">
+      {/* Plain AppNav, not RouteNav: this page is what the service worker
+          serves with no network, so the `auth` capability can never be read
+          and the Account entry could never pass its gate. RouteNav would only
+          add a failing request and a sign-in SDK load. */}
       <AppNav activeTab={null} />
 
       <main className="view-scroll" data-view="offline" aria-label="Offline">

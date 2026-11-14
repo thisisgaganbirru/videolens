@@ -115,6 +115,28 @@ Complete these items before making the application publicly available.
       backend and worker services, so the healthy 2026-11-06 production
       deploy implies it is set; confirm from the Railway dashboard rather
       than from this checkbox.
+- [ ] Signed-in free runs (`FREE_RUNS_PER_ACCOUNT_DAILY`, default 10 per
+      UTC day per account; added 2026-11-13 as 10 per month, daily since
+      2026-11-14). Apply Alembic `0003_account_free_runs` and
+      `0005_account_daily_free_runs` (which needs `0004_billing` before it)
+      to the environment's database **before** deploying the code: without
+      the tables, or with `period` still varchar(7), every signed-in run
+      without a key fails at admission. Remove any
+      `FREE_RUNS_PER_ACCOUNT_MONTHLY` variable (no longer read); if it was
+      set to 0 to turn the allowance off, set `FREE_RUNS_PER_ACCOUNT_DAILY=0`.
+- [ ] Paid plan (Stripe, added 2026-11-13, `docs/backend/billing.md`). Off
+      until the `STRIPE_*` variables are set. Order: apply Alembic
+      `0004_billing`, deploy the code with `STRIPE_*` blank, create the
+      Stripe test-mode Product, Prices and Meter, set the variables on the
+      backend **and** worker, add the webhook endpoint
+      `https://<api>/api/billing/webhook`, then check `billing: ok` in
+      `GET /api/capabilities` and run one test checkout. Not yet applied
+      or configured in any environment. Since 2026-11-14 the paid plan's
+      included runs are `PAID_RUNS_PER_DAY` (default 30 per UTC day);
+      `PAID_RUNS_PER_MONTH` is no longer read. If an environment has
+      `PAID_RUNS_PER_MONTH` set, delete it and set `PAID_RUNS_PER_DAY`
+      instead (or leave it unset for 30), on the backend **and** worker.
+      No migration: 0005 already widened `period`.
 - [x] Abandoned runs are reported as failed instead of polling forever
       (`GetRunUseCase` staleness backstop, arq cancellation handling).
 - [x] `GET /api/capabilities` reports which dependencies work, and the app
@@ -276,6 +298,11 @@ READ_RATE_LIMIT_PER_MINUTE=120
 TRUSTED_PROXY_HOPS=2
 MAX_FILE_SIZE_MB=200
 MAX_DURATION_SECONDS=180
+# Signed in (JWT or account API key) AND own Gemini key on the run: the bigger
+# set. Same values on backend and worker. At or below the standard value =
+# the standard value. The client reads both sets from GET /api/limits.
+SIGNED_IN_BYOK_MAX_DURATION_SECONDS=600
+SIGNED_IN_BYOK_MAX_FILE_SIZE_MB=500
 # Tallest video yt-dlp fetches for a URL run; FFmpeg re-encodes anyway.
 YTDLP_MAX_HEIGHT=720
 # Global daily backstop across ALL callers, UTC day. 0 disables it.
@@ -283,6 +310,11 @@ DAILY_RUN_CAP=200
 # Anonymous free runs per device / per IP, per UTC day (BYOK runs exempt).
 FREE_RUNS_PER_DEVICE=3
 FREE_RUNS_PER_IP=10
+# Signed-in accounts (no own key): free runs per UTC day, counted per
+# account instead of per device. Needs migrations 0003 and 0005 applied first
+# wherever DATABASE_URL is set. <= 0 = off (signed-in callers fall back to the
+# device rule). Replaces FREE_RUNS_PER_ACCOUNT_MONTHLY (no longer read).
+FREE_RUNS_PER_ACCOUNT_DAILY=10
 # REQUIRED while REDIS_URL is set and FREE_RUNS_PER_DEVICE > 0 (the API
 # refuses to start without it). Same value on backend and worker. Generate
 # with: python -c "import secrets; print(secrets.token_urlsafe(32))"
@@ -295,6 +327,10 @@ RUN_TTL_SECONDS=3600
 # Worker-only in effect, but harmless to set on both:
 WORKER_MAX_JOBS=2
 WORKER_JOB_TIMEOUT_SECONDS=600
+# Timeout of the process_long_run job (signed-in + BYOK runs, up to 10 min
+# of media). Set on BOTH services: the API uses it for the stale-run check
+# (+120 s) and the long-run slot expiry, the worker for the arq timeout.
+WORKER_LONG_JOB_TIMEOUT_SECONDS=1800
 TEMP_DIR=/tmp/videolens
 ALLOWED_ORIGINS=https://app.example.com
 REDIS_URL=<Railway Redis URL>
@@ -320,6 +356,25 @@ AUTH_JWKS_URL=<OIDC JWKS URL>
 AUTH_ISSUER=<OIDC issuer>
 AUTH_AUDIENCE=<OIDC audience>
 ALLOW_ANONYMOUS=true
+# Paid plan (docs/backend/billing.md). Leave STRIPE_SECRET_KEY blank and
+# billing is off (the free rules, exactly as before). Set on BOTH services:
+# the worker reports extra runs to Stripe. Needs DATABASE_URL in
+# distributed mode (the API refuses to start otherwise) and migration
+# 0004_billing applied first. Test-mode keys until the owner switches.
+STRIPE_SECRET_KEY=<secret, sk_test_...>
+STRIPE_WEBHOOK_SECRET=<secret, whsec_...>
+STRIPE_PRICE_MONTHLY=<price_...>
+STRIPE_PRICE_YEARLY=<price_... or blank>
+STRIPE_PRICE_EXTRA_RUN=<price_... (metered, monthly)>
+STRIPE_PRICE_EXTRA_RUN_YEARLY=
+STRIPE_METER_EVENT_NAME=videolens_extra_run
+BILLING_RETURN_ORIGIN=https://app.example.com
+# Included runs per UTC day (replaces PAID_RUNS_PER_MONTH, no longer read).
+PAID_RUNS_PER_DAY=30
+# Extra runs per account per UTC month; stays monthly.
+PAID_EXTRA_RUNS_MONTHLY_CAP=200
+PAID_MAX_DURATION_SECONDS=0
+PAID_MAX_FILE_SIZE_MB=0
 ```
 
 Do not set the local Windows `FFMPEG_LOCATION` value in production. The
@@ -342,11 +397,28 @@ Do not configure `YTDLP_COOKIES_FROM_BROWSER` on a hosted server.
 
 ```env
 NEXT_PUBLIC_API_BASE_URL=https://api.example.com
+# Optional. The site's own public origin, for canonical links, sitemap.xml,
+# robots.txt and the social preview image. Defaults to the production
+# Railway domain; set it when a custom domain lands.
+NEXT_PUBLIC_SITE_URL=https://app.example.com
+# Optional. Set to 1 on the dev frontend service only: robots.txt becomes
+# Disallow: /, every page gets a noindex meta and an X-Robots-Tag header.
+NEXT_PUBLIC_NOINDEX=1
+# Optional sign-in (auth phase 2). Blank either one to disable sign-in.
+NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 ```
 
-Because this value is inlined into the browser bundle at build time, configure
-it before building the frontend image. A frontend image or APK is therefore
-bound to one backend and cannot be promoted between environments.
+The two Supabase values are public (the publishable key is meant for the
+browser) and are also inlined at build time; the URL's origin is added to the
+CSP `connect-src`. The Account tab appears only when both are set *and* the
+backend reports the `auth` capability as `ok`. See
+`docs/frontend/auth-sign-in.md`.
+
+Because these values are inlined into the browser bundle at build time,
+configure them before building the frontend image. A frontend image or APK is
+therefore bound to one backend and cannot be promoted between environments.
+See `docs/frontend/seo-and-discovery.md`.
 
 ### Domains
 
@@ -372,6 +444,18 @@ currently provides 0.5 GB RAM and 1 GB ephemeral storage per service, so
 production testing may require a paid plan or lower file limits — and now
 that the worker is its own service, this budget applies separately to the
 worker, not shared with the API service.
+
+**Signed-in + BYOK runs (up to 500 MB / 10 min)** need more of that budget.
+An upload is held twice on the API service while it is handled (Starlette's
+spooled temp file, then the saved copy), so one 500 MB upload needs about
+1 GB of temporary disk on the API and, on the worker, the source plus the
+normalized re-encode. At most one such run is in flight per account
+(`code: long_run_in_progress`), but different accounts can overlap, up to
+`WORKER_MAX_JOBS` on a worker. Check the plan's ephemeral storage before
+relying on the 500 MB value; lower `SIGNED_IN_BYOK_MAX_FILE_SIZE_MB` if it
+does not fit. Nothing in the app caps the request body below this today:
+the size check runs while the saved copy is written, after the body has been
+received (same as the 200 MB check always did).
 
 - [Railway pricing and resource limits](https://docs.railway.com/pricing/plans)
 - [Railway ephemeral storage](https://docs.railway.com/services#ephemeral-storage)
@@ -405,10 +489,51 @@ worker, not shared with the API service.
       subject to `RATE_LIMIT_PER_HOUR`.
 - [ ] A BYOK key never appears in run records, logs, or the `GET
       /api/runs/{run_id}` response.
+- [ ] `GET /api/limits` returns both limit sets; signed in with a BYOK key,
+      a 4-9 minute video completes; signed out or without a key, it is
+      refused with the 3:00 message and the hint. A second long run on the
+      same account while one is processing gets 429
+      `code: long_run_in_progress`; a short run alongside is accepted.
 - [ ] `GET /api/releases` returns the release index (not empty), and the
       Releases tab lists it.
 - [ ] No API keys, cookies, local paths, or terminal color codes appear in
       responses.
+
+### Account database migrations (release step)
+
+Only for an environment with `DATABASE_URL` set (accounts on). Alembic is
+not run at startup and the Dockerfile does not copy `migrations/`, so run it
+from a checkout, **as `postgres`** (the project owner), before deploying
+code that needs the new revision. Full detail, including the offline
+`--sql` path through the SQL editor or connector: `docs/backend/auth.md`,
+"Migrations".
+
+- [ ] `0001_identity`: the `videolens_api` role exists first; then the four
+      identity tables, RLS, policies and grants.
+- [ ] `0002_auth_user_deleter` (account deletion, `DELETE /api/me`): applied
+      as `postgres`, because the two `SECURITY DEFINER` functions it creates
+      (`videolens_private.delete_auth_user(uuid)` and
+      `videolens_private.auth_user_exists(uuid)`) must be owned by a role that
+      can read and delete `auth.users`. Afterwards `has_function_privilege`
+      for `videolens_api` and `EXECUTE` is true for both, and `videolens_private` is **not** in the project's exposed
+      schemas (Supabase dashboard, API settings). Without it, deletion
+      removes the rows and then returns 500 on the Supabase user step, and
+      every first sign-in fails (the existence check cannot run).
+- [ ] `0003_account_free_runs` (signed-in free runs) before the code that
+      uses it.
+- [ ] `0004_billing` (paid plan: `billing_accounts`, `billing_events`,
+      `billing_extra_runs`, with RLS, the `videolens_api` policy and grants;
+      fails if `DATABASE_APP_ROLE` is missing) before any `STRIPE_*`
+      variable is set. Harmless to apply early. Offline SQL:
+      `alembic upgrade 0003_account_free_runs:0004_billing --sql`.
+- [ ] `0005_account_daily_free_runs` (signed-in free runs per UTC day:
+      widens `period` to varchar(10) on `account_free_runs` and
+      `account_free_run_holds`; catalog-only on Postgres, RLS, policies and
+      grants untouched) **before** the code that writes daily keys, or every
+      signed-in free run fails at admission. Needs `0004_billing` first.
+      Offline SQL: `alembic upgrade 0004_billing:0005_account_daily_free_runs --sql`
+      (or `0003_account_free_runs:0005_account_daily_free_runs` from 0003).
+- [ ] `GET /api/capabilities` shows `database: ok` (and `auth: ok`).
 
 ## Phase 3: Installable PWA
 
@@ -643,3 +768,12 @@ The release is complete when:
   pre-launch reports.
 - The Play Store production release is approved and points to the same
   stable backend.
+
+## Changelog
+
+- 2026-11-09 · backend subagent (auth phase 3) · added the account database migrations release step (apply `0002_auth_user_deleter` as `postgres`, verify `has_function_privilege`, keep `videolens_private` unexposed, check `database: ok`)
+- 2026-11-09 · backend subagent (auth phase 3, review fix) · 0002 now also creates `auth_user_exists`; the verify step checks both functions
+- 2026-11-13 · backend agent · `SIGNED_IN_BYOK_MAX_DURATION_SECONDS` / `SIGNED_IN_BYOK_MAX_FILE_SIZE_MB` and `WORKER_LONG_JOB_TIMEOUT_SECONDS` variables; capacity note for 500 MB uploads; release check for `GET /api/limits` and the long-run guard. Deploy the worker before (or with) the API: an old worker does not know `process_long_run` or the `limits` job argument
+- 2026-11-13 · backend agent · paid plan: `STRIPE_*`, `BILLING_RETURN_ORIGIN` and `PAID_*` variables (both services); release checklist item and migration step for `0004_billing`; deploy order (migration, code with billing off, Stripe objects, variables, webhook)
+- 2026-11-14 · backend agent · `FREE_RUNS_PER_ACCOUNT_DAILY` replaces `FREE_RUNS_PER_ACCOUNT_MONTHLY` (remove the old variable); migration step for `0005_account_daily_free_runs` before the daily code
+- 2026-11-14 · backend agent · `PAID_RUNS_PER_DAY` (30/UTC day) replaces `PAID_RUNS_PER_MONTH` (100/month, no longer read): rename the variable on both services if set; no migration

@@ -155,6 +155,12 @@ export interface HistoryRecord {
    *  for the result's Source card. The server never keeps it. Null for links
    *  and imported runs; absent on records written before it existed. */
   file_name?: string | null;
+  /** Who the server holds this run for, as the request that created (or
+   *  imported) it went out: `user:<id>` or `anonymous` (auth phase 2). A 404
+   *  under a different identity means "not yours right now", not "expired",
+   *  so the row is left alone. Absent on records written before it existed;
+   *  those keep the old 404-means-expired rule. */
+  owner?: string | null;
   updated_at: string;
 }
 
@@ -201,18 +207,174 @@ export interface CapabilityReport {
   capabilities: Capability[];
 }
 
-/** This device's free-run allowance for the current UTC day, from
- *  `GET /api/free-runs`. Only meaningful without a bring-your-own key: a
- *  caller with their own Gemini key has no limit and never sees it. */
+/** Whose allowance a free-run count is. `device`: this device's few runs
+ *  per UTC day (anonymous). `account`: the signed-in account's runs, shared
+ *  across that person's devices and used *instead of* the device's while
+ *  signed in (2026-11-13); per UTC day on both plans since 2026-11-14. A server that predates the account allowance
+ *  sends no scope, which reads as `device`. */
+export type FreeRunsScope = "device" | "account";
+
+/** The period a run allowance counts over (2026-11-14). `day`: resets at
+ *  the next UTC midnight (anonymous devices, free accounts and, since
+ *  2026-11-14, the paid plan's 30). `month`: kept for a server that still
+ *  counts the paid plan per month. */
+export type FreeRunsPeriod = "day" | "month";
+
+/** The free-run allowance the server counts this caller against, from
+ *  `GET /api/free-runs`: this device's for the UTC day, or (signed in) the
+ *  account's for the UTC day. Only meaningful without a bring-your-own key:
+ *  a caller with their own Gemini key has no limit and never sees it. */
 export interface FreeRunsStatus {
+  /** `device` or `account`; see `FreeRunsScope`. */
+  scope: FreeRunsScope;
+  /** The signed-in account's plan (2026-11-13, one paid plan). `paid` counts
+   *  against the paid daily allowance (`limit`, 30 since 2026-11-14). A server
+   *  without billing sends no plan, which reads as `free`. */
+  plan: BillingPlan;
+  /** What the count resets over (`period` on the response, 2026-11-14). A
+   *  server that does not send it reads as `day`. */
+  period: FreeRunsPeriod;
+  /** Paid only: runs past `limit` are allowed and billed per run, so a spent
+   *  allowance does not block. `false` everywhere else. */
+  overage: boolean;
   /** The random, server-issued token that counts this device's runs. Not tied
    *  to a person. Replaced whenever the server answers with a different one. */
   deviceToken: string;
   limit: number;
   used: number;
   remaining: number;
-  /** ISO 8601 UTC instant the count resets (next UTC midnight). */
+  /** ISO 8601 UTC instant the count resets: next UTC midnight (`day`), or
+   *  the start of the next month (`month`, an older paid server). */
   resetsAt: string;
   /** `false`: the deployment has no free-run limit — show nothing. */
   enabled: boolean;
+}
+
+/** How long and how large one upload may be (`GET /api/limits`,
+ *  2026-11-13). The server enforces these regardless; the client reads them
+ *  only to word the intake and to refuse a file before uploading it. */
+export interface MediaLimits {
+  maxDurationSeconds: number;
+  maxFileSizeMb: number;
+}
+
+/** Both tiers the server reports. `signedInByok` applies to a signed-in
+ *  person running on their own Gemini key; everyone else gets `standard`.
+ *  On a server without the endpoint both are today's standard values. */
+export interface MediaLimitsTable {
+  standard: MediaLimits;
+  signedInByok: MediaLimits;
+  /** The paid plan's limits, which need no key; null from a server that does
+   *  not report them (then the paid plan gets the other tiers' rules). */
+  paid: MediaLimits | null;
+}
+
+/* ---- billing (2026-11-13, "Level 3, one paid plan") ----
+   Stripe hosted Checkout and Customer Portal, reached by redirect; the
+   browser never loads Stripe.js and never sees a card. `GET /api/billing`
+   describes the signed-in account's plan. Field names here are camelCase
+   because the adapter normalises the body (it is optional chrome). */
+
+export type BillingPlan = "free" | "paid";
+export type BillingInterval = "month" | "year";
+
+/** A price in the currency's minor units (cents for usd), as Stripe gives it. */
+export interface BillingPrice {
+  amount: number;
+  currency: string;
+}
+
+export interface BillingPrices {
+  month: BillingPrice | null;
+  year: BillingPrice | null;
+  /** Each run past the paid daily allowance (capped per month). */
+  extraRun: BillingPrice | null;
+}
+
+/** `GET /api/billing`. `enabled: false` means the server has billing off,
+ *  and the app then looks exactly as it did before billing existed. */
+export type BillingStatus =
+  | { enabled: false }
+  | {
+      enabled: true;
+      plan: BillingPlan;
+      /** Stripe's subscription status (`active`, `past_due`, `canceled`, ...);
+       *  null on the free plan. Kept as a string: an unknown value renders
+       *  neutrally rather than being dropped. */
+      status: string | null;
+      interval: BillingInterval | null;
+      /** ISO 8601; the renewal date, or the end date when cancelling. */
+      currentPeriodEnd: string | null;
+      cancelAtPeriodEnd: boolean;
+      /** `period` (2026-11-14): `day` on both plans now; a body without it
+       *  reads as `day`. */
+      runs: { limit: number; used: number; period: FreeRunsPeriod };
+      prices: BillingPrices;
+    };
+
+/** A plan the server actually sells: `BillingStatus` with billing on. */
+export type BillingDetails = Extract<BillingStatus, { enabled: true }>;
+
+/* ---- accounts (auth phase 2; contract in docs/backend/auth.md) ----
+   Sign-in is optional. A deployment without an identity provider never
+   produces any of these. Field names follow the API's JSON, as the run
+   shapes above do. */
+
+/** The person the identity provider says is signed in. Provider-neutral:
+ *  nothing outside `infrastructure/authSession.ts` knows it is Supabase. */
+export interface AuthUser {
+  /** The provider's stable user id (the token's `sub`). */
+  id: string;
+  email: string | null;
+}
+
+export interface AccountWorkspace {
+  workspace_id: string;
+  name: string;
+}
+
+/** What the caller may do. One free plan in this phase; the numbers are the
+ *  deployment's own limits. */
+export interface AccountEntitlement {
+  plan: string;
+  max_duration_seconds: number;
+  max_file_size_mb: number;
+  metered: boolean;
+  api_access: boolean;
+  library: boolean;
+}
+
+/** `GET /api/me`. Identity and entitlement, no usage and no plan cards. */
+export interface AccountResponse {
+  subject: string;
+  method: "token" | "api_key" | "anonymous" | (string & {});
+  email: string | null;
+  account_id: string | null;
+  workspace: AccountWorkspace | null;
+  entitlement: AccountEntitlement;
+  /** False when the server has nowhere to keep accounts: sign-in works, but
+   *  there is no workspace and `/api/keys` answers 503. */
+  accounts_enabled: boolean;
+}
+
+/** A VideoLens API key as a listing shows it. Never carries the secret. */
+export interface ApiKeySummary {
+  key_id: string;
+  name: string;
+  /** `vl_live_` plus the first eight characters, kept so a key is recognisable. */
+  prefix: string;
+  scopes: string[];
+  active: boolean;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+/** The one response that carries a key's secret. Shown once, never stored. */
+export interface ApiKeyCreated extends ApiKeySummary {
+  secret: string;
+}
+
+export interface ApiKeyListResponse {
+  keys: ApiKeySummary[];
 }

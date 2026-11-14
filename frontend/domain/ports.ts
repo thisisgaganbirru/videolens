@@ -3,10 +3,17 @@
    they go through a hook, which goes through the shared container. */
 
 import type {
+  AccountResponse,
+  BillingInterval,
+  BillingStatus,
+  ApiKeyCreated,
+  ApiKeyListResponse,
+  AuthUser,
   CapabilityReport,
   FreeRunsStatus,
   HistoryPatch,
   HistoryRecord,
+  MediaLimitsTable,
   MediaSource,
   RunCreateResponse,
   RunListResponse,
@@ -74,12 +81,33 @@ export interface DeviceTokenStore {
   set(token: string): void;
 }
 
-/** `GET /api/free-runs`: this device's free-run allowance. Read-only on the
+/** `GET /api/free-runs`: the free-run allowance this caller is counted
+ *  against (this device's, or the signed-in account's when the request
+ *  carries a bearer; the shared `ApiClient` adds it). Read-only on the
  *  server; it issues a fresh token when the stored one is missing or invalid,
  *  and the adapter keeps the `DeviceTokenStore` in step with whatever comes
  *  back. */
 export interface FreeRunsGateway {
   fetchStatus(): Promise<FreeRunsStatus>;
+}
+
+/** `GET /api/limits`: the upload limits per tier. Public, no caller
+ *  identity. Rejects when the endpoint is missing or unreadable; the hook
+ *  falls back to the standard limits then. */
+export interface LimitsGateway {
+  fetchLimits(): Promise<MediaLimitsTable>;
+}
+
+/** `/api/billing*` for the signed-in person (2026-11-13). Both redirects are
+ *  Stripe-hosted pages; these only ask the server for their address.
+ *  Reject with `ApiError` (`code` `already_subscribed` on checkout,
+ *  `no_billing_account` on the portal) or `NetworkError`. */
+export interface BillingGateway {
+  fetchBilling(): Promise<BillingStatus>;
+  /** `POST /api/billing/checkout`: the hosted Checkout page's URL. */
+  startCheckout(interval: BillingInterval): Promise<string>;
+  /** `POST /api/billing/portal`: the hosted Customer Portal's URL. */
+  openPortal(): Promise<string>;
 }
 
 export type VersionLogEntry = {
@@ -234,4 +262,85 @@ export interface DocumentExporter {
   savesViaShareSheet(): boolean;
   share(doc: MarkdownDocument): Promise<void>;
   save(doc: MarkdownDocument): Promise<void>;
+}
+
+/**
+ * Who is signed in, behind the identity provider (auth phase 2).
+ *
+ * Optional by design: with no provider configured the container builds a
+ * session whose `enabled` is false, every request goes out anonymous, and the
+ * Account tab is not offered. Sign-in is an emailed one-time code, the one
+ * method that works the same in a browser tab and inside the Capacitor
+ * WebView (no redirect, no deep link). Google sign-in is phase 4 and is not on
+ * this port yet.
+ *
+ * Failures of `requestEmailCode` and `verifyEmailCode` reject with
+ * `AuthFlowError` (domain/errors.ts), whose `reason` the hook words.
+ */
+export interface AuthSession {
+  /** False when the deployment has no identity provider configured. */
+  readonly enabled: boolean;
+  /** Loads the provider and restores a stored session. Idempotent. */
+  load(): Promise<void>;
+  /** The signed-in person, or null. Synchronous: reads the loaded state. */
+  user(): AuthUser | null;
+  /** True when a session exists, in memory or stored on this device, even
+   *  before the provider has loaded. Synchronous; no network. */
+  hasSession(): boolean;
+  /** A current access token for the API, refreshed when needed. Null only
+   *  when nobody is signed in (or sign-in is unconfigured). When a session
+   *  exists but no token can be had right now (the provider is slow to load,
+   *  a refresh failed on the network) it **throws**: sending that request
+   *  anonymously would reach runs owned by the person as someone else. */
+  getToken(): Promise<string | null>;
+  /** Emails a one-time code. Creates the account on first use. */
+  requestEmailCode(email: string): Promise<void>;
+  /** Exchanges the emailed code for a session. */
+  verifyEmailCode(email: string, code: string): Promise<void>;
+  /** Signs out on this device only. Never rejects; the stored session is
+   *  cleared even when the provider cannot be reached. */
+  signOut(): Promise<void>;
+  /** Ends every session of this person (other devices and this one). Rejects
+   *  with `AuthFlowError` when the provider refused or could not be reached,
+   *  and then this device **stays signed in**. Other devices keep a valid
+   *  access token until it expires (the API verifies tokens by JWKS only),
+   *  and VideoLens API keys are not touched. */
+  signOutEverywhere(): Promise<void>;
+  /** Called whenever the session changes (sign-in, sign-out, a token
+   *  refresh, another tab). Returns unsubscribe. */
+  subscribe(listener: () => void): () => void;
+}
+
+/** Whether *this server* verifies sign-in tokens: its `auth` capability.
+ *  `unknown` until the capability report arrives. The bearer goes out only
+ *  on `ok`, because the backend reads a bearer *instead of* `X-Client-ID`: a
+ *  server without a matching verifier would answer 401/503 to every caller
+ *  route (auth phase 2). Fed by the capabilities adapter, read by the API
+ *  client. */
+export type ServerAuthState = "unknown" | "ok" | "off";
+
+export interface ServerAuthStatus {
+  current(): ServerAuthState;
+  report(state: Exclude<ServerAuthState, "unknown">): void;
+  /** Resolves with the state once known, or with `unknown` after `maxMs`. */
+  settled(maxMs: number): Promise<ServerAuthState>;
+}
+
+/** Which identity the app's requests are going out as, so a History record
+ *  can remember who owns its run: `user:<id>` when the bearer is sent,
+ *  `anonymous` otherwise; null before the first request. */
+export interface CallerIdentity {
+  lastOwner(): string | null;
+}
+
+/** `/api/me` and `/api/keys`, sent as the signed-in person. */
+export interface AccountGateway {
+  fetchAccount(): Promise<AccountResponse>;
+  listKeys(): Promise<ApiKeyListResponse>;
+  createKey(name: string): Promise<ApiKeyCreated>;
+  revokeKey(keyId: string): Promise<void>;
+  /** `DELETE /api/me` (auth phase 3): the account, its workspace, API keys
+   *  and any runs the server still holds for it. Resolves on 204; rejects
+   *  with `ApiError` (401, 403, 503, anything unexpected) or `NetworkError`. */
+  deleteAccount(): Promise<void>;
 }

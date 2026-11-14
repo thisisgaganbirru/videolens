@@ -6,9 +6,11 @@ from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError, GeoRestrictedError
 
 from ...domain.entities import SavedUpload, SourceMetadata
+from ...domain.entitlements import MediaLimits, size_over_limit_message
 from ...domain.errors import MediaValidationError
 from ..config import Settings
 from .ffmpeg import _media_binary
+from .limits import effective_limits
 from .net import validate_public_url
 from .thumbnails import dimensions_from_info, thumbnail_urls_from_info
 from .uploads import _cleanup_dir, create_run_dir
@@ -163,17 +165,20 @@ def _download_failure(exc: DownloadError) -> tuple[str, str]:
     return _GENERIC_DOWNLOAD_FAILURE, detail
 
 
-async def download_url(settings: Settings, run_id: str, url: str) -> SavedUpload:
+async def download_url(
+    settings: Settings, run_id: str, url: str, limits: MediaLimits | None = None
+) -> SavedUpload:
+    limits = effective_limits(settings, limits)
     await asyncio.to_thread(validate_public_url, url)
     cookie_options = _cookie_options(settings)
     ffmpeg_path = _media_binary(settings, "ffmpeg")
     run_dir = create_run_dir(settings, run_id)
-    max_bytes = settings.max_file_size_mb * 1024 * 1024
+    max_bytes = limits.max_file_size_bytes
 
     def progress_hook(status: dict) -> None:
         downloaded = status.get("downloaded_bytes") or 0
         if downloaded > max_bytes:
-            raise DownloadError(f"The video is over the {settings.max_file_size_mb}MB limit.")
+            raise DownloadError(f"The video is over the {limits.max_file_size_mb}MB limit.")
 
     def run_download() -> tuple[str, dict]:
         options = {
@@ -205,10 +210,9 @@ async def download_url(settings: Settings, run_id: str, url: str) -> SavedUpload
 
     try:
         path, info = await asyncio.to_thread(run_download)
-        if os.path.getsize(path) > max_bytes:
-            raise MediaValidationError(
-                f"Download exceeds the {settings.max_file_size_mb}MB size limit."
-            )
+        size_bytes = os.path.getsize(path)
+        if size_bytes > max_bytes:
+            raise MediaValidationError(size_over_limit_message(limits, subject="That video"))
         metadata = _source_metadata_from_info(info, url)
         width, height = dimensions_from_info(info)
         return SavedUpload(
@@ -218,6 +222,7 @@ async def download_url(settings: Settings, run_id: str, url: str) -> SavedUpload
             thumbnail_urls=thumbnail_urls_from_info(info),
             width=width,
             height=height,
+            size_bytes=size_bytes,
         )
     except MediaValidationError:
         _cleanup_dir(run_dir)

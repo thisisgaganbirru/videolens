@@ -110,6 +110,43 @@ deliberately **not** added; that is an owner decision.
 6.14:1 on the guide's tint in light, 10.1:1 in dark (was under 4.5:1 in
 light). Existing tokens only.
 
+## Consent line and sign-in prompt (2026-11-13, owner-approved copy)
+
+The help line under the field (`helpId`, `.key-help`) is now the owner's
+consent wording, replacing the phone boards' "held briefly on the server"
+sentence:
+
+> Your key is saved only on this device. VideoLens passes it to Google for
+> your own runs and never stores it. You're responsible for your key and any
+> usage on your Google account. By saving a key you agree to the Terms and
+> Privacy Policy.
+
+"Terms" and "Privacy Policy" are plain `<a className="text-link">` to
+`/terms` and `/privacy`, the same pattern as the intake's terms row. Saving
+is the agreement: no checkbox, no new chrome. It is still the field's
+`aria-describedby`.
+
+**Truth note for the next editor.** The old line said the key is "held
+briefly on the server" because in distributed mode it waits in the
+single-use Redis vault until the worker reads it. The approved copy says
+"never stores it" and the Privacy page says "held in memory only until the
+run calls Gemini ... never written to our database or logs". Redis is an
+in-memory store and the entry is single-use, so the owner accepted this; do
+not put a contradicting sentence next to it.
+
+**Sign-in prompt.** A second `.key-help.key-signin` line, "Signed in with
+your own key, you can analyze videos up to N minutes. Sign in", with "Sign in"
+linking `mainTabHref("account")` and a plain left click going through
+`goToMainTab("account")` (same as the nav and `FreeRunsBanner`). `HomeScreen`
+passes `signInForMinutes = showAccount && authUser.ready && !authUser.user ?
+mediaLimits.upgradeMinutes : null`: the nav's rule for offering Account, plus
+nobody signed in. N comes from `useMediaLimits` (`signedInByok`
+`maxDurationSeconds`); `upgradeMinutes` is null when the server reports no
+larger tier (also before or without `GET /api/limits`, whose fallback makes
+both tiers equal), which hides the line. Unlike the intake hint it does not
+require a saved key, since this page is where the key goes in. It never says
+signing in makes the key safer.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported ApiKeyPanel; promoted the sr-only label to a visible .card-label, kept the programmatic association
@@ -120,3 +157,5 @@ light). Existing tokens only.
 - 2026-11-01 · frontend agent (Phase 5b) · lede now the boards' "You get a few free runs" sentence; `ApiKeyStore` gained `subscribe()` so saving or removing a key updates the free-run banner at once; `X-Device-Token` now rides on `createRun` beside the key (see `free-runs.md`)
 - 2026-11-02 · frontend agent (refinement 6) · A11-07 AI Studio link uses --color-accent-strong (6.14:1 light, 10.1:1 dark)
 - 2026-11-07 · frontend agent · added the dedicated-key/spending-limit line to the guide panel; key now covered by the CSP and excluded from Android backups (see `security-headers.md`)
+- 2026-11-13 · frontend agent · a saved key plus sign-in now raises the upload limits to 10 min / 500 MB (`useMediaLimits` watches `apiKeyStore`); see `upload-form.md`, "Upload limits per tier"
+- 2026-11-13 · frontend agent · owner-approved consent help line under the key field (Terms/Privacy links, replaces "held briefly on the server"); sign-in prompt for the 10-minute tier when sign-in works and nobody is signed in (`signInForMinutes` prop from HomeScreen)

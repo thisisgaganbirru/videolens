@@ -6,7 +6,7 @@ Answers "which parts of this deployment actually work right now, and was that ac
 - `backend/app/domain/entities.py` — `CapabilityState` (`ok` / `degraded` / `unavailable` / `disabled`), `Capability` (`name`, `state`, `detail`, `probed`), `CapabilityReport`.
 - `backend/app/domain/ports.py` — `CapabilityProbe` (`name`, `async check()`).
 - `backend/app/application/get_capabilities.py` — `GetCapabilitiesUseCase`, runs the probes and aggregates.
-- `backend/app/infrastructure/health/probes.py` — the six concrete probes.
+- `backend/app/infrastructure/health/probes.py` — the seven concrete probes.
 - `backend/app/interface/api/routes.py` — the route.
 - `backend/app/container.py` — probe list and order.
 
@@ -36,6 +36,8 @@ The failure this design exists to avoid: a health check that reports `ok` for so
 | `analysis_engine` | `AnalysisEngineProbe` | Reports whether a shared key is configured, and says outright it was **not** verified — the only way to validate a Gemini key is to spend a request with it. Missing key is `degraded`, not `unavailable`, because BYOK callers still work. Never includes the key. `probed: false` |
 | `run_store` | `RunStoreProbe` | Pings Redis in distributed mode. In local mode there is nothing to ping (`RunStore.ping()` returns `True` unconditionally there), so it reports `ok` with `probed: false` and names the store as non-durable rather than calling a method whose answer proves nothing. |
 | `object_storage` | `ObjectStoreProbe` | Unconfigured → `disabled` (topology, not a fault). Configured → `head_bucket` against the real bucket, because having four settings filled in says nothing about whether they are correct. On failure the traceback is logged at WARNING and `log_detail` names the S3 error code and HTTP status (403 = bad or rotated keys, 404 = wrong or deleted bucket) or, for a non-S3 error such as a refused connection, just the exception class. |
+| `auth` | `AuthProbe` | Whether sign-in is offered and works. Unconfigured (`AUTH_JWKS_URL`/`AUTH_ISSUER` blank) → `disabled`, `probed: false`. Configured → fetches the JWKS through the verifier's own caching client: at least one key → `ok`; fetch failure or empty set → `degraded` (anonymous use still works), the exception class in `log_detail`. `probed: true`. Appended after `daily_budget`. See `auth.md`. |
+| `database` | `DatabaseProbe` | Whether the account store answers. `DATABASE_URL` blank → `disabled`, `probed: false` (local mode keeps accounts in memory, distributed mode runs without accounts; both by design, and the detail says which). Set → one `SELECT 1` through the shared engine (5s timeout): answers → `ok`; fails → `degraded`, not `unavailable`, because anonymous use still works (same rule as `auth`). Host names and driver errors stay in the log; `log_detail` is the exception class. Appended last, after `auth`. See `auth.md`. |
 | `daily_budget` | `DailyBudgetProbe` | Reads `DailyBudget.remaining()` — deliberately read-only; health reporting must never consume the budget it reports on. Exhausted → `unavailable`, uncapped → `disabled`. |
 
 ## Aggregation and shape
@@ -45,6 +47,16 @@ Overall `state` is the worst reported state, with `disabled` excluded — an unc
 A probe that raises becomes an `unavailable` row with a fixed message, and the real exception goes to the logs only — the same masking rule `ProcessRunUseCase` uses, and for the same reason (boto and redis errors carry endpoints and credentials). A broken dependency must not also break the endpoint that exists to describe it.
 
 Results are cached for 10s behind an `asyncio.Lock`. The probes spawn subprocesses and open sockets, so an uncached public endpoint would hand any caller a way to spawn processes at will.
+
+## `billing` (2026-11-13)
+
+`BillingProbe` (`docs/backend/billing.md`): `disabled` without the required
+`STRIPE_*` settings or an account store (not probed); `ok` when the plan's
+Price objects read back through the gateway's one-hour cache (`probed=true`;
+a read never charges anything); `degraded` when the monthly price cannot be
+read (checkout cannot be offered; runs are unaffected). Like `auth`, a
+`degraded` billing row does drag the overall state to `degraded`.
+`log_detail` says test or live mode; the key never appears.
 
 ## Relationship to the existing health endpoints
 
@@ -64,3 +76,6 @@ Unchanged and still separate:
 - 2026-08-29 · frontend agent · marked the "frontend does not consume this" gap closed and pointed it at docs/frontend/capability-reporting.md; no backend code touched
 - 2026-08-29 · main session · split `detail` from `log_detail` so the unauthenticated report stops publishing versions, topology and the live budget count
 - 2026-10-28 · claude (session ccr-ee9ca9d3) · `ObjectStoreProbe` now actually logs the head_bucket failure and puts the S3 code/status in `log_detail`; before, it said "see the logged exception" but nothing was logged
+- 2026-11-08 · backend subagent (auth phase 1) · added the `auth` capability (`AuthProbe`, seventh probe, appended last): disabled when sign-in is unconfigured, ok/degraded from a real JWKS fetch
+- 2026-11-09 · backend subagent (auth phase 3) · added the `database` capability (`DatabaseProbe`, eighth probe, after `auth`): disabled without `DATABASE_URL`, ok on `SELECT 1`, degraded on failure
+- 2026-11-13 · backend agent · `billing` row (`BillingProbe`): disabled / ok (prices read, cached) / degraded
