@@ -105,6 +105,7 @@ class RunStore:
         duration_seconds: float | None = None,
         media_tier: str | None = None,
         admitted_byok: bool = False,
+        account_id: str | None = None,
     ) -> Run:
         now = datetime.now(timezone.utc)
         run = Run(
@@ -118,6 +119,7 @@ class RunStore:
             duration_seconds=duration_seconds,
             media_tier=media_tier,
             admitted_byok=admitted_byok,
+            account_id=account_id,
         )
         await self._write(run)
         if self._settings.queue_enabled:

@@ -102,6 +102,12 @@ class Run(BaseModel):
     # spend the shared key on it (docs/backend/byok.md). Server bookkeeping,
     # not sent to the client; False for a run stored before it existed.
     admitted_byok: bool = False
+    # The account the run was admitted for (a signed-in person, or the
+    # account owning the API key's workspace), so the worker can save a paid
+    # account's result to its server-side history once the run completes
+    # (docs/backend/saved-history.md). Server bookkeeping, never sent to the
+    # client; None for anonymous runs and runs stored before it existed.
+    account_id: Optional[str] = None
 
 
 class CapabilityState(str, Enum):
@@ -215,6 +221,16 @@ class Account(BaseModel):
     email: Optional[str] = None
     default_workspace_id: Optional[str] = None
     created_at: datetime
+    # The 30-day deletion hold (docs/backend/saved-history.md): set by
+    # `DELETE /api/me`, cleared by a restore. While `purge_at` is set the
+    # account is refused everywhere except `POST /api/me/restore`; once it
+    # has passed, the cleanup job removes the account for good.
+    deleted_at: Optional[datetime] = None
+    purge_at: Optional[datetime] = None
+
+    @property
+    def pending_deletion(self) -> bool:
+        return self.purge_at is not None
 
 
 class WorkspaceRole(str, Enum):
@@ -457,3 +473,97 @@ class ExtraRunCharge:
     account_id: str
     stripe_customer_id: str
     completed_at: datetime
+
+
+# ------------------------------------------------------------ saved history
+#
+# Paid accounts' run results, kept on the server (docs/backend/saved-history.md;
+# owner decision 2026-11-14). Result text and a source descriptor only:
+# never the media, never the poster image, never a key.
+
+
+@dataclass(frozen=True)
+class SavedRunSource:
+    """Where a saved run came from: facts about the source, never the media.
+    `source_url` is the public link a link run was made from (None for a
+    file run: the server never keeps a file name)."""
+
+    source_kind: Optional[str] = None
+    platform: Optional[str] = None
+    source_url: Optional[str] = None
+    source_title: Optional[str] = None
+    uploader: Optional[str] = None
+    duration_seconds: Optional[float] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+
+    def to_dict(self) -> dict:
+        return {key: value for key, value in self.__dict__.items() if value is not None}
+
+    @classmethod
+    def from_dict(cls, data: dict | None) -> "SavedRunSource":
+        data = data or {}
+        return cls(**{key: data.get(key) for key in cls.__dataclass_fields__})
+
+
+@dataclass(frozen=True)
+class SavedRunSummary:
+    """One row of the saved-history list: no transcript, no notes."""
+
+    run_id: str
+    title: str
+    summary_snippet: Optional[str]
+    source: SavedRunSource
+    completeness: str
+    created_at: datetime
+    # The keyset cursor's tie-breaker (the row's own uuid).
+    saved_id: str = ""
+
+
+@dataclass(frozen=True)
+class SavedRun:
+    """A saved run in full. `result` is a `VideoAnalysis` as a dict (title,
+    summary, transcript, on-screen text, notes, and their segments)."""
+
+    run_id: str
+    account_id: str
+    title: str
+    summary_snippet: Optional[str]
+    source: SavedRunSource
+    result: dict
+    completeness: str
+    created_at: datetime
+    saved_id: str = ""
+
+
+@dataclass(frozen=True)
+class PendingAccountPurge:
+    """An account whose deletion hold has ended, for the cleanup job."""
+
+    account_id: str
+    external_id: str
+
+
+@dataclass(frozen=True)
+class SavedRunCursor:
+    """Keyset position: list rows strictly older than this one."""
+
+    created_at: datetime
+    saved_id: str
+
+
+@dataclass(frozen=True)
+class SavedRunPage:
+    items: list
+    next_cursor: Optional[SavedRunCursor] = None
+
+
+@dataclass(frozen=True)
+class SavedHistoryStatus:
+    """Whether new runs are being saved (`saving`: the account is on the
+    paid plan now) and, once the paid plan ended, when the saved runs are
+    removed for good (`expires_at`). Both off for a free account that never
+    paid, and on a deployment with no database or billing."""
+
+    saving: bool = False
+    expires_at: Optional[datetime] = None

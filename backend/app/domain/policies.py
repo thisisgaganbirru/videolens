@@ -204,3 +204,22 @@ def subscription_grants_paid(status: str | None, current_period_end: datetime | 
 
 def subscription_is_live(status: str | None) -> bool:
     return status in LIVE_SUBSCRIPTION_STATUSES
+
+
+# Subscription states Stripe is still working through: the account is off
+# the paid plan (no new runs are saved) but the subscription has not ended,
+# so the post-cancel window for saved runs does not start yet
+# (docs/backend/saved-history.md). Stripe moves both on by itself: past_due
+# to active, canceled or unpaid; incomplete to active or incomplete_expired.
+UNSETTLED_SUBSCRIPTION_STATUSES = frozenset({"past_due", "incomplete"})
+
+
+def subscription_has_ended(status: str | None, current_period_end: datetime | None, now: datetime) -> bool:
+    """Whether the paid plan has ended for good, which starts the window
+    after which the account's saved runs are removed: canceled,
+    incomplete_expired, unpaid, paused or never subscribed, or an
+    active/trialing row past its period end plus the renewal grace (a missed
+    `customer.subscription.deleted`)."""
+    if subscription_grants_paid(status, current_period_end, now):
+        return False
+    return status not in UNSETTLED_SUBSCRIPTION_STATUSES
