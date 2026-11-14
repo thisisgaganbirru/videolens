@@ -2240,6 +2240,16 @@ h3 {
     color: var(--color-muted);
     overflow-wrap: anywhere;
   }
+  /* The Gemini key page's sign-in line while it is not yet known whether it
+     applies: its space is held, unseen and inert (see ApiKeyPanel). */
+  .key-signin-ghost {
+    visibility: hidden;
+  }
+  /* A session is stored on this device (pre-paint stamp): a signed-in visit
+     never shows the line, so it holds nothing, from the first paint. */
+  :root[data-session] .key-signin-ghost {
+    display: none;
+  }
   .key-actions {
     display: flex;
     flex-wrap: wrap;

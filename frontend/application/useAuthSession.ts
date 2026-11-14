@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { AuthUser } from "@/domain/entities";
 import { AuthFlowError, type AuthFailureReason } from "@/domain/errors";
 import { authSession } from "@/infrastructure/container";
@@ -58,6 +58,22 @@ export function useAuthUser() {
   }, []);
 
   return { enabled: authSession.enabled, ready: state.ready, user: state.user };
+}
+
+const noSession = () => false;
+const storedSession = () => authSession.hasSession();
+const subscribeSession = (onChange: () => void) => authSession.subscribe(onChange);
+
+/**
+ * A session is stored on this device, before the provider has loaded and
+ * `useAuthUser().ready` turns true. Only a hint for holding layout (the
+ * Gemini key page's sign-in line), never for who is signed in: the stored
+ * session may yet turn out to be expired. False during prerender and
+ * hydration (localStorage is not read during render there); the client
+ * value follows right after.
+ */
+export function useStoredSessionHint(): boolean {
+  return useSyncExternalStore(subscribeSession, storedSession, noSession);
 }
 
 /** Where the emailed-code flow is. "Email entered" is `idle` with a

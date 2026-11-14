@@ -9,6 +9,7 @@ import { SPLASH_INIT_SCRIPT } from "@/application/firstRunScripts";
 import { FONT_SCALE_INIT_SCRIPT } from "@/application/nativeFontScale";
 import { SITE_DESCRIPTION, SITE_NAME, SITE_NOINDEX, SITE_URL } from "@/infrastructure/siteOrigin";
 import { BYOK_INIT_SCRIPT } from "@/infrastructure/apiKeyStore";
+import { SESSION_INIT_SCRIPT } from "@/infrastructure/authSessionStamp";
 import "./globals.css";
 
 /* Self-hosted at build time by next/font — no request to Google at runtime,
@@ -172,14 +173,18 @@ if(r.getAttribute("data-shell")==="web"){document.addEventListener("DOMContentLo
 
    The key-presence stamp (2026-11-14, Android QA run 22) goes last and
    depends on nothing: `data-byok` lets CSS drop the free-runs strip's
-   reserved height before hydration. See infrastructure/apiKeyStore.ts. */
+   reserved height before hydration. See infrastructure/apiKeyStore.ts.
+   The session stamp (2026-11-14) follows it the same way: `data-session`
+   lets CSS drop the Gemini key page's held sign-in line for a signed-in
+   visit. See infrastructure/authSessionStamp.ts. */
 const PRE_PAINT_SCRIPT =
   FONT_SCALE_INIT_SCRIPT +
   THEME_INIT_SCRIPT +
   SHELL_INIT_SCRIPT +
   LANDING_REDIRECT_SCRIPT +
   SPLASH_INIT_SCRIPT +
-  BYOK_INIT_SCRIPT;
+  BYOK_INIT_SCRIPT +
+  SESSION_INIT_SCRIPT;
 
 export default function RootLayout({
   children,

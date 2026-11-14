@@ -24,7 +24,7 @@ import { useAnalysisRun } from "@/application/useAnalysisRun";
 import { HISTORY_LIMIT, useHistoryBoot } from "@/application/useRunHistory";
 import { useDocumentTitle } from "@/application/useDocumentTitle";
 import { useCapabilities } from "@/application/useCapabilities";
-import { useAuthUser } from "@/application/useAuthSession";
+import { useAuthUser, useStoredSessionHint } from "@/application/useAuthSession";
 import { useMediaLimits } from "@/application/useMediaLimits";
 import { useBilling } from "@/application/useBilling";
 import { formatPrice } from "@/components/format";
@@ -132,6 +132,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      account's free runs instead of this device's (2026-11-13), so
      a sign-in or sign-out re-reads the allowance. */
   const authUser = useAuthUser();
+  const storedSessionHint = useStoredSessionHint();
   const freeRuns = useFreeRuns(authUser.ready ? (authUser.user?.id ?? "") : null);
 
   /* Refinement 9 (items 6 and 8, device QA): every time the intake comes
@@ -189,6 +190,19 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      never lands short and then grows a "Sign in" sentence (a measured 0.037
      layout shift at 412 px, UX fix spec 3.6). */
   const stripKnown = capabilitiesSettled && authUser.ready;
+  /* The Gemini key page's "Sign in" line needs the session, the auth
+     capability and `/api/limits`. It is known not to apply as soon as any of
+     them says so (no provider in this build, someone signed in, sign-in not
+     offered); otherwise its space is held until all three have answered.
+     A session stored on this device counts as signed in for this purpose,
+     so a signed-in visit never holds the line while the provider loads.
+     What still moves once: the server turning sign-in off, `/api/limits`
+     failing, or a stored session that turns out to be expired. */
+  const keySignInPending =
+    authUser.enabled &&
+    !(authUser.ready ? authUser.user : storedSessionHint) &&
+    !(capabilitiesSettled && !showAccount) &&
+    !(capabilitiesSettled && authUser.ready && mediaLimits.settled);
 
   /* A link shared into the app is a request to analyze *that*, so it takes the
      screen over: whatever tab is showing, and whatever run is on it, gives way
@@ -625,6 +639,8 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
             /* Unlike the intake hint, offered with or without a key saved:
                this page is where the key goes in. */
             signInForMinutes={showAccount && authUser.ready && !authUser.user ? mediaLimits.upgradeMinutes : null}
+            signInPending={keySignInPending}
+            signInStandInMinutes={mediaLimits.byokMinutes ?? 10}
           />
         </main>
       )}
