@@ -18,6 +18,12 @@ with the full contract, is `docs/backend/saved-history.md`.
 With sign-in off, billing off, or a backend without the routes, nothing on
 screen changes.
 
+Complimentary Plus (2026-11-14, `billing.md`) saves runs exactly like a
+subscription. Nothing here is gated on billing being enabled: the mode
+comes from `saved_history` / `GET /api/history`, and the `paidHint` comes
+from the plan or the run count, whose `plan` is `paid` for a complimentary
+account even on a server with Stripe off.
+
 ## Contract used
 
 | Call | Used for |
@@ -182,3 +188,4 @@ finishes while saving, and after a restore.
 
 - 2026-11-14 · frontend agent · created: saved-history client (gateway, store, hold source, restore), History saved page with Load more / browser-only group / plan-ended and held notices / per-run and delete-all confirmations, opening a saved run and its 404 view, result and retention lines, Account History row / Upgrade History row / delete copy / deleted card date / held and restored states, landing and legal copy
 - 2026-11-14 · frontend agent · Load more reserves the next page at click time (20 ghost posters appended to the last group while `loadingMore`), so the control moves with the press and nothing jumps on arrival: 0.0297 -> 0.0018 at 412 (tabbar baseline). Restore-window-closed card keeps the height it had while restoring (closed text over an inert copy of the held text and "Restoring" line, one grid cell): 0.0664 -> 0.0000 at 412 web; it can show blank space under Sign out. Remaining: a short last page collapses the unused ghosts (below the fold in the mock), and a page that starts a new date group inserts its label
+- 2026-11-14 · frontend agent · checked complimentary Plus: no billing gate on saved History; verified with mocked responses (Stripe on and off) that the account's runs show as for a subscriber
