@@ -208,6 +208,8 @@ class SqlSavedRuns:
             .where(
                 accounts.c.saved_runs_expire_at.is_(None),
                 accounts.c.purge_at.is_(None),
+                # Complimentary Plus is on the paid plan without Stripe.
+                accounts.c.complimentary_plus.is_(False),
                 has_runs,
                 not_paid,
             )

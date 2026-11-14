@@ -6,6 +6,7 @@ from ..domain.errors import (
     AlreadySubscribedError,
     BillingIntervalError,
     BillingNotConfiguredError,
+    ComplimentaryPlanError,
     ForbiddenError,
 )
 from ..domain.policies import subscription_is_live
@@ -23,6 +24,10 @@ class StartCheckoutUseCase:
             # Defence in depth behind `require_person`: an agent's key must
             # never start a subscription on its owner's card.
             raise ForbiddenError("This needs a signed-in session, not an API key.")
+        # Complimentary Plus (with no paying subscription) has nothing to
+        # buy, Stripe on or off: never create a customer or a session for it.
+        if (await self._plans.standing(principal.account_id)).complimentary:
+            raise ComplimentaryPlanError()
         if not self._plans.enabled:
             raise BillingNotConfiguredError()
         if not principal.account_id:
