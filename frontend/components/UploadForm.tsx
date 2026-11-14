@@ -594,7 +594,7 @@ function BlockedBlock({
             <a className="btn btn-primary btn-pill" href={mainTabHref("account")} onClick={onAccount}>
               {offer === "sign-in"
                 ? `Sign in for ${ACCOUNT_FREE_RUNS_PER_DAY} runs a day`
-                : `Upgrade for ${PAID_RUNS_PER_DAY} runs a day`}
+                : `Upgrade to Plus for ${PAID_RUNS_PER_DAY} runs a day`}
             </a>
             <a className="text-link" href={mainTabHref("api-key")} onClick={onApiKey}>
               Use your own Gemini key
