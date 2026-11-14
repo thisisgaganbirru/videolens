@@ -1,11 +1,13 @@
 "use client";
 
-import { useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useId, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
 import { Check, Eye, EyeOff } from "lucide-react";
 import { useGeminiApiKey } from "@/application/useGeminiApiKey";
 import { isNoticeable } from "@/application/useCapabilities";
 import { CapabilityCallout } from "@/components/CapabilityNotice";
 import AppBackLink from "@/components/AppBackLink";
+import { isPlainLeftClick } from "@/components/navClick";
+import { goToMainTab, mainTabHref } from "@/application/useMainTab";
 import type { Capability } from "@/domain/entities";
 
 /* Hallmark · theme: editorial · page: API key
@@ -20,10 +22,9 @@ import type { Capability } from "@/domain/entities";
  *
  * The lede is the boards' verbatim since Phase 5b, when the per-device daily
  * free-run allowance (GET /api/free-runs) made "You get a few free runs" true.
- * Copy departs from the boards in one place, for truth: the transport sentence
- * is the phone boards' version on every size, because the desktop board's "We
- * never store it on a server" is not quite true — in distributed mode the key
- * waits in a single-use Redis entry until the worker picks the run up.
+ * The help line under the field is the owner-approved consent wording
+ * (2026-11-13), with links to Terms and Privacy; it replaced the phone
+ * boards' "held briefly on the server" sentence.
  *
  * `budgetCapability` is the deployment's `daily_budget` row, passed down from
  * `HomeScreen` (one /api/capabilities fetch per app load). It is surfaced here
@@ -33,10 +34,21 @@ import type { Capability } from "@/domain/entities";
 
 const AI_STUDIO_URL = "https://aistudio.google.com/apikey";
 
+function openAccount(event: MouseEvent<HTMLAnchorElement>) {
+  if (!isPlainLeftClick(event)) return;
+  event.preventDefault();
+  goToMainTab("account");
+}
+
 export default function ApiKeyPanel({
   budgetCapability,
+  signInForMinutes = null,
 }: {
   budgetCapability?: Capability | null;
+  /** Minutes a signed-in person on their own key may send, offered only
+   *  where sign-in works and nobody is signed in, and only when the server
+   *  reports a larger tier (HomeScreen decides). Null hides the line. */
+  signInForMinutes?: number | null;
 }) {
   const { value, stored, saved, update, save, clear } = useGeminiApiKey();
   const [revealed, setRevealed] = useState(false);
@@ -146,14 +158,36 @@ export default function ApiKeyPanel({
             Paste your key first, then save it.
           </p>
         )}
-        {/* The transport statement is the point of this page, not filler: it
-            is what makes pasting a key here a reasonable thing to do. True as
-            written since 2026-11-01, when runsGateway stopped attaching the key
-            to polls and history — it travels only with POST /api/runs. */}
+        {/* The transport and consent statement is the point of this page,
+            not filler: it is what makes pasting a key here a reasonable thing
+            to do. Owner-approved wording (2026-11-13), replacing the earlier
+            "held briefly on the server" line; the key travels only with
+            POST /api/runs (runsGateway, since 2026-11-01). Saving is the
+            agreement: no checkbox, by the owner's choice. */}
         <p id={helpId} className="key-help">
-          Your key is stored in this browser. It is sent with your own runs and held briefly on the
-          server while a run is processed.
+          Your key is saved only on this device. VideoLens passes it to Google for your own runs
+          and never stores it. You&apos;re responsible for your key and any usage on your Google
+          account. By saving a key you agree to the{" "}
+          <a className="text-link" href="/terms">
+            Terms
+          </a>{" "}
+          and{" "}
+          <a className="text-link" href="/privacy">
+            Privacy Policy
+          </a>
+          .
         </p>
+        {/* Same rule as the nav's Account tab: only where sign-in works and
+            nobody is signed in. States what the longer tier is, never that
+            signing in makes the key safer. */}
+        {signInForMinutes ? (
+          <p className="key-help key-signin">
+            Signed in with your own key, you can analyze videos up to {signInForMinutes} minutes.{" "}
+            <a className="text-link" href={mainTabHref("account")} onClick={openAccount}>
+              Sign in
+            </a>
+          </p>
+        ) : null}
         <div className="key-actions">
           <button type="submit" className="btn btn-primary btn-pill">
             Save key

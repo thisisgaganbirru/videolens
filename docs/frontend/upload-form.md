@@ -8,10 +8,10 @@ The "Analyze" tab's entry point: paste a public media URL, or drag/drop/browse a
 - `frontend/components/CapabilityNotice.tsx` — `CapabilityCallout`, the one-line deployment notice this form renders under the URL row. See `capability-reporting.md`.
 
 **Client-side pre-validation** (backend re-validates authoritatively regardless):
-- File: extension allowlist (`.mp3`/`.mp4`/`.mov`), `MAX_FILE_SIZE_MB` (200), and a best-effort duration check (`readMediaDuration`, via a hidden `<video>`/`<audio>` element's `loadedmetadata` event) against `MAX_DURATION_SECONDS` (180) — wrapped in try/catch since this can fail on some browsers/files, in which case it's silently skipped ("Backend performs authoritative validation").
+- File: extension allowlist (`.mp3`/`.mp4`/`.mov`), the effective `limits.maxFileSizeMb`, and a best-effort duration check (`readMediaDuration`, via a hidden `<video>`/`<audio>` element's `loadedmetadata` event) against the effective `limits.maxDurationSeconds` — wrapped in try/catch since this can fail on some browsers/files, in which case it's silently skipped ("Backend performs authoritative validation"). The limits are no longer constants in the form (2026-11-13): see "Upload limits per tier" below.
 - URL: must parse as `http:`/`https:`.
 
-**Terms acceptance**: a checkbox, persisted in `localStorage` (`videolens-media-terms-v1`) so it stays checked across sessions once accepted. Required before either submit path proceeds. Both paths explain on press rather than greying out: pressing Analyze link, pressing Browse files (click, Enter or Space) or dropping a file with the terms unticked shows "Accept the media-use terms before analysis." under the terms row (`#terms-error`, refinement 4; it used to be `#intake-error`), marks the checkbox (`aria-invalid`, danger outline), focuses it and reveals it. Browse opens no picker and the drop is not taken. Until refinement 8 Browse was simply disabled while unticked, which hid the reason and disagreed with the link path.
+**Terms acceptance**: a checkbox, persisted in `localStorage` (`videolens-media-terms-v3`; versioned, see "Terms acceptance version") so it stays checked across sessions once accepted. Required before either submit path proceeds. Both paths explain on press rather than greying out: pressing Analyze link, pressing Browse files (click, Enter or Space) or dropping a file with the terms unticked shows "Accept the media-use terms before analysis." under the terms row (`#terms-error`, refinement 4; it used to be `#intake-error`), marks the checkbox (`aria-invalid`, danger outline), focuses it and reveals it. Browse opens no picker and the drop is not taken. Until refinement 8 Browse was simply disabled while unticked, which hid the reason and disagreed with the link path.
 
 **Analyze link is enabled with an empty field (Phase 2).** It used to be
 disabled until a URL was typed; Main.png draws it as the live green primary
@@ -321,6 +321,10 @@ the section band every time (at 140: band 57-140, field 53-105, message
   the backend sends `Retry-After` (delta-seconds until the rate-limit window
   frees) on the 429 and lists it in CORS `expose_headers`, so this wording is
   live; without the header it still falls back to the backend's `detail`.
+  Exception (2026-11-13): a 429 with `code: "long_run_in_progress"` (a
+  signed-in BYOK person starting a second long run) always shows the
+  server's `detail` ("You already have a long video processing. Wait for it
+  to finish."), never the rate-limit wording, Retry-After or not.
 
 ## Refinement 8 (2026-11-02)
 
@@ -363,6 +367,65 @@ the picker and the chosen file sends exactly one POST and leaves the intake.
   nothing opens. The effect defers through `queueMicrotask`, so it does not set
   state synchronously in an effect.
 
+## Upload limits per tier (2026-11-13)
+
+Owner decision "Level 2": signed in **and** a Gemini key saved → videos up to
+10 minutes and files up to 500 MB; everyone else 3 minutes / 200 MB.
+
+- `GET /api/limits` (public, no caller identity) → `{"standard":
+  {"max_duration_seconds", "max_file_size_mb"}, "signed_in_byok": {…},
+  "paid": {…}}`. `paid` (billing, 2026-11-13) is optional: missing or
+  unreadable becomes `paid: null`.
+  Adapter `infrastructure/limitsGateway.ts` (`FetchLimitsGateway`, port
+  `LimitsGateway`, `container.limitsGateway`) normalises: a missing or
+  unreadable `standard`, or a non-2xx, rejects; a missing `signed_in_byok`
+  falls back to that body's `standard`. Types `MediaLimits` /
+  `MediaLimitsTable` in `domain/entities.ts`.
+- `application/useMediaLimits.ts`: one read per app load into a module-level
+  store (like the free-run count). Until it lands, and for good when it fails
+  (an older server answers 404), both tiers are 180 s / 200 MB
+  (`FALLBACK_LIMITS`), so an older server is never promised 10 minutes.
+  `useMediaLimits(signedIn, paid)` watches the saved key (`apiKeyStore.subscribe`)
+  and returns `{limits, extended, upgradeMinutes, paidMinutes, hasKey}`. The
+  tier is `paid` when signed in on the paid plan and the server reported one,
+  else `signed_in_byok` when signed in with a key, else `standard`. Called
+  once from `HomeScreen` with `Boolean(authUser.user)` and the plan (from
+  `useBilling` or the free-runs read), so sign-in/out, the plan and saving or
+  removing the key recompute it. `paidMinutes` (null without a `paid` tier)
+  feeds the Account Plan pitch.
+- `UploadForm` props `limits` (defaults to standard) and `signInForMinutes`.
+  The drop hint reads "MP3, MP4, or MOV. Up to 500 MB and 10 minutes." (or
+  200 MB / 3 minutes); the size and duration errors quote the same numbers
+  ("…exceeds the 10 minutes limit.").
+- Sign-in hint: a second `.hint` line under the limits, "Sign in for videos
+  up to 10 minutes." ("Sign in" links to the Account tab). Shown only when
+  `showAccount`, the auth state is ready, nobody is signed in, a key is saved,
+  and the server reports a larger tier. No new chrome.
+- Not added: the optional "Add your own Gemini key for videos up to 10
+  minutes." for signed-in people without a key. They already see the
+  free-runs strip's "Add your own key for more." and its Add key pill; a
+  second key prompt in the drop well would nag and wrap to three lines on a
+  phone.
+
+## Terms acceptance version (2026-11-13)
+
+The checkbox's flag is versioned in its storage key,
+`MEDIA_TERMS_ACCEPTANCE_KEY` in `components/mediaTerms.ts`, now
+`videolens-media-terms-v3`. **Bump the version whenever the Terms change
+materially**: a new key reads as "not accepted", so everyone sees the box
+unticked once and re-accepts the updated Terms. Put the replaced key in
+`RETIRED_KEYS`; `readTermsAccepted` and `writeTermsAccepted` remove it
+(guarded, like every storage call) so it does not linger. v1 -> v2 went with
+the November 13, 2026 Terms update; v2 -> v3 went with the Paid plan section
+added the same day (docs/frontend/billing.md), so `RETIRED_KEYS` is now v1
+and v2. No pre-paint script, service worker or
+Android code reads the key, so the CSP hashes are unaffected;
+`scripts/readme-screenshots.js` seeds it and must follow the bump.
+
+A one-line "By analyzing, you agree to the Terms." under Analyze link was
+added and removed the same day (owner decision): the required checkbox
+already records acceptance. `.link-row` is back to three grid areas.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported UploadForm to the unboxed .intake; returns a fragment since HomeScreen supplies the wrapper
@@ -386,3 +449,7 @@ the picker and the chosen file sends exactly one POST and leaves the intake.
 - 2026-11-02 · frontend agent (refinement 7) · RUN-16 note updated: the backend now sends and exposes Retry-After on 429, so "Try again in about N minutes" is live
 - 2026-11-02 · frontend agent (refinement 8) · Browse files stays enabled with the terms unticked; pressing it (click/Enter/Space) or dropping a file shows the terms error, marks/focuses/reveals the checkbox, no picker; dropped non-files ignored; a chosen file still auto-submits
 - 2026-11-02 · frontend agent (refinement 9) · blocked-intake note tied to Analyze/Browse via aria-describedby; terms helpers moved to components/mediaTerms.ts; IntakeHandoff props so the expired view's "Choose the file again" opens the picker directly (terms gate kept)
+- 2026-11-13 · frontend agent · upload limits per tier: `GET /api/limits` via `limitsGateway` + `useMediaLimits` (fallback 3 min / 200 MB for both tiers); drop hint and pre-checks use the effective limits; quiet "Sign in for videos up to 10 minutes." line for signed-out key holders; 429 `long_run_in_progress` shows the server detail
+- 2026-11-13 · frontend agent · "By analyzing, you agree to the Terms." under Analyze link (`.link-consent`, new `consent` grid area of `.link-row`)
+- 2026-11-13 · frontend agent · removed the "By analyzing, you agree to the Terms." line and its `consent` grid area (the checkbox covers acceptance); terms key bumped to `videolens-media-terms-v2`, v1 cleared from storage; rule: bump the version whenever the Terms change materially
+- 2026-11-13 · frontend agent · terms key bumped to `videolens-media-terms-v3` for the Terms' Paid plan section, v2 added to `RETIRED_KEYS`; `useMediaLimits(signedIn, paid)` picks the `paid` tier from `GET /api/limits` when the plan is paid (docs/frontend/billing.md)

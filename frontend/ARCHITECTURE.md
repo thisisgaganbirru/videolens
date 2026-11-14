@@ -27,6 +27,7 @@ and host → platform), `ports.ts` (the interfaces below).
 | `ServerAuthStatus`, `CallerIdentity` | `serverAuthStatus.ts`, `apiClient.ts` | the server's `auth` capability (fed by the capabilities adapter, gates the bearer); the identity requests go out as (History `owner`) |
 | `CapabilitiesGateway` | `capabilitiesGateway.ts` | `/api/capabilities`, no caller identity |
 | `FreeRunsGateway`, `DeviceTokenStore` | `freeRunsGateway.ts`, `deviceTokenStore.ts` | `/api/free-runs`; `localStorage` |
+| `BillingGateway` | `billingGateway.ts` | `/api/billing`, `/api/billing/checkout`, `/api/billing/portal` |
 | `ApiKeyStore` | `apiKeyStore.ts` | `localStorage` (BYOK) |
 | `HistoryStore` | `historyStore.ts` | IndexedDB, capped at 20, `BroadcastChannel` across tabs |
 | `ActiveRunStore` | `activeRunStore.ts` | `sessionStorage`, so a reload resumes the run |
@@ -45,7 +46,7 @@ caller-scoped gateway (runs, free runs, account) uses: `X-Client-ID` always,
 **`application/`** — one hook or React-free module per concern.
 `useAnalysisRun` (submit, poll, open from history, reset; the 401 retry and
 402 block), `historySync` (every History write), `useRunHistory`,
-`useFreeRuns`, `useCapabilities`, `serverReachability` + `gatewayError`
+`useFreeRuns`, `useBilling`, `useCapabilities`, `serverReachability` + `gatewayError`
 (classifying failed reads), `useGeminiApiKey`, `useVersionLog`,
 `useUpdateCheck`, `useSharedUrl`, `useMainTab` (the tab as a URL property,
 `/app?view=…`, switched with `pushState` so the shell is never unmounted),
@@ -150,3 +151,4 @@ scale into the WebView before first paint).
 - 2026-11-07 · main session · rewritten as a codemap: port/adapter and route tables, the two shells, invariants, cross-cutting; removed the stale `useMediaQuery.ts` reference
 - 2026-11-08 · frontend subagent (auth phase 2) · `AuthSession` + `SupabaseAuthSession`/`NullAuthSession`, `AccountGateway`, shared `ApiClient` (runs and free-runs gateways now take it), hooks `useAuthSession`/`useAccount`/`useApiKeys`, `account` tab and `AccountPanel`; see docs/frontend/auth-sign-in.md
 - 2026-11-08 · frontend subagent (auth phase 2, review fixes) · `ServerAuthStatus` + `MemoryServerAuthStatus`, `CallerIdentity` on `ApiClient`, `HistoryRecord.owner` and `recordGone`; see docs/frontend/auth-sign-in.md
+- 2026-11-13 · frontend agent · `BillingGateway` + `FetchBillingGateway`, hook `useBilling` (`useBilling`, `useBillingActions`), `takeSearchParam` in `useMainTab`; see docs/frontend/billing.md

@@ -5,12 +5,14 @@
 import type { CallerIdentity } from "@/domain/ports";
 import { SessionStorageActiveRunStore } from "./activeRunStore";
 import { FetchAccountGateway } from "./accountGateway";
+import { FetchBillingGateway } from "./billingGateway";
 import { ApiClient } from "./apiClient";
 import { buildAuthSession } from "./authSession";
 import { LocalStorageApiKeyStore } from "./apiKeyStore";
 import { FetchCapabilitiesGateway } from "./capabilitiesGateway";
 import { LocalStorageDeviceTokenStore } from "./deviceTokenStore";
 import { FetchFreeRunsGateway } from "./freeRunsGateway";
+import { FetchLimitsGateway } from "./limitsGateway";
 import { IndexedDbHistoryStore } from "./historyStore";
 import { FetchRunsGateway } from "./runsGateway";
 import { MemoryServerAuthStatus } from "./serverAuthStatus";
@@ -43,6 +45,10 @@ export const callerIdentity: CallerIdentity = apiClient;
 export const runsGateway = new FetchRunsGateway(apiClient, apiKeyStore);
 export const freeRunsGateway = new FetchFreeRunsGateway(apiClient, deviceTokenStore);
 export const accountGateway = new FetchAccountGateway(apiClient);
+/* The paid plan (2026-11-13): Stripe-hosted pages, reached by redirect. */
+export const billingGateway = new FetchBillingGateway(apiClient);
+/* Upload limits per tier (2026-11-13); public, no caller identity. */
+export const limitsGateway = new FetchLimitsGateway();
 export const capabilitiesGateway = new FetchCapabilitiesGateway(serverAuthStatus);
 export const versionLogGateway = new FetchVersionLogGateway();
 export const updateChecker = new ApiUpdateChecker();

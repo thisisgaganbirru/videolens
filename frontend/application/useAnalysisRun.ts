@@ -122,6 +122,8 @@ function provesRefund(before: FreeRunsStatus, after: FreeRunsStatus | null): boo
     after !== null &&
     before.enabled &&
     after.enabled &&
+    /* A sign-in or sign-out between the two reads swaps whose count it is. */
+    after.scope === before.scope &&
     after.resetsAt === before.resetsAt &&
     after.remaining === before.remaining
   );
@@ -503,7 +505,7 @@ export function useAnalysisRun() {
            truth. No error line: the limit banner above the card says it, with
            the one action that fixes it, and the form stays as typed. */
         if (err instanceof ApiError && err.code === "free_runs_used") {
-          markFreeRunsUsed(err.limit, err.used);
+          markFreeRunsUsed(err.limit, err.used, err.scope);
           if (generationRef.current !== generation) return;
           /* A retry from the failed view lands here too; the banner lives on
              the intake, so go back to it. With a key saved the banner is

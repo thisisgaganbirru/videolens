@@ -98,5 +98,9 @@ export function useCapabilities() {
     /** Wired to the Account tab (auth phase 2): the tab shows only when this
      *  is `ok`, meaning the server verifies sign-in tokens. */
     auth: find(report, "auth"),
+    /** Wired to the Account tab's Plan group (2026-11-13): drawn only when
+     *  this is `ok` and `GET /api/billing` says enabled. Missing (a server
+     *  without billing) means no Plan group and no billing request. */
+    billing: find(report, "billing"),
   };
 }

@@ -22,6 +22,9 @@ import { useAnalysisRun } from "@/application/useAnalysisRun";
 import { useHistoryBoot } from "@/application/useRunHistory";
 import { useCapabilities } from "@/application/useCapabilities";
 import { useAuthUser } from "@/application/useAuthSession";
+import { useMediaLimits } from "@/application/useMediaLimits";
+import { useBilling } from "@/application/useBilling";
+import { formatPrice } from "@/components/format";
 import { useSharedUrl, type SharedUrl } from "@/application/useSharedUrl";
 import { canonicalizeAppPath, goToMainTab, useMainTab, type MainTab } from "@/application/useMainTab";
 import type { RunSourceKind } from "@/domain/entities";
@@ -87,14 +90,21 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      calls in three conditionally-rendered children would be one request per
      tab visit. The two contextual notices therefore take props instead of
      reaching for the hook themselves. */
-  const { notice, urlDownload, dailyBudget, auth: authCapability } = useCapabilities();
+  const { notice, urlDownload, dailyBudget, auth: authCapability, billing: billingCapability } = useCapabilities();
 
   const sharedUrl = useSharedUrl();
 
   /* Here for the same reason as `useCapabilities`: this shell is never
      unmounted by a tab switch, so the allowance is read once per app load
      (and again after each run, on a 402, or when the key is removed). */
-  const freeRuns = useFreeRuns();
+  /* Auth phase 2: who is signed in (declared here because the free-run
+     allowance depends on it). History re-imports the server's runs when a
+     person signs in (useHistoryBoot, below), and the Account tab is offered
+     only where sign-in actually works. Signed in, the server counts the
+     account's monthly free runs instead of this device's (2026-11-13), so
+     a sign-in or sign-out re-reads the allowance. */
+  const authUser = useAuthUser();
+  const freeRuns = useFreeRuns(authUser.ready ? (authUser.user?.id ?? "") : null);
 
   /* Refinement 9 (items 6 and 8, device QA): every time the intake comes
      back — "Analyze another file" after a refunded run, stop watching, a
@@ -113,13 +123,34 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   /* Once per app load: seed History from the server the first time, and
      re-check runs this browser last saw unfinished. Here, not in the History
      panel, because it has to happen whichever tab the app opens on. */
-  /* Auth phase 2: who is signed in. History re-imports the server's runs
-     when a person signs in (useHistoryBoot), and the Account tab is offered
-     only where sign-in actually works: a provider is configured in this
-     build *and* the server says it verifies tokens. */
-  const authUser = useAuthUser();
+  /* The Account tab is offered only where sign-in actually works: a
+     provider is configured in this build *and* the server says it verifies
+     tokens. */
   useHistoryBoot({ ready: authUser.ready, userId: authUser.user?.id ?? null });
   const showAccount = authUser.enabled && authCapability?.state === "ok";
+  /* The paid plan (2026-11-13): read only where sign-in works and the
+     server's `billing` capability is `ok`, for whoever is signed in. With
+     billing off nothing is requested and `billing` stays null, so every
+     screen looks as it did before billing existed. */
+  const { billing, notice: checkoutReturn } = useBilling(
+    authUser.ready ? (authUser.user?.id ?? null) : null,
+    showAccount && billingCapability?.state === "ok"
+  );
+  /* Either read can say so first: the plan, or the free-run count (which
+     carries `plan` too, and is the one read while no key is saved). */
+  const paid = billing?.plan === "paid" || freeRuns.banner?.plan === "paid";
+  const extraRunPrice = billing?.prices.extraRun ? formatPrice(billing.prices.extraRun) : null;
+  /* Upload limits (2026-11-13): the paid plan, or signed in on their own key,
+     gets the larger tier. Read once per app load here, recomputed on
+     sign-in/out, on a plan change, and when the key is saved or removed. The
+     sign-in hint is offered only where sign-in works, to someone with a key
+     saved who is signed out. */
+  const mediaLimits = useMediaLimits(Boolean(authUser.user), paid);
+  const signInForMinutes =
+    showAccount && authUser.ready && !authUser.user && mediaLimits.hasKey ? mediaLimits.upgradeMinutes : null;
+  /* The top bar's Account button shows the signed-in person's initial; null
+     (signed out, or no email) draws the person glyph instead. */
+  const accountInitial = authUser.user?.email?.trim().charAt(0).toUpperCase() || null;
   /* Signing in or out changes who owns runs on the server, so a run being
      watched would stop answering. The Account panel holds both meanwhile. */
   const runInProgress = submitting || status === "queued" || status === "processing";
@@ -243,7 +274,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      only on the standalone routes that still opt into it. */
   return (
     <div className="shell" data-view={activeTab}>
-      <AppNav activeTab={activeTab} onSelectTab={goToMainTab} showAccount={showAccount} />
+      <AppNav activeTab={activeTab} onSelectTab={goToMainTab} showAccount={showAccount} accountInitial={accountInitial} />
 
       {activeTab === "analyze" && (
         <main ref={analyzeRef} className="view-scroll" data-view="analyze" aria-label="Analyze">
@@ -273,7 +304,14 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     zero-height when a key is saved, the deployment has no
                     limit, or the allowance could not be read. */}
                 <div className="free-runs-slot" role="status">
-                  {freeRuns.banner && <FreeRunsBanner banner={freeRuns.banner} />}
+                  {freeRuns.banner && (
+                    <FreeRunsBanner
+                      banner={freeRuns.banner}
+                      offerSignIn={showAccount && authUser.ready && !authUser.user}
+                      offerUpgrade={billing !== null && billing.plan === "free"}
+                      extraRunPrice={extraRunPrice}
+                    />
+                  )}
                 </div>
                 <p className="eyebrow">New analysis</p>
                 <h1 className="intake-title">Turn any short video into clean notes.</h1>
@@ -288,6 +326,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                   onSubmit={submit}
                   submitting={submitting}
                   blocked={freeRuns.blocked}
+                  blockedScope={freeRuns.banner?.scope}
                   sharedUrl={formPrefill}
                   urlCapability={urlDownload}
                   /* Back at idle with an error means the submit was rejected,
@@ -299,6 +338,8 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                   submitError={error}
                   handoff={handoff}
                   onHandoffTaken={takeHandoff}
+                  limits={mediaLimits.limits}
+                  signInForMinutes={signInForMinutes}
                 />
               </div>
 
@@ -463,7 +504,12 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
 
       {activeTab === "api-key" && (
         <main className="view-scroll" data-view="api-key" aria-label="API key">
-          <ApiKeyPanel budgetCapability={dailyBudget} />
+          <ApiKeyPanel
+            budgetCapability={dailyBudget}
+            /* Unlike the intake hint, offered with or without a key saved:
+               this page is where the key goes in. */
+            signInForMinutes={showAccount && authUser.ready && !authUser.user ? mediaLimits.upgradeMinutes : null}
+          />
         </main>
       )}
 
@@ -478,7 +524,10 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
           <AccountPanel
             authCapability={authCapability}
             runInProgress={runInProgress}
-            freeRunsLeft={freeRuns.banner ? freeRuns.banner.remaining : null}
+            freeRuns={freeRuns.banner}
+            billing={billing}
+            checkoutReturn={checkoutReturn}
+            paidMinutes={mediaLimits.paidMinutes}
           />
         </main>
       )}
