@@ -272,3 +272,39 @@ class SubscriptionCancelFailedError(AccountDeletionError):
 
     def __init__(self, *, log_detail: str | None = None) -> None:
         super().__init__(SUBSCRIPTION_CANCEL_FAILED_MESSAGE, log_detail=log_detail)
+
+
+# ------------------------------------------------- deletion hold, saved history
+# docs/backend/saved-history.md.
+
+
+ACCOUNT_PENDING_DELETION_MESSAGE = (
+    "This account was deleted. You can restore it until it is removed for good."
+)
+
+
+class AccountPendingDeletionError(Exception):
+    """A signed-in person whose account is in the 30-day deletion hold (410
+    `account_pending_deletion`, with `purge_at`). Every account-scoped
+    endpoint answers this except `POST /api/me/restore`, so the client can
+    offer "Restore your account?"."""
+
+    def __init__(self, purge_at, message: str = ACCOUNT_PENDING_DELETION_MESSAGE) -> None:
+        super().__init__(message)
+        self.purge_at = purge_at
+
+
+class AccountRestoreClosedError(Exception):
+    """A restore asked for after the hold ended (410 `restore_window_closed`):
+    the account is about to be, or already was, removed for good."""
+
+    def __init__(self, message: str = "This account can no longer be restored.") -> None:
+        super().__init__(message)
+
+
+class SavedRunNotFoundError(Exception):
+    """No saved run with that id for this account (404)."""
+
+
+class InvalidCursorError(Exception):
+    """A saved-history page cursor that does not decode (400)."""
