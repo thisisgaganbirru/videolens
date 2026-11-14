@@ -599,8 +599,8 @@ schedule. Nothing here is built, and nothing should be built from this
 section without a new owner decision.
 
 **Idea (owner, 2026-11-14).** Fund the generous free allowance (3 runs a day
-per device signed out, 10 a day signed in, so up to about 900 three-minute
-videos a month for a heavy account) with ads on the free tiers. The paid plan
+per device signed out, 10 a day signed in, so up to about 300 three-minute
+videos, about 900 minutes, a month for a heavy account) with ads on the free tiers. The paid plan
 is ad-free, and "no ads" becomes one of its selling points next to 10-minute
 videos without a key.
 
