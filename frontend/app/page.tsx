@@ -16,7 +16,7 @@ import "./landing.css";
 export const metadata: Metadata = {
   title: { absolute: "VideoLens AI · Turn any short video into clean notes" },
   description:
-    "Paste a link or add a file. You get a transcript, the text on screen, a short summary and notes you can keep. A few free runs to start, no account needed.",
+    "Paste a link or add a file. You get a transcript, the text on screen, a short summary and notes you can keep. Free runs every day, no account needed.",
   alternates: { canonical: "/" },
 };
 

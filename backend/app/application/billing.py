@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from ..domain.entities import BillingAccount, ExtraRunCharge, FreeRunPeriod
-from ..domain.policies import subscription_grants_paid
+from ..domain.policies import start_of_next_utc_month, subscription_grants_paid, utc_month
 from ..domain.ports import BillingAccounts, BillingGateway, ExtraRunLedger
 
 logger = logging.getLogger("videolens")
@@ -59,6 +59,22 @@ class BillingPlans:
 
     def now(self) -> datetime:
         return self._clock()
+
+    def extra_runs_period(self, now: datetime | None = None) -> str:
+        """The ledger period extra runs and their cap count against: the
+        UTC month ("YYYY-MM"), whatever the included runs' period is."""
+        return utc_month(now or self._clock())
+
+    def extra_runs_resets_at(self, now: datetime | None = None) -> datetime:
+        """When this month's extra-run count (and so the cap) starts over."""
+        return start_of_next_utc_month(now or self._clock())
+
+    async def extra_runs_used(self, account_id: str, period: str | None = None) -> int:
+        """Extra runs this account has taken in `period` (default: this
+        month). The one definition of "used" for both the safety cap at
+        admission and `GET /api/billing`: every ledger row not voided, so
+        held (in flight), due (completed, not yet reported) and reported."""
+        return await self.ledger.count(account_id, period or self.extra_runs_period())
 
     async def paid_account(self, account_id: str | None) -> BillingAccount | None:
         """The account's billing row when it is on the paid plan now

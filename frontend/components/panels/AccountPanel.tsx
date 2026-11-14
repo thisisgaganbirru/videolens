@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
 import { useAccount, useAccountDeletion } from "@/application/useAccount";
@@ -15,10 +15,12 @@ import {
 import AppBackLink from "@/components/AppBackLink";
 import { isPlainLeftClick } from "@/components/navClick";
 import { goToMainTab, mainTabHref, type MainTab } from "@/application/useMainTab";
-import { formatDay, formatLongDay, formatPrice } from "@/components/format";
+import { formatClockTime, formatDay, formatLongDay, formatPrice } from "@/components/format";
 import type { ApiKeySummary, BillingDetails, Capability } from "@/domain/entities";
 import type { FreeRunsBanner } from "@/application/useFreeRuns";
 import { useBillingActions, type BillingAction, type CheckoutReturn } from "@/application/useBilling";
+import { durationLabel, type MediaLimitsState } from "@/application/useMediaLimits";
+import { HISTORY_LIMIT } from "@/application/useRunHistory";
 import {
   ACCOUNT_FREE_RUNS_PER_DAY,
   PAID_EXTRA_RUNS_PER_MONTH,
@@ -27,67 +29,90 @@ import {
 
 /* Hallmark · component: account panel · genre: editorial · theme: custom
  * (owner handoff, app/tokens.css) · layout: option A, grouped list (owner's
- * pick, 2026-11-09): identity card, then small uppercase group labels over
- * white grouped cards of hairline rows, then the quiet account-ending
- * controls last
- * states: unavailable · loading · signed out (email, sending, code sent,
- *         verifying, field errors, resend countdown, run-in-progress guard) ·
- *         signed in (account loading, rejected, failed + retry) · API keys
- *         (collapsed, count once known, unseen-secret flag, loading, load
- *         error, empty, list, creating, one-time secret, copied, revoke
+ * pick, 2026-11-09), refined 2026-11-14 (owner's six items): a compact
+ * identity row, then small uppercase group labels over white grouped cards,
+ * in the order Plan and usage · Upgrade or Billing · On this device ·
+ * Developer tools · Information, then the quiet account-ending controls last
+ * pre-emit critique: P4 H5 E4 S5 R5 V3
+ * states: loading (capabilities or session not known yet) · unavailable ·
+ *         signed out (lead reason, email, sending, code sent, verifying,
+ *         field errors, resend countdown, run-in-progress guard, continue
+ *         without an account, quiet extras) · signed in (account loading,
+ *         rejected, failed + retry) · plan and usage (always, billing or
+ *         not: plan name, runs left, video length, reset in local time; each
+ *         static placeholder in each reserved slot until its read lands; own Gemini key
+ *         variant; count unavailable) · upgrade (free + billing: comparison,
+ *         price, one action, yearly as a quiet link, a null price hides its
+ *         control, extra-run terms) · billing (paid: runs left, price,
+ *         renews / ends, payment failed, extra-run terms, Manage billing) ·
+ *         both: opening, handed off to the browser, action error, reserved
+ *         static loading lines or unavailable text over the reserved
+ *         stand-in while the plan is read · VideoLens API access (collapsed,
+ *         count once known, unseen-secret flag, account loading, loading,
+ *         load error, empty, list, creating, one-time secret, copied, revoke
  *         confirm, revoking, revoked, action error) · sign out everywhere
  *         (idle, run guard, working, failed and still signed in) · delete
  *         account (quiet link, confirming with typed email, run guard,
  *         deleting, failed: rejected / unavailable / unreachable / generic,
  *         not offered when the server keeps no accounts, deleted card) ·
- *         plan (absent when billing is off · free: pitch, monthly/yearly
- *         buttons, a null price hides its button · paid: interval, renews /
- *         ends, payment failed, runs used, extra-run price, Manage billing ·
- *         opening, handed off to the browser, action error) · checkout
- *         return notice (confirming, paid, cancelled, unconfirmed,
+ *         checkout return notice (confirming, paid, cancelled, unconfirmed,
  *         signed-out variant)
  *
  * Auth phases 2 and 3 (docs/frontend/auth-sign-in.md). Sign-in is optional
- * and the page says so first. The emailed code is the only method: Google
- * is phase 4 and has no button. Deletion is the very last item, a muted link
- * that opens the form, and is confirmed by typing the account's email.
+ * and the page says so: "Continue without an account" sits under the form.
+ * The emailed code is the only method: Google is phase 4 and has no button.
+ * Deletion is the very last item, a muted link that opens the form, and is
+ * confirmed by typing the account's email.
+ *
+ * Two kinds of key appear here and the copy keeps them apart: a VideoLens
+ * API key (ours, for other tools to submit runs as this account) and a
+ * Gemini key (Google's, optional, the person's own). Neither is needed to
+ * use the app.
  *
  * Components never touch the provider: the session, `/api/me` and
  * `/api/keys` all come through the three application hooks. */
 
 type AccountPanelProps = {
   /** The deployment's `auth` capability row, from HomeScreen's one
-   *  `/api/capabilities` read. Anything but `ok` (including not arrived yet)
-   *  means no sign-in form here; a leftover session can still sign out. */
+   *  `/api/capabilities` read. Anything but `ok` means no sign-in form
+   *  here; a leftover session can still sign out. */
   authCapability: Capability | null;
+  /** That read has answered, success or failure. Until then the panel says
+   *  "Loading" rather than "sign-in is not available", which it cannot know
+   *  yet and which used to flash on every load. */
+  capabilitiesSettled: boolean;
   /** True while a run is submitting, queued or processing on Analyze.
    *  Signing in or out changes who the server holds runs for, so the run on
    *  screen would stop answering (History keeps it: `recordGone`); the panel
    *  holds both actions until it settles. */
   runInProgress: boolean;
-  /** The free-run allowance, from HomeScreen's one `useFreeRuns` read: the
-   *  account's when the server counts it (`scope: "account"`; for the UTC
-   *  day on both plans since 2026-11-14, per `period`), else this
-   *  device's for the day. Null when unknown, unlimited, or beside
-   *  the point (a Gemini key is saved): the identity line then says nothing
-   *  about free runs. */
+  /** The run allowance, from HomeScreen's one `useFreeRuns` read: the
+   *  account's when the server counts it (`scope: "account"`, per UTC day),
+   *  else this device's. Null when unknown, unlimited, or beside the point
+   *  (a Gemini key is saved). */
   freeRuns: FreeRunsBanner | null;
+  /** No key is saved and that read has not answered yet: the Plan and usage
+   *  card keeps its rows and leaves the values blank. */
+  freeRunsPending: boolean;
   /** The signed-in account's plan, from HomeScreen's one `useBilling` read.
    *  Null when billing is off, the server's `billing` capability is not
-   *  `ok`, nobody is signed in, or the read failed: no Plan group at all, so
-   *  the panel looks exactly as it did before billing existed. */
+   *  `ok`, nobody is signed in, or the read failed: no Upgrade or Billing
+   *  group. The Plan and usage card does not depend on it. */
   billing: BillingDetails | null;
+  /** The server sells a plan and its answer for this account is still on
+   *  the way: the Upgrade / Billing group's height is held meanwhile. */
+  billingPending: boolean;
+  /** A billing request failed; keep its reservation with an unavailable
+   *  message, rather than treating the deployment as billing-disabled. */
+  billingFailed: boolean;
   /** Set when this load came back from Stripe Checkout
    *  (`?billing=success|cancel`, already stripped from the address). */
   checkoutReturn: CheckoutReturn | null;
-  /** The paid tier's video length in minutes, when the server reports one;
-   *  null leaves the length out of the pitch rather than guess it. */
-  paidMinutes: number | null;
-  /** The video length signing in unlocks on the user's own key, in minutes
-   *  (`useMediaLimits().upgradeMinutes`); null (limits not read, or no larger
-   *  tier) leaves the length out of the lede rather than promise it. Only the
-   *  signed-out lede reads it. */
-  signInMinutes: number | null;
+  /** The upload limits, from HomeScreen's one `useMediaLimits`: the length
+   *  that applies to this person, the tiers the comparison quotes, and
+   *  whether a Gemini key is saved. Lengths are never guessed: nothing is
+   *  quoted until the read has answered. */
+  limits: MediaLimitsState;
 };
 
 const RUN_GUARD =
@@ -95,12 +120,15 @@ const RUN_GUARD =
 
 export default function AccountPanel({
   authCapability,
+  capabilitiesSettled,
   runInProgress,
   freeRuns,
+  freeRunsPending,
   billing,
+  billingPending,
+  billingFailed,
   checkoutReturn,
-  paidMinutes,
-  signInMinutes,
+  limits,
 }: AccountPanelProps) {
   const auth = useAuthUser();
   /* Held here, above the signed-in view: deleting signs out, which unmounts
@@ -113,23 +141,20 @@ export default function AccountPanel({
     void signedOut.then(() => setDeleted((d) => (d ? "done" : d)));
   }, []);
   /* The same gate as the tab in HomeScreen: a provider in this build *and*
-     the server's word that it verifies tokens. Still loading or failed
-     counts as no, so nobody signs in to a server that would refuse the
-     token (the API client would not send it anyway). */
+     the server's word that it verifies tokens. A failed report counts as
+     no, so nobody signs in to a server that would refuse the token (the API
+     client would not send it anyway). */
   const available = auth.enabled && authCapability?.state === "ok";
+  /* Not known yet: the capability report, or (where sign-in works) who is
+     signed in. Only the title and one line show, so nothing that appears
+     later moves anything already on screen. */
+  const loading = auth.enabled && (!capabilitiesSettled || (available && !auth.ready));
 
   return (
     <div className="key-page acct-page">
       <AppBackLink />
       <header className="view-head">
         <h1 className="view-title">Account</h1>
-        <p className="view-lede">
-          {auth.user
-            ? "Your sign-in, connected tools, and data on this device."
-            : signInMinutes
-              ? `Sign in for ${ACCOUNT_FREE_RUNS_PER_DAY} free runs a day, videos up to ${signInMinutes} minutes with your own key, and API keys for your scripts. An account is optional.`
-              : `Sign in for ${ACCOUNT_FREE_RUNS_PER_DAY} free runs a day and API keys for your scripts. An account is optional.`}
-        </p>
       </header>
 
       {/* Always mounted so the change is announced; empty, it takes no space. */}
@@ -143,34 +168,40 @@ export default function AccountPanel({
 
       {deleted ? (
         <DeletedCard signingOut={deleted === "signing-out"} onBack={() => setDeleted(false)} />
-      ) : !available ? (
-        <>
-          <Unavailable />
-          {/* A session left over from a server that did take sign-in (or one
-              whose report has not arrived): Sign out stays reachable here,
-              at /app?view=account, even with the tab hidden. */}
-          {auth.ready && auth.user && (
-            <IdentityCard email={auth.user.email} runInProgress={runInProgress} freeRuns={freeRuns} />
-          )}
-        </>
-      ) : !auth.ready ? (
+      ) : loading ? (
         <p role="status" className="pending-note acct-gap">
           Loading…
         </p>
+      ) : !available ? (
+        <>
+          <Unavailable />
+          {/* A session left over from a server that did take sign-in: Sign
+              out stays reachable here, at /app?view=account, even with the
+              tab hidden. */}
+          {auth.ready && auth.user && <IdentityRow email={auth.user.email} runInProgress={runInProgress} />}
+        </>
       ) : auth.user ? (
         <SignedIn
           userId={auth.user.id}
           email={auth.user.email}
           runInProgress={runInProgress}
           freeRuns={freeRuns}
+          freeRunsPending={freeRunsPending}
           billing={billing}
-          paidMinutes={paidMinutes}
+          billingPending={billingPending}
+          billingFailed={billingFailed}
+          limits={limits}
           onDeleted={markDeleted}
         />
       ) : (
-        <SignInCard runInProgress={runInProgress} />
+        <SignedOut runInProgress={runInProgress} limits={limits} />
       )}
-      {(deleted || !available || !auth.user) && <AccountResources />}
+      {!loading && (deleted || !available || !auth.user) && (
+        <>
+          <DeviceGroup />
+          <InformationGroup />
+        </>
+      )}
     </div>
   );
 }
@@ -198,6 +229,45 @@ function Unavailable() {
 }
 
 /* ---------------------------------------------------------------- signed out */
+
+/* One reason first (the daily runs an account gives), then the form, then
+   the way on without one. What else an account unlocks is true but not why
+   most people sign in, so it comes last and quietly. Neither a Gemini key
+   nor a VideoLens API key is needed to use the app, and nothing here says
+   otherwise. */
+function SignedOut({ runInProgress, limits }: { runInProgress: boolean; limits: MediaLimitsState }) {
+  /* The length is the server's. Until its read answers, the line holds its
+     place unseen (worded with the usual number, so the height is right)
+     rather than quote one. */
+  const minutes = limits.settled ? limits.byokMinutes : 10;
+  return (
+    <>
+      <SignInCard runInProgress={runInProgress} />
+      <p className="acct-continue-row">
+        <Link
+          href={mainTabHref("analyze")}
+          prefetch={false}
+          className="acct-link acct-continue"
+          onClick={(event) => {
+            if (!isPlainLeftClick(event)) return;
+            event.preventDefault();
+            goToMainTab("analyze");
+          }}
+        >
+          Continue without an account
+        </Link>
+      </p>
+      <p
+        className={limits.settled ? "key-help acct-also" : "key-help acct-also acct-ghost"}
+        aria-hidden={limits.settled ? undefined : true}
+      >
+        {minutes
+          ? `An account also unlocks videos up to ${minutes} minutes with your own Gemini key, and VideoLens API keys for scripts and other tools.`
+          : "An account also gives you VideoLens API keys for scripts and other tools."}
+      </p>
+    </>
+  );
+}
 
 function SignInCard({ runInProgress }: { runInProgress: boolean }) {
   const flow = useEmailCodeSignIn();
@@ -241,8 +311,10 @@ function SignInCard({ runInProgress }: { runInProgress: boolean }) {
     const sending = flow.phase === "sending";
     return (
       <form className="key-card acct-sign-in" onSubmit={sendCode} noValidate aria-label="Sign in or create an account">
-        <h2 className="acct-card-title">Sign in or create an account</h2>
-        <p className="key-help acct-form-intro">We’ll send you a code. No password needed.</p>
+        <h2 className="acct-card-title">Get {ACCOUNT_FREE_RUNS_PER_DAY} free runs a day</h2>
+        <p className="key-help acct-form-intro">
+          Sign in or create an account with your email. No password needed.
+        </p>
         <label htmlFor={emailId} className="key-label">
           Email
         </label>
@@ -269,12 +341,12 @@ function SignInCard({ runInProgress }: { runInProgress: boolean }) {
           </p>
         )}
         <p id={emailHelpId} className="key-help">
-          New here? Verifying your first code sets it up.
+          We’ll email you a code. New here? Entering it creates your account.
         </p>
         <div className="key-actions">
           <button
             type="submit"
-            className="btn btn-primary btn-pill"
+            className="btn btn-primary btn-pill acct-send-code"
             aria-disabled={sending || undefined}
           >
             {sending ? "Sending…" : "Send code"}
@@ -358,42 +430,53 @@ function SignedIn({
   email,
   runInProgress,
   freeRuns,
+  freeRunsPending,
   billing,
-  paidMinutes,
+  billingPending,
+  billingFailed,
+  limits,
   onDeleted,
 }: {
   userId: string;
   email: string | null;
   runInProgress: boolean;
   freeRuns: FreeRunsBanner | null;
+  freeRunsPending: boolean;
   billing: BillingDetails | null;
-  paidMinutes: number | null;
+  billingPending: boolean;
+  billingFailed: boolean;
+  limits: MediaLimitsState;
   onDeleted: (signedOut: Promise<void>) => void;
 }) {
   const { account, problem, loading, reload } = useAccount(userId);
-  const identity = (
-    <IdentityCard email={account?.email ?? email} runInProgress={runInProgress} freeRuns={freeRuns} />
-  );
+  const identity = <IdentityRow email={account?.email ?? email} runInProgress={runInProgress} />;
 
   if (problem?.kind === "unavailable") {
     return (
       <>
         <Unavailable />
         {identity}
-        <AccountResources />
+        <DeviceGroup />
+        <InformationGroup />
       </>
     );
   }
+
+  /* /api/me names the plan too, and usually lands before the run count and
+     the plan: it lets the held stand-in below be the Billing card from the
+     start for a paid account, instead of swapping from the taller Upgrade
+     card (which moved every group under it). */
+  const entitledPaid = account?.entitlement?.plan === "paid";
+  const paid = billing?.plan === "paid" || freeRuns?.plan === "paid" || entitledPaid;
 
   return (
     <>
       {identity}
 
-      {loading && (
-        <p role="status" className="pending-note acct-gap">
-          Loading your account…
-        </p>
-      )}
+      {/* Said, not drawn: a line that came and went here pushed the page. */}
+      <p role="status" className="sr-only">
+        {loading ? "Loading your account…" : ""}
+      </p>
 
       {problem?.kind === "rejected" && (
         <div role="alert" className="error-inline acct-gap">
@@ -410,23 +493,67 @@ function SignedIn({
         </div>
       )}
 
-      {billing && <PlanGroup billing={billing} paidMinutes={paidMinutes} />}
+      <PlanUsageGroup
+        freeRuns={freeRuns}
+        freeRunsPending={freeRunsPending}
+        billing={billing}
+        billingPending={billingPending}
+        billingFailed={billingFailed}
+        entitledPaid={entitledPaid}
+        limits={limits}
+      />
 
-      {account && (
-        <section className="acct-group" aria-labelledby="acct-grp-account">
-          <h2 id="acct-grp-account" className="history-group-label acct-group-label">
-            Your account
+      {billing && !billingFailed ? (
+        billing.plan === "paid" ? (
+          <BillingGroup billing={billing} />
+        ) : (
+          <UpgradeGroup billing={billing} limits={limits} />
+        )
+      ) : billingPending || billingFailed ? (
+        /* Keep the existing stand-in's dimensions. Static loading lines or
+           a failure message are painted over it without entering flow. */
+        <div className="acct-loading-group" aria-busy={billingPending || undefined}>
+          <div className="acct-ghost" aria-hidden="true" inert>
+            {paid ? (
+              <BillingGroup billing={billing ?? GHOST_PAID_BILLING} />
+            ) : (
+              <UpgradeGroup billing={billing ?? GHOST_FREE_BILLING} limits={limits} />
+            )}
+          </div>
+          <div className="acct-loading-overlay" role="status">
+            {billingFailed ? <p className="key-help">Billing unavailable.</p> : (
+              <>
+                <span className="sr-only">Loading billing</span>
+                <PlaceholderLine /><PlaceholderLine /><PlaceholderLine />
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      <DeviceGroup signedIn />
+
+      {/* Drawn while `/api/me` is still loading too (the row is collapsed
+          and fetches nothing until opened), so it does not arrive late and
+          move Information down. */}
+      {(account || loading) && (
+        <section className="acct-group" aria-labelledby="acct-grp-dev">
+          <h2 id="acct-grp-dev" className="history-group-label acct-group-label">
+            Developer tools
           </h2>
-          <ApiKeyManager key={userId} enabled={account.accounts_enabled && account.workspace !== null} />
+          <ApiKeyManager
+            key={userId}
+            enabled={account ? account.accounts_enabled && account.workspace !== null : null}
+          />
         </section>
       )}
 
-      <AccountResources signedIn />
+      <InformationGroup />
 
       {/* Last on the page, on purpose: the two controls that end something. */}
       <section className="acct-end" aria-labelledby="acct-end-title">
         <h2 id="acct-end-title" className="sr-only">
-          Sign out everywhere or delete your account
+          Security and account removal
         </h2>
         <SignOutEverywhere runInProgress={runInProgress} />
         {account && (
@@ -442,15 +569,10 @@ function SignedIn({
   );
 }
 
-function IdentityCard({
-  email,
-  runInProgress,
-  freeRuns,
-}: {
-  email: string | null;
-  runInProgress: boolean;
-  freeRuns: FreeRunsBanner | null;
-}) {
+/* Who is signed in, and the way out, on one line under the title. Sign out
+   is a text control here, not a button: it has to stay within reach, but it
+   is not what the page is for (owner, 2026-11-14). */
+function IdentityRow({ email, runInProgress }: { email: string | null; runInProgress: boolean }) {
   const [signingOut, setSigningOut] = useState(false);
 
   const handleSignOut = () => {
@@ -460,144 +582,391 @@ function IdentityCard({
   };
 
   return (
-    <section className="key-card acct-identity" aria-label="Signed in as">
-      <div className="acct-identity-details">
-        <p className="acct-email">{email ?? "your account"}</p>
-        <p className="key-help acct-identity-meta">
-          Email sign-in
-          {freeRuns !== null && (
-            <>
-              {" · "}
-              <span className="acct-nowrap">
-                {freeRuns.plan === "paid"
-                  ? `Runs left ${freeRuns.period === "month" ? "this month" : "today"}: ${freeRuns.remaining} of ${freeRuns.limit}`
-                  : freeRuns.scope === "account"
-                    ? `Free runs left ${freeRuns.period === "month" ? "this month" : "today"}: ${freeRuns.remaining} of ${freeRuns.limit}`
-                    : `Free runs left on this device: ${freeRuns.remaining}`}
-              </span>
-            </>
-          )}
-        </p>
-      </div>
-      <div className="key-actions">
-        <button
-          type="button"
-          className="btn btn-secondary btn-pill key-remove"
-          onClick={handleSignOut}
-          aria-disabled={signingOut || runInProgress || undefined}
-        >
-          {signingOut ? "Signing out…" : "Sign out"}
-        </button>
-      </div>
-      {/* After the button, so on a phone the email and Sign out stay together. */}
+    <section className="acct-id" aria-label="Signed in as">
+      <p className="acct-email">{email ?? "your account"}</p>
+      <button
+        type="button"
+        className="acct-link acct-signout"
+        onClick={handleSignOut}
+        aria-disabled={signingOut || runInProgress || undefined}
+      >
+        {signingOut ? "Signing out…" : "Sign out"}
+      </button>
+      {/* After the control, so the email and Sign out stay together. */}
       {runInProgress && <p className="pending-note acct-guard">{RUN_GUARD}</p>}
     </section>
   );
 }
 
-/* ---------------------------------------------------------------------- plan */
+/* ------------------------------------------------------------ plan and usage */
 
-const INTERVAL_LABEL = { month: "Monthly", year: "Yearly" } as const;
+/* What this account gets today: the plan, the runs left out of the limit,
+   the video length that applies, and when the count resets. Drawn for every
+   signed-in account, with billing or without (a free account on a server
+   that sells nothing still has a plan and a count).
 
-/* One plan, so no pricing table: a sentence saying what it buys and the two
-   ways to pay for it, or, once paid, what the account has and the one way to
-   change it. Both leave for a Stripe-hosted page (`useBillingActions`);
-   nothing here takes card details. */
-function PlanGroup({ billing, paidMinutes }: { billing: BillingDetails; paidMinutes: number | null }) {
+   Four reads feed it (session, run count, limits, plan) and none of them
+   may move the page: the three rows are always there, and a value is left
+   blank in its reserved line until its read has answered.
+
+   The reset is the server's `resets_at` (UTC midnight) in the reader's own
+   time zone, so it says "7:00 PM" in New York and "5:30 AM" in Mumbai. It
+   never says "midnight" or "tomorrow": neither is true for most readers. */
+function PlanUsageGroup({
+  freeRuns,
+  freeRunsPending,
+  billing,
+  billingPending,
+  billingFailed,
+  entitledPaid,
+  limits,
+}: {
+  freeRuns: FreeRunsBanner | null;
+  freeRunsPending: boolean;
+  billing: BillingDetails | null;
+  billingPending: boolean;
+  billingFailed: boolean;
+  /** The session's own entitlement (`/api/me`) says the plan is paid. */
+  entitledPaid: boolean;
+  limits: MediaLimitsState;
+}) {
+  const paid = billing?.plan === "paid" || freeRuns?.plan === "paid" || entitledPaid;
+  /* Either read can name the plan; with both settled and silent (billing
+     off, or a saved key so no count is read) the account is a free one.
+     A failed plan read with no count is not silence: the plan is not known,
+     and a paid account must not be told it is a free one. */
+  const planKnown = freeRuns !== null || billing !== null || (!freeRunsPending && !billingPending);
+  const planFailed = planKnown && billingFailed && freeRuns === null && billing === null && !entitledPaid;
+
+  /* The run count's own read first; the plan's count stands in when that
+     one failed. The plan read carries no reset instant. */
+  const usage = freeRuns
+    ? {
+        remaining: freeRuns.remaining,
+        limit: freeRuns.limit,
+        monthly: freeRuns.period === "month",
+        resetsAt: freeRuns.resetsAt,
+        device: freeRuns.scope === "device",
+      }
+    : billing
+      ? {
+          remaining: Math.max(0, billing.runs.limit - billing.runs.used),
+          limit: billing.runs.limit,
+          monthly: billing.runs.period === "month",
+          resetsAt: "",
+          device: false,
+        }
+      : null;
+  const ownKey = limits.hasKey;
+  const waiting = !ownKey && usage === null && (freeRunsPending || billingPending);
+
+  const runsValue = ownKey
+    ? "On your own Gemini key"
+    : usage
+      ? `${usage.remaining} of ${usage.limit} runs left ${usage.monthly ? "this month" : "today"}`
+      : waiting
+        ? null
+        : "Runs unavailable";
+
+  /* The length follows the plan, so it waits for the plan as well as for
+     the limits: a paid account must not read "3 minutes" for a moment. */
+  const lengthKnown = limits.settled && planKnown;
+  const onPaidTier = paid && limits.extended && limits.paidMinutes !== null;
+  const lengthNote = !lengthKnown
+    ? null
+    : onPaidTier
+      ? "No Gemini key needed"
+      : limits.extended
+        ? "With your own Gemini key"
+        : limits.byokMinutes
+          ? `or ${limits.byokMinutes} with your own Gemini key`
+          : null;
+
+  const resetWhen = usage
+    ? usage.monthly
+      ? usage.resetsAt && !Number.isNaN(Date.parse(usage.resetsAt))
+        ? formatDay(usage.resetsAt)
+        : null
+      : formatClockTime(usage.resetsAt)
+    : null;
+  const resetValue = ownKey
+    ? "No daily limit with your Gemini key"
+    : resetWhen
+      ? `${usage?.device ? "This browser · " : ""}Resets ${usage?.monthly ? "on" : "at"} ${resetWhen}`
+      : "Reset time unavailable";
+
+  return (
+    <section className="acct-group acct-group-primary" aria-labelledby="acct-grp-plan">
+      <h2 id="acct-grp-plan" className="history-group-label acct-group-label">
+        Plan and usage
+      </h2>
+      <div className="key-card acct-card acct-plan">
+        <p className="acct-plan-name">
+          {planFailed ? "Plan unavailable" : planKnown ? (paid ? "Paid plan" : "Free account") : <PlaceholderLine />}
+        </p>
+        <dl className="acct-facts">
+          <div className="acct-usage" aria-busy={waiting || undefined}>
+            <dt className="sr-only">Runs</dt>
+            <dd className="acct-usage-count" data-none={(!ownKey && !usage && !waiting) || undefined}>
+              {runsValue ?? <><span className="sr-only">Loading runs</span><PlaceholderLine /></>}
+            </dd>
+            <dt className="sr-only">{ownKey ? "Daily limit" : "Reset time"}</dt>
+            <dd className="acct-usage-reset">{waiting ? <PlaceholderLine /> : resetValue}</dd>
+          </div>
+          <div className="acct-fact">
+            <dt>Video length</dt>
+            <dd>{lengthKnown ? `Up to ${durationLabel(limits.limits.maxDurationSeconds)}` : <PlaceholderLine />}</dd>
+            <dd className="acct-fact-note">{lengthNote}</dd>
+          </div>
+        </dl>
+      </div>
+    </section>
+  );
+}
+
+function PlaceholderLine() {
+  return <span className="acct-placeholder" aria-hidden="true" />;
+}
+
+/* ------------------------------------------------------- upgrade and billing */
+
+/* Stand-ins for the group's reserved height while the plan is read (see
+   SignedIn). Never seen and never announced; the prices only size the lines
+   they would fill. */
+const GHOST_FREE_BILLING: BillingDetails = {
+  enabled: true,
+  plan: "free",
+  status: null,
+  interval: null,
+  currentPeriodEnd: null,
+  cancelAtPeriodEnd: false,
+  runs: { limit: ACCOUNT_FREE_RUNS_PER_DAY, used: 0, period: "day" },
+  extraRuns: null,
+  prices: { month: { amount: 1200, currency: "usd" }, year: null, extraRun: { amount: 15, currency: "usd" } },
+};
+const GHOST_PAID_BILLING: BillingDetails = {
+  ...GHOST_FREE_BILLING,
+  plan: "paid",
+  status: "active",
+  interval: "month",
+  currentPeriodEnd: "2026-12-13T00:00:00Z",
+  runs: { limit: PAID_RUNS_PER_DAY, used: 0, period: "day" },
+  /* Reserves the "Extra runs this month" row, including older servers. */
+  extraRuns: { used: 0, limit: PAID_EXTRA_RUNS_PER_MONTH, period: "month", resetsAt: null },
+};
+
+function extraRunTerms(included: number, extraRun: string | null): string {
+  return extraRun
+    ? `Past the ${included}, extra runs are ${extraRun} each, up to ${PAID_EXTRA_RUNS_PER_MONTH} a month.`
+    : `Past the ${included}, extra runs are billed per run, up to ${PAID_EXTRA_RUNS_PER_MONTH} a month.`;
+}
+
+/* What the two billing groups share under their own content: the action's
+   failure and the note that Stripe opened elsewhere (the installed app). */
+function BillingActionStatus({ actions }: { actions: ReturnType<typeof useBillingActions> }) {
+  return (
+    <>
+      {actions.error && (
+        <p role="alert" className="error-note key-error">
+          {actions.error}
+        </p>
+      )}
+      <p role="status" className="key-status-slot">
+        {actions.handedOff && (
+          <span className="key-status">Opened in your browser. Come back here when you’re done.</span>
+        )}
+      </p>
+    </>
+  );
+}
+
+/* A free account where the server sells the plan: the two tiers side by
+   side, the price, one action, and the extra-run terms on their own line.
+
+   The length row is exact on purpose (owner, 2026-11-14). A free account's
+   included runs need no Gemini key either, so "no key needed" is not a paid
+   benefit in general; the one thing only the paid plan has is longer videos
+   *without* a key. The free column therefore says what a key adds, and the
+   paid column ties "no key" to the length. Never "unlimited": the extra
+   runs are priced and capped, and both are stated.
+
+   The free count is the server's (`runs.limit` on a free body is the free
+   allowance); the paid 30 and the 200 cap are the sold constants, because
+   no body a free account can read carries them. */
+function UpgradeGroup({ billing, limits }: { billing: BillingDetails; limits: MediaLimitsState }) {
   const actions = useBillingActions();
-  const paid = billing.plan === "paid";
   const month = billing.prices.month ? formatPrice(billing.prices.month) : null;
   const year = billing.prices.year ? formatPrice(billing.prices.year) : null;
   const extraRun = billing.prices.extraRun ? formatPrice(billing.prices.extraRun) : null;
-  const periodEnd = billing.currentPeriodEnd ? formatLongDay(billing.currentPeriodEnd) : null;
-  const paymentFailed = billing.status === "past_due" || billing.status === "unpaid";
   const busy = actions.busy !== null;
-
-  const button = (action: BillingAction, label: string, primary: boolean) => (
-    <button
-      type="button"
-      className={`btn ${primary ? "btn-primary" : "btn-secondary"} btn-pill`}
-      onClick={() => void actions.run(action)}
-      aria-disabled={busy || undefined}
-    >
-      {actions.busy === action ? "Opening…" : label}
-    </button>
-  );
+  const primary: BillingAction = month ? "month" : "year";
 
   return (
-    <section className="acct-group" aria-labelledby="acct-grp-plan">
-      <h2 id="acct-grp-plan" className="history-group-label acct-group-label">
-        Plan
+    <section className="acct-group" aria-labelledby="acct-grp-upgrade">
+      <h2 id="acct-grp-upgrade" className="history-group-label acct-group-label">
+        Upgrade
       </h2>
       <div className="key-card acct-card acct-plan">
-        {paid ? (
+        <table className="acct-compare">
+          <caption className="sr-only">Your free account compared with the paid plan</caption>
+          <thead>
+            <tr>
+              <th scope="col">Your free account</th>
+              <th scope="col">Paid plan</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="rowgroup" colSpan={2}>
+                Runs a day
+              </th>
+            </tr>
+            <tr>
+              <td>
+                <strong className="acct-figure">{billing.runs.limit}</strong>
+              </td>
+              <td>
+                <strong className="acct-figure">{PAID_RUNS_PER_DAY}</strong>
+              </td>
+            </tr>
+          </tbody>
+          {/* Only where the server reports the paid tier's length: the
+              comparison never quotes a number it has not heard. */}
+          {limits.paidMinutes !== null && (
+            <tbody>
+              <tr>
+                <th scope="rowgroup" colSpan={2}>
+                  Video length
+                </th>
+              </tr>
+              <tr>
+                <td>
+                  <strong>Up to {durationLabel(limits.standardSeconds)}</strong>
+                  {limits.byokMinutes !== null && <> or {limits.byokMinutes} with your own Gemini key</>}
+                </td>
+                <td>
+                  <strong>Up to {limits.paidMinutes} minutes</strong> with no Gemini key
+                </td>
+              </tr>
+            </tbody>
+          )}
+        </table>
+
+        {(month || year) && (
           <>
-            <p className="acct-plan-name">
-              Paid
-              {billing.interval && <span className="acct-plan-interval"> · {INTERVAL_LABEL[billing.interval]}</span>}
-            </p>
-            {periodEnd && (
-              <p className="key-help">{billing.cancelAtPeriodEnd ? `Ends ${periodEnd}` : `Renews ${periodEnd}`}</p>
-            )}
-            {paymentFailed && (
-              <p className="error-note key-error acct-plan-warning">
-                Payment failed — update your card in Manage billing.
-              </p>
-            )}
-            <p className="key-help">
-              <span className="acct-nowrap">
-                {billing.runs.used} of {billing.runs.limit} used {billing.runs.period === "month" ? "this month" : "today"}.
-              </span>
-              {extraRun && (
+            <p className="acct-price">
+              {month ? (
                 <>
-                  {" "}
-                  <span className="acct-nowrap">Extra runs are {extraRun} each,</span>{" "}
-                  <span className="acct-nowrap">up to {PAID_EXTRA_RUNS_PER_MONTH} a month.</span>
+                  <strong>{month}</strong> a month
+                </>
+              ) : (
+                <>
+                  <strong>{year}</strong> a year
                 </>
               )}
             </p>
-            <div className="key-actions">{button("portal", "Manage billing", paymentFailed)}</div>
-          </>
-        ) : (
-          <>
-            <p className="acct-plan-name">Free</p>
-            {/* 2026-11-14 (owner): the paid plan is 30 runs a day, so the pitch
-                can compare honestly with the free account's 10. Included runs,
-                then extra runs and their monthly cap, each said once; never
-                "unlimited". The counts are the sold ones (accountAllowance);
-                the free body's `runs.limit` is the free allowance. */}
-            <p className="key-help">
-              {`The paid plan: ${PAID_RUNS_PER_DAY} runs a day instead of ${ACCOUNT_FREE_RUNS_PER_DAY}`}
-              {paidMinutes !== null && `, videos up to ${paidMinutes} minutes`}
-              {", and no Gemini key needed."}
-              {extraRun
-                ? ` Past the ${PAID_RUNS_PER_DAY}, extra runs are ${extraRun} each, up to ${PAID_EXTRA_RUNS_PER_MONTH} a month.`
-                : ` Past the ${PAID_RUNS_PER_DAY}, extra runs are billed per run, up to ${PAID_EXTRA_RUNS_PER_MONTH} a month.`}
-            </p>
-            {(month || year) && (
-              <div className="key-actions">
-                {month && button("month", `Upgrade — ${month}/month`, true)}
-                {year && button("year", `Yearly — ${year}/year`, !month)}
-              </div>
-            )}
+            <div className="key-actions">
+              <button
+                type="button"
+                className="btn btn-primary btn-pill"
+                onClick={() => void actions.run(primary)}
+                aria-disabled={busy || undefined}
+              >
+                {actions.busy === primary ? "Opening…" : "Upgrade to paid"}
+              </button>
+              {month && year && (
+                <button
+                  type="button"
+                  className="acct-link acct-yearly"
+                  onClick={() => void actions.run("year")}
+                  aria-disabled={busy || undefined}
+                >
+                  {actions.busy === "year" ? "Opening…" : `Or pay ${year} a year`}
+                </button>
+              )}
+            </div>
           </>
         )}
-        {actions.error && (
-          <p role="alert" className="error-note key-error">
-            {actions.error}
+        <p className="key-help acct-extra-terms">{extraRunTerms(PAID_RUNS_PER_DAY, extraRun)}</p>
+        <BillingActionStatus actions={actions} />
+      </div>
+      <p className="key-help acct-group-note">
+        Billed through Stripe. Cancel anytime. Runs with your own Gemini key never count.
+      </p>
+    </section>
+  );
+}
+
+/* A paid account: what it has and the one way to change it. Only what
+   `GET /api/billing` returns is shown. It carries no count of extra runs
+   used this month, so none is drawn; the terms line states the price and
+   the cap instead. Runs left today is in the Plan and usage card directly
+   above, so it is not repeated here. Leaves for Stripe's hosted portal; nothing here takes
+   card details. */
+function BillingGroup({ billing }: { billing: BillingDetails }) {
+  const actions = useBillingActions();
+  const price = billing.interval ? billing.prices[billing.interval] : null;
+  const amount = price ? formatPrice(price) : null;
+  const extraRun = billing.prices.extraRun ? formatPrice(billing.prices.extraRun) : null;
+  const periodEnd = billing.currentPeriodEnd ? formatLongDay(billing.currentPeriodEnd) : null;
+  const paymentFailed = billing.status === "past_due" || billing.status === "unpaid";
+
+  return (
+    <section className="acct-group" aria-labelledby="acct-grp-billing">
+      <h2 id="acct-grp-billing" className="history-group-label acct-group-label">
+        Billing
+      </h2>
+      <div className="key-card acct-card acct-plan">
+        {paymentFailed && (
+          <p className="error-note key-error acct-plan-warning">
+            Payment failed. Update your card in Manage billing.
           </p>
         )}
-        <p role="status" className="key-status-slot">
-          {actions.handedOff && (
-            <span className="key-status">Opened in your browser. Come back here when you’re done.</span>
+        <dl className="acct-facts acct-facts-flush">
+          {billing.interval && (
+            <div className="acct-fact">
+              <dt>Price</dt>
+              <dd>
+                {amount
+                  ? `${amount} a ${billing.interval}`
+                  : billing.interval === "year"
+                    ? "Billed yearly"
+                    : "Billed monthly"}
+              </dd>
+            </div>
           )}
-        </p>
+          {periodEnd && (
+            <div className="acct-fact">
+              <dt>{billing.cancelAtPeriodEnd ? "Ends" : "Renews"}</dt>
+              <dd>{periodEnd}</dd>
+            </div>
+          )}
+          {/* The server's own count and cap (2026-11-14). No limit means the
+              cap is off: the count alone, never an invented number. */}
+            <div className={billing.extraRuns ? "acct-fact" : "acct-fact acct-ghost"} aria-hidden={!billing.extraRuns || undefined}>
+              <dt>Extra runs this month</dt>
+              <dd>
+                {billing.extraRuns
+                  ? billing.extraRuns.limit === null
+                    ? billing.extraRuns.used
+                    : `${billing.extraRuns.used} of ${billing.extraRuns.limit}`
+                  : "—"}
+              </dd>
+            </div>
+        </dl>
+        <p className="key-help acct-extra-terms">{extraRunTerms(billing.runs.limit, extraRun)}</p>
+        <div className="key-actions">
+          <button
+            type="button"
+            className={`btn ${paymentFailed ? "btn-primary" : "btn-secondary"} btn-pill`}
+            onClick={() => void actions.run("portal")}
+            aria-disabled={actions.busy !== null || undefined}
+          >
+            {actions.busy === "portal" ? "Opening…" : "Manage billing"}
+          </button>
+        </div>
+        <BillingActionStatus actions={actions} />
       </div>
-      {!paid && (
-        <p className="key-help acct-group-note">
-          Billed through Stripe. Cancel anytime. Runs with your own Gemini key never count.
-        </p>
-      )}
     </section>
   );
 }
@@ -647,7 +1016,9 @@ function SignOutEverywhere({ runInProgress }: { runInProgress: boolean }) {
 
 type ApiKeysState = ReturnType<typeof useApiKeys>;
 
-function ApiKeyManager({ enabled }: { enabled: boolean }) {
+/* `enabled` is null while `/api/me` is still loading: the row is drawn
+   anyway (collapsed, it asks for nothing), and opening it then says so. */
+function ApiKeyManager({ enabled }: { enabled: boolean | null }) {
   /* The keys are fetched on the first opening only (`visited`), never on
      mount. The hook lives here, above the body, so the row can show a count
      once that fetch has answered and can flag a one-time secret that is
@@ -655,7 +1026,7 @@ function ApiKeyManager({ enabled }: { enabled: boolean }) {
      the body stays mounted. */
   const [visited, setVisited] = useState(false);
   const [open, setOpen] = useState(false);
-  const api = useApiKeys(enabled && visited);
+  const api = useApiKeys(enabled === true && visited);
   const active = api.keys?.filter((key) => key.active && !key.revoked_at).length ?? 0;
   const meta =
     api.justCreated && !open
@@ -675,8 +1046,10 @@ function ApiKeyManager({ enabled }: { enabled: boolean }) {
     >
       <summary className="acct-row acct-disclosure-toggle">
         <span className="acct-row-text">
-          <span className="acct-row-title">API keys</span>
-          <span className="acct-row-description">Let your scripts and agents use VideoLens as you</span>
+          <span className="acct-row-title">VideoLens API access</span>
+          <span className="acct-row-description">
+            VideoLens API keys let other tools submit runs through your account.
+          </span>
         </span>
         {meta && (
           <span className="acct-row-meta" data-fresh={meta.fresh ? "true" : undefined}>
@@ -685,12 +1058,21 @@ function ApiKeyManager({ enabled }: { enabled: boolean }) {
         )}
         <ChevronDown aria-hidden="true" />
       </summary>
-      {visited && <ApiKeysSection enabled={enabled} api={api} />}
+      {visited &&
+        (enabled === null ? (
+          <div className="acct-details-body">
+            <p role="status" className="pending-note acct-help-flush">
+              Loading your account…
+            </p>
+          </div>
+        ) : (
+          <ApiKeysSection enabled={enabled} api={api} />
+        ))}
     </details>
   );
 }
 
-function AccountTabLink({ tab, title, description }: { tab: MainTab; title: string; description?: string }) {
+function AccountTabLink({ tab, title, description }: { tab: MainTab; title: ReactNode; description?: string }) {
   return (
     <Link href={mainTabHref(tab)} prefetch={false} className="acct-row" onClick={(event) => {
       if (!isPlainLeftClick(event)) return;
@@ -706,41 +1088,54 @@ function AccountTabLink({ tab, title, description }: { tab: MainTab; title: stri
   );
 }
 
-/* The two link groups every state shows: plain rows, one tap to go. */
-function AccountResources({ signedIn = false }: { signedIn?: boolean }) {
+/* The two link groups every state shows: plain rows, one tap to go. Signed
+   in, Developer tools sits between them. */
+function DeviceGroup({ signedIn = false }: { signedIn?: boolean }) {
   return (
-    <>
-      <section className="acct-group" aria-labelledby="acct-grp-device">
-        <h2 id="acct-grp-device" className="history-group-label acct-group-label">
-          On this device
-        </h2>
-        <div className="key-card acct-card">
-          <AccountTabLink tab="history" title="History" description="View or remove saved analyses" />
-          <AccountTabLink
-            tab="api-key"
-            title="Your Gemini key"
-            description="Your own Google key for analyses. Stays in this browser."
-          />
-        </div>
-        {signedIn && <p className="key-help acct-group-note">Both stay in this browser when you sign out.</p>}
-      </section>
-      <section className="acct-group" aria-labelledby="acct-grp-help">
-        <h2 id="acct-grp-help" className="history-group-label acct-group-label">
-          Help
-        </h2>
-        <div className="key-card acct-card">
-          <Link href="/privacy" prefetch={false} className="acct-row">
-            <span className="acct-row-title">Privacy policy</span>
-            <ChevronRight aria-hidden="true" />
-          </Link>
-          <Link href="/terms" prefetch={false} className="acct-row">
-            <span className="acct-row-title">Terms of use</span>
-            <ChevronRight aria-hidden="true" />
-          </Link>
-          <AccountTabLink tab="releases" title="What’s new" />
-        </div>
-      </section>
-    </>
+    <section className="acct-group" aria-labelledby="acct-grp-device">
+      <h2 id="acct-grp-device" className="history-group-label acct-group-label">
+        On this device
+      </h2>
+      <div className="key-card acct-card">
+        <AccountTabLink
+          tab="history"
+          title="Recent history"
+          description={`Saved in this browser · Up to ${HISTORY_LIMIT} runs`}
+        />
+        <AccountTabLink
+          tab="api-key"
+          title={
+            <>
+              Your Gemini key <span className="acct-optional">(optional)</span>
+            </>
+          }
+          description="Use your own Google AI access."
+        />
+      </div>
+      <p className="key-help acct-group-note">Not synced between devices.{signedIn ? " Both stay in this browser when you sign out." : ""}</p>
+    </section>
+  );
+}
+
+/* No support or contact row: there is no monitored address yet. */
+function InformationGroup() {
+  return (
+    <section className="acct-group acct-group-information" aria-labelledby="acct-grp-info">
+      <h2 id="acct-grp-info" className="history-group-label acct-group-label">
+        Information
+      </h2>
+      <div className="key-card acct-card">
+        <Link href="/privacy" prefetch={false} className="acct-row">
+          <span className="acct-row-title">Privacy policy</span>
+          <ChevronRight aria-hidden="true" />
+        </Link>
+        <Link href="/terms" prefetch={false} className="acct-row">
+          <span className="acct-row-title">Terms of use</span>
+          <ChevronRight aria-hidden="true" />
+        </Link>
+        <AccountTabLink tab="releases" title="What’s new" />
+      </div>
+    </section>
   );
 }
 
@@ -754,7 +1149,9 @@ function ApiKeysSection({ enabled, api }: { enabled: boolean; api: ApiKeysState 
   if (!enabled) {
     return (
       <div className="acct-details-body">
-        <p className="key-help acct-help-flush">This server does not keep accounts, so it cannot issue API keys.</p>
+        <p className="key-help acct-help-flush">
+          This server does not keep accounts, so it cannot issue VideoLens API keys.
+        </p>
       </div>
     );
   }
@@ -770,9 +1167,9 @@ function ApiKeysSection({ enabled, api }: { enabled: boolean; api: ApiKeysState 
   const revoked = keys?.filter((key) => !key.active || key.revoked_at) ?? [];
 
   return (
-    <section className="acct-details-body" aria-label="Manage API keys">
+    <section className="acct-details-body" aria-label="Manage VideoLens API keys">
       <p className="key-help acct-help-top">
-        A key lets a script or an agent call the VideoLens API as you. Send it in an{" "}
+        A VideoLens API key lets a script or an agent call the VideoLens API as you. Send it in an{" "}
         <code className="acct-inline-code">X-Api-Key</code> header. Keep it secret.
       </p>
 
@@ -823,9 +1220,9 @@ function ApiKeysSection({ enabled, api }: { enabled: boolean; api: ApiKeysState 
           Loading keys…
         </p>
       ) : keys.length === 0 ? (
-        <p className="pending-note acct-empty">No API keys yet. Create one above to get started.</p>
+        <p className="pending-note acct-empty">No VideoLens API keys yet. Create one above to get started.</p>
       ) : (
-        <ul className="acct-key-list" aria-label="Your API keys">
+        <ul className="acct-key-list" aria-label="Your VideoLens API keys">
           {[...active, ...revoked].map((apiKey) => (
             <KeyRow
               key={apiKey.key_id}
@@ -1075,7 +1472,7 @@ function DeleteAccountSection({
             </ul>
             <p className="key-help acct-delete-note">
               Deleting your account does not clear this browser’s saved History or Gemini key.
-              You can remove them under History and API key.
+              You can remove them under History and Gemini key.
             </p>
           </div>
         </div>

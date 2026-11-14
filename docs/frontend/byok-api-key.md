@@ -33,8 +33,8 @@ Centred `.key-page` column (43.5rem, the board's 696px): serif `.view-title`
 `.key-card` form — visible label, 3rem password field with an eye toggle
 (`aria-pressed`, "Show key"/"Hide key"), help line, **Save key** (primary pill)
 and **Remove key** (grey `--color-input-border` edge, shown only while a key is
-stored), and a `role="status"` slot: "Saved on this device" (accent-soft pill),
-"Removed from this device", or "Not saved yet". Saving an empty field shows
+stored), and a `role="status"` slot: "Saved in this browser" (accent-soft pill),
+"Removed from this browser", or "Not saved yet". Saving an empty field shows
 `.error-note` "Paste your key first, then save it." and focuses the field;
 saving re-masks the field. Below, a tint "Where to get a key" panel with three
 numbered steps and a link to Google AI Studio (new tab, sr-only note, no
@@ -147,6 +147,50 @@ both tiers equal), which hides the line. Unlike the intake hint it does not
 require a saved key, since this page is where the key goes in. It never says
 signing in makes the key safer.
 
+**Held space (2026-11-14).** The line used to arrive after the session,
+capabilities and limits had all answered and push Save key and the guide
+down (CLS 0.0235 at 412 web, 0.0196 at 412 app, measured; 0.0385 with a key
+saved). `HomeScreen` now passes `signInPending` (`keySignInPending`): true
+while it is not yet known whether the line applies, false as soon as
+anything settles it (no provider in this build, someone signed in, the
+server not offering sign-in). While pending the panel renders the same
+sentence in the same place as `.key-help.key-signin.key-signin-ghost`
+(`visibility: hidden`, `aria-hidden`, `inert`, "Sign in" a plain span), sized
+with `signInStandInMinutes` (`byokMinutes`, else 10). Element order and the
+consent paragraph are unchanged.
+
+A signed-in visit must not hold the line either, but the prerendered page
+cannot know the session. Two pieces cover that: the pre-paint
+`SESSION_INIT_SCRIPT` (`infrastructure/authSessionStamp.ts`, appended to the
+layout's pre-paint script like `BYOK_INIT_SCRIPT`) stamps `<html
+data-session>` when the provider's stored-session key exists (presence
+only), and `:root[data-session] .key-signin-ghost { display: none }`; after
+hydration `useStoredSessionHint()` (`useSyncExternalStore` over
+`authSession.hasSession()`) keeps the ghost unrendered until the provider
+loads. `providerStorageKey(url)` is shared with `SupabaseAuthSession`, so the
+two cannot disagree on the key. The build hashes the inline script like any
+other pre-paint snippet.
+
+Measured after (6 loads each, read timings varied, light and dark): signed
+out 0.0000 at 412 web, 0.0018 at 412 app (the tab bar's own icon swap),
+0.0027 at 320, 0.0016 at 1280; signed in 0.0000 / 0.0018 / 0.0027 / 0.0009.
+Still moving once: (1) a build with a provider on a server whose `auth`
+capability is not `ok`: the held line collapses when the report lands
+(0.0235 at 412 web, 0.0173 at 412 app, 0.0044 at 1280); (2) `/api/limits`
+failing; (3) a stored session that has expired. Separate and pre-existing:
+with a key saved, "Remove key" and the status pill appear after hydration
+(the deliberate read-after-hydration effect in `useGeminiApiKey`), 0.0130 at
+412 web and 0.0096 at 412 app.
+
+## UX fix spec 6.2 (2026-11-14)
+
+- h1 "Gemini key"; field label "Gemini key".
+- Lede: "Optional. VideoLens works without a key. Runs on your own Gemini key
+  don't count toward your daily runs. The key is saved in this browser only."
+- The consent paragraph (`.key-help`) is byte-identical (checked against the
+  previous commit). The guide keeps Google's own button names ("Get API key",
+  "Create API key"): they are what AI Studio shows.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported ApiKeyPanel; promoted the sr-only label to a visible .card-label, kept the programmatic association
@@ -159,3 +203,6 @@ signing in makes the key safer.
 - 2026-11-07 · frontend agent · added the dedicated-key/spending-limit line to the guide panel; key now covered by the CSP and excluded from Android backups (see `security-headers.md`)
 - 2026-11-13 · frontend agent · a saved key plus sign-in now raises the upload limits to 10 min / 500 MB (`useMediaLimits` watches `apiKeyStore`); see `upload-form.md`, "Upload limits per tier"
 - 2026-11-13 · frontend agent · owner-approved consent help line under the key field (Terms/Privacy links, replaces "held briefly on the server"); sign-in prompt for the 10-minute tier when sign-in works and nobody is signed in (`signInForMinutes` prop from HomeScreen)
+- 2026-11-14 · frontend agent · status strings say "Saved in this browser" / "Removed from this browser" (UX fix spec batch a); tab label "Gemini key" in the nav and More sheet
+- 2026-11-14 · frontend agent · UX fix spec batch e: panel h1 and field label "Gemini key"; lede says the app works without a key and what a key changes
+- 2026-11-14 · frontend agent · sign-in line's space held while it is unknown whether it applies (`signInPending`, inert ghost); pre-paint `data-session` stamp + `useStoredSessionHint` so a signed-in visit holds nothing; CLS at 412 web 0.0235 -> 0.0000 signed out, 0 signed in; consent paragraph untouched

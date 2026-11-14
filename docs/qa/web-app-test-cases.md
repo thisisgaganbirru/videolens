@@ -172,7 +172,7 @@ as a question, not a fact. A defect found in a ▦ case names the viewport.
 | RUN-04 | Mock each documented error class (download failed, login-gated link, too long, unsupported, quota, server error). | Each has its own sentence; none says only "Something went wrong". |
 | RUN-05 | Switch to History while a run is processing, then back. | The run keeps progressing; History shows it as in progress; coming back shows the live stage. |
 | RUN-06 | Reload the page mid-run. Variants: (a) on `/app`: the run resumes and reaches the result; (b) reload on `?view=history`: History stays, no resume; (c) reload with the API unreachable (offline document reload lands on `/offline` by design): Connection lost, then Retry now resumes; (d) reload after the server forgot the run: the expired view. | As listed per variant. |
-| RUN-07 | "Stop watching and analyze another file". | Returns to a fresh intake; terms stay ticked; the in-flight run remains in History. |
+| RUN-07 | "Stop watching and start another". | Returns to a fresh intake; terms stay ticked; the in-flight run remains in History. |
 | RUN-08 | Poll the live run with (a) 5xx, (b) network errors. | (a) "Server trouble" pill and "The server is having trouble right now…", with the retry countdown and Retry now; (b) "Connection lost". The run recovers by itself in both. |
 | RUN-09 | Poll fails continuously (abort/`route.abort("failed")`). | "Connection lost" with a countdown and **Retry now**; polling backs off; nothing crashes. |
 | RUN-10 | While in Connection lost, restore the mock. | The next retry (or Retry now) resumes the run and clears the notice; the stage list continues. |
@@ -207,7 +207,7 @@ as a question, not a fact. A defect found in a ▦ case names the viewport.
 | RES-12 | Long content: a 30k-word transcript, a 2,000-char unbroken string, a very long title, 200 notes bullets. | No horizontal scroll; the band scrolls; the UI stays responsive (< 1 s to switch tabs); the last line is not hidden behind the footer. |
 | RES-13 | Empty and null fields: no on-screen text, no transcript, no summary. | A clear empty state per tab; no "null"/"undefined". |
 | RES-14 | Non-Latin and RTL content. | No tofu; an Arabic Notes fixture renders `direction: rtl` (bullets on the right) and English stays LTR; layout holds. |
-| RES-15 | "Analyze another file" after a result. | Fresh intake with an **empty** link field; terms stay ticked. |
+| RES-15 | "Analyze another" after a result. | Fresh intake with an **empty** link field; terms stay ticked. |
 | RES-16 | Result page, print preview (Ctrl+P). | Readable; the fixed chrome does not cover content. (COSMETIC if not.) |
 
 ## 8. History

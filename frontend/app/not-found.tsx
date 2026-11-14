@@ -56,10 +56,10 @@ export default function NotFound() {
           <p className="not-found-lede">The address may be mistyped, or the page has moved.</p>
           <div className="not-found-actions">
             <Link href="/app" className="btn btn-ink btn-pill not-found-action">
-              Open VideoLens
+              Open the app
             </Link>
             <Link href="/" className="btn btn-secondary btn-pill not-found-action not-found-action--web">
-              Go to the home page
+              Home page
             </Link>
           </div>
         </div>

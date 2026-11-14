@@ -3,6 +3,7 @@ import { Capacitor } from "@capacitor/core";
 import type { AuthUser } from "@/domain/entities";
 import { AuthFlowError, type AuthFailureReason } from "@/domain/errors";
 import type { AuthSession } from "@/domain/ports";
+import { providerStorageKey } from "./authSessionStamp";
 
 /* The identity provider, behind the `AuthSession` port (auth phase 2).
 
@@ -113,13 +114,7 @@ export class SupabaseAuthSession implements AuthSession {
     private readonly url: string,
     private readonly publishableKey: string
   ) {
-    let ref = "default";
-    try {
-      ref = new URL(url).hostname.split(".")[0] || ref;
-    } catch {
-      /* an invalid URL fails at load, where it is reported */
-    }
-    this.storageKey = `sb-${ref}-auth-token`;
+    this.storageKey = providerStorageKey(url);
   }
 
   private storedSession(): boolean {

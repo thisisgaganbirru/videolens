@@ -41,7 +41,7 @@ export default function LandingAllowance() {
 
   let tier: ReactNode = "Free runs to start. No account needed.";
   if (media.hasKey) {
-    tier = "Runs use the Gemini key saved on this device.";
+    tier = "Runs use the Gemini key saved in this browser.";
   } else if (banner?.plan === "paid") {
     tier = (
       <>

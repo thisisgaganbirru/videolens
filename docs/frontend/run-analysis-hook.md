@@ -45,7 +45,7 @@ them.
 or the URL minus scheme and `www.`) and `retrySource` (the original
 `MediaSource`). `retry()` resubmits it as a brand-new run; `canRetry` is true
 only when there is a source to resubmit — a run reopened from History has none,
-so its failed view shows only "Analyze another file". While the resubmission is
+so its failed view shows only "Analyze another". While the resubmission is
 in flight the failed view stays up with its button reading "Starting…".
 
 **Free runs (Phase 5b).** In `submit`, a 401 with `ApiError.code === "device_token_invalid"` calls `refreshFreeRuns()` (which stores the fresh token) and sends the same `createRun` once more. A 402 `free_runs_used` calls `markFreeRunsUsed(limit, used)`, sets no error (the limit banner says it), and returns the screen to idle if the submit came from the failed view's retry. An accepted run calls `noteRunAccepted()` to re-read the count. See `free-runs.md`.
@@ -152,3 +152,4 @@ found." behaviour. Network errors and 5xx keep the reconnect countdown.
 - 2026-11-01 · frontend agent (refinement 1) · `expired` / `againUrl` for runs the server forgot; `source_url` stored on submit (IndexedDB only)
 - 2026-11-02 · frontend agent (refinement 3) · a 404 on the live poll, a reconnect or openRun's server fallback now expires the run (History row failed + EXPIRED_MESSAGE, expired view) instead of "Connection lost" / "Run not found."; `liveUrlRef` for the link
 - 2026-11-02 · frontend agent (refinement 6) · RUN-06 web resume via sessionStorage ActiveRunStore; RUN-08 lostCause (network vs server) exposed for the lost screen
+- 2026-11-14 · frontend agent · button label "Analyze another" (UX fix spec batch a)

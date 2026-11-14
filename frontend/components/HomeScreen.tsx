@@ -21,9 +21,10 @@ import HistoryPanel from "@/components/panels/HistoryPanel";
 import VersionLogPanel from "@/components/panels/VersionLogPanel";
 import AccountPanel from "@/components/panels/AccountPanel";
 import { useAnalysisRun } from "@/application/useAnalysisRun";
-import { useHistoryBoot } from "@/application/useRunHistory";
+import { HISTORY_LIMIT, useHistoryBoot } from "@/application/useRunHistory";
+import { useDocumentTitle } from "@/application/useDocumentTitle";
 import { useCapabilities } from "@/application/useCapabilities";
-import { useAuthUser } from "@/application/useAuthSession";
+import { useAuthUser, useStoredSessionHint } from "@/application/useAuthSession";
 import { useMediaLimits } from "@/application/useMediaLimits";
 import { useBilling } from "@/application/useBilling";
 import { formatPrice } from "@/components/format";
@@ -53,6 +54,9 @@ const FREE_RUNS_GHOST: FreeRunsBannerState = {
   limit: 3,
   exhausted: false,
   overage: false,
+  /* A valid time, so the stand-in carries the "Resets at …" sentence and is
+     as long as the real strip (UX fix spec 3.2). */
+  resetsAt: "2026-01-01T00:00:00Z",
 };
 
 export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
@@ -107,7 +111,14 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      calls in three conditionally-rendered children would be one request per
      tab visit. The two contextual notices therefore take props instead of
      reaching for the hook themselves. */
-  const { notice, urlDownload, dailyBudget, auth: authCapability, billing: billingCapability } = useCapabilities();
+  const {
+    notice,
+    urlDownload,
+    dailyBudget,
+    auth: authCapability,
+    billing: billingCapability,
+    settled: capabilitiesSettled,
+  } = useCapabilities();
 
   const sharedUrl = useSharedUrl();
 
@@ -121,6 +132,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      account's free runs instead of this device's (2026-11-13), so
      a sign-in or sign-out re-reads the allowance. */
   const authUser = useAuthUser();
+  const storedSessionHint = useStoredSessionHint();
   const freeRuns = useFreeRuns(authUser.ready ? (authUser.user?.id ?? "") : null);
 
   /* Refinement 9 (items 6 and 8, device QA): every time the intake comes
@@ -153,7 +165,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      server's `billing` capability is `ok`, for whoever is signed in. With
      billing off nothing is requested and `billing` stays null, so every
      screen looks as it did before billing existed. */
-  const { billing, notice: checkoutReturn } = useBilling(
+  const { billing, notice: checkoutReturn, pending: billingPending, failed: billingFailed } = useBilling(
     authUser.ready ? (authUser.user?.id ?? null) : null,
     showAccount && billingCapability?.state === "ok"
   );
@@ -172,6 +184,25 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   /* Signing in or out changes who owns runs on the server, so a run being
      watched would stop answering. The Account panel holds both meanwhile. */
   const runInProgress = submitting || status === "queued" || status === "processing";
+  /* The strip and the out-of-runs offer both depend on whether sign-in is
+     offered, which is known only once the capabilities read and the session
+     have answered. Until then the slot keeps its stand-in, so the strip
+     never lands short and then grows a "Sign in" sentence (a measured 0.037
+     layout shift at 412 px, UX fix spec 3.6). */
+  const stripKnown = capabilitiesSettled && authUser.ready;
+  /* The Gemini key page's "Sign in" line needs the session, the auth
+     capability and `/api/limits`. It is known not to apply as soon as any of
+     them says so (no provider in this build, someone signed in, sign-in not
+     offered); otherwise its space is held until all three have answered.
+     A session stored on this device counts as signed in for this purpose,
+     so a signed-in visit never holds the line while the provider loads.
+     What still moves once: the server turning sign-in off, `/api/limits`
+     failing, or a stored session that turns out to be expired. */
+  const keySignInPending =
+    authUser.enabled &&
+    !(authUser.ready ? authUser.user : storedSessionHint) &&
+    !(capabilitiesSettled && !showAccount) &&
+    !(capabilitiesSettled && authUser.ready && mediaLimits.settled);
 
   /* A link shared into the app is a request to analyze *that*, so it takes the
      screen over: whatever tab is showing, and whatever run is on it, gives way
@@ -214,6 +245,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      remounts on reset and would otherwise take the same share again). Derived
      during render, no effect: the form itself applies whatever it is handed. */
   const [againPrefill, setAgainPrefill] = useState<SharedUrl | null>(null);
+  const [fromHistory, setFromHistory] = useState(false);
   const [dismissedShare, setDismissedShare] = useState<SharedUrl | null>(null);
   const liveShare = sharedUrl && sharedUrl !== dismissedShare ? sharedUrl : null;
   const formPrefill =
@@ -222,6 +254,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   /** Every "analyze another" / "stop watching": a fresh, empty intake. Terms
    *  stay accepted (they are remembered by the form, not cleared here). */
   const startOver = () => {
+    setFromHistory(false);
     setDismissedShare(sharedUrl);
     setAgainPrefill(null);
     reset();
@@ -229,6 +262,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
 
   /** Expired run: back to the intake with its link in the field, if stored. */
   const analyzeAgain = () => {
+    setFromHistory(false);
     setDismissedShare(sharedUrl);
     setAgainPrefill(againUrl ? { url: againUrl, receivedAt: Date.now() } : null);
     reset();
@@ -282,8 +316,41 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
        `source_kind`, when it has one, seeds the run's frames before the
        first status response arrives. */
     goToMainTab("analyze", { push: true });
+    setFromHistory(true);
     void openRun(runId, sourceKind);
   };
+
+  /* UX fix spec 4.5: a run opened from History offers the way back to it.
+     True only from `handleOpenRun`; every reset and every new submit clears
+     it. */
+  const backToHistory = () => goToMainTab("history");
+  const submitFresh: typeof submit = (...args) => {
+    setFromHistory(false);
+    return submit(...args);
+  };
+
+  /* UX fix spec 4.6: the tab title names the view and the run state. */
+  const titleLabel =
+    activeTab === "analyze"
+      ? status === "idle"
+        ? "Analyze a video"
+        : status === "complete"
+          ? result?.title?.trim() || "Result"
+          : status === "failed"
+            ? expired
+              ? "Run expired"
+              : "Run failed"
+            : "Analyzing"
+      : activeTab === "history"
+        ? "History"
+        : activeTab === "api-key"
+          ? "Gemini key"
+          : activeTab === "releases"
+            ? "Releases"
+            : activeTab === "account"
+              ? "Account"
+              : null;
+  useDocumentTitle(titleLabel);
 
   /* No `data-frame` here any more. Phase 2 retired the inner results pane:
      the whole Analyze band is the one scroller (from 32rem up it scrolls
@@ -309,10 +376,8 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                   report lands and can announce it. A conditionally-rendered
                   live region announces nothing, and a permanently visible
                   "all systems operational" strip is chrome that tells the
-                  user nothing they can act on. A grid item of its own: first
-                  on a phone, top of the panel column on a wide screen, so it
-                  never sits between the lede and the card. First in the DOM
-                  too, so it is read before the form it is about. */}
+                  user nothing they can act on. A grid item of its own above
+                  the centred intake, read before the controls it describes. */}
               <div className="cap-slot" aria-live="polite">
                 {reachability !== "ok" ? (
                   <ReachabilityNotice state={reachability} />
@@ -322,7 +387,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
               </div>
               <div className="intake">
                 {/* Free runs (Phase 5b, IntakeFreeApp / IntakeLimitApp), above
-                    the eyebrow on every shell. The wrapper is always in the DOM
+                    the title on every shell. The wrapper is always in the DOM
                     so the polite status region exists before the count lands
                     and can announce it (and the switch to "used"); empty and
                     zero-height when a key is saved, the deployment has no
@@ -331,34 +396,41 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     22) it holds an invisible, inert stand-in strip with the
                     commonest sentence, so the real one lands in space already
                     taken at every width instead of pushing the page down. */}
-                <div className="free-runs-slot" role="status" data-pending={freeRuns.pending || undefined}>
-                  {freeRuns.banner ? (
-                    <FreeRunsBanner
-                      banner={freeRuns.banner}
-                      offerSignIn={showAccount && authUser.ready && !authUser.user}
-                      offerUpgrade={billing !== null && billing.plan === "free"}
-                      extraRunPrice={extraRunPrice}
-                    />
-                  ) : freeRuns.pending ? (
-                    <div className="free-runs-ghost" aria-hidden="true" inert>
-                      <FreeRunsBanner banner={FREE_RUNS_GHOST} offerSignIn />
-                    </div>
-                  ) : null}
+                {/* Desktop (60rem up, 2026-11-14 owner): the allowance sits at
+                    the right end of the title's row, sized to its words; the
+                    title row's height is the title's, so the card does not
+                    move when the count lands. Phones keep the strip stacked
+                    above the title (DOM order: status first). */}
+                <div className="intake-head">
+                  <div className="free-runs-slot" role="status" data-pending={freeRuns.pending || undefined}>
+                    {freeRuns.banner && stripKnown ? (
+                      <FreeRunsBanner
+                        banner={freeRuns.banner}
+                        offerSignIn={showAccount && authUser.ready && !authUser.user}
+                        offerUpgrade={billing !== null && billing.plan === "free"}
+                        extraRunPrice={extraRunPrice}
+                      />
+                    ) : freeRuns.pending || freeRuns.banner ? (
+                      <div className="free-runs-ghost" aria-hidden="true" inert>
+                        <FreeRunsBanner banner={FREE_RUNS_GHOST} offerSignIn />
+                      </div>
+                    ) : null}
+                  </div>
+                  <h1 className="intake-title">New analysis</h1>
                 </div>
-                <p className="eyebrow">New analysis</p>
-                <h1 className="intake-title">Turn any short video into clean notes.</h1>
-                <p className="intake-lede">
-                  {/* Same pointer/touch swap as the drop zone's title
-                      (globals.css): "drop" is a lie on a touch screen. */}
-                  <span className="only-pointer">Paste a link or drop a file.</span>
-                  <span className="only-touch">Paste a link or add a file.</span> You get a
-                  transcript, the text on screen, a short summary, and notes you can keep.
-                </p>
                 <UploadForm
-                  onSubmit={submit}
+                  onSubmit={submitFresh}
                   submitting={submitting}
-                  blocked={freeRuns.blocked}
+                  blocked={freeRuns.blocked && stripKnown}
                   blockedPeriod={freeRuns.banner?.period}
+                  /* The out-of-runs offer, in order: sign in, upgrade, key. */
+                  blockedOffer={
+                    showAccount && authUser.ready && !authUser.user
+                      ? "sign-in"
+                      : billing !== null && billing.plan === "free"
+                        ? "upgrade"
+                        : "key"
+                  }
                   sharedUrl={formPrefill}
                   urlCapability={urlDownload}
                   /* Back at idle with an error means the submit was rejected,
@@ -373,54 +445,10 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                   limits={mediaLimits.limits}
                   signInForMinutes={signInForMinutes}
                 />
-              </div>
-
-              <aside className="wyg" aria-labelledby="wyg-title">
-                <h2 id="wyg-title" className="wyg-title">
-                  What you get
-                </h2>
-                <dl className="wyg-list">
-                  <div className="wyg-row">
-                    <dt className="chip">TL;DR</dt>
-                    <dd>
-                      <WhatYouGet
-                        short="A short read of what the video says."
-                        long="A short read of what the video says, so you can decide if it is worth your time."
-                      />
-                    </dd>
-                  </div>
-                  <div className="wyg-row">
-                    <dt className="chip">Notes</dt>
-                    <dd>
-                      <WhatYouGet
-                        short="Structured notes to copy or download."
-                        long="Structured notes to copy or download as Markdown."
-                      />
-                    </dd>
-                  </div>
-                  <div className="wyg-row">
-                    <dt className="chip">Transcript</dt>
-                    <dd>
-                      <WhatYouGet
-                        short="Timestamped, with speakers when clear."
-                        long="Timestamped, with speakers labeled when they can be told apart."
-                      />
-                    </dd>
-                  </div>
-                  <div className="wyg-row">
-                    <dt className="chip">On-screen</dt>
-                    <dd>
-                      <WhatYouGet
-                        short="Text, code, and charts from the frames."
-                        long="Text, code, and charts that appear in the frames, not just the audio."
-                      />
-                    </dd>
-                  </div>
-                </dl>
-                <p className="wyg-foot">
-                  Files are deleted from our servers as soon as a run finishes.
+                <p className="intake-retention">
+                  Your video is deleted from our servers when the run finishes. The result is kept for up to an hour, then deleted.
                 </p>
-              </aside>
+              </div>
             </div>
           )}
 
@@ -444,6 +472,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                 expired={expired}
                 canRefill={againUrl !== null}
                 onAnalyzeAgain={sourceKind === "file" && againUrl === null ? chooseFileAgain : analyzeAgain}
+                onBackToHistory={fromHistory ? backToHistory : undefined}
                 mediaKind={mediaKind}
                 freeRunRefunded={freeRunRefunded}
               />
@@ -495,8 +524,13 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     </p>
                   )}
                 </div>
+                {fromHistory ? (
+                  <button type="button" className="btn btn-secondary btn-block reset-wide" onClick={backToHistory}>
+                    Back to History
+                  </button>
+                ) : null}
                 <button type="button" className="btn btn-secondary btn-block reset-wide" onClick={startOver}>
-                  Analyze another file
+                  Analyze another
                 </button>
               </div>
 
@@ -509,11 +543,23 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     completeness={completeness}
                   />
                 </article>
-                {/* The same action, placed under the card on a phone where
+                {/* UX fix spec 4.4: where the result is kept. Static text, so
+                    it reserves its own height. Shown even when History cannot
+                    be saved: that error is only known to the History panel's
+                    own read, and a second IndexedDB read here is not cheap. */}
+                <p className="result-saved">
+                  History keeps your last {HISTORY_LIMIT} runs in this browser. Not synced.
+                </p>
+                {/* The same actions, placed under the card on a phone where
                     the source column is a pill above it. CSS shows exactly
-                    one of the two. */}
+                    one of each pair. */}
+                {fromHistory ? (
+                  <button type="button" className="btn btn-secondary btn-block reset-narrow" onClick={backToHistory}>
+                    Back to History
+                  </button>
+                ) : null}
                 <button type="button" className="btn btn-secondary btn-block reset-narrow" onClick={startOver}>
-                  Analyze another file
+                  Analyze another
                 </button>
               </div>
             </div>
@@ -535,12 +581,14 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
       )}
 
       {activeTab === "api-key" && (
-        <main className="view-scroll" data-view="api-key" aria-label="API key">
+        <main className="view-scroll" data-view="api-key" aria-label="Gemini key">
           <ApiKeyPanel
             budgetCapability={dailyBudget}
             /* Unlike the intake hint, offered with or without a key saved:
                this page is where the key goes in. */
             signInForMinutes={showAccount && authUser.ready && !authUser.user ? mediaLimits.upgradeMinutes : null}
+            signInPending={keySignInPending}
+            signInStandInMinutes={mediaLimits.byokMinutes ?? 10}
           />
         </main>
       )}
@@ -556,11 +604,14 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
           <AccountPanel
             authCapability={authCapability}
             runInProgress={runInProgress}
+            capabilitiesSettled={capabilitiesSettled}
             freeRuns={freeRuns.banner}
+            freeRunsPending={freeRuns.pending}
             billing={billing}
+            billingPending={billingPending}
+            billingFailed={billingFailed}
             checkoutReturn={checkoutReturn}
-            paidMinutes={mediaLimits.paidMinutes}
-            signInMinutes={mediaLimits.upgradeMinutes}
+            limits={mediaLimits}
           />
         </main>
       )}
@@ -587,19 +638,6 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
         }}
       />
     </div>
-  );
-}
-
-/* The "What you get" lines come in two lengths, as drawn: the phone board
-   (single column, panel under the card) uses the short ones, the desktop
-   board the long. Both are in the DOM and CSS shows one — `display: none`
-   keeps the other out of the accessibility tree, so it is read once. */
-function WhatYouGet({ short, long }: { short: string; long: string }) {
-  return (
-    <>
-      <span className="wyg-short">{short}</span>
-      <span className="wyg-long">{long}</span>
-    </>
   );
 }
 

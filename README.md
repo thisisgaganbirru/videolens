@@ -175,9 +175,11 @@ never a deployment manifest. See `docs/container-workflows.md`.
   plan: runs past `limit` are billed, not refused).
 - `GET /api/billing` — the signed-in caller's plan: `{"enabled": false}`
   with billing off, else `{ enabled, plan, status, interval,
-  current_period_end, cancel_at_period_end, runs: { limit, used }, prices:
-  { month, year, extra_run } }` (amounts in cents, read from Stripe; any may
-  be `null`). `POST /api/billing/checkout` `{ interval: "month" | "year" }`
+  current_period_end, cancel_at_period_end, runs: { limit, used, period },
+  extra_runs, prices: { month, year, extra_run } }` (amounts in cents, read
+  from Stripe; any may be `null`). `extra_runs` is `{ used, limit, period:
+  "month", resets_at }` on the paid plan (billed extra runs this UTC month,
+  `limit` null when the cap is off) and `null` otherwise. `POST /api/billing/checkout` `{ interval: "month" | "year" }`
   and `POST /api/billing/portal` return `{ url }` for Stripe-hosted Checkout
   or the Customer Portal (signed-in person only; `409 already_subscribed`,
   `404 no_billing_account`). `POST /api/billing/webhook` is Stripe's,

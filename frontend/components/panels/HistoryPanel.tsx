@@ -2,7 +2,7 @@
 
 import { useId, useMemo, useState } from "react";
 import { AudioLines, ChevronDown, Play } from "lucide-react";
-import { useRunHistory, type HistoryEntry } from "@/application/useRunHistory";
+import { HISTORY_LIMIT, useRunHistory, type HistoryEntry } from "@/application/useRunHistory";
 import type { RunSourceKind } from "@/domain/entities";
 import {
   HISTORY_FILTERS,
@@ -38,7 +38,7 @@ export default function HistoryPanel({ onOpenRun, onAnalyze }: HistoryPanelProps
     <div className="history">
       <header className="history-head">
         <h1 className="history-title">History</h1>
-        <p className="history-lede">Your recent analyses. Open one to read its notes again.</p>
+        <p className="history-lede">Your last {HISTORY_LIMIT} runs, saved in this browser. Not synced.</p>
       </header>
       <HistoryBody
         runs={runs}
@@ -69,11 +69,11 @@ function HistoryBody({
       <div className="history-empty" data-error-kind="storage" role="status">
         <p className="history-empty-title">{error.message}</p>
         <p className="history-empty-body">
-          This browser isn&apos;t letting VideoLens keep anything on this device, which private
-          browsing often does. You can still analyze videos; their results just won&apos;t wait
-          here afterwards.
+          This browser isn&apos;t letting VideoLens save anything, which private browsing often
+          does. You can still analyze videos; their results just won&apos;t be kept here
+          afterwards.
         </p>
-        <button type="button" className="btn btn-secondary" onClick={onAnalyze}>
+        <button type="button" className="btn btn-primary" onClick={onAnalyze}>
           Analyze a video
         </button>
       </div>
@@ -109,7 +109,7 @@ function HistoryBody({
         <p className="history-empty-body">
           Analyze a link or a file and it will wait here, so you can read its notes again later.
         </p>
-        <button type="button" className="btn btn-secondary" onClick={onAnalyze}>
+        <button type="button" className="btn btn-primary" onClick={onAnalyze}>
           Analyze a video
         </button>
       </div>

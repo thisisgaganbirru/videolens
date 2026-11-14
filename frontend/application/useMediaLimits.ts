@@ -21,6 +21,10 @@ export const FALLBACK_LIMITS: MediaLimitsTable = { standard: STANDARD, signedInB
 
 let table: MediaLimitsTable = FALLBACK_LIMITS;
 let requested = false;
+/* The read has answered, either way (2026-11-14). The Account panel waits
+   for it before quoting a video length, so a paid account never sees the
+   fallback's 3 minutes for a moment. */
+let settled = false;
 const listeners = new Set<() => void>();
 
 function subscribe(listener: () => void): () => void {
@@ -34,11 +38,14 @@ function load(): void {
   limitsGateway.fetchLimits().then(
     (next) => {
       table = next;
+      settled = true;
       listeners.forEach((listener) => listener());
     },
     () => {
       /* Quiet: the fallback is already in place, and the server re-checks
          every upload. Reachability is reported by the other launch reads. */
+      settled = true;
+      listeners.forEach((listener) => listener());
     }
   );
 }
@@ -69,6 +76,16 @@ export type MediaLimitsState = {
    *  and for good when it fails; the numbers above are then the fallback.
    *  The landing page quotes a length only once this is true. */
   known: boolean;
+  /** The read has answered, success or failure. After a failure the
+   *  numbers are the fallback, which is what an older server enforces. */
+  settled: boolean;
+  /** The standard tier's length in seconds (what a free account without a
+   *  key gets), for the Account panel's comparison. */
+  standardSeconds: number;
+  /** Minutes the signed-in-with-a-key tier allows, when that is longer than
+   *  the standard tier; null when the server reports no longer tier. Unlike
+   *  `upgradeMinutes` it does not depend on who is asking. */
+  byokMinutes: number | null;
 };
 
 /**
@@ -81,6 +98,7 @@ export type MediaLimitsState = {
 export function useMediaLimits(signedIn: boolean, paid = false): MediaLimitsState {
   const current = useSyncExternalStore(subscribe, () => table, () => FALLBACK_LIMITS);
   const hasKey = useSyncExternalStore(subscribeKey, hasKeySnapshot, hasKeyServerSnapshot);
+  const isSettled = useSyncExternalStore(subscribe, () => settled, () => false);
 
   useEffect(() => {
     load();
@@ -101,6 +119,9 @@ export function useMediaLimits(signedIn: boolean, paid = false): MediaLimitsStat
     paidMinutes: current.paid ? Math.floor(current.paid.maxDurationSeconds / 60) : null,
     hasKey,
     known: current !== FALLBACK_LIMITS,
+    settled: isSettled,
+    standardSeconds: current.standard.maxDurationSeconds,
+    byokMinutes: larger ? Math.floor(current.signedInByok.maxDurationSeconds / 60) : null,
   };
 }
 

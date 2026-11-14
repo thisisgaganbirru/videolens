@@ -43,12 +43,20 @@ function openAccount(event: MouseEvent<HTMLAnchorElement>) {
 export default function ApiKeyPanel({
   budgetCapability,
   signInForMinutes = null,
+  signInPending = false,
+  signInStandInMinutes = 10,
 }: {
   budgetCapability?: Capability | null;
   /** Minutes a signed-in person on their own key may send, offered only
    *  where sign-in works and nobody is signed in, and only when the server
    *  reports a larger tier (HomeScreen decides). Null hides the line. */
   signInForMinutes?: number | null;
+  /** Whether the sign-in line applies is not known yet (session, the
+   *  capabilities report or `/api/limits` still on its way). Its space is
+   *  then held so the actions and the guide do not drop when it lands. */
+  signInPending?: boolean;
+  /** Minutes the held line is sized with; never seen. */
+  signInStandInMinutes?: number;
 }) {
   const { value, stored, saved, update, save, clear } = useGeminiApiKey();
   const [revealed, setRevealed] = useState(false);
@@ -93,11 +101,11 @@ export default function ApiKeyPanel({
     status = (
       <span className="key-status" data-tone="saved">
         <Check aria-hidden="true" />
-        Saved on this device
+        Saved in this browser
       </span>
     );
   } else if (!hasStored && saved) {
-    status = <span className="key-status">Removed from this device</span>;
+    status = <span className="key-status">Removed from this browser</span>;
   } else if (dirty && value.trim()) {
     status = <span className="key-status">Not saved yet</span>;
   }
@@ -106,10 +114,10 @@ export default function ApiKeyPanel({
     <div className="key-page">
       <AppBackLink />
       <header className="view-head">
-        <h1 className="view-title">API key</h1>
+        <h1 className="view-title">Gemini key</h1>
         <p className="view-lede">
-          Optional. You get a few free runs. Add your own Gemini key to keep going. It is stored in
-          this browser only.
+          Optional. VideoLens works without a key. Runs on your own Gemini key don&apos;t count
+          toward your daily runs. The key is saved in this browser only.
         </p>
       </header>
 
@@ -121,7 +129,7 @@ export default function ApiKeyPanel({
 
       <form className="key-card" onSubmit={handleSubmit} noValidate>
         <label htmlFor={fieldId} className="key-label">
-          Gemini API key
+          Gemini key
         </label>
         <div className="key-row">
           <input
@@ -186,6 +194,14 @@ export default function ApiKeyPanel({
             <a className="text-link" href={mainTabHref("account")} onClick={openAccount}>
               Sign in
             </a>
+          </p>
+        ) : signInPending ? (
+          /* Same sentence, same box, held unseen while it is not known
+             whether the line applies (UX fix follow-up: it used to arrive
+             late and push Save and the guide down). Not a link, not read. */
+          <p className="key-help key-signin key-signin-ghost" aria-hidden="true" inert>
+            Signed in with your own key, you can analyze videos up to {signInStandInMinutes} minutes.{" "}
+            <span className="text-link">Sign in</span>
           </p>
         ) : null}
         <div className="key-actions">

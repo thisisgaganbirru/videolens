@@ -336,7 +336,7 @@ intake and on the result view. It is now `position: sticky; bottom:
 max(var(--space-sm), var(--safe-bottom))` with `margin: auto auto <same>`, the
 last flex item of `.shell`. Measured at 390×844 app shell, light and dark:
 dock 764–828 before and after scrolling the intake, the progress view and the
-result to the bottom; the terms checkbox, Retry and "Analyze another file" are
+result to the bottom; the terms checkbox, Retry and "Analyze another" are
 all hit-testable (nothing over them).
 
 **Keyboard (#2).** `application/useSoftKeyboard.ts` (mounted once in
@@ -927,7 +927,51 @@ dark. `verify_reach.py` covers the reachability notice (32/32).
   the coarse-pointer `2.75rem` floor. Sheet rows still keep their `3.5rem`
   min-height. Both are outside this pass.
 
+## Document titles (UX fix spec, 2026-11-14)
+
+`application/useDocumentTitle.ts` sets `document.title` in an effect to
+`<label> · <suffix>`; the suffix is the prerendered title's last " · " part
+(the site name), read once. `HomeScreen` labels: Analyze idle "Analyze a
+video", queued/processing/lost "Analyzing", failed "Run failed", expired "Run
+expired", result the result title (or "Result"); "History", "Gemini key",
+"Releases", "Account". No render-time DOM read, no localStorage.
+
+## Phone menu order (UX fix spec 6.1, 2026-11-14)
+
+- `.menu-panel` rows are picked from `navTabs(showAccount)` in the order
+  Analyze, History, Account (when offered), Gemini key, Releases (`menuTabs` in
+  `AppNav`). `MAIN_TABS`, `navTabs`, the desktop inline tabs (Analyze,
+  History, Gemini key, Releases), the dock and the More sheet are unchanged.
+- The Gemini key row carries `.menu-item--minor-first` (`margin-top:
+  var(--space-md)`, declared after `.menu-item` because of its `all: unset`),
+  so the menu reads as two groups.
+- Signed out, the Account row reads "Sign in for 10 runs a day"
+  (`ACCOUNT_FREE_RUNS_PER_DAY`) on every route, the landing included. The bar
+  pill still uses `signedOutLabel` ("Sign in"; "Get 10 free runs" on `/`).
+- Measured at 320 and 412 on `/`, `/app`, every tab, the legal pages and
+  404: the same five rows, each 60px; `/offline` has no Account row (its
+  plain `AppNav`, by design). The variant that drops Gemini key and Releases
+  when Account exists was not built (needs the owner's yes).
+
+## Simplified idle Analyze column (2026-11-14)
+
+The idle Analyze view now uses one centred column capped at 46rem at all
+widths (38.75rem in Codex's first pass; widened the same day so the intake's
+lines do not wrap on desktop, see `upload-form.md`). The service-notice slot precedes it; within it the allowance strip
+(including its existing pending reservation) precedes the single h1 "New
+analysis", the intake card and the exact retention sentence below it. The
+old desktop marketing header and companion output panel are removed. Shell
+scrolling/dock clearance, landing, run, result and failed layouts are unchanged.
+This supersedes earlier descriptions of the two-column idle intake.
+Verified in Playwright (frontend agent review, 2026-11-14) at 320, 412,
+1024, 1280 and 1440, light and dark, web shell and (320/412) app shell: one
+h1, no horizontal overflow, the Account tab is in the DOM, the idle page does
+not scroll at 1280x800, and in the app shell "Analyze link" sits above the
+dock (bottom 434 vs dock top 560 at 320x640; 374 vs 835 at 412x915).
+
 ## Changelog
+
+- 2026-11-14 · Codex · idle Analyze now uses one centred 38.75rem column at every width with a New analysis h1, allowance above and retention below the card; removed the idle companion panel while retaining shared landing styles and existing run/result/failed layouts
 
 - 2026-08-15 · frontend agent (foundation) · rebuilt the shell to the Terminal direction: one-viewport flex chain, pill nav, mobile drawer, 4 tabs, theme toggle
 - 2026-08-15 · main session · added the tab-alignment margin so History/API key/Releases match .workspace; verified nav + drawer geometry with Playwright
@@ -963,3 +1007,7 @@ dark. `verify_reach.py` covers the reachability notice (32/32).
 - 2026-11-14 · frontend agent · dock gains an Account item (4 items when `showAccount`, 62px each at 320, 52px tall, labels unclipped); the More sheet drops its Account row. See auth-sign-in.md
 - 2026-11-14 · frontend agent · top bar: `.nav-account--signin` modifier, a "Sign in" pill (auto width, 44px) in the `.nav-account` slot when signed out; same display rules (≥48rem, hidden in the sideways app shell); nothing in the slot until auth state is ready. See auth-sign-in.md
 - 2026-11-14 · frontend agent · landing, legal and 404 render `RouteNav`/`RouteTabBar` (AppNav/BottomTabBar plus the Account entry from `useAccountEntry`); `/offline` keeps plain AppNav/BottomTabBar. See auth-sign-in.md
+- 2026-11-14 · frontend agent · the `api-key` tab is labelled "Gemini key" in the top bar, phone menu and More sheet; id and URL unchanged (UX fix spec batch a)
+- 2026-11-14 · frontend agent · UX fix spec batch c: per-view document titles via `useDocumentTitle`
+- 2026-11-14 · frontend agent · UX fix spec batch e: phone menu order Analyze, History, Account, Gemini key, Releases with a gap before the minor pair; signed-out menu row "Sign in for 10 runs a day" on every route
+- 2026-11-14 · frontend agent · idle Analyze column widened to 46rem (one line per intake line on desktop); Codex's single-column layout verified in the browser at 320-1440, both shells, both themes

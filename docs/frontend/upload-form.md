@@ -221,7 +221,7 @@ link is 52px tall (`.link-row .btn` min-height 3.25rem), Browse files 44px.
 - **Prefill (#7, #14).** The `sharedUrl` prop is now `HomeScreen`'s
   `formPrefill`: the newer of the live share and an expired run's "Analyze it
   again" link. A share already used is dismissed when the user starts over
-  ("Analyze another file", "Stop watching"), so the remounted form comes back
+  ("Analyze another", "Stop watching"), so the remounted form comes back
   empty instead of re-taking the old share. Terms stay ticked. Measured: share
   `/app?share-target=1&url=…` fills the field; after the run, "Analyze another
   file" shows an empty field with terms still ticked.
@@ -386,13 +386,15 @@ Owner decision "Level 2": signed in **and** a Gemini key saved → videos up to
   (an older server answers 404), both tiers are 180 s / 200 MB
   (`FALLBACK_LIMITS`), so an older server is never promised 10 minutes.
   `useMediaLimits(signedIn, paid)` watches the saved key (`apiKeyStore.subscribe`)
-  and returns `{limits, extended, upgradeMinutes, paidMinutes, hasKey}`. The
+  and returns `{limits, extended, upgradeMinutes, paidMinutes, hasKey}` plus,
+  since 2026-11-14, `settled` (the read has answered, either way),
+  `standardSeconds` and `byokMinutes` for the Account panel. The
   tier is `paid` when signed in on the paid plan and the server reported one,
   else `signed_in_byok` when signed in with a key, else `standard`. Called
   once from `HomeScreen` with `Boolean(authUser.user)` and the plan (from
   `useBilling` or the free-runs read), so sign-in/out, the plan and saving or
   removing the key recompute it. `paidMinutes` (null without a `paid` tier)
-  feeds the Account Plan pitch.
+  feeds the Account panel's Upgrade comparison.
 - `UploadForm` props `limits` (defaults to standard) and `signInForMinutes`.
   The drop hint reads "MP3, MP4, or MOV. Up to 500 MB and 10 minutes." (or
   200 MB / 3 minutes); the size and duration errors quote the same numbers
@@ -426,7 +428,72 @@ A one-line "By analyzing, you agree to the Terms." under Analyze link was
 added and removed the same day (owner decision): the required checkbox
 already records acceptance. `.link-row` is back to three grid areas.
 
+## UX fix spec, batch b (2026-11-14)
+
+- **Link label** is "Paste a public link" (placeholder unchanged).
+- **Out-of-runs block.** `#intake-blocked` is now a `div`
+  (`.intake-blocked__text` + `.intake-blocked__actions`) offering one way out
+  by the new `blockedOffer` prop (`"sign-in" | "upgrade" | "key"`, default
+  `"key"`). The `aria-describedby` wiring on Analyze link and Browse files is
+  unchanged. `blockedPeriod` stays a prop but is no longer read. Copy and
+  rules in `free-runs.md`, "Strip and out-of-runs offer".
+- **Phone header (below 32rem).** The h1 holds two spans,
+  `.intake-title__long` ("Turn any short video into clean notes.") and
+  `.intake-title__short` ("New analysis"); CSS shows one, so the h1 reads as
+  one phrase. The intake's eyebrow and lede are hidden there. Desktop is
+  untouched. Measured: at 320x640 web, Analyze link ends at y=444; at 320x640
+  app shell, the link field and Analyze link (392-444) sit above the dock
+  (560); at 412x915 both are in the first screen; at 1280x800 the idle intake
+  does not scroll (band scrollHeight = clientHeight = 666).
+
+## Simplified Analyze entry (2026-11-14)
+
+This supersedes the earlier two-column board layout. Idle Analyze now has
+one "New analysis" h1 at every width, with no eyebrow, marketing headline,
+introduction or "What you get" panel. The intake is centred with a maximum
+width of 46rem (736px; was 38.75rem in Codex's first pass, see below). The existing free-runs strip stays above the title
+with its live region, pending stand-in, wording and pre-paint saved-key gate.
+The exact former panel retention sentence appears directly below the intake
+card as 14px muted text at every width. UploadForm controls, consent wording
+and blocked state are unchanged. Removed panel and title-switch CSS; shared
+landing eyebrow, output-row and chip styles remain. Run/result/failed states
+are unchanged.
+
+### Card width: one line each on desktop (frontend agent review, 2026-11-14)
+
+Owner: "Don't wrap anything, extend the box properly." `.intake-layout`'s
+`max-width` is **46rem** at every width (phones fill the gutters anyway).
+Sized to the longest line, measured in the browser at 1280: the consent
+sentence is 625px at 14px, plus the checkbox column (32px) and the card's
+padding and border (50px) = 707px, so 736px leaves ~29px. The retention
+line under the card (688px), the file hint (304px), the allowance strip text
+(408px anonymous, 280-344px signed in or spent) and the out-of-runs block
+(274px sentence, 409-423px actions) all fit. The strip is in the same column,
+so it is the same width and left edge as the card. rem, so it scales with
+the text.
+
+Measured lines (Playwright, mocked `/api/`, light and dark):
+
+| Width | Consent | Retention | File hint | Strip | Out-of-runs sentence |
+|---|---|---|---|---|---|
+| 1024 / 1280 / 1440 | 1 | 1 | 1 | 1 | 1 |
+| 412 | 3 | 2 | 2 | 1-2 | 1 |
+| 320 | 4 | 3 | 2 | 2 | 2 |
+
+Phones: `text-wrap: pretty` on the consent text, retention line, file hint,
+strip text and blocked sentence (no lone last word); the Terms / Privacy
+Policy links are `nowrap`, and "200 MB" is joined by a no-break space in
+UploadForm, so neither splits. Button labels stay on one line at every
+width. No horizontal overflow at 320-1440. At 1280x800 the idle page does
+not scroll (runs left, signed in, out of runs). CLS on load: 0.0006-0.0027
+everywhere except the known out-of-runs in-card shift (0.017 at 1440, 0.024
+at 1280, 0.039 at 1024, 0.083-0.112 at 412/320) and signed in at 412 (0.016-
+0.018: the strip's stand-in is the two-line anonymous sentence, the signed-in
+one is one line).
+
 ## Changelog
+
+- 2026-11-14 · Codex · simplified idle Analyze to one centred column with a single New analysis h1 at every width, removed the marketing introduction/output panel and dead CSS, retained the allowance reservation above the title, and moved the exact retention sentence below the card
 
 - 2026-08-15 · frontend agent · ported UploadForm to the unboxed .intake; returns a fragment since HomeScreen supplies the wrapper
 - 2026-08-15 · frontend agent (error block weight) · split HomeScreen's one error branch in two — idle demoted to an inline note in UploadForm's own error slot, poll-death promoted to a full .error-block with a start-over button inside it; requested an `.error-note` class
@@ -453,3 +520,8 @@ already records acceptance. `.link-row` is back to three grid areas.
 - 2026-11-13 · frontend agent · "By analyzing, you agree to the Terms." under Analyze link (`.link-consent`, new `consent` grid area of `.link-row`)
 - 2026-11-13 · frontend agent · removed the "By analyzing, you agree to the Terms." line and its `consent` grid area (the checkbox covers acceptance); terms key bumped to `videolens-media-terms-v2`, v1 cleared from storage; rule: bump the version whenever the Terms change materially
 - 2026-11-13 · frontend agent · terms key bumped to `videolens-media-terms-v3` for the Terms' Paid plan section, v2 added to `RETIRED_KEYS`; `useMediaLimits(signedIn, paid)` picks the `paid` tier from `GET /api/limits` when the plan is paid (docs/frontend/billing.md)
+- 2026-11-14 · frontend agent · `useMediaLimits` also returns `settled`, `standardSeconds` and `byokMinutes` (Account panel's Plan and usage card and Upgrade comparison); upload form unchanged
+- 2026-11-14 · frontend agent · "What you get" foot reads "Your video is deleted from our servers when the run finishes. The result is kept for up to an hour, then deleted." (UX fix spec batch a)
+- 2026-11-14 · frontend agent · UX fix spec batch b: "Paste a public link"; out-of-runs block with `blockedOffer` (sign-in / upgrade / key) and `.intake-blocked__*` classes; phone-only short h1 "New analysis" with eyebrow and lede hidden below 32rem
+- 2026-11-14 · frontend agent · reviewed Codex's simplified intake in the browser; card widened to 46rem so the consent, retention, hint and strip lines are one line each at 1024-1440; phone wrapping tidied (`text-wrap: pretty`, nowrap legal links, "200 MB"); stale UploadForm comment fixed
+- 2026-11-14 · frontend agent · desktop (60rem up) intake centred in the content band: `main.view-scroll:has(> .intake-layout)` is a size container and `.intake-layout` gets `margin-top: max(0px, (100cqb - 27rem) / 2)` (fixed anchor, so the out-of-runs card grows downward instead of re-centring; taller than the band starts at the top and scrolls). Allowance strip and h1 wrapped in `.intake-head`, a title-left / strip-right row on desktop; phones unchanged

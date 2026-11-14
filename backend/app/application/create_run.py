@@ -25,7 +25,7 @@ from ..domain.errors import (
     RunSchedulingError,
     TermsNotAcceptedError,
 )
-from ..domain.policies import seconds_until_next_utc_day, utc_month
+from ..domain.policies import seconds_until_next_utc_day
 from ..domain.run_facts import file_platform
 from ..domain.ports import (
     AccountFreeRunAllowance,
@@ -278,9 +278,9 @@ class CreateRunUseCase:
         )
         if claim is not None:
             return _Admission(allowance=accounts, claim=claim)
-        period = utc_month(billing.now())
+        period = billing.extra_runs_period()
         cap = billing.extra_runs_monthly_cap
-        if cap > 0 and await billing.ledger.count(paid.account_id, period) >= cap:
+        if cap > 0 and await billing.extra_runs_used(paid.account_id, period) >= cap:
             raise ExtraRunsCapReachedError(EXTRA_RUNS_CAP_MESSAGE, limit=cap)
         return _Admission(allowance=_ExtraRunHold(billing.ledger, paid, period), claim=None)
 

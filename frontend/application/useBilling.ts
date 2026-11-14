@@ -21,8 +21,8 @@ import { billingGateway, nativeShell } from "@/infrastructure/container";
    Quiet by design, like the other launch reads. Nothing is fetched unless
    the server's `billing` capability is `ok` and someone is signed in, so a
    server with billing off (or without it) sees no request and the app looks
-   exactly as before. A failed read hides the Plan group rather than guessing;
-   a later read (tab visible again, app resumed) can bring it back.
+   exactly as before. A failed read keeps the Account group's reservation
+   and shows an unavailable message; a later read can recover it.
 
    Returning from Checkout (`/app?view=account&billing=success|cancel`): the
    param is read once and stripped, then for success the plan is re-read with
@@ -37,10 +37,16 @@ type Snapshot = {
    *  being read (signed out, or the server sells no plan). */
   owner: string | null;
   status: BillingStatus | null;
+  /** A read has answered for `owner`, success or failure (2026-11-14). False
+   *  from the moment an owner is set until then: the Account panel keeps the
+   *  billing group's height reserved meanwhile, so it does not push the
+   *  groups under it down when it lands. */
+  settled: boolean;
+  failed: boolean;
   notice: CheckoutReturn | null;
 };
 
-let snapshot: Snapshot = { owner: null, status: null, notice: null };
+let snapshot: Snapshot = { owner: null, status: null, settled: false, failed: false, notice: null };
 const listeners = new Set<() => void>();
 let owner: string | null = null;
 let epoch = 0;
@@ -72,14 +78,15 @@ export function refreshBilling(): Promise<BillingStatus | null> {
       inFlight = null;
       if (asked !== epoch) return refreshBilling();
       const confirmed = isPaid(status) && (snapshot.notice === "confirming" || snapshot.notice === "unconfirmed");
-      publish({ owner, status, ...(confirmed ? { notice: "paid" as const } : {}) });
+      publish({ owner, status, settled: true, failed: false, ...(confirmed ? { notice: "paid" as const } : {}) });
       return status;
     },
     (): null | Promise<BillingStatus | null> => {
       inFlight = null;
       if (asked !== epoch) return refreshBilling();
-      /* Keep a plan already shown (a blip should not make it vanish); with
-         none yet, the group simply stays hidden. */
+      /* Retain any last-known plan for sizing and entitlements. The panel
+         shows an unavailable message in the same reserved space. */
+      publish({ settled: true, failed: true });
       return null;
     }
   );
@@ -92,7 +99,7 @@ function setOwner(next: string | null): void {
   owner = next;
   epoch += 1;
   inFlight = null;
-  publish({ owner: next, status: null });
+  publish({ owner: next, status: null, settled: false, failed: false });
   if (next) void refreshBilling();
 }
 
@@ -172,6 +179,10 @@ export function useBilling(userId: string | null, enabled: boolean) {
     /** `{enabled: true, ...}` only once read; null while unknown, signed
      *  out, failed, or when the server sells no plan. */
     billing: (status && status.enabled ? status : null) as BillingDetails | null,
+    /** The server sells a plan, someone is signed in, and the plan has not
+     *  answered yet: the billing group may be about to appear. */
+    pending: active && !(current.owner === userId && current.settled),
+    failed: active && current.owner === userId && current.failed,
     /** The checkout-return notice, if this load came back from Checkout. */
     notice: current.notice,
   };
