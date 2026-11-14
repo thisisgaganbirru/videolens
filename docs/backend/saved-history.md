@@ -10,7 +10,12 @@ account, free ones too.
 Both are off (nothing saved, nothing held, every list empty) without a
 database. Saving also needs billing on: with any required `STRIPE_*` blank
 nothing is saved or removed, though rows already there stay listable and
-deletable.
+deletable. The one exception is **complimentary Plus** (`accounts.complimentary_plus`,
+`billing.md`, since 2026-11-14): such an account is on the paid plan with
+or without Stripe, so its runs are saved and `saving` is true even with
+Stripe off. The post-cancel window (arming, purging, the restore re-arm,
+`expires_at`) still needs Stripe on, so switching Stripe off never starts
+removing anyone's runs.
 
 ## Files
 
@@ -160,9 +165,10 @@ caption path and the main path. It saves only when:
 - the run has an `account_id` (recorded at intake on the Redis run record,
   never a job argument), and
 - that account is on the paid plan **at completion time**
-  (`BillingPlans.paid_account`: active or trialing within its period plus 3
-  days). A run started while paid that finishes after the plan ended is not
-  saved; one started free that finishes paid is.
+  (`BillingPlans.standing(...).paid`: a subscription active or trialing
+  within its period plus 3 days, or complimentary Plus). A run started
+  while paid that finishes after the plan ended is not saved; one started
+  free that finishes paid is.
 
 Runs made with the account's API keys are saved too (same account). BYOK
 runs are saved like any other (the key is never part of the record).
@@ -209,6 +215,16 @@ the table.
   whose webhook has not arrived yet is cleared, not purged.
 - After it: the cleanup removes the account's saved runs for good and
   clears the date.
+- **Complimentary Plus never gets a window.** It counts as paid
+  everywhere above: `sync_expiry` clears instead of arming (a cancelled
+  subscription on a complimentary account arms nothing), `arm_lapsed`
+  skips it (the SQL scan filters `complimentary_plus = false` and the
+  application re-checks), `purge_expired` clears an expiry armed before the
+  flag was set instead of purging. Clearing the flag by hand later makes the
+  account an ordinary lapsed one: with Stripe on, the backstop arms a fresh
+  30-day window on its next tick.
+- The window logic runs only with Stripe billing on (`SavedHistory.windows_enabled`);
+  with it off nothing is armed or removed and `expires_at` is null.
 
 ### The deletion hold: `ACCOUNT_DELETION_HOLD_DAYS` = 30
 
@@ -226,7 +242,9 @@ counters, saved runs. **The Supabase user stays too**: the person has to be
 able to sign in to restore. Saved runs of a held account are never touched
 by the window scans. A restore re-arms a fresh full window for them (from
 the restore, since the account is now free), so the hold never eats into
-it.
+it. A restore leaves `complimentary_plus` as it was (decision 2026-11-14,
+the simplest): a complimentary account comes back on complimentary Plus,
+its saved runs are kept with no window, and saving resumes.
 
 After `purge_at`, the hourly cleanup, per account (25 per tick):
 
@@ -327,3 +345,4 @@ on Postgres if `DATABASE_APP_ROLE` does not exist.
 - 2026-11-14 · backend agent · saved runs keep the poster: `saved_runs.thumbnail` (text null, in 0006 in place), `thumbnail` on every `GET /api/history` item and on `GET /api/history/{run_id}`, same shape as a live run's; size guard drops segments, then the poster, then skips; recorded the owner's confirmations on keys during the hold, no fresh account during the hold, no API-key history reads
 - 2026-11-14 · backend agent · created: paid saved history (migration 0006, saving on success, `/api/history*`, `saved_history` on `/api/me`), the post-cancel window, the 30-day deletion hold with `POST /api/me/restore`, and the hourly cleanup cron
 - 2026-11-14 · backend agent · migration `0008_value_checks`: `ck_saved_runs_completeness` (`full` | `captions_only`)
+- 2026-11-14 · backend agent · complimentary Plus (`accounts.complimentary_plus`, migration 0010): saved and `saving: true` with or without Stripe; never a post-cancel window (sync/arm/purge treat it as paid, the SQL arm scan skips it); window logic gated on Stripe on (`windows_enabled`); restore leaves the flag as it was

@@ -15,7 +15,10 @@ from Stripe for display. No amount is written in the code.
 
 If any required `STRIPE_*` setting is blank, billing is off. Every account
 then follows the free rules exactly as it did before billing existed, and
-the `billing` capability row reads `disabled`.
+the `billing` capability row reads `disabled`. The one exception is
+**complimentary Plus** (since 2026-11-14, see that section below): an
+account whose `accounts.complimentary_plus` the owner set by hand in SQL is
+on the paid plan with or without Stripe, and is never billed.
 
 History stays in the browser. Billing adds three small tables next to the
 identity tables: who is subscribed, which webhooks were handled, and which
@@ -30,7 +33,8 @@ extra runs are owed. It stores no run content and no result.
 | domain | `domain/policies.py` | `subscription_grants_paid` (active/trialing plus a 3-day renewal grace), `subscription_is_live` |
 | domain | `domain/ports.py` | `BillingGateway`, `BillingAccounts`, `ExtraRunLedger`; `AccountFreeRunAllowance.status/try_consume(limit=)` |
 | domain | `domain/errors.py` | `Billing*Error` (each has a `code`), `WebhookSignatureError`, `ExtraRunsCapReachedError`, `SubscriptionCancelFailedError` |
-| application | `application/billing.py` | `BillingPlans` (decides whether an account is paid right now), `ExtraRunBilling` (complete, void, flush) |
+| domain | `domain/entities.py` | `PlanStanding` (`subscription`, `complimentary`, `paid`, `billable`), `Account.complimentary_plus` |
+| application | `application/billing.py` | `BillingPlans` (decides whether an account is paid right now: `standing`, `paid_account`, `is_complimentary`, `offered`), `ExtraRunBilling` (complete, void, flush) |
 | application | `get_billing.py`, `start_checkout.py`, `open_billing_portal.py`, `handle_billing_webhook.py` | the four endpoints |
 | application | `create_run.py` | paid admission: included runs, then an extra-run hold, the monthly safety cap, DAILY_RUN_CAP exemption |
 | application | `process_run.py`, `get_run.py` | bill on a successful `set_result`; void on every other ending (including the stale-run sweep) |
@@ -39,6 +43,7 @@ extra runs are owed. It stores no run content and no result.
 | infrastructure | `billing/stripe_gateway.py` | `StripeBillingGateway(settings)`: stripe-python `StripeClient`, calls run in a thread, every Stripe object reduced to a domain record |
 | infrastructure | `persistence/billing_store.py` | SQL and in-memory `BillingAccounts` / `ExtraRunLedger` |
 | infrastructure | `persistence/schema.py`, `migrations/versions/0004_billing.py` | the three tables |
+| infrastructure | `migrations/versions/0010_complimentary_plus.py`, `persistence/account_directory.py` | `accounts.complimentary_plus`, read into `Account` |
 | infrastructure | `health/probes.py` | `BillingProbe` |
 | infrastructure | `config.py` | `STRIPE_*`, `PAID_*`, `BILLING_RETURN_ORIGIN`, `billing_configured`, `distributed_billing_error()` |
 | interface | `api/routes.py`, `api/schemas.py`, `api/error_handlers.py` | the endpoints, DTOs, `{detail, code}` errors |
@@ -100,6 +105,15 @@ account store, the response is exactly `{"enabled": false}`. Otherwise:
 - `amount` is in the currency's smallest unit (cents). A price is `null`
   when it is not configured (yearly is optional), when Stripe could not be
   read just now, or when the Price is tiered.
+- `complimentary` (bool, since 2026-11-14) is `true` only when the account
+  is on the paid plan through complimentary Plus and not through a paying
+  subscription; hide checkout and "Manage billing" then. `false` for
+  everyone else, including a complimentary account that also has a paying
+  subscription (the subscription wins). A complimentary account gets this
+  full body even with billing off, with `enabled: false` (still "Stripe
+  billing is on here"), `plan: "paid"`, `status`/`interval`/
+  `current_period_end` null, `extra_runs` null and every price null. See
+  "Complimentary Plus".
 
 ### `POST /api/billing/checkout`
 
@@ -112,6 +126,7 @@ signed-in person may call it: anonymous gets 401 and an API key gets 403.
 | 200 | `{"url"}` | |
 | 400 | `{"detail","code":"invalid_interval"}` | `year` with no yearly price configured |
 | 409 | `{"detail","code":"already_subscribed"}` | the stored subscription is live (active, trialing, past_due, unpaid, incomplete or paused); open the portal instead |
+| 409 | `{"detail","code":"complimentary_plan"}` | complimentary Plus with no paying subscription, Stripe on or off (since 2026-11-14); nothing is created in Stripe |
 | 422 | FastAPI validation | `interval` is not `month` or `year` |
 | 503 | `{"detail","code":"billing_disabled"}` | billing off |
 | 503 | `{"detail","code":"billing_unavailable"}` | Stripe refused or could not be reached |
@@ -126,7 +141,9 @@ after returning.
 No body. The response is `{"url"}`, a Stripe Customer Portal session that
 returns to `/app?view=account`. Only a signed-in person may call it. An
 account that never started a checkout gets 404 `{"detail","code":"no_billing_account"}`.
-The 503 codes are the same as for checkout.
+The 503 codes are the same as for checkout. A complimentary Plus account
+gets 409 `{"detail","code":"complimentary_plan"}` instead of the 404 (no
+Stripe customer) and instead of 503 `billing_disabled` (Stripe off).
 
 ### `POST /api/billing/webhook`
 
@@ -168,7 +185,11 @@ gets ids only: event, customer, subscription and account.
 - `GET /api/limits` gains `"paid": {"max_duration_seconds", "max_file_size_mb"}`,
   listed whether or not billing is on.
 - `GET /api/me`: `entitlement.plan` is `"paid"` (with `metered: true`) for
-  a paid account, with the paid media limits.
+  a paid account, with the paid media limits. Since 2026-11-14
+  `entitlement.complimentary` (bool): `true` with `plan: "paid"` and
+  `metered: false` for complimentary Plus.
+- `GET /api/free-runs`, signed in, since 2026-11-14: `"complimentary": bool`;
+  complimentary Plus reads `plan: "paid"`, `overage: false`.
 - `POST /api/runs`: a paid account past its included runs and at
   `PAID_EXTRA_RUNS_MONTHLY_CAP` gets 402 `{"detail","code":"extra_runs_cap","limit"}`.
   This is a new code; the frontend shows "add your own key or wait for next month".
@@ -342,6 +363,56 @@ plan (`policies.subscription_has_ended`: not paid, and not `past_due` /
 `incomplete`) starts the 30-day post-cancel window, a resubscribe clears
 it. The cleanup cron arms any window the webhook missed.
 
+### Complimentary Plus (`accounts.complimentary_plus`, 2026-11-14)
+
+Owner decision: the owner's own account is on Plus permanently, without
+Stripe, to test it and use the product. Migration `0010_complimentary_plus`
+adds `accounts.complimentary_plus BOOLEAN NOT NULL DEFAULT false`. It is set
+and cleared **only by hand in SQL** by the owner; no route, setting or job
+writes it, and none may be added.
+
+```sql
+-- set (by email; the account must have signed in once)
+UPDATE accounts SET complimentary_plus = true  WHERE lower(email) = lower('owner@example.com');
+-- unset
+UPDATE accounts SET complimentary_plus = false WHERE lower(email) = lower('owner@example.com');
+-- check
+SELECT id, email, complimentary_plus FROM accounts WHERE complimentary_plus;
+```
+
+`BillingPlans.standing(account_id)` returns a `PlanStanding`, the one
+answer every caller uses: a paying subscription (`paid_account`, Stripe on)
+wins and sets `subscription`; otherwise the flag sets `complimentary`;
+otherwise the free plan. `paid` = either; `billable` = subscription only.
+The flag is read with `AccountDirectory.get_account`, and the container
+passes the directory only with `DATABASE_URL` set, so without a database
+nobody is complimentary and everything is as before.
+
+With the flag (and no paying subscription), Stripe on or off:
+
+- Paid media limits (`MediaTier.PAID`, the long job), `PAID_RUNS_PER_DAY`
+  included runs on the same daily row, `DAILY_RUN_CAP` exempt (like every
+  paid run; bounded by the included runs).
+- Past the included runs: 402 `free_runs_used` (scope `account`, period
+  `day`, limit = `PAID_RUNS_PER_DAY`), "You have used today's Plus runs...".
+  Never an extra run: no `billing_extra_runs` row, no meter event, no
+  Stripe customer (`CreateRunUseCase._admit_complimentary`). BYOK stays
+  exempt, as for everyone.
+- `plan: "paid"` and `complimentary: true` on `GET /api/billing`,
+  `GET /api/me` (`entitlement`, with `metered: false`) and
+  `GET /api/free-runs` (`overage: false`).
+- Saved history saves its runs and reports `saving: true`; it never gets a
+  post-cancel window (`saved-history.md`).
+- `POST /api/billing/checkout`: 409 `complimentary_plan`, before anything
+  touches Stripe. `POST /api/billing/portal`: 409 `complimentary_plan` when
+  Stripe is off or the account has no Stripe customer; one with a customer
+  (an old or past_due subscription) opens the portal as anyone does.
+
+With a real paying subscription as well, billing follows the subscription
+exactly as before (extras admitted and billed, portal, `already_subscribed`),
+and `complimentary` reads false. If that subscription ends, the account
+falls back to complimentary Plus.
+
 ## Settings
 
 | Variable | Default | |
@@ -416,6 +487,15 @@ Nothing in this repository creates Stripe objects.
 
 ## Deploy order
 
+Complimentary Plus: apply `0010_complimentary_plus` **before** deploying
+the code that reads it. Every `select(accounts)` names the new column, so
+code ahead of the migration fails every signed-in request on Postgres.
+The column has a constant default, so the `ADD COLUMN` is catalog-only
+(no rewrite) on Postgres 11+; the existing RLS policy and grants on
+`accounts` cover it.
+
+Billing:
+
 1. Apply migration `0004_billing` (`alembic upgrade head`) to the
    database. With billing off nothing reads these tables, so applying it
    early is harmless. **Not applied to any remote database by this
@@ -448,6 +528,13 @@ Nothing in this repository creates Stripe objects.
 
 ## Tests
 
+- `tests/application/test_complimentary_plus.py`, `tests/infrastructure/persistence/test_complimentary_plus.py`,
+  and the complimentary classes in `tests/interface/api/test_billing_routes.py`:
+  complimentary Plus with Stripe off and on (limits, included runs, the
+  402, no ledger row or meter call, saved and listed, no window, restore,
+  checkout/portal 409, the exact `GET /api/billing` bodies), a real
+  subscription winning, ordinary accounts unchanged, migration 0010.
+
 - `tests/application/test_billing.py`: checkout, portal and view; webhook
   signature, idempotency, transitions and ordering; paid admission within
   and over the limit; the cap; BYOK not counted; the view's `extra_runs`
@@ -475,3 +562,4 @@ Nothing in this repository creates Stripe objects.
 - 2026-11-14 · backend agent · saved history follows the plan: paid results saved after billing, the webhook starts or clears the 30-day post-cancel window (`saved-history.md`); deletion is a 30-day hold, the subscription still cancelled at once
 - 2026-11-14 · backend agent · migration `0008_value_checks`: check constraints on `billing_extra_runs.state` and `.period` (`YYYY-MM`); none on `billing_accounts.status`/`interval`, which come from Stripe verbatim
 - 2026-11-14 · frontend agent · paid plan is named Plus in the UI
+- 2026-11-14 · backend agent · complimentary Plus: migration `0010_complimentary_plus` (`accounts.complimentary_plus`, set only by hand in SQL); `BillingPlans.standing` / `PlanStanding`; paid plan with or without Stripe, never billed (402 `free_runs_used` past `PAID_RUNS_PER_DAY`, no ledger, no meter); `complimentary` on `GET /api/billing` (full body even with billing off), `GET /api/me` `entitlement`, `GET /api/free-runs`; checkout/portal 409 `complimentary_plan`; a paying subscription wins
