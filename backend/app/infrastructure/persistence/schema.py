@@ -55,9 +55,18 @@ accounts = Table(
     # The identity provider's `sub`.
     Column("external_id", String(255), nullable=False, unique=True),
     Column("email", String(320), nullable=True),
-    # Not a foreign key: workspaces reference accounts, and a cycle would
-    # need deferred constraints on Postgres for nothing.
-    Column("default_workspace_id", String(36), nullable=True),
+    # A foreign key since 0009, ON DELETE SET NULL: the purge deletes the
+    # workspaces before the account, and the pointer clears as they go.
+    # Not deferrable: creation inserts the account (NULL), then the
+    # workspace, then sets the pointer. `use_alter` breaks the
+    # accounts <-> workspaces cycle for `create_all` (SQLite gets it
+    # inline, since it does not check the referenced table at CREATE).
+    Column(
+        "default_workspace_id",
+        String(36),
+        ForeignKey("workspaces.id", name="fk_accounts_default_workspace_id", ondelete="SET NULL", use_alter=True),
+        nullable=True,
+    ),
     Column("created_at", DateTime(timezone=True), nullable=False),
     # The deletion hold (0006): set by DELETE /api/me, cleared by a restore;
     # the cleanup job removes the account once `purge_at` has passed.

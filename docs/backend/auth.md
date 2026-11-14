@@ -205,7 +205,7 @@ Upper bound on the Supabase side: about 7 days (backups, Auth logs), if Supabase
 
 The identity data lives in Postgres (Supabase), not in Redis. The four tables are:
 
-- `accounts`: `id`, `external_id` (unique; the IdP `sub`), `email`, `default_workspace_id`, `created_at`.
+- `accounts`: `id`, `external_id` (unique; the IdP `sub`), `email`, `default_workspace_id` (FK `workspaces.id` `ON DELETE SET NULL` since 0009), `created_at`.
 - `workspaces`: `id`, `name`, `owner_account_id` (FK `ON DELETE CASCADE` since 0007), `created_at`.
 - `workspace_members`: (`workspace_id`, `account_id`) PK, both FKs `ON DELETE CASCADE` since 0007, `role`.
 - `api_keys`: `id`, `workspace_id` (FK `ON DELETE CASCADE` since 0007, indexed), `name`, `prefix`, `key_hash` (unique), `scopes` (JSON), `active`, `last_used_at`, `revoked_at`, `created_at`.
@@ -226,6 +226,16 @@ UNION ALL SELECT 'extra.period', count(*) FROM billing_extra_runs WHERE period !
 ```
 
 Every count must be 0.
+
+Since 2026-11-14 (`0009_default_workspace_fk`, Postgres only) `accounts.default_workspace_id` is a foreign key, `fk_accounts_default_workspace_id`, `ON DELETE SET NULL`, not deferrable. The cycle between `accounts` and `workspaces` is safe in that form. Creation (`SqlAccountDirectory._resolve`, one transaction) inserts the account with a NULL pointer, then the workspace and owner membership, then sets the pointer, so no statement references a missing row. The purge deletes workspaces before the account, and SET NULL clears the pointer as they go (a plain NO ACTION key would break that order). A bare `DELETE FROM accounts` cascades to the workspaces (0007), whose SET NULL then finds no account row left (exercised on SQLite with foreign keys on; not run on Postgres). Restore touches only `deleted_at`/`purge_at`. Before applying, this must return 0:
+
+```sql
+SELECT count(*) FROM accounts a
+WHERE a.default_workspace_id IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM workspaces w WHERE w.id = a.default_workspace_id);
+```
+
+In `schema.py` the key carries `use_alter=True` to break the cycle for `create_all`.
 
 Runs and history are unchanged for free and anonymous callers. The server still holds runs for `RUN_TTL_SECONDS` only, and history stays in the browser. Since 2026-11-14 a paid account's results are also saved in `saved_runs`, and `accounts` gains `deleted_at`, `purge_at` and `saved_runs_expire_at` (migration `0006_saved_history`, `saved-history.md`).
 
@@ -349,3 +359,4 @@ The application code has not yet run against a real Supabase project: the SQL ad
 - 2026-11-14 · backend agent · account deletion is a 30-day hold (`DELETE /api/me` returns 200 with `purge_at`; 410 `account_pending_deletion` everywhere but the new `POST /api/me/restore`; API keys 401 while held); the hourly worker cron removes the Supabase user then the rows after the hold; `saved_history` on `/api/me`; migration 0006 columns in Storage
 - 2026-11-14 · backend agent · migration `0007_identity_cascades`: the four identity foreign keys cascade on delete (Postgres; names kept); the purge keeps its explicit children-first deletes, which were already correct without the cascade
 - 2026-11-14 · backend agent · migration `0008_value_checks`: named check constraints on `workspace_members.role` and the two free-run `period` columns (plus billing and saved-run ones); pre-apply violation query in Storage
+- 2026-11-14 · backend agent · migration `0009_default_workspace_fk`: `accounts.default_workspace_id` references `workspaces(id)` `ON DELETE SET NULL` (not deferrable); why the cycle is safe for creation, purge and restore; pre-apply orphan query
