@@ -816,6 +816,26 @@ wants a re-accept. Static, no scripts: CSP hashes unchanged.
 - Offline: "Open the app" (plain `<a href="/app">`, still required offline)
   and "Open History". "Try again" promised a retry the link does not do.
 
+## Saved history and the deletion hold (2026-11-14, drafts)
+
+- Privacy gains "Saved runs on the paid plan" (draft marker): title, short
+  summary, full result and a small thumbnail are stored on our server until
+  the user deletes them, 30 days after the paid plan ends, or account
+  deletion completes, whichever is first; the media is never saved and is
+  still deleted when the run finishes; runs without the paid plan are not
+  saved to the account.
+- "Information retained" and "Your History" point to it; without the paid
+  plan the browser is the only place results are kept.
+- "Signing in": deleting stops the account at once, holds it 30 days for a
+  restore by signing in with the same email (which meanwhile cannot start a
+  new account), and deletion completes within 30 days.
+- "Payments": billing records are removed when the deletion completes.
+- Terms "Paid plan": restoring within 30 days comes back on the free plan;
+  saved runs' retention in one sentence.
+- Contact stays a placeholder; draft comments kept. The effective date and
+  `videolens-media-terms-v3` were **not** bumped, as with the earlier draft
+  edits: the owner decides when the drafts become binding.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported privacy/terms/offline off the Midnight Glass classes
@@ -846,3 +866,4 @@ wants a re-accept. Static, no scripts: CSP hashes unchanged.
 - 2026-11-14 · frontend agent · Terms "Paid plan" states a daily included allowance and a monthly cap on extra runs; Privacy "Payments" keeps a daily run count and a monthly extra-run count (drafts; effective date and terms key unchanged, flagged)
 - 2026-11-14 · frontend agent · vocabulary only (UX fix spec batch a): Terms "stored only in your browser", Privacy "out of this browser"; nothing else changed
 - 2026-11-14 · frontend agent · UX fix spec batch e: 404 actions "Open the app" / "Home page"; offline "Try again" is now "Open the app"
+2026-11-14 · frontend agent · Privacy: new "Saved runs on the paid plan" section (draft), Information retained and History point to it, account deletion described as a 30-day hold that completes within 30 days, billing records removed when deletion completes; Terms "Paid plan": restore comes back on the free plan, saved runs' retention; Contact placeholder and draft markers kept; effective date and terms key unchanged (flagged)
