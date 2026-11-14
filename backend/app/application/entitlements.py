@@ -5,7 +5,8 @@ deployment's own limits. The seam is kept so the subscription work replaces
 the numbers (and reads the workspace's plan here), not the structure.
 
 A paid account (docs/backend/billing.md) gets the `PAID_*` set (by default
-the signed-in BYOK numbers) without needing a key.
+the signed-in BYOK numbers) without needing a key. So does a complimentary
+Plus account (same plan, `metered` false: it is never billed).
 
 Media limits are per request on top of that (docs/backend/media-validation.md,
 "Limits per caller"): a signed-in caller who brings their own Gemini key on
@@ -14,6 +15,8 @@ standard `MAX_DURATION_SECONDS` / `MAX_FILE_SIZE_MB`. Every enforcement point
 (upload size, duration probe, URL download, caption fallback) reads the
 `MediaLimits` chosen here, never the settings directly.
 """
+
+from dataclasses import replace
 
 from ..domain.entities import Principal
 from ..domain.entitlements import Entitlement, MediaLimits, MediaTier, Plan, entitlement_for
@@ -47,11 +50,15 @@ class EntitlementResolver:
             max_file_size_mb,
         )
 
-    async def for_principal(self, principal: Principal, *, paid: bool = False) -> Entitlement:
-        if paid:
-            return entitlement_for(
+    async def for_principal(
+        self, principal: Principal, *, paid: bool = False, complimentary: bool = False
+    ) -> Entitlement:
+        if paid or complimentary:
+            entitlement = entitlement_for(
                 Plan.PAID, max_duration_seconds=self._paid_duration, max_file_size_mb=self._paid_size
             )
+            # Complimentary Plus: nothing past the included runs is billed.
+            return replace(entitlement, metered=False) if complimentary else entitlement
         return entitlement_for(
             Plan.FREE,
             max_duration_seconds=self._max_duration_seconds,

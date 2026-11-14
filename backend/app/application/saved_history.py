@@ -20,8 +20,16 @@
 `SavedHistoryQueries` is the API side: list, get, delete one, delete all,
 always for the caller's own account.
 
-Off (nothing saved, every list empty, `saving: false`) without a database or
-with billing off, which is exactly the behaviour before this existed.
+Complimentary Plus (`accounts.complimentary_plus`, docs/backend/billing.md)
+is the paid plan here too: its runs are saved and `saving` is true with or
+without Stripe, and it never gets a post-cancel window (one is cleared).
+
+Saving is off (nothing saved, every list empty, `saving: false`) without a
+database, or with billing off and no account store to read complimentary
+Plus from, which is exactly the behaviour before this existed. The
+post-cancel window (arming, purging, the restore re-arm, the expiry shown)
+needs Stripe billing on, as before: with it off nothing is armed or
+removed, so switching Stripe off never starts deleting anyone's runs.
 """
 
 import base64
@@ -112,8 +120,15 @@ class SavedHistory:
 
     @property
     def enabled(self) -> bool:
-        """A database to keep the rows in and billing on to decide who pays.
-        Off = nothing is saved and nothing is removed, as before."""
+        """Saving can happen: a database to keep the rows in, and Stripe
+        billing on or complimentary Plus readable to decide who is on the
+        paid plan. Off = nothing is saved, as before."""
+        return self.saved_runs.enabled and self._plans is not None and self._plans.offered
+
+    @property
+    def windows_enabled(self) -> bool:
+        """The post-cancel window applies: a database and Stripe billing on
+        (a subscription can end). Off = nothing is armed or removed."""
         return self.saved_runs.enabled and self._plans is not None and self._plans.enabled
 
     def now(self) -> datetime:
@@ -131,7 +146,7 @@ class SavedHistory:
             if run is None or run.status is not RunStatus.COMPLETE or run.result is None or not run.account_id:
                 return False
             assert self._plans is not None
-            if await self._plans.paid_account(run.account_id) is None:
+            if not (await self._plans.standing(run.account_id)).paid:
                 return False
             record = self._record(run, source_url)
             if record is None:
@@ -206,18 +221,25 @@ class SavedHistory:
         if not account_id or not self.enabled:
             return SavedHistoryStatus()
         assert self._plans is not None
-        if await self._plans.paid_account(account_id) is not None:
+        if (await self._plans.standing(account_id)).paid:
             return SavedHistoryStatus(saving=True)
+        if not self.windows_enabled:
+            return SavedHistoryStatus()
         return SavedHistoryStatus(saving=False, expires_at=await self.saved_runs.expiry(account_id))
 
     async def sync_expiry(self, account_id: str) -> None:
         """After Stripe reported a subscription change: paid again clears the
         expiry (everything is kept); ended arms it, once, `grace` from now.
-        In between (past_due, incomplete) nothing changes. Never raises."""
-        if not self.enabled:
+        In between (past_due, incomplete) nothing changes. Complimentary
+        Plus counts as paid: a cancelled subscription on it arms nothing.
+        Never raises."""
+        if not self.windows_enabled:
             return
         assert self._plans is not None
         try:
+            if await self._plans.is_complimentary(account_id):
+                await self.saved_runs.clear_expiry(account_id)
+                return
             account = await self._plans.accounts.get(account_id)
             now = self._clock()
             status = account.status if account else None
@@ -233,12 +255,13 @@ class SavedHistory:
     async def rearm_after_restore(self, account_id: str) -> None:
         """A restored account comes back on the free plan (the subscription
         was cancelled at deletion): its saved runs get a fresh full window
-        from now, so the hold never eats into it. A paid one is untouched."""
-        if not self.enabled:
+        from now, so the hold never eats into it. A paid one (complimentary
+        Plus included: the restore leaves the flag as it was) is untouched."""
+        if not self.windows_enabled:
             return
         assert self._plans is not None
         try:
-            if await self._plans.paid_account(account_id) is not None:
+            if (await self._plans.standing(account_id)).paid:
                 await self.saved_runs.clear_expiry(account_id)
                 return
             if await self.saved_runs.expiry(account_id) is None:
@@ -251,13 +274,16 @@ class SavedHistory:
 
     async def arm_lapsed(self, *, limit: int = 200) -> int:
         """The cleanup job's backstop: accounts holding saved runs whose paid
-        plan ended without a webhook saying so get their window now."""
-        if not self.enabled:
+        plan ended without a webhook saying so get their window now.
+        Complimentary Plus is never armed (the scan skips it too)."""
+        if not self.windows_enabled:
             return 0
         assert self._plans is not None
         now = self._clock()
         armed = 0
         for account_id in await self.saved_runs.accounts_to_arm(now, limit=limit):
+            if await self._plans.is_complimentary(account_id):
+                continue
             account = await self._plans.accounts.get(account_id)
             status = account.status if account else None
             period_end = account.current_period_end if account else None
@@ -272,14 +298,15 @@ class SavedHistory:
     async def purge_expired(self, *, limit: int = 25) -> int:
         """Remove saved runs whose window has passed. Re-checks the plan, so
         a resubscribe whose webhook has not been applied yet is not purged
-        (its expiry is cleared instead). Returns how many runs went."""
-        if not self.enabled:
+        (its expiry is cleared instead), nor is complimentary Plus. Returns
+        how many runs went."""
+        if not self.windows_enabled:
             return 0
         assert self._plans is not None
         now = self._clock()
         removed = 0
         for account_id in await self.saved_runs.expired_accounts(now, limit=limit):
-            if await self._plans.paid_account(account_id) is not None:
+            if (await self._plans.standing(account_id)).paid:
                 await self.saved_runs.clear_expiry(account_id)
                 continue
             count = await self.saved_runs.purge_expired(account_id, now)

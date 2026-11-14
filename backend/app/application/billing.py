@@ -1,7 +1,10 @@
 """The paid plan's shared rules (docs/backend/billing.md).
 
 `BillingPlans` answers "is this account on the paid plan right now" for
-admission, `GET /api/free-runs`, `GET /api/me` and `GET /api/billing`.
+admission, `GET /api/free-runs`, `GET /api/me`, `GET /api/billing` and
+saved history (`standing`): through a paying Stripe subscription, or through
+complimentary Plus (`accounts.complimentary_plus`, set by hand in SQL by the
+owner), which needs no Stripe and is never billed.
 `ExtraRunBilling` moves a run past the included ones through the ledger
 (held -> due -> reported, or held -> void) and reports it to Stripe once,
 only after the run completed. Neither ever fails a run: billing bookkeeping
@@ -12,9 +15,9 @@ import logging
 from datetime import datetime, timezone
 from typing import Callable
 
-from ..domain.entities import BillingAccount, ExtraRunCharge, FreeRunPeriod
+from ..domain.entities import BillingAccount, ExtraRunCharge, FreeRunPeriod, PlanStanding
 from ..domain.policies import start_of_next_utc_month, subscription_grants_paid, utc_month
-from ..domain.ports import BillingAccounts, BillingGateway, ExtraRunLedger
+from ..domain.ports import AccountDirectory, BillingAccounts, BillingGateway, ExtraRunLedger
 
 logger = logging.getLogger("videolens")
 
@@ -41,9 +44,13 @@ class BillingPlans:
         ledger: ExtraRunLedger,
         paid_runs_per_day: int,
         extra_runs_monthly_cap: int = 0,
+        directory: AccountDirectory | None = None,
         clock: Clock | None = None,
     ) -> None:
         self.gateway = gateway
+        # Where `accounts.complimentary_plus` is read. None (the container
+        # passes None without a database) = nobody is complimentary.
+        self._directory = directory
         self.accounts = accounts
         self.ledger = ledger
         self.paid_runs_per_day = max(0, paid_runs_per_day)
@@ -56,6 +63,18 @@ class BillingPlans:
         """Stripe configured and somewhere to keep the account's link. Off =
         every caller is on the free rules, exactly as before billing."""
         return self.gateway.enabled and self.accounts.enabled
+
+    @property
+    def complimentary_enabled(self) -> bool:
+        """An account store to read `complimentary_plus` from."""
+        return self._directory is not None and self._directory.enabled
+
+    @property
+    def offered(self) -> bool:
+        """Anyone can be on the paid plan on this deployment: Stripe billing
+        is on, or complimentary Plus can be read. What saved history's
+        saving gate asks; `enabled` stays "Stripe billing is on"."""
+        return self.enabled or self.complimentary_enabled
 
     def now(self) -> datetime:
         return self._clock()
@@ -88,6 +107,29 @@ class BillingPlans:
         if not subscription_grants_paid(account.status, account.current_period_end, self._clock()):
             return None
         return account
+
+    async def is_complimentary(self, account_id: str | None) -> bool:
+        """`accounts.complimentary_plus` for this account (False without an
+        account store or for an unknown account). Says nothing about a
+        subscription; `standing` combines the two."""
+        if not account_id or not self.complimentary_enabled:
+            return False
+        assert self._directory is not None
+        account = await self._directory.get_account(account_id)
+        return bool(account is not None and account.complimentary_plus)
+
+    async def standing(self, account_id: str | None) -> PlanStanding:
+        """The plan this account is on now. A paying subscription wins (it
+        is what billing follows); otherwise the complimentary flag puts the
+        account on the paid plan, never billed; otherwise the free plan."""
+        if not account_id:
+            return PlanStanding()
+        subscription = await self.paid_account(account_id)
+        if subscription is not None:
+            return PlanStanding(subscription=subscription)
+        if await self.is_complimentary(account_id):
+            return PlanStanding(complimentary=True)
+        return PlanStanding()
 
 
 class ExtraRunBilling:

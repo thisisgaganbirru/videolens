@@ -101,7 +101,14 @@ class _Billing:
     """One deployment's worth of billing: gateway, stores, plans."""
 
     def __init__(
-        self, *, enabled: bool = True, yearly: bool = True, cap: int = 200, included: int = 30, clock=None
+        self,
+        *,
+        enabled: bool = True,
+        yearly: bool = True,
+        cap: int = 200,
+        included: int = 30,
+        clock=None,
+        directory=None,
     ) -> None:
         self.gateway = FakeBillingGateway(enabled=enabled, yearly=yearly)
         self.accounts = InMemoryBillingAccounts(SETTINGS)
@@ -112,6 +119,7 @@ class _Billing:
             ledger=self.ledger,
             paid_runs_per_day=included,
             extra_runs_monthly_cap=cap,
+            directory=directory,
             clock=clock,
         )
         self.extra_runs = ExtraRunBilling(plans=self.plans)

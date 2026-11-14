@@ -136,6 +136,7 @@ async def free_runs(
         resets_at=status.resets_at,
         plan=standing.plan,
         overage=standing.overage if standing.plan is not None else None,
+        complimentary=standing.complimentary if standing.plan is not None else None,
     )
 
 
@@ -264,6 +265,7 @@ async def me(request: Request, principal: Principal = Depends(get_signed_in_prin
             metered=entitlement.metered,
             api_access=entitlement.api_access,
             library=entitlement.library,
+            complimentary=view.complimentary,
         ),
         accounts_enabled=view.accounts_enabled,
         saved_history=_saved_history(view.saved_history),
@@ -442,13 +444,15 @@ def _prices(prices: BillingPrices | None) -> BillingPricesResponse:
 @router.get("/api/billing", response_model=BillingResponse)
 @limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
 async def billing(request: Request, principal: Principal = Depends(get_signed_in_principal)) -> Response:
-    """The caller's plan and its runs (today's, on either plan). Anonymous is 401; with billing off (or no account store) just `{"enabled": false}`. Prices are
-    read from Stripe (cached) and are null when Stripe could not be read."""
+    """The caller's plan and its runs (today's, on either plan). Anonymous is 401; with billing off (or no account store) just `{"enabled": false}`,
+    except for a complimentary Plus account, which gets the full body with
+    `enabled: false` and `complimentary: true`. Prices are read from Stripe
+    (cached) and are null when Stripe could not be read or is off."""
     view = await container.get_billing_use_case.execute(principal)
-    if not view.enabled:
+    if not view.enabled and not view.complimentary:
         return JSONResponse({"enabled": False})
     return BillingResponse(
-        enabled=True,
+        enabled=view.enabled,
         plan=view.plan,
         status=view.status,
         interval=view.interval if view.interval in ("month", "year") else None,
@@ -466,6 +470,7 @@ async def billing(request: Request, principal: Principal = Depends(get_signed_in
             else None
         ),
         prices=_prices(view.prices),
+        complimentary=view.complimentary,
     )
 
 
@@ -476,7 +481,9 @@ async def billing_checkout(
 ) -> BillingUrlResponse:
     """A Stripe Checkout URL for the paid plan. A signed-in session only
     (an API key is 403). 409 `already_subscribed` when the account already
-    holds a live subscription: send the person to the portal instead."""
+    holds a live subscription: send the person to the portal instead. 409
+    `complimentary_plan` for a complimentary Plus account with no paying
+    subscription (Stripe on or off)."""
     url = await container.start_checkout_use_case.execute(principal, body.interval)
     return BillingUrlResponse(url=url)
 
@@ -485,7 +492,9 @@ async def billing_checkout(
 @limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
 async def billing_portal(request: Request, principal: Principal = Depends(require_person)) -> BillingUrlResponse:
     """A Stripe Customer Portal URL (cancel, card, invoices). 404
-    `no_billing_account` for an account that never started a checkout."""
+    `no_billing_account` for an account that never started a checkout;
+    409 `complimentary_plan` for a complimentary Plus account with no
+    Stripe customer, or any complimentary account while Stripe is off."""
     url = await container.open_billing_portal_use_case.execute(principal)
     return BillingUrlResponse(url=url)
 

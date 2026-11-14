@@ -139,18 +139,22 @@ class Container:
                 saved_runs=memory_saved_runs,
             )
 
-        # The paid plan. Enabled only with Stripe configured AND an account
-        # store; otherwise every caller is on the free rules, as before.
+        # The paid plan. Stripe billing is on only with Stripe configured AND
+        # an account store. Complimentary Plus (`accounts.complimentary_plus`,
+        # set by hand in SQL) is read from the database only, so without
+        # DATABASE_URL nobody is complimentary and everything is as before.
         self.billing = BillingPlans(
             gateway=self.billing_gateway,
             accounts=self.billing_accounts,
             ledger=self.extra_run_ledger,
             paid_runs_per_day=settings.paid_runs_per_day,
             extra_runs_monthly_cap=settings.paid_extra_runs_monthly_cap,
+            directory=self.accounts if self.database.enabled else None,
         )
         self.extra_run_billing = ExtraRunBilling(plans=self.billing)
-        # Saved history: on only with a database and billing (who pays
-        # decides who is saved); off = exactly as before it existed.
+        # Saved history: on only with a database and a paid plan to decide
+        # who is saved (Stripe billing, or complimentary Plus); the
+        # post-cancel window only with Stripe billing on.
         self.saved_history = SavedHistory(
             runs=self.run_repository,
             saved_runs=self.saved_runs,
