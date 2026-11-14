@@ -1,5 +1,12 @@
 import { ApiError, NetworkError } from "@/domain/errors";
-import type { AuthSession, CallerIdentity, DeviceTokenStore, ServerAuthStatus } from "@/domain/ports";
+import type {
+  AccountHoldNotice,
+  AccountHoldSource,
+  AuthSession,
+  CallerIdentity,
+  DeviceTokenStore,
+  ServerAuthStatus,
+} from "@/domain/ports";
 import { API_BASE_URL } from "./apiBase";
 import { getClientId } from "./clientId";
 
@@ -35,8 +42,12 @@ const SERVER_AUTH_WAIT_MS = 4000;
 
 export const ANONYMOUS_OWNER = "anonymous";
 
-export class ApiClient implements CallerIdentity {
+/** The 410 a held account gets on every identity-resolving route. */
+export const ACCOUNT_PENDING_DELETION = "account_pending_deletion";
+
+export class ApiClient implements CallerIdentity, AccountHoldSource {
   private owner: string | null = null;
+  private readonly holdListeners = new Set<(notice: AccountHoldNotice) => void>();
 
   constructor(
     private readonly auth: AuthSession,
@@ -46,6 +57,28 @@ export class ApiClient implements CallerIdentity {
 
   lastOwner(): string | null {
     return this.owner;
+  }
+
+  /** The deletion hold (2026-11-14): every caller gateway sends through
+   *  here, so this is the one place that hears a held account's 410,
+   *  whichever request it answered. */
+  subscribe(listener: (notice: AccountHoldNotice) => void): () => void {
+    this.holdListeners.add(listener);
+    return () => {
+      this.holdListeners.delete(listener);
+    };
+  }
+
+  /** Reads a 410 from a clone, so the caller still gets the whole body. */
+  private async noticeHold(res: Response, owner: string | null): Promise<void> {
+    if (res.status !== 410 || this.holdListeners.size === 0) return;
+    const body = await res.clone().json().catch(() => null);
+    if (body?.code !== ACCOUNT_PENDING_DELETION) return;
+    const notice: AccountHoldNotice = {
+      owner,
+      purgeAt: typeof body.purge_at === "string" ? body.purge_at : null,
+    };
+    this.holdListeners.forEach((listener) => listener(notice));
   }
 
   /** The bearer, or null to go out anonymous. Throws `NetworkError` when it
@@ -79,11 +112,15 @@ export class ApiClient implements CallerIdentity {
    *  content type). */
   async send(path: string, init: RequestInit = {}, extra: Record<string, string> = {}): Promise<Response> {
     const headers = { ...(await this.identityHeaders()), ...extra };
+    const owner = this.owner;
+    let res: Response;
     try {
-      return await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
+      res = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
     } catch {
       throw new NetworkError(UNREACHABLE);
     }
+    await this.noticeHold(res, owner);
+    return res;
   }
 
   /** A 2xx whose body will not parse is still a server-side problem, so it
@@ -102,7 +139,8 @@ export class ApiClient implements CallerIdentity {
     const body = await res.json().catch(() => null);
     const detail = typeof body?.detail === "string" ? body.detail : null;
     const code = typeof body?.code === "string" ? body.code : undefined;
-    throw new ApiError(detail || `${fallback} (${res.status})`, res.status, { code });
+    const purgeAt = typeof body?.purge_at === "string" ? body.purge_at : undefined;
+    throw new ApiError(detail || `${fallback} (${res.status})`, res.status, { code, purgeAt });
   }
 
   async json<T>(path: string, init: RequestInit, fallback: string): Promise<T> {
