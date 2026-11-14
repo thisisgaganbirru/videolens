@@ -138,6 +138,61 @@ free-runs 503 alone, capabilities 503 alone and both 503 all show the notice
 (18/18); a refocus with one read still failing keeps it; a fully healthy
 refocus clears it and the pill appears; 400 on either or both shows nothing.
 
+## Account allowance (2026-11-13)
+
+Owner decision: a signed-in account gets **10 free shared-key runs per UTC
+calendar month**, tied to the account across devices, used *instead of* the
+device's 3 per day while signed in. A saved Gemini key is still exempt.
+Backend contract: `GET /api/free-runs` gains `"scope": "device" | "account"`
+(account: `limit` 10, `resets_at` the first of next month 00:00Z); the 402
+`free_runs_used` body gains `scope` too.
+
+- **Bearer.** Nothing new in the gateway: `FetchFreeRunsGateway` already goes
+  through the shared `ApiClient`, which adds `Authorization: Bearer` when
+  someone is signed in and the server's `auth` capability is `ok` (the same
+  path `/api/me` and run creation use). Verified in Chrome that the read
+  carries it when signed in.
+- **Scope.** `FreeRunsStatus.scope` (`domain/entities.ts`, `FreeRunsScope`).
+  The gateway reads only a literal `"account"` as account; missing (an older
+  server) or anything else is `device`. `ApiError.scope` carries the 402's,
+  and `markFreeRunsUsed(limit, used, scope)` uses it (falling back to the last
+  read's scope, then device).
+- **Re-read on sign-in / sign-out.** `useFreeRuns(identity)` takes
+  `authUser.ready ? (user?.id ?? "") : null` from `HomeScreen`. A change after
+  the first known value calls `noteIdentityChanged()`: bumps an
+  `identityEpoch`, clears the cached count and any 402 limit state, publishes
+  `null` (the strip goes quiet rather than showing the other identity's
+  number), and re-reads unless a key is saved. A read that was in flight under
+  the old identity is not published; `refreshFreeRuns` notices the epoch moved
+  and reads again. The first known value does not re-read: the launch read
+  already waits for a stored session (`ApiClient`).
+- **Refund proof** (`provesRefund`) now also requires the same `scope` before
+  and after, so a sign-in between the two reads cannot pose as a refund.
+- **Spent timer.** Unchanged code; for an account the reset is weeks out, so
+  the 24h cap simply re-reads once a day.
+
+**Copy** (only the scope changes the words; layout unchanged):
+
+| Where | device (unchanged unless noted) | account |
+|---|---|---|
+| Analyze strip, runs left | "**3 free runs left.** Add your own key for more." | "**7 free runs left this month.** Add your own key for more." |
+| Analyze strip, spent | "**You have used your free runs.** Add your own key to keep going." | "**You have used this month's free runs.** Add your own Gemini key to keep going." (the server's 402 `detail`, word for word) |
+| Analyze strip, spent, signed out where sign-in is offered (`showAccount`) | "**You have used your free runs.** Add your own key, or [sign in] for 10 free runs a month." (new; inline `.text-link` to `/app?view=account`, ink + 600 like the blocked note's link) | n/a |
+| Blocked note in the intake card | "No free runs left today, so analyzing is paused." | "No free runs left this month, so analyzing is paused." (`UploadForm` `blockedScope`) |
+| Account panel identity line | "Free runs left on this device: N" | "Free runs left this month: N of 10" (`limit` from the server) |
+
+The sign-in nudge is only on the spent device strip: that is where signing in
+actually unblocks someone, and it adds no chrome. The "10" there is a
+constant (`ACCOUNT_FREE_RUNS_PER_MONTH` in `FreeRunsBanner.tsx`) because a
+signed-out caller has no account read to take it from; change it with the
+backend's limit. No reset date is shown in the Account panel (kept short).
+With a key saved, a 402 still shows the server's sentence verbatim as the
+intake error (unchanged path).
+
+Not verified in a browser: the signed-out spent strip with the sign-in link
+(it needs signing the owner out, which was off limits); typecheck and build
+cover it.
+
 ## Changelog
 
 - 2026-11-01 · frontend agent (Phase 5b) · created: device token store, free-runs gateway/port, `useFreeRuns` store, 401 retry-once and 402 limit state in `useAnalysisRun`, `FreeRunsBanner` on all shells, `UploadForm` `blocked`, API key lede and Privacy sentence
@@ -147,3 +202,5 @@ refocus clears it and the pill appears; 400 on either or both shows nothing.
 - 2026-11-02 · frontend agent (refinement 10) · 5xx from the free-runs (and capabilities) read now counts as unreachable, so a Railway 502/503 shows the "Can't reach the server" notice; 4xx unchanged
 - 2026-11-02 · frontend agent (refinement 11) · per-read reachability (`noteReadResult(source, err)`, `forgetReadResult`, `isReadFailing`): the notice shows when ANY launch read is unreachable and clears only once every read is healthy again, so a partial 5xx outage is no longer hidden by the other read's success; 4xx and copy unchanged (D-R10-1)
 - 2026-11-02 · frontend (refinement 15) · `.free-runs-slot` is an em size container; below 17em the strip stacks (pill under the sentence), so the sentence is never one word a line at large text; 320/100% unchanged
+- 2026-11-13 · frontend agent · account allowance: `scope` on `FreeRunsStatus`/`ApiError` (missing = device), re-read on sign-in/sign-out with an identity epoch so a stale read is never published, scope-aware copy on the strip, blocked note and Account panel, and a quiet "sign in for 10 free runs a month" link on the spent device strip where sign-in is offered
+- 2026-11-13 · frontend agent · `plan`/`overage` on `FreeRunsStatus`; paid strip "N of L runs left this month." (no pill), past the allowance with overage "Extra runs are billed at $X each." (not blocked); a spent free account adds ", or upgrade." (link to Account) when billing is on. See `billing.md`

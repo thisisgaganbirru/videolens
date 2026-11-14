@@ -4,6 +4,8 @@
 
 import type {
   AccountResponse,
+  BillingInterval,
+  BillingStatus,
   ApiKeyCreated,
   ApiKeyListResponse,
   AuthUser,
@@ -11,6 +13,7 @@ import type {
   FreeRunsStatus,
   HistoryPatch,
   HistoryRecord,
+  MediaLimitsTable,
   MediaSource,
   RunCreateResponse,
   RunListResponse,
@@ -78,12 +81,33 @@ export interface DeviceTokenStore {
   set(token: string): void;
 }
 
-/** `GET /api/free-runs`: this device's free-run allowance. Read-only on the
+/** `GET /api/free-runs`: the free-run allowance this caller is counted
+ *  against (this device's, or the signed-in account's when the request
+ *  carries a bearer; the shared `ApiClient` adds it). Read-only on the
  *  server; it issues a fresh token when the stored one is missing or invalid,
  *  and the adapter keeps the `DeviceTokenStore` in step with whatever comes
  *  back. */
 export interface FreeRunsGateway {
   fetchStatus(): Promise<FreeRunsStatus>;
+}
+
+/** `GET /api/limits`: the upload limits per tier. Public, no caller
+ *  identity. Rejects when the endpoint is missing or unreadable; the hook
+ *  falls back to the standard limits then. */
+export interface LimitsGateway {
+  fetchLimits(): Promise<MediaLimitsTable>;
+}
+
+/** `/api/billing*` for the signed-in person (2026-11-13). Both redirects are
+ *  Stripe-hosted pages; these only ask the server for their address.
+ *  Reject with `ApiError` (`code` `already_subscribed` on checkout,
+ *  `no_billing_account` on the portal) or `NetworkError`. */
+export interface BillingGateway {
+  fetchBilling(): Promise<BillingStatus>;
+  /** `POST /api/billing/checkout`: the hosted Checkout page's URL. */
+  startCheckout(interval: BillingInterval): Promise<string>;
+  /** `POST /api/billing/portal`: the hosted Customer Portal's URL. */
+  openPortal(): Promise<string>;
 }
 
 export type VersionLogEntry = {

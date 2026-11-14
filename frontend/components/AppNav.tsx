@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import Link from "next/link";
-import { ChevronRight, Menu, X } from "lucide-react";
+import { ChevronRight, Menu, UserRound, X } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import { isPlainLeftClick } from "@/components/navClick";
 import { mainTabHref, navTabs, type MainTab } from "@/application/useMainTab";
@@ -17,6 +17,9 @@ import { mainTabHref, navTabs, type MainTab } from "@/application/useMainTab";
  *                       destinations in a full-screen menu (Web "Menu" board)
  *
  * Account (auth phase 2) is a fifth destination, drawn only when `showAccount`.
+ * From 48rem it is not a text tab but a round button at the far right of the
+ * bar (after the theme toggle): the person glyph signed out, the email's
+ * initial signed in. The phone menu keeps it as a text row.
  *  - app:               brand · theme toggle; the destinations live in the
  *                       bottom tab bar instead (BottomTabBar)
  *
@@ -48,6 +51,9 @@ type AppNavProps = {
   /** Draw the Account tab (auth phase 2). Only `/app` knows whether sign-in
    *  is available, so every other route leaves it off. */
   showAccount?: boolean;
+  /** The signed-in person's initial for the Account button; null or absent
+   *  draws the person glyph. Supplied by `/app`, which has the session. */
+  accountInitial?: string | null;
 };
 
 /** The ring-and-dot mark from the boards. Decorative: the word beside it is the
@@ -62,8 +68,16 @@ export function BrandMark({ className = "brand-mark" }: { className?: string }) 
   );
 }
 
-export default function AppNav({ activeTab, onSelectTab, landing = false, showAccount = false }: AppNavProps) {
+export default function AppNav({
+  activeTab,
+  onSelectTab,
+  landing = false,
+  showAccount = false,
+  accountInitial = null,
+}: AppNavProps) {
   const tabs = navTabs(showAccount);
+  /* Inline text tabs leave Account out: it is the round button instead. */
+  const inlineTabs = tabs.filter((tab) => tab !== "account");
   const [menuOpen, setMenuOpen] = useState(false);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
@@ -113,7 +127,7 @@ export default function AppNav({ activeTab, onSelectTab, landing = false, showAc
 
           <div className="nav-actions">
             <nav className="nav-links" aria-label="Main">
-              {tabs.map((tab) => (
+              {inlineTabs.map((tab) => (
                 <Link
                   key={tab}
                   className="nav-tab"
@@ -127,6 +141,27 @@ export default function AppNav({ activeTab, onSelectTab, landing = false, showAc
             </nav>
 
             <ThemeToggle />
+
+            {/* Shown only where the inline tabs are (CSS, from 48rem). Same
+                href and in-place switch as the text tab it replaces. */}
+            {showAccount && (
+              <Link
+                className="nav-account"
+                href={mainTabHref("account")}
+                aria-label={TAB_LABEL.account}
+                title={TAB_LABEL.account}
+                aria-current={activeTab === "account" ? "page" : undefined}
+                onClick={handleTabClick("account")}
+              >
+                {accountInitial ? (
+                  <span className="nav-account__initial" aria-hidden="true">
+                    {accountInitial}
+                  </span>
+                ) : (
+                  <UserRound aria-hidden="true" />
+                )}
+              </Link>
+            )}
 
             <button
               ref={toggleRef}

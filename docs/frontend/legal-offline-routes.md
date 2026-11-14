@@ -14,6 +14,7 @@ The three standalone pages that render *outside* the app shell: `/privacy`,
 - `frontend/sw/sw.template.js` — **the service worker source**. Decides which route a failed navigation actually resolves to; see "What the service worker serves offline".
 - `frontend/scripts/build-sw.mjs` — generates the served worker from that template after every build.
 - `frontend/public/sw.js` — **generated, gitignored.** Do not edit.
+- `frontend/components/ServiceWorkerRegistration.tsx` — registers `/sw.js` in production only. In dev (`NODE_ENV !== "production"`) it instead unregisters every registration on the origin and deletes the `videolens-shell-*` caches, because a worker left by an earlier production build on the same origin (e.g. `localhost:3005`) otherwise keeps serving stale cached chunks cache-first and the dev page runs old code (seen 2026-11-13: the Account tab missing on `npm run dev`).
 
 All three are **server components**; `ThemeToggle` is the only `"use client"`
 island. All routes are statically prerendered.
@@ -121,7 +122,7 @@ are deleted from `globals.css`.
   `.legal-copy` (capped at `--measure`, 30px between sections, **no rules**).
   `LegalSection` renders `section.legal-section > h2.legal-heading`
   (Newsreader 24→28px) `+ p.legal-text` (17/1.65, ink-2, 4px under its
-  heading). Deviations: the meta line keeps "Effective August 1, 2026" (the
+  heading). Deviations: the meta line keeps "Effective <date>" (currently November 13, 2026; the
   boards' "Last updated:" would change what the date means legally), and the
   boards' tint "Sample text — replace before launch" notice is not rendered:
   the copy is the real policy text, not sample text (its Contact clause still
@@ -757,6 +758,34 @@ Verified on an emulated asset server serving `out/`: start, terms Back (fresh
 entry), privacy Back (after the app) and the dock from privacy all end on
 `/app.html`. On `next start` the web stays on `/app`.
 
+## Copy update (2026-11-13, owner-approved)
+
+Both pages now read "Effective November 13, 2026". Terms: a new "Your own
+Gemini key" section after "Prohibited use" (key stored only on the device,
+not stored by us, user responsible for it, its charges and Google's terms),
+and "Prohibited use" ends with the limit/suspend/block sentence covering
+accounts and devices; the meta description names the new section. Privacy:
+a new "Your own Gemini key" section after "Your History" (sent with the run
+request, held in memory until the run calls Gemini, then discarded; never
+written to the database or logs), and "Signing in" now says the server also
+keeps a count of the free runs the account has used each month. Pages stay
+static server components; no scripts added, so the CSP hashes are unchanged.
+
+## Paid plan copy (2026-11-13, drafts for the owner's legal review)
+
+Terms gain "Paid plan" after "Your own Gemini key" (auto-renewing monthly or
+yearly until cancelled; cancel in Manage billing, access to the end of the
+paid period; extra runs billed per run at the checkout price; BYOK runs do
+not count; no partial-period refunds except where the law requires; price
+changes announced before renewal; Stripe handles payments). Privacy gains
+"Payments" before "Third-party services" (Stripe processes payments, we never
+see or store the card number; we keep the Stripe customer and subscription
+IDs, plan status, renewal date and a monthly run count), and "Third-party
+services" names Stripe. Both meta descriptions mention the new sections. Each
+section carries a JSX comment marking it a draft. Effective date unchanged
+(November 13, 2026). Static, no scripts: CSP hashes unchanged. Terms key
+bumped to v3 (`upload-form.md`). Detail in `billing.md`.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported privacy/terms/offline off the Midnight Glass classes
@@ -778,3 +807,7 @@ entry), privacy Back (after the app) and the dock from privacy all end on
 - 2026-11-02 · frontend agent (refinement 10) · Privacy/Terms Back link visible on every shell (`AppBackLink everywhere`), web target /app, app cold-open still /app.html; /offline unchanged (no Back link, plain <a>)
 - 2026-11-09 · frontend agent · privacy page deletion sentence corrected (backups and logs ~7 days); detail in auth-sign-in.md "Phase 3 state"
 - 2026-11-12 · launch-checklist session · `/privacy` and `/terms` get per-page title, description and canonical; `/offline` is `noindex, nofollow` and excluded by robots.txt; the Privacy "Contact" placeholder is still unfilled and is flagged as a launch blocker in `seo-and-discovery.md`
+- 2026-11-13 · frontend agent · `ServiceWorkerRegistration` now unregisters any leftover worker and deletes the `videolens-shell-*` caches when not in production, so `npm run dev` never runs under a stale production worker; production registration unchanged
+- 2026-11-13 · frontend agent · effective date November 13, 2026 on both pages; Terms gains "Your own Gemini key" and a suspension sentence in "Prohibited use"; Privacy gains "Your own Gemini key" and the monthly free-run count under "Signing in"
+- 2026-11-13 · frontend agent · Terms "Paid plan" and Privacy "Payments" sections (drafts for legal review), Stripe named under third-party services, meta descriptions updated
+- 2026-11-13 · frontend agent · Terms "Paid plan": deleting your account cancels your subscription immediately; Privacy "Payments": deletion cancels first (no refund), billing rows removed, Stripe keeps its customer record for invoices and tax (drafts)

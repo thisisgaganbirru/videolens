@@ -6,7 +6,7 @@ import type { ApiClient } from "./apiClient";
    docs/backend/auth.md). Sent through `ApiClient`, so the bearer token rides
    along whenever someone is signed in. Signed out, `/api/me` answers 401 and
    the hooks never ask; `/api/keys` refuses anything but a signed-in person.
-   No billing methods: the paid tier is deferred. */
+   Billing has its own gateway (billingGateway.ts). */
 export class FetchAccountGateway implements AccountGateway {
   constructor(private readonly client: ApiClient) {}
 

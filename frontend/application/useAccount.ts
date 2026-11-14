@@ -80,7 +80,7 @@ export function useAccount(userId: string | null) {
  *  - `unreachable`: no answer at all (or the sign-in could not be confirmed).
  *  - `failed`: anything else, including 403 (an API-key caller, which the
  *    panel never is) and a 404/405 from a server without the route yet. */
-export type DeletionProblem = "rejected" | "unavailable" | "unreachable" | "failed";
+export type DeletionProblem = "rejected" | "unavailable" | "unreachable" | "subscription" | "failed";
 
 export type DeletionState =
   | { phase: "idle" }
@@ -95,12 +95,18 @@ const DELETION_MESSAGE: Record<DeletionProblem, string> = {
   unavailable: "Deleting accounts is not available on this server. Nothing was deleted.",
   unreachable:
     "Could not reach VideoLens to delete your account. Check your connection and try again.",
+  /* 503 `subscription_cancel_failed` (paid plan, 2026-11-13): deletion
+     cancels the subscription first, and that step failed, so nothing was
+     deleted and nothing about the plan changed. The form stays usable. */
+  subscription:
+    "We couldn’t cancel your subscription, so your account was not deleted. Your account and subscription are unchanged. Try again in a moment.",
   failed: "Your account could not be deleted just now. Try again in a moment.",
 };
 
 function deletionProblem(err: unknown): DeletionProblem {
   if (err instanceof NetworkError) return "unreachable";
   if (err instanceof ApiError && err.status === 401) return "rejected";
+  if (err instanceof ApiError && err.code === "subscription_cancel_failed") return "subscription";
   if (err instanceof ApiError && err.status === 503) return "unavailable";
   return "failed";
 }

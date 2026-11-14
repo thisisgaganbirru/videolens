@@ -99,7 +99,7 @@ renders **both** chromes; CSS shows one.
 
 | | web (browser tab) | app (installed PWA / Capacitor) |
 |---|---|---|
-| Top bar | brand · tab links (≥ 48rem) · theme · hamburger (< 48rem) | ≤ 37.5rem: brand · theme only. Wider: same as web (links ≥ 48rem, hamburger between) |
+| Top bar | brand · tab links (≥ 48rem) · theme · Account button (≥ 48rem, when sign-in is offered) · hamburger (< 48rem) | ≤ 37.5rem: brand · theme only. Wider: same as web (links ≥ 48rem, hamburger between) |
 | Phone menu | `.menu-panel`, sibling of `.nav-wrap`, full-width 60px cards; hides the content section while open | none at ≤ 37.5rem |
 | Bottom | `SiteFooter` | ≤ 37.5rem: `BottomTabBar` (fixed dock, inset by `--page-gutter`/safe areas), no footer. Wider: `SiteFooter`, same as web |
 | Privacy / Terms | footer | ≤ 37.5rem: More sheet rows. Wider: the footer (owner decision 2026-11-01; not added to the top-bar menu) |
@@ -959,3 +959,4 @@ dark. `verify_reach.py` covers the reachability notice (32/32).
 - 2026-11-02 · frontend agent (refinement 14) · no CSS change: Android now sets the system font scale as the root font-size (text zoom pinned to 100, see android-update-check.md), so the R13 caps and theme-control container queries work in the app; measured wordmark ≤ 22px, landscape bar 56px and the theme tiers at 320/360/390 × 1.0–2.0; repaired the mangled R13 harness path
 - 2026-11-02 · frontend (refinement 15) · dock capped with min(rem, px) (64px portrait / 52px sideways at every scale, labels ≤ 14/15px, 44px items); More-sheet icon tile, gap and chevron capped so labels never reach their chevrons (320/200% "Releases" −39 → +33px), theme indent follows; theme tiers and header unchanged; intake cards stack (see capability-reporting.md, free-runs.md)
 - 2026-11-08 · frontend subagent (auth phase 2) · new `account` tab (`MAIN_TABS`, `TAB_LABEL`, a More-sheet row with `CircleUserRound`), shown only when sign-in is configured and the `auth` capability is `ok` (`navTabs(showAccount)`); `/app?view=account` still renders the panel. See auth-sign-in.md
+- 2026-11-13 · frontend agent · top bar gains `.nav-account` (round Account link after the theme toggle, ≥ 48rem only, same visibility rules as `.nav-links`); Account leaves the inline text tabs. See auth-sign-in.md

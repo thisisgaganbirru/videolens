@@ -170,3 +170,23 @@ export function useMainTab(): MainTab {
   const raw = useSearchParams().get(VIEW_PARAM);
   return isMainTab(raw) ? raw : DEFAULT_MAIN_TAB;
 }
+
+/**
+ * Reads one query param from the current address and removes it in place
+ * (billing return, 2026-11-13: `/app?view=account&billing=success`), so a
+ * reload or a shared link does not repeat what it announced. Keeps the tab,
+ * the other params, the hash and the in-app marker; a fresh state object for
+ * the same reason as `goToMainTab` (Next then syncs `useSearchParams`).
+ * Client-only. Returns null when the param is absent.
+ */
+export function takeSearchParam(name: string): string | null {
+  const url = new URL(window.location.href);
+  const value = url.searchParams.get(name);
+  if (value === null) return null;
+  url.searchParams.delete(name);
+  const current: unknown = window.history.state;
+  const marked =
+    !!current && typeof current === "object" && !!(current as Record<string, unknown>)[IN_APP_ENTRY_KEY];
+  window.history.replaceState(marked ? { [IN_APP_ENTRY_KEY]: true } : {}, "", `${url.pathname}${url.search}${url.hash}`);
+  return value;
+}

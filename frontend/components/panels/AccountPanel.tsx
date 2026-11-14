@@ -15,8 +15,10 @@ import {
 import AppBackLink from "@/components/AppBackLink";
 import { isPlainLeftClick } from "@/components/navClick";
 import { goToMainTab, mainTabHref, type MainTab } from "@/application/useMainTab";
-import { formatDay } from "@/components/format";
-import type { ApiKeySummary, Capability } from "@/domain/entities";
+import { formatDay, formatLongDay, formatPrice } from "@/components/format";
+import type { ApiKeySummary, BillingDetails, Capability } from "@/domain/entities";
+import type { FreeRunsBanner } from "@/application/useFreeRuns";
+import { useBillingActions, type BillingAction, type CheckoutReturn } from "@/application/useBilling";
 
 /* Hallmark · component: account panel · genre: editorial · theme: custom
  * (owner handoff, app/tokens.css) · layout: option A, grouped list (owner's
@@ -32,7 +34,13 @@ import type { ApiKeySummary, Capability } from "@/domain/entities";
  *         (idle, run guard, working, failed and still signed in) · delete
  *         account (quiet link, confirming with typed email, run guard,
  *         deleting, failed: rejected / unavailable / unreachable / generic,
- *         not offered when the server keeps no accounts, deleted card)
+ *         not offered when the server keeps no accounts, deleted card) ·
+ *         plan (absent when billing is off · free: pitch, monthly/yearly
+ *         buttons, a null price hides its button · paid: interval, renews /
+ *         ends, payment failed, runs used, extra-run price, Manage billing ·
+ *         opening, handed off to the browser, action error) · checkout
+ *         return notice (confirming, paid, cancelled, unconfirmed,
+ *         signed-out variant)
  *
  * Auth phases 2 and 3 (docs/frontend/auth-sign-in.md). Sign-in is optional
  * and the page says so first. The emailed code is the only method: Google
@@ -52,16 +60,40 @@ type AccountPanelProps = {
    *  screen would stop answering (History keeps it: `recordGone`); the panel
    *  holds both actions until it settles. */
   runInProgress: boolean;
-  /** This device's free runs left today, from HomeScreen's one `useFreeRuns`
-   *  read. Null when unknown, unlimited, or beside the point (a Gemini key is
-   *  saved): the identity line then says nothing about free runs. */
-  freeRunsLeft: number | null;
+  /** The free-run allowance, from HomeScreen's one `useFreeRuns` read: the
+   *  account's for the month when the server counts it (`scope: "account"`),
+   *  else this device's for the day. Null when unknown, unlimited, or beside
+   *  the point (a Gemini key is saved): the identity line then says nothing
+   *  about free runs. */
+  freeRuns: FreeRunsBanner | null;
+  /** The signed-in account's plan, from HomeScreen's one `useBilling` read.
+   *  Null when billing is off, the server's `billing` capability is not
+   *  `ok`, nobody is signed in, or the read failed: no Plan group at all, so
+   *  the panel looks exactly as it did before billing existed. */
+  billing: BillingDetails | null;
+  /** Set when this load came back from Stripe Checkout
+   *  (`?billing=success|cancel`, already stripped from the address). */
+  checkoutReturn: CheckoutReturn | null;
+  /** The paid tier's video length in minutes, when the server reports one;
+   *  null leaves the length out of the pitch rather than guess it. */
+  paidMinutes: number | null;
 };
+
+/** The paid plan's monthly allowance, as sold (owner, 2026-11-13). The live
+ *  number comes from `billing.runs.limit` once someone is on the plan. */
+const PAID_RUNS_PER_MONTH = 100;
 
 const RUN_GUARD =
   "A run is in progress on Analyze. Wait until it finishes: signing in or out now would stop this screen following it until you switch back.";
 
-export default function AccountPanel({ authCapability, runInProgress, freeRunsLeft }: AccountPanelProps) {
+export default function AccountPanel({
+  authCapability,
+  runInProgress,
+  freeRuns,
+  billing,
+  checkoutReturn,
+  paidMinutes,
+}: AccountPanelProps) {
   const auth = useAuthUser();
   /* Held here, above the signed-in view: deleting signs out, which unmounts
      that view, and the confirmation has to outlive it. */
@@ -90,6 +122,15 @@ export default function AccountPanel({ authCapability, runInProgress, freeRunsLe
         </p>
       </header>
 
+      {/* Always mounted so the change is announced; empty, it takes no space. */}
+      <div role="status" className="acct-plan-notice-slot">
+        {checkoutReturn && !deleted && (
+          <p className="key-card acct-plan-notice" data-tone={checkoutReturn === "cancelled" ? "quiet" : undefined}>
+            {checkoutNotice(checkoutReturn, auth.ready && auth.user !== null)}
+          </p>
+        )}
+      </div>
+
       {deleted ? (
         <DeletedCard signingOut={deleted === "signing-out"} onBack={() => setDeleted(false)} />
       ) : !available ? (
@@ -99,7 +140,7 @@ export default function AccountPanel({ authCapability, runInProgress, freeRunsLe
               whose report has not arrived): Sign out stays reachable here,
               at /app?view=account, even with the tab hidden. */}
           {auth.ready && auth.user && (
-            <IdentityCard email={auth.user.email} runInProgress={runInProgress} freeRunsLeft={freeRunsLeft} />
+            <IdentityCard email={auth.user.email} runInProgress={runInProgress} freeRuns={freeRuns} />
           )}
         </>
       ) : !auth.ready ? (
@@ -111,7 +152,9 @@ export default function AccountPanel({ authCapability, runInProgress, freeRunsLe
           userId={auth.user.id}
           email={auth.user.email}
           runInProgress={runInProgress}
-          freeRunsLeft={freeRunsLeft}
+          freeRuns={freeRuns}
+          billing={billing}
+          paidMinutes={paidMinutes}
           onDeleted={markDeleted}
         />
       ) : (
@@ -120,6 +163,14 @@ export default function AccountPanel({ authCapability, runInProgress, freeRunsLe
       {(deleted || !available || !auth.user) && <AccountResources />}
     </div>
   );
+}
+
+function checkoutNotice(notice: CheckoutReturn, signedIn: boolean): string {
+  if (notice === "cancelled") return "Checkout cancelled. Nothing was charged.";
+  if (!signedIn) return "Checkout finished. Sign in with the email you paid with to see your plan.";
+  if (notice === "paid") return "You’re on the paid plan.";
+  if (notice === "confirming") return "Confirming payment…";
+  return "We have not seen your payment yet. If you completed checkout, it will show here shortly.";
 }
 
 function Unavailable() {
@@ -296,18 +347,22 @@ function SignedIn({
   userId,
   email,
   runInProgress,
-  freeRunsLeft,
+  freeRuns,
+  billing,
+  paidMinutes,
   onDeleted,
 }: {
   userId: string;
   email: string | null;
   runInProgress: boolean;
-  freeRunsLeft: number | null;
+  freeRuns: FreeRunsBanner | null;
+  billing: BillingDetails | null;
+  paidMinutes: number | null;
   onDeleted: (signedOut: Promise<void>) => void;
 }) {
   const { account, problem, loading, reload } = useAccount(userId);
   const identity = (
-    <IdentityCard email={account?.email ?? email} runInProgress={runInProgress} freeRunsLeft={freeRunsLeft} />
+    <IdentityCard email={account?.email ?? email} runInProgress={runInProgress} freeRuns={freeRuns} />
   );
 
   if (problem?.kind === "unavailable") {
@@ -345,6 +400,8 @@ function SignedIn({
         </div>
       )}
 
+      {billing && <PlanGroup billing={billing} paidMinutes={paidMinutes} />}
+
       {account && (
         <section className="acct-group" aria-labelledby="acct-grp-account">
           <h2 id="acct-grp-account" className="history-group-label acct-group-label">
@@ -378,11 +435,11 @@ function SignedIn({
 function IdentityCard({
   email,
   runInProgress,
-  freeRunsLeft,
+  freeRuns,
 }: {
   email: string | null;
   runInProgress: boolean;
-  freeRunsLeft: number | null;
+  freeRuns: FreeRunsBanner | null;
 }) {
   const [signingOut, setSigningOut] = useState(false);
 
@@ -398,10 +455,16 @@ function IdentityCard({
         <p className="acct-email">{email ?? "your account"}</p>
         <p className="key-help acct-identity-meta">
           Email sign-in
-          {freeRunsLeft !== null && (
+          {freeRuns !== null && (
             <>
               {" · "}
-              <span className="acct-nowrap">Free runs left on this device: {freeRunsLeft}</span>
+              <span className="acct-nowrap">
+                {freeRuns.plan === "paid"
+                  ? `Runs left this month: ${freeRuns.remaining} of ${freeRuns.limit}`
+                  : freeRuns.scope === "account"
+                    ? `Free runs left this month: ${freeRuns.remaining} of ${freeRuns.limit}`
+                    : `Free runs left on this device: ${freeRuns.remaining}`}
+              </span>
             </>
           )}
         </p>
@@ -418,6 +481,104 @@ function IdentityCard({
       </div>
       {/* After the button, so on a phone the email and Sign out stay together. */}
       {runInProgress && <p className="pending-note acct-guard">{RUN_GUARD}</p>}
+    </section>
+  );
+}
+
+/* ---------------------------------------------------------------------- plan */
+
+const INTERVAL_LABEL = { month: "Monthly", year: "Yearly" } as const;
+
+/* One plan, so no pricing table: a sentence saying what it buys and the two
+   ways to pay for it, or, once paid, what the account has and the one way to
+   change it. Both leave for a Stripe-hosted page (`useBillingActions`);
+   nothing here takes card details. */
+function PlanGroup({ billing, paidMinutes }: { billing: BillingDetails; paidMinutes: number | null }) {
+  const actions = useBillingActions();
+  const paid = billing.plan === "paid";
+  const month = billing.prices.month ? formatPrice(billing.prices.month) : null;
+  const year = billing.prices.year ? formatPrice(billing.prices.year) : null;
+  const extraRun = billing.prices.extraRun ? formatPrice(billing.prices.extraRun) : null;
+  const periodEnd = billing.currentPeriodEnd ? formatLongDay(billing.currentPeriodEnd) : null;
+  const paymentFailed = billing.status === "past_due" || billing.status === "unpaid";
+  const busy = actions.busy !== null;
+
+  const button = (action: BillingAction, label: string, primary: boolean) => (
+    <button
+      type="button"
+      className={`btn ${primary ? "btn-primary" : "btn-secondary"} btn-pill`}
+      onClick={() => void actions.run(action)}
+      aria-disabled={busy || undefined}
+    >
+      {actions.busy === action ? "Opening…" : label}
+    </button>
+  );
+
+  return (
+    <section className="acct-group" aria-labelledby="acct-grp-plan">
+      <h2 id="acct-grp-plan" className="history-group-label acct-group-label">
+        Plan
+      </h2>
+      <div className="key-card acct-card acct-plan">
+        {paid ? (
+          <>
+            <p className="acct-plan-name">
+              Paid
+              {billing.interval && <span className="acct-plan-interval"> · {INTERVAL_LABEL[billing.interval]}</span>}
+            </p>
+            {periodEnd && (
+              <p className="key-help">{billing.cancelAtPeriodEnd ? `Ends ${periodEnd}` : `Renews ${periodEnd}`}</p>
+            )}
+            {paymentFailed && (
+              <p className="error-note key-error acct-plan-warning">
+                Payment failed — update your card in Manage billing.
+              </p>
+            )}
+            <p className="key-help">
+              <span className="acct-nowrap">
+                {billing.runs.used} of {billing.runs.limit} used this month.
+              </span>
+              {extraRun && (
+                <>
+                  {" "}
+                  <span className="acct-nowrap">Extra runs are {extraRun} each.</span>
+                </>
+              )}
+            </p>
+            <div className="key-actions">{button("portal", "Manage billing", paymentFailed)}</div>
+          </>
+        ) : (
+          <>
+            <p className="acct-plan-name">Free</p>
+            <p className="key-help">
+              The paid plan: {PAID_RUNS_PER_MONTH} runs a month on our key
+              {paidMinutes !== null && `, videos up to ${paidMinutes} minutes`}, no key needed.
+              {extraRun && ` Extra runs after that are ${extraRun} each.`}
+            </p>
+            {(month || year) && (
+              <div className="key-actions">
+                {month && button("month", `Upgrade — ${month}/month`, true)}
+                {year && button("year", `Yearly — ${year}/year`, !month)}
+              </div>
+            )}
+          </>
+        )}
+        {actions.error && (
+          <p role="alert" className="error-note key-error">
+            {actions.error}
+          </p>
+        )}
+        <p role="status" className="key-status-slot">
+          {actions.handedOff && (
+            <span className="key-status">Opened in your browser. Come back here when you’re done.</span>
+          )}
+        </p>
+      </div>
+      {!paid && (
+        <p className="key-help acct-group-note">
+          Billed through Stripe. Cancel anytime. Runs with your own Gemini key never count.
+        </p>
+      )}
     </section>
   );
 }

@@ -207,21 +207,102 @@ export interface CapabilityReport {
   capabilities: Capability[];
 }
 
-/** This device's free-run allowance for the current UTC day, from
- *  `GET /api/free-runs`. Only meaningful without a bring-your-own key: a
- *  caller with their own Gemini key has no limit and never sees it. */
+/** Whose allowance a free-run count is. `device`: this device's few runs
+ *  per UTC day (anonymous). `account`: the signed-in account's runs per UTC
+ *  calendar month, shared across that person's devices and used *instead of*
+ *  the device's while signed in (2026-11-13). A server that predates the
+ *  account allowance sends no scope, which reads as `device`. */
+export type FreeRunsScope = "device" | "account";
+
+/** The free-run allowance the server counts this caller against, from
+ *  `GET /api/free-runs`: this device's for the UTC day, or (signed in) the
+ *  account's for the UTC month. Only meaningful without a bring-your-own key:
+ *  a caller with their own Gemini key has no limit and never sees it. */
 export interface FreeRunsStatus {
+  /** `device` or `account`; see `FreeRunsScope`. */
+  scope: FreeRunsScope;
+  /** The signed-in account's plan (2026-11-13, one paid plan). `paid` counts
+   *  against the paid monthly allowance (`limit`, 100 at launch). A server
+   *  without billing sends no plan, which reads as `free`. */
+  plan: BillingPlan;
+  /** Paid only: runs past `limit` are allowed and billed per run, so a spent
+   *  allowance does not block. `false` everywhere else. */
+  overage: boolean;
   /** The random, server-issued token that counts this device's runs. Not tied
    *  to a person. Replaced whenever the server answers with a different one. */
   deviceToken: string;
   limit: number;
   used: number;
   remaining: number;
-  /** ISO 8601 UTC instant the count resets (next UTC midnight). */
+  /** ISO 8601 UTC instant the count resets: next UTC midnight (device), or
+   *  the first of next month at 00:00Z (account). */
   resetsAt: string;
   /** `false`: the deployment has no free-run limit — show nothing. */
   enabled: boolean;
 }
+
+/** How long and how large one upload may be (`GET /api/limits`,
+ *  2026-11-13). The server enforces these regardless; the client reads them
+ *  only to word the intake and to refuse a file before uploading it. */
+export interface MediaLimits {
+  maxDurationSeconds: number;
+  maxFileSizeMb: number;
+}
+
+/** Both tiers the server reports. `signedInByok` applies to a signed-in
+ *  person running on their own Gemini key; everyone else gets `standard`.
+ *  On a server without the endpoint both are today's standard values. */
+export interface MediaLimitsTable {
+  standard: MediaLimits;
+  signedInByok: MediaLimits;
+  /** The paid plan's limits, which need no key; null from a server that does
+   *  not report them (then the paid plan gets the other tiers' rules). */
+  paid: MediaLimits | null;
+}
+
+/* ---- billing (2026-11-13, "Level 3, one paid plan") ----
+   Stripe hosted Checkout and Customer Portal, reached by redirect; the
+   browser never loads Stripe.js and never sees a card. `GET /api/billing`
+   describes the signed-in account's plan. Field names here are camelCase
+   because the adapter normalises the body (it is optional chrome). */
+
+export type BillingPlan = "free" | "paid";
+export type BillingInterval = "month" | "year";
+
+/** A price in the currency's minor units (cents for usd), as Stripe gives it. */
+export interface BillingPrice {
+  amount: number;
+  currency: string;
+}
+
+export interface BillingPrices {
+  month: BillingPrice | null;
+  year: BillingPrice | null;
+  /** Each run past the paid monthly allowance. */
+  extraRun: BillingPrice | null;
+}
+
+/** `GET /api/billing`. `enabled: false` means the server has billing off,
+ *  and the app then looks exactly as it did before billing existed. */
+export type BillingStatus =
+  | { enabled: false }
+  | {
+      enabled: true;
+      plan: BillingPlan;
+      /** Stripe's subscription status (`active`, `past_due`, `canceled`, ...);
+       *  null on the free plan. Kept as a string: an unknown value renders
+       *  neutrally rather than being dropped. */
+      status: string | null;
+      interval: BillingInterval | null;
+      /** ISO 8601; the renewal date, or the end date when cancelling. */
+      currentPeriodEnd: string | null;
+      cancelAtPeriodEnd: boolean;
+      runs: { limit: number; used: number };
+      prices: BillingPrices;
+    };
+
+/** A plan the server actually sells: `BillingStatus` with billing on. */
+export type BillingDetails = Extract<BillingStatus, { enabled: true }>;
 
 /* ---- accounts (auth phase 2; contract in docs/backend/auth.md) ----
    Sign-in is optional. A deployment without an identity provider never

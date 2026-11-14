@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useSyncExternalStore } from "react";
-import type { FreeRunsStatus } from "@/domain/entities";
+import { useEffect, useRef, useSyncExternalStore } from "react";
+import type { BillingPlan, FreeRunsScope, FreeRunsStatus } from "@/domain/entities";
 import { apiKeyStore, freeRunsGateway, nativeShell } from "@/infrastructure/container";
 import { forgetReadResult, isReadFailing, noteReadResult, onReconnectChance } from "@/application/serverReachability";
 
 /* Free runs (Phase 5b): an anonymous device gets a few runs per UTC day
-   without a Gemini key. This module holds the one copy of what the app knows
+   without a Gemini key; a signed-in account gets its own monthly allowance
+   instead (2026-11-13). This module holds the one copy of what the app knows
    about that allowance, outside React, because three places act on it and
    none of them owns the others:
 
@@ -16,6 +17,14 @@ import { forgetReadResult, isReadFailing, noteReadResult, onReconnectChance } fr
      401 `device_token_invalid`;
    - the API key page changes whether it matters at all (a saved key means no
      limit), which arrives through `apiKeyStore.subscribe`.
+
+   Two allowances, one store (2026-11-13). Signed in, the server counts the
+   account's monthly runs instead of this device's daily ones; the shared
+   `ApiClient` adds the bearer, so the same read answers for whoever is
+   signed in, and `status.scope` says which allowance it is. Signing in or
+   out therefore makes the cached count wrong: `useFreeRuns(identity)` sees
+   the change and calls `noteIdentityChanged`, which drops the count and
+   reads again under the new identity.
 
    Quiet by design. A failed or offline status read leaves the banner hidden
    rather than guessing: the server is still the authority, and a 402 on the
@@ -34,6 +43,10 @@ let inFlight: Promise<FreeRunsStatus | null> | null = null;
    read keeps the limit state up instead of going quiet: the refusal is hard
    evidence, and hiding it would invite a submit that is certain to fail. */
 let refusedSinceLastRead = false;
+/* Bumped on every sign-in or sign-out. A read that went out under the old
+   identity is not published (its count is someone else's); it is replaced by
+   a fresh read instead. */
+let identityEpoch = 0;
 
 function publish(next: Snapshot) {
   snapshot = next;
@@ -56,25 +69,43 @@ function subscribe(listener: () => void): () => void {
  */
 export function refreshFreeRuns(): Promise<FreeRunsStatus | null> {
   if (inFlight) return inFlight;
-  inFlight = freeRunsGateway
-    .fetchStatus()
-    .then((status) => {
+  const epoch = identityEpoch;
+  const request: Promise<FreeRunsStatus | null> = freeRunsGateway.fetchStatus().then(
+    (status): FreeRunsStatus | Promise<FreeRunsStatus | null> => {
+      inFlight = null;
+      /* Asked as whoever was signed in before: read again as who is now. */
+      if (epoch !== identityEpoch) return refreshFreeRuns();
       noteReadResult("free-runs");
       refusedSinceLastRead = false;
       publish({ status });
       return status;
-    })
-    .catch((err: unknown) => {
+    },
+    (err: unknown): null | Promise<FreeRunsStatus | null> => {
+      inFlight = null;
+      if (epoch !== identityEpoch) return refreshFreeRuns();
       /* Quiet here; whether the server was reachable at all is reported to
          serverReachability, which says so on Analyze (refinement 4). */
       noteReadResult("free-runs", err);
       if (!refusedSinceLastRead) publish({ status: null });
       return null;
-    })
-    .finally(() => {
-      inFlight = null;
-    });
-  return inFlight;
+    }
+  );
+  inFlight = request;
+  return request;
+}
+
+/**
+ * Someone signed in or out, so the server now counts a different allowance
+ * (the account's monthly runs, or this device's daily ones). Forgets the
+ * cached count, including a 402's limit state (that refusal was for the other
+ * identity), and reads again unless a key is saved. Until the read lands the
+ * intake shows nothing about free runs, never the other identity's number.
+ */
+export function noteIdentityChanged(): void {
+  identityEpoch += 1;
+  refusedSinceLastRead = false;
+  publish({ status: null });
+  if (apiKeyStore.get() === "") void refreshFreeRuns();
 }
 
 /**
@@ -83,17 +114,27 @@ export function refreshFreeRuns(): Promise<FreeRunsStatus | null> {
  * status read had failed and nothing was known — then confirms with a fresh
  * read (which also learns `resets_at`).
  */
-export function markFreeRunsUsed(limit?: number, used?: number): void {
+export function markFreeRunsUsed(limit?: number, used?: number, scope?: string): void {
   const prev = snapshot.status;
   const lim = limit ?? prev?.limit ?? 0;
   refusedSinceLastRead = true;
+  /* The 402's own scope wins; an older server sends none, so fall back to
+     what the last read said, then to this device. */
+  const refusedScope: FreeRunsScope =
+    scope === "account" || scope === "device" ? scope : (prev?.scope ?? "device");
   publish({
     status: {
+      scope: refusedScope,
+      /* A 402 is only ever sent to the free plan (a paid account's runs past
+         its allowance are billed instead). */
+      plan: "free",
+      overage: false,
       deviceToken: prev?.deviceToken ?? "",
       limit: lim,
       used: used ?? Math.max(lim, prev?.used ?? 0),
       remaining: 0,
-      resetsAt: prev?.resetsAt ?? "",
+      /* A reset instant only means something for the same allowance. */
+      resetsAt: prev && prev.scope === refusedScope ? prev.resetsAt : "",
       enabled: true,
     },
   });
@@ -139,10 +180,19 @@ const hasKeySnapshot = () => apiKeyStore.get() !== "";
 const hasKeyServerSnapshot = () => false;
 
 export type FreeRunsBanner = {
+  /** `device` (per UTC day) or `account` (per UTC month); drives the copy. */
+  scope: FreeRunsScope;
+  /** `paid` (2026-11-13): the paid plan's monthly allowance, worded as runs
+   *  rather than free runs. */
+  plan: BillingPlan;
   remaining: number;
   limit: number;
-  /** No free runs left today: submits are blocked until a key is saved. */
+  /** None left in this period. On the free plan submits are then blocked
+   *  until a key is saved (or, on the device allowance, until someone signs
+   *  in); on the paid plan with `overage` they go on, billed per run. */
   exhausted: boolean;
+  /** Paid only: runs past the allowance are allowed and billed. */
+  overage: boolean;
 };
 
 /**
@@ -153,10 +203,24 @@ export type FreeRunsBanner = {
  * Call once, from the always-mounted shell (`HomeScreen`): it reads the
  * allowance on mount whenever no key is saved, and again whenever the key is
  * removed.
+ *
+ * `identity` is who is signed in, as the shell knows it: `null` until the
+ * sign-in state is known, then the user id or `""` for nobody. A change after
+ * the first known value (a sign-in or sign-out) re-reads the allowance under
+ * the new identity. The first value does not: the launch read already waits
+ * for a stored session before it goes out (`ApiClient`).
  */
-export function useFreeRuns(): { banner: FreeRunsBanner | null; blocked: boolean } {
+export function useFreeRuns(identity: string | null = ""): { banner: FreeRunsBanner | null; blocked: boolean } {
   const { status } = useSyncExternalStore(subscribe, () => snapshot, () => snapshot);
   const hasKey = useSyncExternalStore(subscribeKey, hasKeySnapshot, hasKeyServerSnapshot);
+
+  const knownIdentity = useRef<string | null>(null);
+  useEffect(() => {
+    if (identity === null) return;
+    const previous = knownIdentity.current;
+    knownIdentity.current = identity;
+    if (previous !== null && previous !== identity) noteIdentityChanged();
+  }, [identity]);
 
   useEffect(() => {
     if (hasKey) {
@@ -202,9 +266,10 @@ export function useFreeRuns(): { banner: FreeRunsBanner | null; blocked: boolean
     };
   }, [hasKey]);
 
-  /* Spent for today: read again just after the UTC reset the server named, so
-     a tab left open overnight unblocks itself. Capped so a bogus far-future
-     instant cannot overflow setTimeout. */
+  /* Spent for this period: read again just after the UTC reset the server
+     named, so a tab left open overnight unblocks itself. Capped at a day, so
+     a bogus far-future instant cannot overflow setTimeout (and an account's
+     month-end reset is simply checked once a day until it is near). */
   const resetsAt = status && status.remaining <= 0 ? status.resetsAt : "";
   useEffect(() => {
     if (hasKey || !resetsAt) return;
@@ -217,8 +282,18 @@ export function useFreeRuns(): { banner: FreeRunsBanner | null; blocked: boolean
 
   if (hasKey || !status || !status.enabled) return { banner: null, blocked: false };
   const exhausted = status.remaining <= 0;
+  const overage = status.plan === "paid" && status.overage;
   return {
-    banner: { remaining: Math.max(0, status.remaining), limit: status.limit, exhausted },
-    blocked: exhausted,
+    banner: {
+      scope: status.scope,
+      plan: status.plan,
+      remaining: Math.max(0, status.remaining),
+      limit: status.limit,
+      exhausted,
+      overage,
+    },
+    /* Paid with overage: the allowance running out costs money per run, it
+       does not stop anyone (the server sends no 402 then). */
+    blocked: exhausted && !overage,
   };
 }

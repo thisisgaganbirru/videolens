@@ -97,6 +97,18 @@ session.
 - **Shown** only when `authSession.enabled` *and* the server's `auth`
   capability is `ok`. Computed in `HomeScreen` and passed to `AppNav`,
   `BottomTabBar` and `MoreSheet` (`navTabs(showAccount)`).
+- **Top bar entry (2026-11-13).** From 48rem the web top bar draws Account
+  not as a text tab but as a round 44px link at the far right, after the
+  theme toggle (`.nav-account` in `AppNav`): lucide `UserRound` signed out,
+  the email's first character uppercased signed in (`accountInitial`,
+  computed in `HomeScreen` from `authUser.user.email`; null falls back to
+  the glyph). `aria-label` and `title` "Account", same href and in-place
+  switch as the old tab, `aria-current="page"` plus the text tabs' filled
+  ink when current. It is shown exactly where `.nav-links` is (unlayered
+  48rem rule, hidden again in the sideways app shell). The web phone menu
+  and the More sheet keep Account as a text row; the dock is unchanged.
+  `UserRound` rather than the More sheet's `CircleUserRound` because the
+  button's own round frame already draws the circle.
 - The panel uses the **same gate** for its sign-in form: capability still
   loading, failed to load, or not `ok` all show the calm "Sign-in is not
   available on this server" card and no form. The same card shows when
@@ -115,6 +127,14 @@ session.
   created secret is kept. It resets on leaving the page, signing out, or
   changing users. Inside: create, Copy/Done for the one-time secret, and the
   list with inline revoke confirmation.
+- **Free runs line (2026-11-13).** The identity card's meta line reads
+  "Free runs left this month: N of 10" when the server counts the account's
+  monthly allowance (`scope: "account"`), and keeps "Free runs left on this
+  device: N" otherwise (including an older server that sends no scope). The
+  panel takes the `FreeRunsBanner` object from HomeScreen's one `useFreeRuns`
+  (prop `freeRuns`, was `freeRunsLeft`), and HomeScreen re-reads the
+  allowance on every sign-in and sign-out. See `free-runs.md`, "Account
+  allowance".
 - **On this device / Help:** plain link rows (History, Your Gemini key;
   Privacy policy, Terms of use, What's new). They show in every state:
   signed out, unavailable, deleted and signed in.
@@ -360,3 +380,8 @@ cannot be resized); check them on the bundled APK.
 - 2026-11-09 · frontend subagent (auth phase 3, review fix) · "Back to sign in" on the deleted card is held (`aria-disabled`, guard, status line) until `signOut()` settles, via a promise passed to `onDeleted`, so the old session cannot re-create the account; `rejected` deletion copy reworded to stay true when a lost-204 retry gets 401; tsc clean, build and build:mobile pass, lint 5 known only
 - 2026-11-09 · frontend agent · privacy page deletion sentence corrected (backups and logs ~7 days)
 - 2026-11-09 · frontend agent · Account tab option A layout; sign out everywhere
+- 2026-11-13 · frontend agent · desktop top bar: Account text tab replaced by a round icon link at the far right (person glyph signed out, email initial signed in, filled ink when current); phone menu, More sheet and dock unchanged
+- 2026-11-13 · frontend agent · Account panel free-runs line is scope-aware ("Free runs left this month: N of 10" for the account allowance); `AccountPanel` prop `freeRunsLeft` → `freeRuns`; HomeScreen re-reads free runs when the signed-in user changes
+- 2026-11-13 · frontend agent · signed in + saved Gemini key unlocks the larger upload tier (10 min / 500 MB from `GET /api/limits`); signed out with a key, the drop well says "Sign in for videos up to 10 minutes." (link to Account) where sign-in is offered. See `upload-form.md`, "Upload limits per tier"
+- 2026-11-13 · frontend agent · Account gains a "Plan" group above "Your account" (only when the `billing` capability is ok and `/api/billing` says enabled), a checkout-return notice under the header, and "Runs left this month: N of L" on the identity line for a paid account; props `billing`, `checkoutReturn`, `paidMinutes`. See `billing.md`
+- 2026-11-13 · frontend agent · account deletion: 503 `subscription_cancel_failed` gets its own message (nothing deleted, account and subscription unchanged), form stays usable. See `billing.md`

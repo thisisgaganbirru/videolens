@@ -10,13 +10,15 @@ import { UNREADABLE } from "./apiClient";
 /* An error body's `code` and a 402's `limit`/`used`, carried onto the
    `ApiError` so the hook can branch on `code` (`free_runs_used`,
    `device_token_invalid`) instead of matching the sentence. */
-function errorExtras(body: unknown): { code?: string; limit?: number; used?: number } {
+function errorExtras(body: unknown): { code?: string; limit?: number; used?: number; scope?: string } {
   if (typeof body !== "object" || body === null) return {};
   const b = body as Record<string, unknown>;
   return {
     code: typeof b.code === "string" ? b.code : undefined,
     limit: typeof b.limit === "number" ? b.limit : undefined,
     used: typeof b.used === "number" ? b.used : undefined,
+    /* `device` or `account` (2026-11-13); absent from older servers. */
+    scope: typeof b.scope === "string" ? b.scope : undefined,
   };
 }
 
@@ -74,6 +76,22 @@ function tryAgainIn(seconds: number): string {
 /** The sentence for a refused run creation. */
 function createRunFailureMessage(status: number, body: unknown, retryAfter: string | null): string {
   const detail = userFacingDetail(body);
+  /* 2026-11-13: a signed-in BYOK person may run one long video at a time;
+     a second one is refused with this code. That is not "going too fast",
+     and any Retry-After is beside the point: the server's sentence says
+     what to wait for. */
+  if (status === 429 && errorExtras(body).code === "long_run_in_progress") {
+    return detail ?? "You already have a long video processing. Wait for it to finish.";
+  }
+  /* 2026-11-13, paid plan: a paid account past its monthly cap on extra
+     runs. Its own quiet sentence and no upgrade offer (it is already paid);
+     the cap comes from the body's `limit`. */
+  const extras = errorExtras(body);
+  if (status === 402 && extras.code === "extra_runs_cap") {
+    return extras.limit !== undefined
+      ? `You’ve reached this month’s limit of ${extras.limit} extra runs. Runs reset next month.`
+      : "You’ve reached this month’s limit of extra runs. Runs reset next month.";
+  }
   if (status === 429) {
     const wait = retryAfterSeconds(retryAfter);
     if (wait !== null) return `${RATE_LIMITED} ${tryAgainIn(wait)}`;

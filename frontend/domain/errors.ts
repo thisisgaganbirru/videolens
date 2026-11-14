@@ -15,6 +15,9 @@ export class ApiError extends Error {
    *  `free_runs_used`. Absent on every other error. */
   readonly limit?: number;
   readonly used?: number;
+  /** Whose allowance a 402 `free_runs_used` refers to (`device` or
+   *  `account`). Absent on other errors and from servers that predate it. */
+  readonly scope?: string;
 
   /** `status` is the HTTP status, when there was one. Lets a caller tell "this
    *  run no longer exists" (404 — the server forgot it) from every other
@@ -22,12 +25,13 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status?: number,
-    extra: { code?: string; limit?: number; used?: number } = {}
+    extra: { code?: string; limit?: number; used?: number; scope?: string } = {}
   ) {
     super(message);
     this.code = extra.code;
     this.limit = extra.limit;
     this.used = extra.used;
+    this.scope = extra.scope;
   }
 }
 

@@ -394,6 +394,54 @@ h3 {
     display: block;
   }
 
+  /* ---- Account button (web top bar, from 48rem) ----
+     The fifth destination drawn as a round button at the far right, in the
+     same 44px frame as the theme toggle: the person glyph signed out, the
+     email's initial signed in. Current = the filled ink the text tabs use, so
+     "you are here" reads the same across the row. Hidden wherever the inline
+     tabs are (the phone menu and the More sheet keep Account as a row); the
+     unlayered 48rem rule at the end of the file shows it. */
+  .nav-account {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+    color: var(--color-ink);
+    background: var(--color-surface);
+    border: var(--rule-w) solid var(--color-border-strong);
+    border-radius: var(--radius-pill);
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out),
+      color var(--dur-short) var(--ease-out);
+  }
+  .nav-account svg {
+    width: 18px;
+    height: 18px;
+  }
+  .nav-account__initial {
+    font-family: var(--font-ui);
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .nav-account[aria-current="page"] {
+    background: var(--color-ink);
+    border-color: var(--color-ink);
+    color: var(--color-paper);
+  }
+  .nav-account:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  .nav-account:not([aria-current="page"]):active {
+    background: var(--color-tint);
+  }
+
   /* ---- phone menu (web shell, below 48rem) ----
      Not a drawer over the page: it takes the content band's place, between
      the top bar and the footer, as on the Web "Menu" board. It is a sibling of
@@ -2748,6 +2796,55 @@ h3 {
     white-space: nowrap;
   }
 
+  /* Plan (2026-11-13, docs/frontend/billing.md). One plan, so one card of
+     plain text and at most two buttons, padded like a row; no pricing table.
+     The checkout-return notice is a quiet accent line under the header; its
+     slot is always mounted (live region) and takes no space when empty. */
+  .acct-page .acct-plan {
+    padding: var(--space-md) 1.25rem;
+  }
+  .acct-page .acct-plan > .key-help {
+    margin: var(--space-2xs) 0 0;
+  }
+  .acct-page .acct-plan > .key-actions {
+    flex-wrap: wrap;
+  }
+  .acct-page .acct-plan > .key-status-slot:empty {
+    display: none;
+  }
+  .acct-page .acct-plan-name {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--color-ink);
+  }
+  .acct-page .acct-plan-interval {
+    font-weight: 400;
+    color: var(--color-muted);
+  }
+  .acct-page .acct-plan-warning {
+    margin-top: var(--space-xs);
+  }
+  .acct-page .acct-plan-notice {
+    margin: var(--space-md) 0 0;
+    padding: var(--space-sm) 1.25rem;
+    background: var(--color-accent-soft);
+    color: var(--color-accent-strong);
+    font-weight: 600;
+  }
+  .acct-page .acct-plan-notice[data-tone="quiet"] {
+    background: var(--color-surface);
+    color: var(--color-muted);
+    font-weight: 400;
+  }
+  @media (min-width: 40rem) {
+    .acct-page .acct-plan,
+    .acct-page .acct-plan-notice {
+      padding-inline: 1.75rem;
+    }
+  }
+
   .acct-page .acct-end {
     margin-top: var(--space-lg);
   }
@@ -3785,6 +3882,13 @@ h3 {
     font-weight: 600;
     color: var(--color-ink);
   }
+  /* The spent line's "sign in" link (signed out, sign-in offered;
+     2026-11-13). Ink like the blocked note's link: the underline and weight
+     mark it, and the strip's text stays one colour. */
+  .free-runs__text .text-link {
+    font-weight: 600;
+    color: var(--color-ink);
+  }
   /* The spent sentence is two lines on the board, the headline on its own. */
   .free-runs[data-state="spent"] .free-runs__text strong {
     display: block;
@@ -4783,6 +4887,9 @@ h3 {
   .nav-links {
     display: flex;
   }
+  .nav-account {
+    display: inline-flex;
+  }
   .menu-toggle,
   .menu-panel,
   .nav-wrap[data-menu-open="true"] + .menu-panel {
@@ -4795,7 +4902,8 @@ h3 {
    would bring the inline tabs back beside the dock, so it is undone here, and
    the bar is made compact: a 390px-tall screen cannot spare 76px of nav. */
 @media (max-height: 31.25rem) {
-  :root[data-shell="app"] .nav-links {
+  :root[data-shell="app"] .nav-links,
+  :root[data-shell="app"] .nav-account {
     display: none;
   }
   :root[data-shell="app"] .nav {
@@ -4921,7 +5029,8 @@ h3 {
     background: var(--color-tint);
   }
   .theme-toggle:hover,
-  .menu-toggle:hover {
+  .menu-toggle:hover,
+  .nav-account:not([aria-current="page"]):hover {
     background: var(--color-tint);
     border-color: var(--color-input-border);
   }

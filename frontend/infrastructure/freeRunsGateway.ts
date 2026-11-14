@@ -8,7 +8,9 @@ import { UNREADABLE } from "./apiClient";
 
    Sends the stored `X-Device-Token` (when there is one), the usual
    `X-Client-ID` and, when signed in, the bearer (all via `ApiClient`), never
-   the Gemini key — this endpoint does not read it. The
+   the Gemini key — this endpoint does not read it. With the bearer the
+   server answers with the signed-in account's monthly allowance (`scope:
+   "account"`) instead of this device's daily one. The
    server answers with the token it counts against: the same one, or a fresh
    one when ours was missing or invalid. Whatever it says is written back to
    the store here, so the next `POST /api/runs` carries the token the count
@@ -32,6 +34,13 @@ function normalise(raw: unknown): FreeRunsStatus {
     throw new ApiError(UNREADABLE);
   }
   return {
+    /* Only a literal "account" is the account allowance; missing (a server
+       from before 2026-11-13) or anything else is this device's. */
+    scope: body.scope === "account" ? "account" : "device",
+    /* Billing (2026-11-13): only a literal "paid" is the paid plan; missing
+       (a server without billing) is free, and so is anything unknown. */
+    plan: body.plan === "paid" ? "paid" : "free",
+    overage: body.plan === "paid" && body.overage === true,
     deviceToken: body.device_token,
     limit,
     used,
