@@ -210,30 +210,29 @@ export interface CapabilityReport {
 /** Whose allowance a free-run count is. `device`: this device's few runs
  *  per UTC day (anonymous). `account`: the signed-in account's runs, shared
  *  across that person's devices and used *instead of* the device's while
- *  signed in (2026-11-13); per UTC day on the free plan since 2026-11-14,
- *  per month on the paid one. A server that predates the account allowance
+ *  signed in (2026-11-13); per UTC day on both plans since 2026-11-14. A server that predates the account allowance
  *  sends no scope, which reads as `device`. */
 export type FreeRunsScope = "device" | "account";
 
 /** The period a run allowance counts over (2026-11-14). `day`: resets at
- *  the next UTC midnight (anonymous devices and free accounts). `month`:
- *  the paid plan's allowance. */
+ *  the next UTC midnight (anonymous devices, free accounts and, since
+ *  2026-11-14, the paid plan's 30). `month`: kept for a server that still
+ *  counts the paid plan per month. */
 export type FreeRunsPeriod = "day" | "month";
 
 /** The free-run allowance the server counts this caller against, from
  *  `GET /api/free-runs`: this device's for the UTC day, or (signed in) the
- *  account's: for the UTC day on the free plan, the month on the paid one. Only meaningful without a bring-your-own key:
+ *  account's for the UTC day. Only meaningful without a bring-your-own key:
  *  a caller with their own Gemini key has no limit and never sees it. */
 export interface FreeRunsStatus {
   /** `device` or `account`; see `FreeRunsScope`. */
   scope: FreeRunsScope;
   /** The signed-in account's plan (2026-11-13, one paid plan). `paid` counts
-   *  against the paid monthly allowance (`limit`, 100 at launch). A server
+   *  against the paid daily allowance (`limit`, 30 since 2026-11-14). A server
    *  without billing sends no plan, which reads as `free`. */
   plan: BillingPlan;
   /** What the count resets over (`period` on the response, 2026-11-14). A
-   *  server that does not send it is read by scope and plan: paid is
-   *  `month`, everything else `day`. */
+   *  server that does not send it reads as `day`. */
   period: FreeRunsPeriod;
   /** Paid only: runs past `limit` are allowed and billed per run, so a spent
    *  allowance does not block. `false` everywhere else. */
@@ -245,7 +244,7 @@ export interface FreeRunsStatus {
   used: number;
   remaining: number;
   /** ISO 8601 UTC instant the count resets: next UTC midnight (`day`), or
-   *  the start of the next billing month (`month`, paid). */
+   *  the start of the next month (`month`, an older paid server). */
   resetsAt: string;
   /** `false`: the deployment has no free-run limit — show nothing. */
   enabled: boolean;
@@ -288,7 +287,7 @@ export interface BillingPrice {
 export interface BillingPrices {
   month: BillingPrice | null;
   year: BillingPrice | null;
-  /** Each run past the paid monthly allowance. */
+  /** Each run past the paid daily allowance (capped per month). */
   extraRun: BillingPrice | null;
 }
 
@@ -307,7 +306,9 @@ export type BillingStatus =
       /** ISO 8601; the renewal date, or the end date when cancelling. */
       currentPeriodEnd: string | null;
       cancelAtPeriodEnd: boolean;
-      runs: { limit: number; used: number };
+      /** `period` (2026-11-14): `day` on both plans now; a body without it
+       *  reads as `day`. */
+      runs: { limit: number; used: number; period: FreeRunsPeriod };
       prices: BillingPrices;
     };
 

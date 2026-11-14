@@ -3866,6 +3866,17 @@ h3 {
   .free-runs-slot:empty {
     display: none;
   }
+  /* 2026-11-14 (Android QA run 22, CLS 0.08-0.12): before the first read the
+     slot holds an invisible stand-in strip (HomeScreen), so the real one
+     lands in reserved space at every width and font scale. A saved key never
+     shows the strip: the pre-paint `data-byok` stamp drops the reservation
+     before hydration, so a key holder's page does not collapse either. */
+  .free-runs-ghost {
+    visibility: hidden;
+  }
+  :root[data-byok] .free-runs-slot[data-pending] {
+    display: none;
+  }
   .free-runs-slot {
     margin-bottom: var(--space-md);
     /* Refinement 15: the strip stacks when the sentence would get too narrow

@@ -8,6 +8,7 @@ import BottomTabBar from "@/components/BottomTabBar";
 import SiteFooter from "@/components/SiteFooter";
 import CapabilityNotice from "@/components/CapabilityNotice";
 import FreeRunsBanner from "@/components/FreeRunsBanner";
+import type { FreeRunsBanner as FreeRunsBannerState } from "@/application/useFreeRuns";
 import ReachabilityNotice from "@/components/ReachabilityNotice";
 import { useServerReachability } from "@/application/serverReachability";
 import { revalidateFreeRuns, useFreeRuns } from "@/application/useFreeRuns";
@@ -39,6 +40,21 @@ import { platformName } from "@/domain/platforms";
  * fallback — the fallback is what gets baked into the prerendered HTML, and it
  * has to be a real Analyze view, not a placeholder.
  */
+/* The stand-in the free-runs slot sizes itself with before the first read
+   (2026-11-14, Android QA run 22): a signed-out device with runs left and
+   sign-in offered, the first-visit case and the longest "runs left" line, so
+   the real strip is the same height or a line shorter, never taller. Never
+   seen: the slot hides it and it is inert. */
+const FREE_RUNS_GHOST: FreeRunsBannerState = {
+  scope: "device",
+  period: "day",
+  plan: "free",
+  remaining: 3,
+  limit: 3,
+  exhausted: false,
+  overage: false,
+};
+
 export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   const [sourceOpen, setSourceOpen] = useState(false);
   const {
@@ -310,16 +326,24 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     so the polite status region exists before the count lands
                     and can announce it (and the switch to "used"); empty and
                     zero-height when a key is saved, the deployment has no
-                    limit, or the allowance could not be read. */}
-                <div className="free-runs-slot" role="status">
-                  {freeRuns.banner && (
+                    limit, or the allowance could not be read.
+                    Until the first read answers (2026-11-14, Android QA run
+                    22) it holds an invisible, inert stand-in strip with the
+                    commonest sentence, so the real one lands in space already
+                    taken at every width instead of pushing the page down. */}
+                <div className="free-runs-slot" role="status" data-pending={freeRuns.pending || undefined}>
+                  {freeRuns.banner ? (
                     <FreeRunsBanner
                       banner={freeRuns.banner}
                       offerSignIn={showAccount && authUser.ready && !authUser.user}
                       offerUpgrade={billing !== null && billing.plan === "free"}
                       extraRunPrice={extraRunPrice}
                     />
-                  )}
+                  ) : freeRuns.pending ? (
+                    <div className="free-runs-ghost" aria-hidden="true" inert>
+                      <FreeRunsBanner banner={FREE_RUNS_GHOST} offerSignIn />
+                    </div>
+                  ) : null}
                 </div>
                 <p className="eyebrow">New analysis</p>
                 <h1 className="intake-title">Turn any short video into clean notes.</h1>

@@ -19,7 +19,11 @@ import { formatDay, formatLongDay, formatPrice } from "@/components/format";
 import type { ApiKeySummary, BillingDetails, Capability } from "@/domain/entities";
 import type { FreeRunsBanner } from "@/application/useFreeRuns";
 import { useBillingActions, type BillingAction, type CheckoutReturn } from "@/application/useBilling";
-import { ACCOUNT_FREE_RUNS_PER_DAY } from "@/application/accountAllowance";
+import {
+  ACCOUNT_FREE_RUNS_PER_DAY,
+  PAID_EXTRA_RUNS_PER_MONTH,
+  PAID_RUNS_PER_DAY,
+} from "@/application/accountAllowance";
 
 /* Hallmark · component: account panel · genre: editorial · theme: custom
  * (owner handoff, app/tokens.css) · layout: option A, grouped list (owner's
@@ -62,8 +66,8 @@ type AccountPanelProps = {
    *  holds both actions until it settles. */
   runInProgress: boolean;
   /** The free-run allowance, from HomeScreen's one `useFreeRuns` read: the
-   *  account's when the server counts it (`scope: "account"`; for the day on
-   *  the free plan, the month on the paid one, per `period`), else this
+   *  account's when the server counts it (`scope: "account"`; for the UTC
+   *  day on both plans since 2026-11-14, per `period`), else this
    *  device's for the day. Null when unknown, unlimited, or beside
    *  the point (a Gemini key is saved): the identity line then says nothing
    *  about free runs. */
@@ -85,10 +89,6 @@ type AccountPanelProps = {
    *  signed-out lede reads it. */
   signInMinutes: number | null;
 };
-
-/** The paid plan's monthly allowance, as sold (owner, 2026-11-13). The live
- *  number comes from `billing.runs.limit` once someone is on the plan. */
-const PAID_RUNS_PER_MONTH = 100;
 
 const RUN_GUARD =
   "A run is in progress on Analyze. Wait until it finishes: signing in or out now would stop this screen following it until you switch back.";
@@ -470,7 +470,7 @@ function IdentityCard({
               {" · "}
               <span className="acct-nowrap">
                 {freeRuns.plan === "paid"
-                  ? `Runs left ${freeRuns.period === "day" ? "today" : "this month"}: ${freeRuns.remaining} of ${freeRuns.limit}`
+                  ? `Runs left ${freeRuns.period === "month" ? "this month" : "today"}: ${freeRuns.remaining} of ${freeRuns.limit}`
                   : freeRuns.scope === "account"
                     ? `Free runs left ${freeRuns.period === "month" ? "this month" : "today"}: ${freeRuns.remaining} of ${freeRuns.limit}`
                     : `Free runs left on this device: ${freeRuns.remaining}`}
@@ -546,12 +546,13 @@ function PlanGroup({ billing, paidMinutes }: { billing: BillingDetails; paidMinu
             )}
             <p className="key-help">
               <span className="acct-nowrap">
-                {billing.runs.used} of {billing.runs.limit} used this month.
+                {billing.runs.used} of {billing.runs.limit} used {billing.runs.period === "month" ? "this month" : "today"}.
               </span>
               {extraRun && (
                 <>
                   {" "}
-                  <span className="acct-nowrap">Extra runs are {extraRun} each.</span>
+                  <span className="acct-nowrap">Extra runs are {extraRun} each,</span>{" "}
+                  <span className="acct-nowrap">up to {PAID_EXTRA_RUNS_PER_MONTH} a month.</span>
                 </>
               )}
             </p>
@@ -560,14 +561,18 @@ function PlanGroup({ billing, paidMinutes }: { billing: BillingDetails; paidMinu
         ) : (
           <>
             <p className="acct-plan-name">Free</p>
-            {/* 2026-11-14: the free account now gets 10 runs a day, which over
-                a month is more than the paid plan's 100, so the pitch names
-                what the plan adds rather than comparing run counts. */}
+            {/* 2026-11-14 (owner): the paid plan is 30 runs a day, so the pitch
+                can compare honestly with the free account's 10. Included runs,
+                then extra runs and their monthly cap, each said once; never
+                "unlimited". The counts are the sold ones (accountAllowance);
+                the free body's `runs.limit` is the free allowance. */}
             <p className="key-help">
-              {paidMinutes !== null
-                ? `The paid plan: videos up to ${paidMinutes} minutes without your own key, and runs past the daily limit.`
-                : "The paid plan: runs past the daily limit, without your own key."}
-              {extraRun && ` Beyond its ${PAID_RUNS_PER_MONTH} included runs a month, each run is ${extraRun}.`}
+              {`The paid plan: ${PAID_RUNS_PER_DAY} runs a day instead of ${ACCOUNT_FREE_RUNS_PER_DAY}`}
+              {paidMinutes !== null && `, videos up to ${paidMinutes} minutes`}
+              {", and no Gemini key needed."}
+              {extraRun
+                ? ` Past the ${PAID_RUNS_PER_DAY}, extra runs are ${extraRun} each, up to ${PAID_EXTRA_RUNS_PER_MONTH} a month.`
+                : ` Past the ${PAID_RUNS_PER_DAY}, extra runs are billed per run, up to ${PAID_EXTRA_RUNS_PER_MONTH} a month.`}
             </p>
             {(month || year) && (
               <div className="key-actions">

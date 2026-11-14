@@ -4,7 +4,11 @@ import type { MouseEvent } from "react";
 import type { FreeRunsBanner as FreeRunsBannerState } from "@/application/useFreeRuns";
 import { goToMainTab, mainTabHref } from "@/application/useMainTab";
 import { isPlainLeftClick } from "@/components/navClick";
-import { ACCOUNT_FREE_RUNS_PER_DAY } from "@/application/accountAllowance";
+import {
+  ACCOUNT_FREE_RUNS_PER_DAY,
+  PAID_EXTRA_RUNS_PER_MONTH,
+  PAID_RUNS_PER_DAY,
+} from "@/application/accountAllowance";
 
 /* Hallmark · component: banner · genre: editorial · theme: custom (app/tokens.css)
  * boards: design/shots/IntakeFreeApp.png (runs left), IntakeLimitApp.png (spent)
@@ -33,11 +37,12 @@ import { ACCOUNT_FREE_RUNS_PER_DAY } from "@/application/accountAllowance";
  * period comes from the server's `period` (inferred by plan when absent). Signed out and spent, where sign-in is offered, one quiet
  * inline link says what signing in would give; no new chrome.
  *
- * Paid plan (2026-11-13): the same strip counts the paid monthly runs
- * ("N of 100 runs left this month."), with no "Add key" pill, since the plan
- * needs no key. Past the allowance runs go on and are billed, so the spent
- * line states the per-run price instead of turning red. A free account that
- * has spent its month gets one quiet "upgrade" link to the Account tab, only
+ * Paid plan (2026-11-13; 30 a day since 2026-11-14): the same strip counts
+ * the paid runs ("N of 30 runs left today."), with no "Add key" pill, since
+ * the plan needs no key. Past the allowance runs go on and are billed, so
+ * the spent line states the per-run price and the monthly cap on extra runs
+ * instead of turning red. A free account that has spent its day gets one
+ * quiet "upgrade" link to the Account tab, naming the paid daily count, only
  * where the server sells the plan.
  *
  * Signed out with runs left (2026-11-14, Android QA): the device line says
@@ -92,7 +97,9 @@ export default function FreeRunsBanner({
           ) : overage ? (
             <>
               <strong>You have used {monthly ? "this month" : "today"}&apos;s {limit} runs.</strong>{" "}
-              {extraRunPrice ? `Extra runs are billed at ${extraRunPrice} each.` : "Extra runs are billed per run."}
+              {extraRunPrice
+                ? `Extra runs are billed at ${extraRunPrice} each, up to ${PAID_EXTRA_RUNS_PER_MONTH} a month.`
+                : `Extra runs are billed per run, up to ${PAID_EXTRA_RUNS_PER_MONTH} a month.`}
             </>
           ) : (
             <>
@@ -128,8 +135,8 @@ export default function FreeRunsBanner({
                   Add your own Gemini key to keep going, or{" "}
                   <a className="text-link" href={mainTabHref("account")} onClick={openAccount}>
                     upgrade
-                  </a>
-                  .
+                  </a>{" "}
+                  for {PAID_RUNS_PER_DAY} a day.
                 </>
               ) : (
                 "Add your own Gemini key to keep going."

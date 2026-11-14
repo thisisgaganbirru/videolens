@@ -165,7 +165,7 @@ changes and brought the new pieces into the editorial system:
   | Prerender, before the reads, server unreachable, limit off | Free runs to start. No account needed. | (blank, height reserved) |
   | Signed out, device allowance known | **3 free runs a day**, no account needed. | Videos up to 3 minutes. [Sign in] for 10 a day. |
   | Signed in, account allowance | **10 free runs a day** with your account. | Videos up to N minutes. |
-  | Paid plan | **100 runs a month** on your plan. | Videos up to N minutes. |
+  | Paid plan | **30 runs a day** on your plan. (2026-11-14; was 100 a month) | Videos up to N minutes. |
   | Key saved on this device | Runs use the Gemini key saved on this device. | Videos up to N minutes. |
 
   "3 a day" and "10 a day" side by side make the two tiers read as two
@@ -257,3 +257,4 @@ LandingScreen uses literal /app route hrefs: useMainTab is a client module, so i
 - 2026-11-14 · codex · `#how` content-sized; reassurance and limit lines under the hero actions; "What you get" foot as a three-part `<dl>`; nav back to "Sign in"
 - 2026-11-14 · frontend agent · refinement on codex's pass: `LandingAllowance` states the server's free runs and video length (fallback sentence prerendered, line height reserved, no layout shift) with an inline "Sign in for 10 a month" that is also the phone's visible account entry; details terms in serif to match the page; nav "Get 10 free runs" ("Sign up free" at 48–50rem); stray blank lines tidied
 - 2026-11-14 · frontend agent · daily account allowance: signed-out line two "Sign in for 10 a day.", signed-in line "10 free runs a day with your account." (period from the server's `period`); fallback and reserved height unchanged; nav label "Get 10 free runs" / short "Sign up free" kept ("Get 10 free runs a day" would not fit the measured 768-799 bar, and the hero line under it carries the period)
+- 2026-11-14 · frontend agent · paid line reads "30 runs a day on your plan." from the server's `limit`/`period` (no change in `LandingAllowance`; a missing `period` now reads as a day for paid too)

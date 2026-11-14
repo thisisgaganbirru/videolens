@@ -10,8 +10,8 @@ import { UNREADABLE } from "./apiClient";
    `X-Client-ID` and, when signed in, the bearer (all via `ApiClient`), never
    the Gemini key — this endpoint does not read it. With the bearer the
    server answers with the signed-in account's allowance (`scope:
-   "account"`: daily on the free plan since 2026-11-14, monthly on the paid
-   one; `period` says which) instead of this device's daily one. The
+   "account"`: daily on the free plan and, since 2026-11-14, on the paid one
+   too; `period` says which) instead of this device's daily one. The
    server answers with the token it counts against: the same one, or a fresh
    one when ours was missing or invalid. Whatever it says is written back to
    the store here, so the next `POST /api/runs` carries the token the count
@@ -42,9 +42,10 @@ function normalise(raw: unknown): FreeRunsStatus {
     /* Billing (2026-11-13): only a literal "paid" is the paid plan; missing
        (a server without billing) is free, and so is anything unknown. */
     plan,
-    /* 2026-11-14: the server names the period. One that predates the field
-       is read by plan: paid counts a month, a device or free account a day. */
-    period: body.period === "day" || body.period === "month" ? body.period : plan === "paid" ? "month" : "day",
+    /* 2026-11-14: the server names the period. Every allowance now counts a
+       UTC day (device, free account, and the paid plan's 30), so a body
+       without the field reads as `day`; a literal "month" is still honoured. */
+    period: body.period === "month" ? "month" : "day",
     overage: body.plan === "paid" && body.overage === true,
     deviceToken: body.device_token,
     limit,

@@ -53,7 +53,9 @@ function normalise(raw: unknown): BillingStatus {
         ? body.current_period_end
         : null,
     cancelAtPeriodEnd: body.cancel_at_period_end === true,
-    runs: { limit, used },
+    /* 2026-11-14: both plans count a UTC day (free 10, paid 30); only a
+       literal "month" (an older server) reads otherwise. */
+    runs: { limit, used, period: runs.period === "month" ? "month" : "day" },
     prices: { month: price(prices.month), year: price(prices.year), extraRun: price(prices.extra_run) },
   };
 }
