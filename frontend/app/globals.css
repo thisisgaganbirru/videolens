@@ -4914,6 +4914,22 @@ h3 {
   }
 }
 
+/* The signed-out pill's optional short label (landing, 2026-11-14): "Get 10
+   free runs" is 148px, and from 48rem to 50rem the inline bar has only room
+   for ~135px before the right gutter, so "Sign up free" stands in there. Only
+   one span is ever displayed, so the accessible name is the visible text. */
+.nav-account__short {
+  display: none;
+}
+@media (min-width: 48rem) and (max-width: 49.99rem) {
+  .nav-account__long {
+    display: none;
+  }
+  .nav-account__short {
+    display: inline;
+  }
+}
+
 /* A phone held sideways in the installed app keeps the app chrome (the dock
    rule above, item 10). From 48rem the unlayered `.nav-links` rule just above
    would bring the inline tabs back beside the dock, so it is undone here, and

@@ -54,7 +54,7 @@ hydration agree.
 ## UI (IntakeFreeApp.png, IntakeLimitApp.png, IntakeWeb.png)
 
 - One white strip above the "New analysis" eyebrow on **every** shell (installed app, phone web, desktop web; in the left column on desktop). The sentence is on the left and the near-black `btn btn-ink btn-pill` "Add key" is on the right.
-- Copy: "**3 free runs left.** Add your own key for more." The singular is "**1 free run left.**". When spent: "**You have used your free runs.**" with "Add your own key to keep going." on its own line, and the strip gets a `--color-danger-border` hairline. Nothing else turns red.
+- Copy: "**3 free runs left today.** Add your own key for more." The singular is "**1 free run left today.**". Signed out where sign-in is offered, the second sentence is "[Sign in] for 10 a month, or add your own key." (2026-11-14). When spent: "**You have used your free runs.**" with "Add your own key to keep going." on its own line, and the strip gets a `--color-danger-border` hairline. Nothing else turns red.
 - "Add key" is a real link to `/app?view=api-key` (was `/?view=api-key` before Phase 5c moved the tool) (plain click goes through `goToMainTab`; middle-click opens a new tab).
 - Blocked: Analyze link uses the existing `.btn-primary:disabled` grey. **Browse files is disabled too, and drop is refused** (`dropEffect = "none"`, no highlight). The board draws Browse looking normal, but a control that cannot succeed should not look pressable. The link field and the terms box stay usable, so a typed link survives saving a key and coming back.
 - Accessibility: the `.free-runs-slot` wrapper is always rendered with `role="status"` (implicitly polite), so the count and the switch to "used" are announced without moving focus. It is `display: none` while empty.
@@ -175,7 +175,7 @@ Backend contract: `GET /api/free-runs` gains `"scope": "device" | "account"`
 
 | Where | device (unchanged unless noted) | account |
 |---|---|---|
-| Analyze strip, runs left | "**3 free runs left.** Add your own key for more." | "**7 free runs left this month.** Add your own key for more." |
+| Analyze strip, runs left | "**3 free runs left today.** Add your own key for more." Signed out where sign-in is offered (`showAccount`, 2026-11-14): "**3 free runs left today.** [Sign in] for 10 a month, or add your own key." | "**7 free runs left this month.** Add your own key for more." |
 | Analyze strip, spent | "**You have used your free runs.** Add your own key to keep going." | "**You have used this month's free runs.** Add your own Gemini key to keep going." (the server's 402 `detail`, word for word) |
 | Analyze strip, spent, signed out where sign-in is offered (`showAccount`) | "**You have used your free runs.** Add your own key, or [sign in] for 10 free runs a month." (new; inline `.text-link` to `/app?view=account`, ink + 600 like the blocked note's link) | n/a |
 | Blocked note in the intake card | "No free runs left today, so analyzing is paused." | "No free runs left this month, so analyzing is paused." (`UploadForm` `blockedScope`) |
@@ -204,3 +204,4 @@ cover it.
 - 2026-11-02 · frontend (refinement 15) · `.free-runs-slot` is an em size container; below 17em the strip stacks (pill under the sentence), so the sentence is never one word a line at large text; 320/100% unchanged
 - 2026-11-13 · frontend agent · account allowance: `scope` on `FreeRunsStatus`/`ApiError` (missing = device), re-read on sign-in/sign-out with an identity epoch so a stale read is never published, scope-aware copy on the strip, blocked note and Account panel, and a quiet "sign in for 10 free runs a month" link on the spent device strip where sign-in is offered
 - 2026-11-13 · frontend agent · `plan`/`overage` on `FreeRunsStatus`; paid strip "N of L runs left this month." (no pill), past the allowance with overage "Extra runs are billed at $X each." (not blocked); a spent free account adds ", or upgrade." (link to Account) when billing is on. See `billing.md`
+- 2026-11-14 · frontend agent · device strip says "today"; signed out where sign-in is offered it adds one inline "Sign in for 10 a month, or add your own key." so the device and account tiers read as two tiers (Android QA); `ACCOUNT_FREE_RUNS_PER_MONTH` moved to `application/accountAllowance.ts`

@@ -19,7 +19,7 @@ import { formatDay, formatLongDay, formatPrice } from "@/components/format";
 import type { ApiKeySummary, BillingDetails, Capability } from "@/domain/entities";
 import type { FreeRunsBanner } from "@/application/useFreeRuns";
 import { useBillingActions, type BillingAction, type CheckoutReturn } from "@/application/useBilling";
-import { ACCOUNT_FREE_RUNS_PER_MONTH } from "@/components/FreeRunsBanner";
+import { ACCOUNT_FREE_RUNS_PER_MONTH } from "@/application/accountAllowance";
 
 /* Hallmark · component: account panel · genre: editorial · theme: custom
  * (owner handoff, app/tokens.css) · layout: option A, grouped list (owner's

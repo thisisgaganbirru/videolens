@@ -66,8 +66,12 @@ type AppNavProps = {
   accountInitial?: string | null;
   /** The signed-out label of the Account entry (bar pill and phone-menu
    *  row). "Sign in" by default; the landing page, for new visitors, passes
-   *  "Get started" (owner, 2026-11-14). The dock keeps "Account". */
+   *  "Get 10 free runs" (2026-11-14). The dock keeps "Account". */
   signedOutLabel?: string;
+  /** A shorter bar-pill label for the narrow end of the inline bar
+   *  (48rem to 50rem), where a long `signedOutLabel` would run into the
+   *  page gutter. The phone-menu row always uses `signedOutLabel`. */
+  signedOutShortLabel?: string;
 };
 
 /** What the Account entry says, signed out, where it is a text label. */
@@ -93,6 +97,7 @@ export default function AppNav({
   accountState = "loading",
   accountInitial = null,
   signedOutLabel = SIGN_IN_LABEL,
+  signedOutShortLabel,
 }: AppNavProps) {
   const signedOut = accountState === "signed-out";
   const tabs = navTabs(showAccount);
@@ -175,7 +180,14 @@ export default function AppNav({
                 aria-current={activeTab === "account" ? "page" : undefined}
                 onClick={handleTabClick("account")}
               >
-                {signedOutLabel}
+                {signedOutShortLabel ? (
+                  <>
+                    <span className="nav-account__long">{signedOutLabel}</span>
+                    <span className="nav-account__short">{signedOutShortLabel}</span>
+                  </>
+                ) : (
+                  signedOutLabel
+                )}
               </Link>
             )}
             {showAccount && accountState === "signed-in" && (

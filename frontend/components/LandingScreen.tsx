@@ -3,7 +3,8 @@ import RouteNav from "@/components/RouteNav";
 import RouteTabBar from "@/components/RouteTabBar";
 import SiteFooter from "@/components/SiteFooter";
 import SampleResult from "@/components/SampleResult";
-import { APP_PATH } from "@/application/useMainTab";
+import LandingAllowance from "@/components/LandingAllowance";
+import { ACCOUNT_FREE_RUNS_PER_MONTH } from "@/application/accountAllowance";
 
 /* Hallmark · macrostructure: owner board (design/shots/Landing.png, LandingWeb.png)
  * genre: editorial · theme: custom (app/tokens.css — the owner's handoff)
@@ -24,14 +25,26 @@ import { APP_PATH } from "@/application/useMainTab";
  * dock is rendered anyway so the page is correct if that redirect is ever
  * skipped.
  *
- * Copy is held to what the product does today: a few free runs with no
- * account, your own Gemini key for more, History kept in this browser, files
- * deleted from the server once a run finishes. No numbers, no testimonials. */
+ * Copy is held to what the product does today: free runs with no account,
+ * your own Gemini key for more, History kept in this browser, files deleted
+ * from the server once a run finishes. The only numbers are the server's own
+ * (free runs, video length; LandingAllowance, client-side after the reads
+ * land) and the account allowance constant. No testimonials. */
 export default function LandingScreen() {
   return (
     <div className="shell" data-view="landing">
-      {/* Account access is distinct from the no-account analysis action. */}
-      <RouteNav activeTab={null} landing />
+      {/* Signed out, the account entry says what it gets you ("Get 10 free
+          runs"), so it invites new visitors without reading like a second
+          "Start analyzing". Outlined: the hero's green CTA is the view's one
+          green fill. Other routes keep "Sign in". Between 48rem and 50rem
+          the inline bar is 13px too narrow for it, so the pill says "Sign up
+          free" there (measured; app/globals.css). */}
+      <RouteNav
+        activeTab={null}
+        landing
+        signedOutLabel={`Get ${ACCOUNT_FREE_RUNS_PER_MONTH} free runs`}
+        signedOutShortLabel="Sign up free"
+      />
 
       <main className="view-scroll" data-view="landing" aria-label="VideoLens AI">
         <div className="landing">
@@ -44,17 +57,14 @@ export default function LandingScreen() {
                 and notes you can keep.
               </p>
               <div className="landing-actions">
-                <Link href={APP_PATH} className="btn btn-primary btn-pill landing-btn">
+                <Link href="/app" className="btn btn-primary btn-pill landing-btn">
                   Start analyzing
                 </Link>
                 <a href="#how" className="btn btn-secondary btn-pill landing-btn">
                   See how it works
                 </a>
               </div>
-              <p className="landing-reassurance">Free runs to start. No account needed.</p>
-              <p className="landing-limit-note">
-                Check your available runs and video-length limits in Analyze before you begin.
-              </p>
+              <LandingAllowance />
             </div>
 
             <SampleResult />
@@ -129,8 +139,10 @@ export default function LandingScreen() {
               <div>
                 <dt>After the free runs</dt>
                 <dd>
-                  Add your own Gemini key to keep going.{' '}
-                  <Link href={`${APP_PATH}?view=api-key`} className="text-link">Set up a key</Link>
+                  Add your own Gemini key to keep going.{" "}
+                  <Link href="/app?view=api-key" className="text-link">
+                    Set up a key
+                  </Link>
                 </dd>
               </div>
             </dl>
@@ -140,7 +152,7 @@ export default function LandingScreen() {
             <h2 id="landing-band-title" className="landing-band-title">
               Have a video in mind?
             </h2>
-            <Link href={APP_PATH} className="btn btn-primary btn-pill landing-btn">
+            <Link href="/app" className="btn btn-primary btn-pill landing-btn">
               Start analyzing
             </Link>
           </section>

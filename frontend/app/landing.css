@@ -59,30 +59,64 @@
   text-decoration: none;
   white-space: nowrap;
 }
-.landing-reassurance {
-  margin: var(--space-sm) 0 0;
-  color: var(--color-ink);
-  font-weight: 600;
-  font-size: 0.9375rem;
-}
-.landing-limit-note {
-  margin: var(--space-2xs) 0 0;
-  color: var(--color-muted);
-  font-size: 0.875rem;
-  line-height: 1.5;
+/* The allowance under the actions (LandingAllowance): the Analyze
+   free-runs strip's vocabulary, not a new voice. An ink-2 sentence with the
+   count in 600-weight ink, then a muted line. The second line reserves its
+   height (one line; two below 30rem, where it wraps), so the hero does not
+   move when the server's numbers arrive, and stays blank when they never do. */
+.landing-allowance {
+  margin-top: var(--space-sm);
   max-width: 34rem;
 }
+.landing-allowance__tier,
+.landing-allowance__more {
+  margin: 0;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+.landing-allowance__tier {
+  font-size: 0.9375rem;
+  color: var(--color-ink-2);
+}
+.landing-allowance__tier strong {
+  font-weight: 600;
+  color: var(--color-ink);
+}
+.landing-allowance__more {
+  margin-top: 0.125rem;
+  min-height: 1lh;
+  font-size: 0.875rem;
+  color: var(--color-muted);
+}
+/* The inline "Sign in": ink and 600 like the strip's own inline link, so the
+   line keeps one colour and the green stays on "Start analyzing". */
+.landing-allowance__more .text-link {
+  font-weight: 600;
+  color: var(--color-ink);
+}
+@media (max-width: 29.99rem) {
+  .landing-allowance__more {
+    min-height: 2lh;
+  }
+}
+
+/* The foot of "What you get" as three short definitions. The page's other
+   headings are serif 400, so the terms are too, small, with the body in the
+   foot's ink-2; the hairline above is the existing .landing-wyg-foot rule. */
 .landing-details {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: var(--space-md);
+  gap: var(--space-sm) var(--space-lg);
 }
 .landing-details dt {
-  font-weight: 600;
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: 1.1875rem;
+  line-height: 1.3;
   color: var(--color-ink);
 }
 .landing-details dd {
-  margin: var(--space-2xs) 0 0;
+  margin: 0.25rem 0 0;
 }
 .landing-details .text-link {
   white-space: nowrap;
