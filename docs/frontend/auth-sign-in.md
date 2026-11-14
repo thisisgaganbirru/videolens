@@ -455,7 +455,7 @@ Sign out everywhere, Delete account).
   out stays one tap away but is no longer a button.
 - **Plan and usage** (`PlanUsageGroup`), for every signed-in account, with
   or without billing:
-  - Plan name: "Free account" or "Paid plan" (paid if `/api/billing` or
+  - Plan name: "Free account" or "Plus" ("Paid plan" until 2026-11-14) (paid if `/api/billing` or
     `/api/free-runs` says so).
   - "N of L runs left today" is the card's strongest number (20px, weight
     700), above the smaller reset time. From `/api/free-runs`, falling back
@@ -582,3 +582,4 @@ copy now explains the hold. Everything is in `saved-history.md`.
 - 2026-11-14 · frontend agent · delete-account note says "under History and Gemini key" (tab renamed); paid Billing card gains "Extra runs this month" (see billing.md); new pre-paint `data-session` stamp and `useStoredSessionHint()` (`infrastructure/authSessionStamp.ts`; `providerStorageKey` now shared with `SupabaseAuthSession`), used only to hold layout on the Gemini key page (see byok-api-key.md)
 - 2026-11-14 · frontend agent · reviewed Codex's Account refinements in the browser (320-1440, both themes, both shells, signed out / free / paid with and without `extra_runs` / loading / failed); one-line value reservations from 20rem, framed billing stand-in, muted "Runs unavailable", "Plan unavailable" instead of a false "Free account" when the plan read failed
 2026-11-14 · frontend agent · `DELETE /api/me` now answers 200 `{status, purge_at}` (30-day hold; legacy 204 still handled); delete form, deleted card and the new held/restore states rewritten for the hold; `AccountProblem` gains `held`; `useAccount` re-reads after a restore (see saved-history.md)
+- 2026-11-14 · frontend agent · paid plan is named Plus in the UI (Plan card name)

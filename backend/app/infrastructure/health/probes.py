@@ -473,7 +473,7 @@ class BillingProbe:
             return Capability(
                 name=self.name,
                 state=CapabilityState.DISABLED,
-                detail="The paid plan is not offered on this server.",
+                detail="Plus is not offered on this server.",
                 probed=False,
             )
         mode = "test mode" if getattr(self._gateway, "test_mode", False) else "live mode"
@@ -495,7 +495,7 @@ class BillingProbe:
         return Capability(
             name=self.name,
             state=CapabilityState.OK,
-            detail="The paid plan is available.",
+            detail="Plus is available.",
             probed=True,
             log_detail=f"Stripe ({mode}): prices read",
         )

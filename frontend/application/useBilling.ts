@@ -241,7 +241,7 @@ export function useBillingActions() {
       setBusy(null);
       const code = err instanceof ApiError ? err.code : undefined;
       if (code === "already_subscribed") {
-        setError("You are already on the paid plan.");
+        setError("You are already on Plus.");
         void refreshBilling();
       } else if (
         code === "invalid_interval" ||
