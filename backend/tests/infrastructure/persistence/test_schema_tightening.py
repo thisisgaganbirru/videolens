@@ -1,20 +1,23 @@
 """Schema tightening (2026-11-14): migrations 0007 (identity foreign keys
-cascade) and 0008 (fixed-value check constraints). No Postgres in the suite: the Postgres branch is checked through
-the offline (`--sql`) render and with Alembic's `op` mocked; the SQLite round
-trip checks the migration is a no-op there and downgrades cleanly."""
+cascade), 0008 (fixed-value check constraints) and 0009 (the
+`accounts.default_workspace_id` key, SET NULL). No Postgres in the suite:
+the Postgres branch is checked through the offline (`--sql`) render and with
+Alembic's `op` mocked; the SQLite round trip checks the migrations are no-ops
+there and downgrade cleanly; and the creation and purge code runs on SQLite
+with foreign keys enforced, the closest stand-in for Postgres here."""
 
 import contextlib
 import importlib.util
 import io
 import os
+import re
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-import re
-
-from sqlalchemy import CheckConstraint
+from sqlalchemy import CheckConstraint, delete, event, func, select, update
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.schema import CreateTable
 
@@ -138,8 +141,6 @@ class ValueCheckTests(unittest.TestCase):
         )
 
     def test_period_formats_accept_every_key_the_code_writes(self) -> None:
-        from datetime import datetime, timezone
-
         now = datetime(2026, 1, 5, 23, 59, tzinfo=timezone.utc)
         day_or_month = re.compile(self.migration.DAY_OR_MONTH)
         month = re.compile(self.migration.MONTH)
@@ -151,8 +152,6 @@ class ValueCheckTests(unittest.TestCase):
             self.assertNotRegex(bad, day_or_month)
 
     def test_extra_run_period_is_the_month_key(self) -> None:
-        from datetime import datetime, timezone
-
         from app.application.billing import BillingPlans
 
         # Unbound call: `extra_runs_period` reads nothing from self when `now` is given.
@@ -212,8 +211,6 @@ class SqliteCheckEnforcementTests(unittest.IsolatedAsyncioTestCase):
     """The enum checks are portable, so the SQLite test schema enforces them."""
 
     async def test_an_unknown_role_is_rejected(self) -> None:
-        from datetime import datetime, timezone
-
         from sqlalchemy import insert
         from sqlalchemy.exc import IntegrityError
 
@@ -241,6 +238,146 @@ class SqliteCheckEnforcementTests(unittest.IsolatedAsyncioTestCase):
                         )
             finally:
                 await database.close()
+
+
+class DefaultWorkspaceKeyTests(unittest.TestCase):
+    """0009: `accounts.default_workspace_id -> workspaces(id)` ON DELETE SET NULL."""
+
+    def setUp(self) -> None:
+        self.migration = _load("0009_default_workspace_fk.py")
+
+    def test_metadata_declares_the_key(self) -> None:
+        fk = _foreign_key(schema.accounts, "default_workspace_id")
+        self.assertEqual(fk.constraint.name, self.migration.NAME)
+        self.assertEqual(fk.ondelete, "SET NULL")
+        self.assertEqual(fk.column.table.name, "workspaces")
+        self.assertFalse(fk.constraint.deferrable)
+
+    def test_offline_sql_adds_the_key(self) -> None:
+        sql = _offline_sql("0008_value_checks:0009_default_workspace_fk")
+        self.assertIn(
+            "ALTER TABLE accounts ADD CONSTRAINT fk_accounts_default_workspace_id FOREIGN KEY(default_workspace_id) "
+            "REFERENCES workspaces (id) ON DELETE SET NULL",
+            sql,
+        )
+        self.assertNotIn("DEFERRABLE", sql)
+        self.assertIn("UPDATE alembic_version SET version_num='0009_default_workspace_fk'", sql)
+
+    def test_downgrade_drops_it_and_sqlite_is_a_no_op(self) -> None:
+        op = _mock_op(self, self.migration)
+        self.migration.downgrade()
+        op.drop_constraint.assert_called_once_with(self.migration.NAME, "accounts", type_="foreignkey")
+        op.reset_mock()
+        op.get_bind.return_value.dialect.name = "sqlite"
+        self.migration.upgrade()
+        self.migration.downgrade()
+        op.create_foreign_key.assert_not_called()
+        op.drop_constraint.assert_not_called()
+
+
+class EnforcedForeignKeyTests(unittest.IsolatedAsyncioTestCase):
+    """Creation, purge and restore with foreign keys enforced (SQLite's
+    `PRAGMA foreign_keys = ON`), on the schema 0007 and 0009 describe."""
+
+    async def asyncSetUp(self) -> None:
+        from app.infrastructure.config import Settings
+        from app.infrastructure.persistence.account_deleter import SqlAccountDeleter
+        from app.infrastructure.persistence.account_directory import SqlAccountDirectory
+        from app.infrastructure.persistence.api_key_repository import SqlApiKeyRepository
+        from app.infrastructure.persistence.database import Database
+
+        settings = Settings(_env_file=None, gemini_api_key="k", database_url="sqlite://")
+        self.database = Database(settings)
+
+        @event.listens_for(self.database.engine().sync_engine, "connect")
+        def _enforce(dbapi_connection, _record) -> None:
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys = ON")
+            cursor.close()
+
+        await self.database.create_all()
+        async with self.database.connect() as conn:
+            self.assertEqual(await conn.scalar(select(func.count()).select_from(schema.accounts)), 0)
+            enforced = (await conn.exec_driver_sql("PRAGMA foreign_keys")).scalar()
+        self.assertEqual(enforced, 1)
+        self.accounts = SqlAccountDirectory(self.database)
+        self.keys = SqlApiKeyRepository(self.database)
+        self.deleter = SqlAccountDeleter(settings, self.database)
+
+    async def asyncTearDown(self) -> None:
+        await self.database.close()
+
+    async def _count(self, table) -> int:
+        async with self.database.connect() as conn:
+            return await conn.scalar(select(func.count()).select_from(table))
+
+    async def _two_people(self):
+        from sqlalchemy import insert
+
+        mine = await self.accounts.resolve_account("sub-1", "me@b.test")
+        theirs = await self.accounts.resolve_account("sub-2", "them@b.test")
+        await self.keys.issue(mine.default_workspace_id, "mine", [], max_active=10)
+        await self.keys.issue(theirs.default_workspace_id, "theirs", [], max_active=10)
+        async with self.database.connect() as conn:
+            await conn.execute(
+                insert(schema.workspace_members).values(
+                    workspace_id=theirs.default_workspace_id, account_id=mine.account_id, role="member"
+                )
+            )
+        return mine, theirs
+
+    async def test_creation_sets_the_default_workspace(self) -> None:
+        mine, _ = await self._two_people()
+        self.assertIsNotNone(mine.default_workspace_id)
+        self.assertIsNotNone(await self.accounts.get_workspace(mine.default_workspace_id))
+
+    async def test_the_purge_removes_one_person_and_keeps_the_other(self) -> None:
+        _, theirs = await self._two_people()
+        now = datetime.now(timezone.utc)
+        hold = timedelta(days=30)
+        await self.deleter.schedule_deletion("sub-1", now=now, purge_at=now + hold)
+        self.assertTrue(await self.deleter.delete_account("sub-1", due_before=now + hold))
+        self.assertEqual(await self._count(schema.accounts), 1)
+        self.assertEqual(await self._count(schema.workspaces), 1)
+        self.assertEqual(await self._count(schema.workspace_members), 1)
+        self.assertEqual(await self._count(schema.api_keys), 1)
+        still = await self.accounts.get_account(theirs.account_id)
+        self.assertEqual(still.default_workspace_id, theirs.default_workspace_id)
+
+    async def test_restore_still_works(self) -> None:
+        await self._two_people()
+        now = datetime.now(timezone.utc)
+        hold = timedelta(days=30)
+        await self.deleter.schedule_deletion("sub-1", now=now, purge_at=now + hold)
+        self.assertTrue(await self.deleter.restore("sub-1", now=now))
+
+    async def test_a_bare_account_delete_cascades_through_the_cycle(self) -> None:
+        await self._two_people()
+        async with self.database.connect() as conn:
+            await conn.execute(delete(schema.accounts).where(schema.accounts.c.external_id == "sub-1"))
+        self.assertEqual(await self._count(schema.accounts), 1)
+        self.assertEqual(await self._count(schema.workspaces), 1)
+        self.assertEqual(await self._count(schema.workspace_members), 1)
+        self.assertEqual(await self._count(schema.api_keys), 1)
+
+    async def test_deleting_a_default_workspace_clears_the_pointer(self) -> None:
+        mine, _ = await self._two_people()
+        async with self.database.connect() as conn:
+            await conn.execute(delete(schema.api_keys).where(schema.api_keys.c.workspace_id == mine.default_workspace_id))
+            await conn.execute(delete(schema.workspaces).where(schema.workspaces.c.id == mine.default_workspace_id))
+        self.assertIsNone((await self.accounts.get_account(mine.account_id)).default_workspace_id)
+
+    async def test_a_pointer_to_a_missing_workspace_is_refused(self) -> None:
+        from sqlalchemy.exc import IntegrityError
+
+        mine, _ = await self._two_people()
+        with self.assertRaises(IntegrityError):
+            async with self.database.connect() as conn:
+                await conn.execute(
+                    update(schema.accounts)
+                    .where(schema.accounts.c.id == mine.account_id)
+                    .values(default_workspace_id="no-such-workspace")
+                )
 
 
 class SqliteRoundTripTests(unittest.TestCase):
