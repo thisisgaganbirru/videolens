@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { WifiOff } from "lucide-react";
 import AppNav from "@/components/AppNav";
 import BottomTabBar from "@/components/BottomTabBar";
@@ -37,6 +38,12 @@ import SiteFooter from "@/components/SiteFooter";
  * the worker answers it.
  * pre-emit critique: P5 H5 E5 S5 R5 V4
  */
+/* The service worker's fallback document, never a search result. */
+export const metadata: Metadata = {
+  title: "You're offline",
+  robots: { index: false, follow: false },
+};
+
 export default function OfflinePage() {
   return (
     <div className="shell" data-view="offline">

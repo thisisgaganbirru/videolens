@@ -1,4 +1,12 @@
+import type { Metadata } from "next";
 import LegalShell, { LegalSection } from "@/components/LegalShell";
+
+export const metadata: Metadata = {
+  title: "Privacy",
+  description:
+    "How VideoLens AI handles your media, what the server keeps for an hour, and what stays only in your browser.",
+  alternates: { canonical: "/privacy" },
+};
 
 export default function PrivacyPage() {
   return (

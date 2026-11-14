@@ -23,7 +23,14 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ARG NEXT_PUBLIC_API_BASE_URL
+# Optional, both inlined at build time (infrastructure/siteOrigin.ts): the
+# site's own public origin, and the dev deployment's noindex switch. Declared
+# as ARGs so Railway's service variables reach the build stage.
+ARG NEXT_PUBLIC_SITE_URL
+ARG NEXT_PUBLIC_NOINDEX
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL \
+    NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL \
+    NEXT_PUBLIC_NOINDEX=$NEXT_PUBLIC_NOINDEX \
     NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
