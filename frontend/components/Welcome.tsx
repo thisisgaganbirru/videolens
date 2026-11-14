@@ -73,7 +73,7 @@ export default function Welcome() {
 
         <div className="welcome-foot">
           <p className="welcome-note">
-            You get a few free runs to start. Add your own Gemini key any time for more.
+            You get runs every day, no account needed. Add your own Gemini key any time for more.
           </p>
           <button
             type="button"

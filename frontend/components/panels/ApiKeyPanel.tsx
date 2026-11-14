@@ -93,11 +93,11 @@ export default function ApiKeyPanel({
     status = (
       <span className="key-status" data-tone="saved">
         <Check aria-hidden="true" />
-        Saved on this device
+        Saved in this browser
       </span>
     );
   } else if (!hasStored && saved) {
-    status = <span className="key-status">Removed from this device</span>;
+    status = <span className="key-status">Removed from this browser</span>;
   } else if (dirty && value.trim()) {
     status = <span className="key-status">Not saved yet</span>;
   }

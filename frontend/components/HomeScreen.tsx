@@ -426,7 +426,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                   </div>
                 </dl>
                 <p className="wyg-foot">
-                  Files are deleted from our servers as soon as a run finishes.
+                  Your video is deleted from our servers when the run finishes. The result is kept for up to an hour, then deleted.
                 </p>
               </aside>
             </div>
@@ -504,7 +504,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                   )}
                 </div>
                 <button type="button" className="btn btn-secondary btn-block reset-wide" onClick={startOver}>
-                  Analyze another file
+                  Analyze another
                 </button>
               </div>
 
@@ -521,7 +521,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     the source column is a pill above it. CSS shows exactly
                     one of the two. */}
                 <button type="button" className="btn btn-secondary btn-block reset-narrow" onClick={startOver}>
-                  Analyze another file
+                  Analyze another
                 </button>
               </div>
             </div>
@@ -543,7 +543,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
       )}
 
       {activeTab === "api-key" && (
-        <main className="view-scroll" data-view="api-key" aria-label="API key">
+        <main className="view-scroll" data-view="api-key" aria-label="Gemini key">
           <ApiKeyPanel
             budgetCapability={dailyBudget}
             /* Unlike the intake hint, offered with or without a key saved:

@@ -99,7 +99,7 @@ healthy reply on the next window `focus` clears it and the pill appears.
   `NativeShell.onResume`, throttled to 1.5s), from `useFreeRuns`;
 - whenever a run completes or fails (`useAnalysisRun.settleFreeRuns`);
 - whenever the intake comes back (`status === "idle"` in HomeScreen), so
-  "Analyze another file" after a refunded run shows the refunded count.
+  "Analyze another" after a refunded run shows the refunded count.
 `refreshFreeRuns` already dedupes in-flight reads.
 
 **Refund line, only with proof.** On submit, `useAnalysisRun` keeps the
@@ -315,3 +315,4 @@ Not yet re-measured on the device (the QA run's own numbers were on Android).
 - 2026-11-14 · frontend agent · paid plan is 30 runs a day: missing `period` reads as `day` for every plan; paid strip "N of 30 runs left today.", past the 30 "Extra runs are billed at $X each, up to 200 a month."; spent free account "...or upgrade for 30 a day."; 402 `extra_runs_cap` "Your included runs come back tomorrow."; `PAID_RUNS_PER_DAY` / `PAID_EXTRA_RUNS_PER_MONTH` in `accountAllowance.ts`
 - 2026-11-14 · frontend agent · Android QA run 22: strip height reserved before the first read (invisible inert stand-in, `useFreeRuns().pending`, `Snapshot.settled`) and dropped pre-paint for key holders (`BYOK_INIT_SCRIPT` stamps `data-byok`); CLS at 412/320 ~0 for runs-left states, numbers and residue under "Reserved strip height"
 - 2026-11-14 · frontend agent · copy table corrected to the code: the signed-out strip says "10 a day" and "10 free runs a day" (the table still said a month); `FreeRunsBanner.resetsAt` added for the Account panel's Plan and usage card, which replaces the identity line's count
+- 2026-11-14 · frontend agent · refund line reads "This didn't use one of your runs." (UX fix spec batch a)

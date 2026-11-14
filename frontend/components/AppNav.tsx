@@ -35,7 +35,7 @@ import type { AccountState } from "@/application/useAccountEntry";
 export const TAB_LABEL: Record<MainTab, string> = {
   analyze: "Analyze",
   history: "History",
-  "api-key": "API key",
+  "api-key": "Gemini key",
   releases: "Releases",
   account: "Account",
 };

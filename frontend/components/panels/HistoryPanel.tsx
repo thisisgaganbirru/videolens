@@ -69,9 +69,9 @@ function HistoryBody({
       <div className="history-empty" data-error-kind="storage" role="status">
         <p className="history-empty-title">{error.message}</p>
         <p className="history-empty-body">
-          This browser isn&apos;t letting VideoLens keep anything on this device, which private
-          browsing often does. You can still analyze videos; their results just won&apos;t wait
-          here afterwards.
+          This browser isn&apos;t letting VideoLens save anything, which private browsing often
+          does. You can still analyze videos; their results just won&apos;t be kept here
+          afterwards.
         </p>
         <button type="button" className="btn btn-secondary" onClick={onAnalyze}>
           Analyze a video

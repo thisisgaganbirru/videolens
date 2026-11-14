@@ -63,6 +63,7 @@ account store, the response is exactly `{"enabled": false}`. Otherwise:
   "current_period_end": "2026-12-13T00:00:00Z" | null,
   "cancel_at_period_end": false,
   "runs": {"limit": 30, "used": 12, "period": "day"},
+  "extra_runs": {"used": 4, "limit": 200, "period": "month", "resets_at": "2026-12-01T00:00:00Z"} | null,
   "prices": {
     "month": {"amount": 1200, "currency": "usd"} | null,
     "year": {"amount": 12000, "currency": "usd"} | null,
@@ -81,6 +82,19 @@ account store, the response is exactly `{"enabled": false}`. Otherwise:
   2026-11-14, it was `"month"` with `PAID_RUNS_PER_MONTH`); on the free plan
   `"day"` with limit `FREE_RUNS_PER_ACCOUNT_DAILY`. Both read the same daily
   row; only the limit differs.
+- `extra_runs` (since 2026-11-14) is the paid plan's billed extra runs this
+  UTC month, a sibling of `runs` because it counts over a different period
+  (the month, not the day). It is `null` on the free plan (including
+  `past_due` and the other statuses that read as free) and absent with
+  billing off. `used` is exactly what the `PAID_EXTRA_RUNS_MONTHLY_CAP`
+  check counts (`BillingPlans.extra_runs_used`, one definition for both):
+  every ledger row for this month that is not `void`, so `held` (a run past
+  the included ones still in flight), `due` (completed, report pending) and
+  `reported`. A held run that then fails is voided and drops out of `used`.
+  `limit` is the cap, or `null` when the cap is off (0). `resets_at` is
+  00:00 UTC on the first of next month, when `used` starts over. It is not
+  Stripe's invoice period: a subscription renewing on the 13th still counts
+  extra runs per calendar month. Read-only: reading it never bills.
 - `amount` is in the currency's smallest unit (cents). A price is `null`
   when it is not configured (yearly is optional), when Stripe could not be
   read just now, or when the Price is tiered.
@@ -400,7 +414,9 @@ Nothing in this repository creates Stripe objects.
 
 - `tests/application/test_billing.py`: checkout, portal and view; webhook
   signature, idempotency, transitions and ordering; paid admission within
-  and over the limit; the cap; BYOK not counted; past_due treated as free;
+  and over the limit; the cap; BYOK not counted; the view's `extra_runs`
+  (held + due + reported counted, void and other months not; cap off is
+  `limit: null`; free, past_due and billing off have none); past_due treated as free;
   billed once and only on success (including retries, failures and the
   stale sweep); deletion cancels, or refuses on a Stripe failure;
   billing-off parity.
@@ -419,3 +435,4 @@ Nothing in this repository creates Stripe objects.
 - 2026-11-13 · backend agent · created: paid plan through Stripe-hosted Checkout and Portal; `GET /api/billing`, `POST /api/billing/checkout|portal|webhook`; paid admission on the account counter (`PAID_RUNS_PER_MONTH`), extra runs through a held/due/reported ledger and a Billing Meter (identifier = run id), billed only on success; paid media tier; DAILY_RUN_CAP exemption; `extra_runs_cap` 402; deletion cancels the subscription first; migration 0004; `billing` capability row
 - 2026-11-14 · backend agent · the paid counter is still monthly (100/month, metered overage unchanged); the free plan moved to daily rows, so free and paid no longer share a row; `runs.period` on `GET /api/billing`; paid period in `BillingPlans.PAID_RUNS_PERIOD`
 - 2026-11-14 · backend agent · paid included runs are daily: `PAID_RUNS_PER_DAY` (30) replaces `PAID_RUNS_PER_MONTH` (100, no alias); `BillingPlans.PAID_RUNS_PERIOD` is day, on the same daily row as the free plan; `runs.period` and `/api/free-runs` `period` are "day" for paid; extra runs and `PAID_EXTRA_RUNS_MONTHLY_CAP` unchanged (ledger still keyed on the month); no migration
+- 2026-11-14 · backend agent · `GET /api/billing` gains `extra_runs` `{used, limit, period: "month", resets_at}` on the paid plan (null otherwise): this month's extra runs counted by the cap's own definition (`BillingPlans.extra_runs_used`, held + due + reported, not void), shared with admission; no migration, no new setting

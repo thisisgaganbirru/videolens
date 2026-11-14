@@ -130,18 +130,18 @@ export default function LandingScreen() {
             <dl className="landing-wyg-foot landing-details">
               <div>
                 <dt>Your files</dt>
-                <dd>Deleted from our servers as soon as a run finishes.</dd>
+                <dd>Your video is deleted when the run finishes. The result is kept for up to an hour, then deleted.</dd>
               </div>
               <div>
                 <dt>Your history</dt>
                 <dd>Saved in this browser, so you can come back to your notes.</dd>
               </div>
               <div>
-                <dt>After the free runs</dt>
+                <dt>When today&apos;s runs are used</dt>
                 <dd>
-                  Add your own Gemini key to keep going.{" "}
+                  They come back every day. To keep going sooner, use your own Gemini key.{" "}
                   <Link href="/app?view=api-key" className="text-link">
-                    Set up a key
+                    Use your own Gemini key
                   </Link>
                 </dd>
               </div>

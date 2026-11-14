@@ -48,7 +48,7 @@ const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
  */
 export const MORE_SHEET_GROUPS: MoreSheetRow[][] = [
   [
-    { kind: "tab", tab: "api-key", label: "API key", icon: KeyRound },
+    { kind: "tab", tab: "api-key", label: "Gemini key", icon: KeyRound },
     { kind: "tab", tab: "releases", label: "Releases", icon: Tag },
     { kind: "theme", label: "Theme", icon: SunMoon },
   ],

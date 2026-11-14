@@ -33,8 +33,8 @@ Centred `.key-page` column (43.5rem, the board's 696px): serif `.view-title`
 `.key-card` form — visible label, 3rem password field with an eye toggle
 (`aria-pressed`, "Show key"/"Hide key"), help line, **Save key** (primary pill)
 and **Remove key** (grey `--color-input-border` edge, shown only while a key is
-stored), and a `role="status"` slot: "Saved on this device" (accent-soft pill),
-"Removed from this device", or "Not saved yet". Saving an empty field shows
+stored), and a `role="status"` slot: "Saved in this browser" (accent-soft pill),
+"Removed from this browser", or "Not saved yet". Saving an empty field shows
 `.error-note` "Paste your key first, then save it." and focuses the field;
 saving re-masks the field. Below, a tint "Where to get a key" panel with three
 numbered steps and a link to Google AI Studio (new tab, sr-only note, no
@@ -159,3 +159,4 @@ signing in makes the key safer.
 - 2026-11-07 · frontend agent · added the dedicated-key/spending-limit line to the guide panel; key now covered by the CSP and excluded from Android backups (see `security-headers.md`)
 - 2026-11-13 · frontend agent · a saved key plus sign-in now raises the upload limits to 10 min / 500 MB (`useMediaLimits` watches `apiKeyStore`); see `upload-form.md`, "Upload limits per tier"
 - 2026-11-13 · frontend agent · owner-approved consent help line under the key field (Terms/Privacy links, replaces "held briefly on the server"); sign-in prompt for the 10-minute tier when sign-in works and nobody is signed in (`signInForMinutes` prop from HomeScreen)
+- 2026-11-14 · frontend agent · status strings say "Saved in this browser" / "Removed from this browser" (UX fix spec batch a); tab label "Gemini key" in the nav and More sheet

@@ -336,7 +336,7 @@ intake and on the result view. It is now `position: sticky; bottom:
 max(var(--space-sm), var(--safe-bottom))` with `margin: auto auto <same>`, the
 last flex item of `.shell`. Measured at 390×844 app shell, light and dark:
 dock 764–828 before and after scrolling the intake, the progress view and the
-result to the bottom; the terms checkbox, Retry and "Analyze another file" are
+result to the bottom; the terms checkbox, Retry and "Analyze another" are
 all hit-testable (nothing over them).
 
 **Keyboard (#2).** `application/useSoftKeyboard.ts` (mounted once in
@@ -963,3 +963,4 @@ dark. `verify_reach.py` covers the reachability notice (32/32).
 - 2026-11-14 · frontend agent · dock gains an Account item (4 items when `showAccount`, 62px each at 320, 52px tall, labels unclipped); the More sheet drops its Account row. See auth-sign-in.md
 - 2026-11-14 · frontend agent · top bar: `.nav-account--signin` modifier, a "Sign in" pill (auto width, 44px) in the `.nav-account` slot when signed out; same display rules (≥48rem, hidden in the sideways app shell); nothing in the slot until auth state is ready. See auth-sign-in.md
 - 2026-11-14 · frontend agent · landing, legal and 404 render `RouteNav`/`RouteTabBar` (AppNav/BottomTabBar plus the Account entry from `useAccountEntry`); `/offline` keeps plain AppNav/BottomTabBar. See auth-sign-in.md
+- 2026-11-14 · frontend agent · the `api-key` tab is labelled "Gemini key" in the top bar, phone menu and More sheet; id and URL unchanged (UX fix spec batch a)

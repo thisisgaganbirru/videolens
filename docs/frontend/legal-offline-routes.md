@@ -838,3 +838,4 @@ wants a re-accept. Static, no scripts: CSP hashes unchanged.
 - 2026-11-14 · frontend agent · Privacy, Terms and 404 use `RouteNav`/`RouteTabBar` for the Account entry; `/offline` keeps plain `AppNav`/`BottomTabBar` (no network, the `auth` capability can never be read). See auth-sign-in.md
 - 2026-11-14 · frontend agent · Privacy "Signing in": the account's free-run count is kept "each day" (was "each month"); effective date and terms key unchanged
 - 2026-11-14 · frontend agent · Terms "Paid plan" states a daily included allowance and a monthly cap on extra runs; Privacy "Payments" keeps a daily run count and a monthly extra-run count (drafts; effective date and terms key unchanged, flagged)
+- 2026-11-14 · frontend agent · vocabulary only (UX fix spec batch a): Terms "stored only in your browser", Privacy "out of this browser"; nothing else changed

@@ -18,7 +18,7 @@ export default function TermsPage() {
         Do not use the service to bypass access controls, process unlawful material, invade privacy, or overload the service. Private or login-only links are not guaranteed to work. We may limit, suspend or block access, including accounts and devices, that break these terms or put the service or other users at risk.
       </LegalSection>
       <LegalSection heading="Your own Gemini key">
-        If you add your own Google Gemini API key, it is stored only on your device and sent with your requests so we can run your analysis. We do not store it. You are responsible for keeping it safe, for all usage and charges on your Google account, and for complying with Google&apos;s terms.
+        If you add your own Google Gemini API key, it is stored only in your browser and sent with your requests so we can run your analysis. We do not store it. You are responsible for keeping it safe, for all usage and charges on your Google account, and for complying with Google&apos;s terms.
       </LegalSection>
       {/* Draft for the owner's legal review (docs/frontend/billing.md). */}
       <LegalSection heading="Paid plan">
