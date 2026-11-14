@@ -205,7 +205,6 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   useEffect(() => {
     if (!sharedUrl) return;
     goToMainTab("analyze");
-    setFromHistory(false);
     reset();
   }, [sharedUrl, reset]);
 
