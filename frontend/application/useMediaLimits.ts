@@ -65,6 +65,10 @@ export type MediaLimitsState = {
   upgradeMinutes: number | null;
   /** A key is saved on this device. */
   hasKey: boolean;
+  /** The server has answered `GET /api/limits`. False before the read lands
+   *  and for good when it fails; the numbers above are then the fallback.
+   *  The landing page quotes a length only once this is true. */
+  known: boolean;
 };
 
 /**
@@ -96,6 +100,7 @@ export function useMediaLimits(signedIn: boolean, paid = false): MediaLimitsStat
     upgradeMinutes: !extended && larger ? Math.floor(current.signedInByok.maxDurationSeconds / 60) : null,
     paidMinutes: current.paid ? Math.floor(current.paid.maxDurationSeconds / 60) : null,
     hasKey,
+    known: current !== FALLBACK_LIMITS,
   };
 }
 

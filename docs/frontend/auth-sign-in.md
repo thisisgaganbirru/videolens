@@ -155,7 +155,8 @@ session.
   so the capability can never be read and the entry could never show. The
   Routes-without-`showAccount` note in the Dock entry bullet above is
   superseded: those routes now get the 4-item dock too.
-- **Landing label (2026-11-14, follow-up; superseded by landing clarity refinement).** On `/` the signed-out entry
+- **Landing label (2026-11-14, follow-up; superseded twice, see the next
+  bullet).** On `/` the signed-out entry
   reads "Get started" (bar pill and phone-menu row), because the landing is
   for new visitors and "Sign in" reads as existing users only. It is a prop,
   `signedOutLabel` on `AppNav` (passed through `RouteNav`), default "Sign in";
@@ -165,6 +166,20 @@ session.
   view gets one green fill. The dock keeps "Account". The signed-out sign-in
   card now welcomes new people: heading (and form label) "Sign in or create
   an account", help line "New here? Verifying your first code sets it up."
+- **Landing label, final (2026-11-14, landing refinement).** Signed out, `/`
+  passes `signedOutLabel="Get 10 free runs"` (the number is
+  `ACCOUNT_FREE_RUNS_PER_MONTH`, moved to the plain module
+  `application/accountAllowance.ts` so the server-component landing can read
+  it) and `signedOutShortLabel="Sign up free"`. "Get started" sounded like
+  "Start analyzing" but went elsewhere (codex reverted it to "Sign in"); this
+  label names the account action by its benefit. Outlined secondary voice,
+  unchanged. The bar pill renders both labels as spans and CSS shows "Sign up
+  free" only from 48rem to 49.99rem: measured at 768px the long label (148px)
+  put the bar's right edge 13px into the page gutter; from 784px it fits
+  exactly, 800px and up has room. The phone-menu row always reads "Get 10
+  free runs" (full-width row). Phones also get a visible entry without opening
+  the menu: the inline "Sign in" in the hero's allowance line (see
+  `landing-page.md`). `/app`, Privacy, Terms and 404 keep "Sign in".
 - **Signed-out lede (2026-11-14).** "Sign in for 10 free runs a month,
   videos up to N minutes with your own key, and API keys for your scripts.
   An account is optional." The 10 is `ACCOUNT_FREE_RUNS_PER_MONTH` (now
@@ -451,5 +466,5 @@ cannot be resized); check them on the bundled APK.
 - 2026-11-14 · frontend agent · signed out, the ≥48rem top-bar Account control is a labelled "Sign in" pill (secondary voice, 44px); signed in keeps the round initial; nothing drawn until the session is known (`accountState` prop); phone-menu row reads "Sign in" signed out; dock unchanged; signed-out Account lede now lists 10 free runs a month, longer videos with your own key (minutes from limits), and API keys
 - 2026-11-14 · frontend agent · Account entry (Sign in pill / initial / phone-menu row / dock item) on landing, Privacy, Terms and 404 via `RouteNav`/`RouteTabBar` + `useAccountEntry` (same gate, one shared capability read); `/offline` left out (no network)
 - 2026-11-14 · frontend agent · landing's signed-out entry reads "Get started" (`signedOutLabel` prop on AppNav/RouteNav, outlined, not green beside the hero's green CTA); other routes keep "Sign in"; sign-in card heading "Sign in or create an account", help line "New here? Verifying your first code sets it up."
-
-- 2026-11-14: Landing clarity refinement restores the default "Sign in" label on the landing nav and phone menu, distinguishing Account from the no-account "Start analyzing" action. The configurable label prop remains available.
+- 2026-11-14 · codex · landing nav and phone menu back to the default "Sign in", so the account entry reads differently from the no-account "Start analyzing"; the `signedOutLabel` prop stays
+- 2026-11-14 · frontend agent · landing signed-out entry reads "Get 10 free runs" (10 from `ACCOUNT_FREE_RUNS_PER_MONTH`, now in `application/accountAllowance.ts`), bar pill and phone-menu row; new `signedOutShortLabel` prop: the bar pill says "Sign up free" from 48rem to 50rem, where the long label overran the gutter by 13px; other routes keep "Sign in"

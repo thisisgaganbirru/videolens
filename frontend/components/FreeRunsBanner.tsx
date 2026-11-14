@@ -4,6 +4,7 @@ import type { MouseEvent } from "react";
 import type { FreeRunsBanner as FreeRunsBannerState } from "@/application/useFreeRuns";
 import { goToMainTab, mainTabHref } from "@/application/useMainTab";
 import { isPlainLeftClick } from "@/components/navClick";
+import { ACCOUNT_FREE_RUNS_PER_MONTH } from "@/application/accountAllowance";
 
 /* Hallmark · component: banner · genre: editorial · theme: custom (app/tokens.css)
  * boards: design/shots/IntakeFreeApp.png (runs left), IntakeLimitApp.png (spent)
@@ -35,13 +36,12 @@ import { isPlainLeftClick } from "@/components/navClick";
  * needs no key. Past the allowance runs go on and are billed, so the spent
  * line states the per-run price instead of turning red. A free account that
  * has spent its month gets one quiet "upgrade" link to the Account tab, only
- * where the server sells the plan. */
-
-/* The signed-in monthly allowance, as the owner set it (2026-11-13). Only
-   quoted to signed-out people, who have no account read to take it from;
-   signed-in copy always uses the server's own `limit`. Also quoted by the
-   Account panel's signed-out lede. */
-export const ACCOUNT_FREE_RUNS_PER_MONTH = 10;
+ * where the server sells the plan.
+ *
+ * Signed out with runs left (2026-11-14, Android QA): the device line says
+ * "today" and, where sign-in is offered, one inline "Sign in for 10 a
+ * month", so the device tier and the account tier read as two tiers. The
+ * constant lives in application/accountAllowance.ts. */
 
 function openApiKey(event: MouseEvent<HTMLAnchorElement>) {
   if (!isPlainLeftClick(event)) return;
@@ -62,8 +62,8 @@ export default function FreeRunsBanner({
   extraRunPrice = null,
 }: {
   banner: FreeRunsBannerState;
-  /** Sign-in works here and nobody is signed in: the spent device line may
-   *  point at the account allowance. */
+  /** Sign-in works here and nobody is signed in: the device line (runs
+   *  left or spent) points at the account allowance, once, quietly. */
   offerSignIn?: boolean;
   /** The server sells the paid plan and this account is on the free one:
    *  the spent account line may point at it. */
@@ -141,9 +141,18 @@ export default function FreeRunsBanner({
         ) : (
           <>
             <strong>
-              {remaining} free {remaining === 1 ? "run" : "runs"} left{account ? " this month" : ""}.
+              {remaining} free {remaining === 1 ? "run" : "runs"} left {account ? "this month" : "today"}.
             </strong>{" "}
-            Add your own key for more.
+            {!account && offerSignIn ? (
+              <>
+                <a className="text-link" href={mainTabHref("account")} onClick={openAccount}>
+                  Sign in
+                </a>{" "}
+                for {ACCOUNT_FREE_RUNS_PER_MONTH} a month, or add your own key.
+              </>
+            ) : (
+              "Add your own key for more."
+            )}
           </>
         )}
       </p>
