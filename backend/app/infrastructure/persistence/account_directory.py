@@ -52,6 +52,7 @@ class SqlAccountDirectory:
             created_at=as_utc(row.created_at),
             deleted_at=as_utc(row.deleted_at),
             purge_at=as_utc(row.purge_at),
+            complimentary_plus=bool(row.complimentary_plus),
         )
 
     @staticmethod
@@ -219,6 +220,16 @@ class InMemoryAccountDirectory:
         if not self._enabled:
             return None
         return self._members.get((workspace_id, account_id))
+
+    def set_complimentary_plus(self, account_id: str, value: bool = True) -> bool:
+        """Tests and local experiments only: the in-memory stand-in for the
+        owner's hand-written SQL (`UPDATE accounts SET complimentary_plus`).
+        No route calls it. True when the account exists."""
+        account = next((a for a in self._accounts.values() if a.account_id == account_id), None)
+        if account is None:
+            return False
+        account.complimentary_plus = value
+        return True
 
     # The deletion hold, for `InMemoryAccountDeleter` (the SQL adapter keeps
     # it in `accounts.deleted_at` / `purge_at`).
