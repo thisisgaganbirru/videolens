@@ -28,9 +28,17 @@ ARG NEXT_PUBLIC_API_BASE_URL
 # as ARGs so Railway's service variables reach the build stage.
 ARG NEXT_PUBLIC_SITE_URL
 ARG NEXT_PUBLIC_NOINDEX
+# Optional, both inlined at build time (infrastructure/authSession.ts):
+# sign-in is on only when both are set. Public values, never a secret.
+# Without these ARGs the service variables never reach the build and every
+# sign-in entry stays hidden.
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL \
     NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL \
     NEXT_PUBLIC_NOINDEX=$NEXT_PUBLIC_NOINDEX \
+    NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=$NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY \
     NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
