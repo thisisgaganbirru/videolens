@@ -48,7 +48,7 @@ export default function LandingAllowance() {
         <strong>
           {banner.limit} {banner.limit === 1 ? "run" : "runs"} {per}
         </strong>{" "}
-        on your plan.
+        on Plus.
       </>
     );
   } else if (banner?.scope === "account") {

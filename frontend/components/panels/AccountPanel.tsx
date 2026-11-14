@@ -226,7 +226,7 @@ export default function AccountPanel({
 function checkoutNotice(notice: CheckoutReturn, signedIn: boolean): string {
   if (notice === "cancelled") return "Checkout cancelled. Nothing was charged.";
   if (!signedIn) return "Checkout finished. Sign in with the email you paid with to see your plan.";
-  if (notice === "paid") return "You’re on the paid plan.";
+  if (notice === "paid") return "You’re on Plus.";
   if (notice === "confirming") return "Confirming payment…";
   return "We have not seen your payment yet. If you completed checkout, it will show here shortly.";
 }
@@ -780,7 +780,7 @@ function PlanUsageGroup({
       </h2>
       <div className="key-card acct-card acct-plan">
         <p className="acct-plan-name">
-          {planFailed ? "Plan unavailable" : planKnown ? (paid ? "Paid plan" : "Free account") : <PlaceholderLine />}
+          {planFailed ? "Plan unavailable" : planKnown ? (paid ? "Plus" : "Free account") : <PlaceholderLine />}
         </p>
         <dl className="acct-facts">
           <div className="acct-usage" aria-busy={waiting || undefined}>
@@ -892,11 +892,11 @@ function UpgradeGroup({ billing, limits }: { billing: BillingDetails; limits: Me
       </h2>
       <div className="key-card acct-card acct-plan">
         <table className="acct-compare">
-          <caption className="sr-only">Your free account compared with the paid plan</caption>
+          <caption className="sr-only">Your free account compared with Plus</caption>
           <thead>
             <tr>
               <th scope="col">Your free account</th>
-              <th scope="col">Paid plan</th>
+              <th scope="col">Plus</th>
             </tr>
           </thead>
           <tbody>
@@ -972,7 +972,7 @@ function UpgradeGroup({ billing, limits }: { billing: BillingDetails; limits: Me
                 onClick={() => void actions.run(primary)}
                 aria-disabled={busy || undefined}
               >
-                {actions.busy === primary ? "Opening…" : "Upgrade to paid"}
+                {actions.busy === primary ? "Opening…" : "Upgrade to Plus"}
               </button>
               {month && year && (
                 <button
@@ -1587,7 +1587,7 @@ function DeleteAccountSection({
               <li>Your account and its workspace</li>
               <li>Every run saved to your account</li>
               <li>Every API key, so anything still using one stops working</li>
-              <li>Your paid plan, if you have one: the subscription is cancelled now</li>
+              <li>Your Plus plan, if you have one: the subscription is cancelled now</li>
             </ul>
             <p className="key-help acct-delete-note">
               To restore it, sign in again with the same email within 30 days. It comes back on the
