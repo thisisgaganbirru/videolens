@@ -348,7 +348,7 @@ PAUSED (the mock was swapped for the real backend; resumes on a separate GO): re
 
 Build: unchanged. Emulator API 35, swiftshader, laptop restarted before the run. Backend: the lead's real :8000 via `adb reverse` (HEAD 4e2ef7e). Evidence in `%TEMP%\qa11\`. Stage times come from an in-page `fetch` hook polled through CDP, so they are accurate to the app's 3 s poll.
 PASS:
-- **INT-07 / terms persistence.** Starting state: unticked, key empty. Ticked → `videolens-media-terms-v1` = "accepted" → force-stop → cold launch: still ticked and still "accepted".
+- **INT-07 / terms persistence.** Starting state: unticked, key empty. Ticked → `videolens-media-terms-v3` = "accepted" → force-stop → cold launch: still ticked and still "accepted".
 - **RUN-02 (R2, `test-15s.mp4`).** Sending… then POST 202, Normalizing at +4 s (about 3 s), Uploading at +7 s, Analyzing from +13 s, complete at +25 s.
 - **RUN-02b (R3, `test-12s.mp3`).** Already at Analyzing by +3 s; complete at +13 s.
 - **RUN-01 retry.** Link `https://www.youtube.com/watch?v=jNQXAC9IVRw` ("Me at the zoo", public, 19 s): Downloading at +3 s, Uploading at +6 s (Download and Normalize took ≤6 s together), Analyzing from +12 s, complete at +24 s.

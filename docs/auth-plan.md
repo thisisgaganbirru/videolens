@@ -7,7 +7,7 @@ here and get their own document when that work starts. Cross-cutting
 (backend, frontend, Android, agents, infra), so it is filed at the top of
 `docs/` like `railway-environments.md`.
 
-Status: phases 1 and 2 implemented on feat/auth-supabase (pending PR). Phase 2 also shipped the API keys UI from phase 3; account deletion and the `database` capability are phase 3. Phase 3's backend half (`DELETE /api/me`, migration `0002_auth_user_deleter`, the `database` probe, tests) and its frontend half (delete-account UI) were reviewed, fixed and committed on feat/auth-supabase on 2026-11-09; 0002 is applied to `videolens-dev` (verified 2026-11-09), and a real deletion through a Postgres-backed backend has not been exercised yet. On top of phase 3 the Account tab was reorganised as a grouped list and gained "Sign out everywhere" (2026-11-09, `docs/frontend/auth-sign-in.md`). The branch also carries the launch-metadata PR #125 (sitemap, robots, social preview, page titles; `docs/frontend/seo-and-discovery.md`), merged into it on 2026-11-12. The frontend half is tracked in `docs/frontend/auth-sign-in.md` (hand-off: `mem/20261108-auth-phase3-handoff.md`). Google sign-in is deferred to phase 4. Frontend reference: `docs/frontend/auth-sign-in.md`. The implemented reference, with the deviations from this plan, is `docs/backend/auth.md`.
+Status: phases 1 and 2 implemented on feat/auth-supabase (pending PR). Phase 2 also shipped the API keys UI from phase 3; account deletion and the `database` capability are phase 3. Phase 3's backend half (`DELETE /api/me`, migration `0002_auth_user_deleter`, the `database` probe, tests) and its frontend half (delete-account UI) were reviewed, fixed and committed on feat/auth-supabase on 2026-11-09; 0002 is applied to `videolens-dev` (verified 2026-11-09), and a real deletion through a Postgres-backed backend has not been exercised yet. On top of phase 3 the Account tab was reorganised as a grouped list and gained "Sign out everywhere" (2026-11-09, `docs/frontend/auth-sign-in.md`). The branch also carries the launch-metadata PR #125 (sitemap, robots, social preview, page titles; `docs/frontend/seo-and-discovery.md`), merged into it on 2026-11-12. The frontend half is tracked in `docs/frontend/auth-sign-in.md` (hand-off: `mem/20261108-auth-phase3-handoff.md`). Google sign-in is deferred to phase 4. Billing, which this plan left out of scope, landed on the same branch on 2026-11-13 as one paid plan (Stripe-hosted Checkout and Portal, 100 included runs, metered extra runs, migration `0004_billing`, not applied anywhere yet): `docs/backend/billing.md`. It reuses the account counter and the entitlement seam this plan set up; it did not take its design from `feat/paid-tier-integration`. Frontend reference: `docs/frontend/auth-sign-in.md`. The implemented reference, with the deviations from this plan, is `docs/backend/auth.md`.
 
 ## The situation this plan starts from
 
@@ -200,6 +200,14 @@ not a second network call. `DAILY_RUN_CAP` and the free-run allowance stay
 exactly as they are; per-account caps are an entitlement and therefore
 subscription work.
 
+**Superseded for signed-in free runs by the owner decision of 2026-11-13
+("Level 1, signed in free"):** a signed-in account (JWT or account API key)
+without a Gemini key now gets `FREE_RUNS_PER_ACCOUNT_MONTHLY` (10) runs per
+UTC calendar month against the account, instead of the device counter, so
+they follow the person across devices. Implemented in `_admit`; see
+`docs/backend/free-runs.md`, "Signed-in free runs". The original text,
+kept for the record:
+
 Free runs and sign-in do not interact in this phase. A signed-in caller
 without a Gemini key still presents a device token and still gets
 `FREE_RUNS_PER_DEVICE`. This is deliberate: `_admit` is the branch's and the
@@ -309,7 +317,8 @@ new or changed. Per `backend/ARCHITECTURE.md` layering.
 - `create_api_key.py`, `list_api_keys.py`, `revoke_api_key.py`: lifted from
   the route bodies into use cases; `api_access` gate removed.
 - `get_run.py`, `list_runs.py`: use `can_access_run`.
-- `create_run.py`: untouched in this phase (see free runs above). The only
+- `create_run.py`: untouched in this phase (see free runs above; since
+  2026-11-13 `_admit` also handles the signed-in account allowance). The only
   change is that `owner_id` already comes from `principal.owner_id`, which
   for anonymous callers is the client subject, so nothing moves.
 
@@ -606,3 +615,5 @@ Alembic release step), `CLAUDE.md` (Product direction, the lint count, the
 - 2026-11-09 · backend subagent (auth phase 3) · backend half finished in the tree: `DELETE /api/me` (runs, then identity rows in one transaction, then `videolens_private.delete_auth_user` last; idempotent), migration `0002_auth_user_deleter`, `database` probe (failure is `degraded`, not `unavailable`, matching `auth`), 45 new tests; agent-created runs (`key:<id>`) are deleted too. Not yet applied to `videolens-dev`, reviewed or committed
 - 2026-11-09 · main session · phase 3 reviewed, fixed and committed (4 commits, pushed to feat/auth-supabase); 0002 applied to `videolens-dev` via the connector and verified (function grants, no anon/authenticated access, definer owner and empty search_path)
 - 2026-11-13 · main session · status line: Account option A layout and sign out everywhere committed; PR #125 (launch metadata) merged into feat/auth-supabase
+- 2026-11-13 · backend agent · free runs and sign-in now interact (owner decision 2026-11-13): signed-in accounts get 10 free runs per UTC month instead of the device count; the "do not interact" paragraph marked superseded
+- 2026-11-13 · backend agent · status: billing (one paid plan) built on this branch; see `docs/backend/billing.md`

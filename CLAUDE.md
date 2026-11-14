@@ -43,16 +43,23 @@ Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
   recreate them here. `feat/paid-tier-integration` is parked the same way.
 - History lives in the browser (IndexedDB), not on the server. The server
   forgets a run `RUN_TTL_SECONDS` (1 hour) after its last write. Do not add
-  server-side persistence for runs or results; the paid tier that would need
-  it is deferred. The only server-side tables are the four identity tables
-  (`accounts`, `workspaces`, `workspace_members`, `api_keys`) in
-  `infrastructure/persistence/`, owned by Alembic in `backend/migrations/`.
+  server-side persistence for runs or results, not even for paid accounts.
+  The only server-side tables are the four identity tables
+  (`accounts`, `workspaces`, `workspace_members`, `api_keys`), the two
+  monthly run counters (`account_free_runs`, `account_free_run_holds`) and
+  the three billing tables (`billing_accounts`, `billing_events`,
+  `billing_extra_runs`) in `infrastructure/persistence/`, owned by Alembic in
+  `backend/migrations/`.
 - Sign-in is optional and anonymous use is first-class. The `AUTH_*` settings
   verify Supabase-issued JWTs by JWKS only (RS256/ES256; never add HS256 or a
   Supabase SDK to the backend); with them and `DATABASE_URL` blank the API
-  behaves exactly as before accounts existed. No paid tier yet. Keep the BYOK
-  key and history client-side. See `docs/auth-plan.md` and
-  `docs/backend/auth.md`.
+  behaves exactly as before accounts existed. Keep the BYOK key and history
+  client-side. See `docs/auth-plan.md` and `docs/backend/auth.md`.
+- One paid plan via Stripe hosted Checkout and Portal (`docs/backend/billing.md`,
+  `docs/frontend/billing.md`). With any required `STRIPE_*` setting blank,
+  billing is off and nothing changes. Extra runs are billed through a Billing
+  Meter keyed on the run id, only after a run succeeds; never bill from
+  anywhere else.
 - Four spend limits gate Gemini: per-IP rate limit (429), per-device free
   runs (402, needs `DEVICE_TOKEN_SECRET` in distributed mode or the API
   refuses to start), `DAILY_RUN_CAP` (503), and the BYOK exemption from the
