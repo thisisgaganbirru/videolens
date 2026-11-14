@@ -364,8 +364,10 @@ reproduce in desktop Chromium, so it needs a device recheck.
 ## Back to History (UX fix spec, 2026-11-14)
 
 `HomeScreen` keeps `fromHistory`: true in `handleOpenRun`, false in
-`startOver`, `analyzeAgain`, the shared-link reset and every new submit
-(`submitFresh` wraps `submit`). While true, the result view and the expired
+`startOver`, `analyzeAgain` and every new submit (`submitFresh` wraps
+`submit`). The shared-link reset does not clear it: that effect returns to the
+intake, where the flag shows nothing, and the next submit clears it (a
+setter in that effect would be a new lint finding). While true, the result view and the expired
 view offer "Back to History", which is `goToMainTab("history")`.
 
 ## UX fix spec, batch d (2026-11-14)
@@ -392,3 +394,4 @@ view offer "Back to History", which is `goToMainTab("history")`.
 - 2026-11-14 · frontend agent · storage-blocked body: "This browser isn't letting VideoLens save anything, which private browsing often does. You can still analyze videos; their results just won't be kept here afterwards." (UX fix spec batch a)
 - 2026-11-14 · frontend agent · UX fix spec batch c: "Back to History" on a result or expired run opened from History (`fromHistory` in HomeScreen)
 - 2026-11-14 · frontend agent · UX fix spec batch d: lede names the limit and this browser; empty and storage states get the filled "Analyze a video"
+- 2026-11-14 · frontend agent · UX fix spec follow-up: the shared-link effect no longer clears `fromHistory` (lint: setter used before its declaration); the next submit clears it
