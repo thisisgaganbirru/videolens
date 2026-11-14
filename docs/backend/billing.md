@@ -254,6 +254,25 @@ webhook overwrites it from a fresh read. Checkout checks it for a live
 subscription (409). Admission and the views read it through
 `BillingPlans.paid_account`.
 
+### Check constraints (`0008_value_checks`, 2026-11-14)
+
+- `billing_extra_runs.state`: `ck_billing_extra_runs_state`, one of
+  `held`, `due`, `reported`, `void` (`billing_store.HELD, DUE, REPORTED,
+  VOID`).
+- `billing_extra_runs.period`: `ck_billing_extra_runs_period`,
+  `^[0-9]{4}-[0-9]{2}$` (the UTC month, `BillingPlans.extra_runs_period`).
+- `billing_accounts.status` and `billing_accounts.interval`: **no
+  constraint, on purpose.** Both are copied verbatim from Stripe by the
+  webhook (`StripeBillingGateway._snapshot`; `status` can even be `""`,
+  and a price edited in the dashboard can carry `day` or `week`). A value
+  the code does not list would make the database reject the webhook's
+  write, leave the account on stale state and have Stripe retry for days.
+  The readers already treat unknown values safely (`subscription_is_live`,
+  and the API's `month`/`year` filter on `interval`).
+
+Postgres only (the `~` regex); the SQLite test schema in `schema.py`
+declares the `state` check and skips the `period` one.
+
 ## Decisions
 
 ### Yearly plus overage: one meter, flexible billing mode
@@ -454,4 +473,5 @@ Nothing in this repository creates Stripe objects.
 - 2026-11-14 · backend agent · paid included runs are daily: `PAID_RUNS_PER_DAY` (30) replaces `PAID_RUNS_PER_MONTH` (100, no alias); `BillingPlans.PAID_RUNS_PERIOD` is day, on the same daily row as the free plan; `runs.period` and `/api/free-runs` `period` are "day" for paid; extra runs and `PAID_EXTRA_RUNS_MONTHLY_CAP` unchanged (ledger still keyed on the month); no migration
 - 2026-11-14 · backend agent · `GET /api/billing` gains `extra_runs` `{used, limit, period: "month", resets_at}` on the paid plan (null otherwise): this month's extra runs counted by the cap's own definition (`BillingPlans.extra_runs_used`, held + due + reported, not void), shared with admission; no migration, no new setting
 - 2026-11-14 · backend agent · saved history follows the plan: paid results saved after billing, the webhook starts or clears the 30-day post-cancel window (`saved-history.md`); deletion is a 30-day hold, the subscription still cancelled at once
+- 2026-11-14 · backend agent · migration `0008_value_checks`: check constraints on `billing_extra_runs.state` and `.period` (`YYYY-MM`); none on `billing_accounts.status`/`interval`, which come from Stripe verbatim
 - 2026-11-14 · frontend agent · paid plan is named Plus in the UI
