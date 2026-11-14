@@ -361,6 +361,13 @@ rule the same emulation clips at 360/2.0 and is 1.4px from clipping at
 320/1.3. The exact device case (sort beside a clipped field at 1.5) did not
 reproduce in desktop Chromium, so it needs a device recheck.
 
+## Back to History (UX fix spec, 2026-11-14)
+
+`HomeScreen` keeps `fromHistory`: true in `handleOpenRun`, false in
+`startOver`, `analyzeAgain`, the shared-link reset and every new submit
+(`submitFresh` wraps `submit`). While true, the result view and the expired
+view offer "Back to History", which is `goToMainTab("history")`.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported HistoryPanel to day-grouped rows with status dots; fixed duplicate React keys on non-adjacent "Undated" groups
@@ -377,3 +384,4 @@ reproduce in desktop Chromium, so it needs a device recheck.
 - 2026-11-02 · frontend agent (refinement 11) · History placeholder "Search runs"; phone toolbar wraps the sort under the search when large text leaves no room (device QA)
 - 2026-11-02 · frontend agent (refinement 12) · search field floor is now `calc(12ch + 2rem)` (the placeholder's own width) instead of 8.5rem, so the sort wraps under the field before "Search runs" can clip at large text (device QA, 320 / font scale 1.5)
 - 2026-11-14 · frontend agent · storage-blocked body: "This browser isn't letting VideoLens save anything, which private browsing often does. You can still analyze videos; their results just won't be kept here afterwards." (UX fix spec batch a)
+- 2026-11-14 · frontend agent · UX fix spec batch c: "Back to History" on a result or expired run opened from History (`fromHistory` in HomeScreen)
