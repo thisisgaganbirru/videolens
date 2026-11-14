@@ -64,9 +64,13 @@ type AppNavProps = {
   /** The signed-in person's initial for the Account button; null or absent
    *  draws the person glyph. */
   accountInitial?: string | null;
+  /** The signed-out label of the Account entry (bar pill and phone-menu
+   *  row). "Sign in" by default; the landing page, for new visitors, passes
+   *  "Get started" (owner, 2026-11-14). The dock keeps "Account". */
+  signedOutLabel?: string;
 };
 
-/** What the Account entry says where it is a text label. */
+/** What the Account entry says, signed out, where it is a text label. */
 const SIGN_IN_LABEL = "Sign in";
 
 /** The ring-and-dot mark from the boards. Decorative: the word beside it is the
@@ -88,6 +92,7 @@ export default function AppNav({
   showAccount = false,
   accountState = "loading",
   accountInitial = null,
+  signedOutLabel = SIGN_IN_LABEL,
 }: AppNavProps) {
   const signedOut = accountState === "signed-out";
   const tabs = navTabs(showAccount);
@@ -170,7 +175,7 @@ export default function AppNav({
                 aria-current={activeTab === "account" ? "page" : undefined}
                 onClick={handleTabClick("account")}
               >
-                {SIGN_IN_LABEL}
+                {signedOutLabel}
               </Link>
             )}
             {showAccount && accountState === "signed-in" && (
@@ -220,7 +225,7 @@ export default function AppNav({
             aria-current={activeTab === tab ? "page" : undefined}
             onClick={handleTabClick(tab)}
           >
-            {tab === "account" && signedOut ? SIGN_IN_LABEL : TAB_LABEL[tab]}
+            {tab === "account" && signedOut ? signedOutLabel : TAB_LABEL[tab]}
             <ChevronRight aria-hidden="true" />
           </Link>
         ))}

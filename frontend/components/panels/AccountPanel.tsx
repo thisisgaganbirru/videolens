@@ -239,8 +239,8 @@ function SignInCard({ runInProgress }: { runInProgress: boolean }) {
   if (!codeStep) {
     const sending = flow.phase === "sending";
     return (
-      <form className="key-card acct-sign-in" onSubmit={sendCode} noValidate aria-label="Sign in">
-        <h2 className="acct-card-title">Sign in with email</h2>
+      <form className="key-card acct-sign-in" onSubmit={sendCode} noValidate aria-label="Sign in or create an account">
+        <h2 className="acct-card-title">Sign in or create an account</h2>
         <p className="key-help acct-form-intro">We’ll send you a code. No password needed.</p>
         <label htmlFor={emailId} className="key-label">
           Email
@@ -268,7 +268,7 @@ function SignInCard({ runInProgress }: { runInProgress: boolean }) {
           </p>
         )}
         <p id={emailHelpId} className="key-help">
-          New here? Verifying your first code creates your account.
+          New here? Verifying your first code sets it up.
         </p>
         <div className="key-actions">
           <button

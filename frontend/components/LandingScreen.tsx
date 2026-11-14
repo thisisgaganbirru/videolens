@@ -30,7 +30,10 @@ import { APP_PATH } from "@/application/useMainTab";
 export default function LandingScreen() {
   return (
     <div className="shell" data-view="landing">
-      <RouteNav activeTab={null} landing />
+      {/* "Get started", not "Sign in": this page is for new visitors. Kept
+          in the outlined voice: the hero's green "Start analyzing" is on
+          screen with it, and a view gets one green fill. */}
+      <RouteNav activeTab={null} landing signedOutLabel="Get started" />
 
       <main className="view-scroll" data-view="landing" aria-label="VideoLens AI">
         <div className="landing">
