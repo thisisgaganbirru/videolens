@@ -6,7 +6,7 @@ import type {
   RunSummary,
 } from "@/domain/entities";
 import { ApiError } from "@/domain/errors";
-import { historyStore, runsGateway } from "@/infrastructure/container";
+import { callerIdentity, historyStore, runsGateway } from "@/infrastructure/container";
 
 /* Everything that writes History, in one place, free of React.
 
@@ -25,6 +25,14 @@ import { historyStore, runsGateway } from "@/infrastructure/container";
  *  have finished, only that its result never reached this browser. */
 export const EXPIRED_MESSAGE =
   "This run expired on the server before its result reached this browser.";
+
+/** Said on screen (never written to History) when the server answers 404 for
+ *  a run this browser filed under a different identity: it was started signed
+ *  in as someone else, or signed out, and the server holds it for that
+ *  caller (auth phase 2). The run may be perfectly alive; the History row is
+ *  left as it was, so switching back finds it again. */
+export const OTHER_OWNER_MESSAGE =
+  "This run was started under a different sign-in (or while signed out), so the server only shows it to that sign-in. Switch back to see it; it stays in your History.";
 
 const IMPORT_FLAG = "videolens-history-imported";
 const SNIPPET_MAX = 160;
@@ -121,6 +129,10 @@ export function recordSubmitted(runId: string, status: HistoryRecord["status"], 
     created_at: new Date().toISOString(),
     source_kind: source.file ? "file" : "link",
   };
+  /* Who the server holds it for: the identity the create request just went
+     out as. */
+  const owner = callerIdentity.lastOwner();
+  if (owner) patch.owner = owner;
   if (source.url) patch.source_url = source.url;
   if (source.file) {
     patch.file_name = source.file.name;
@@ -172,6 +184,28 @@ export async function recordExpired(runId: string): Promise<string | null> {
   }
 }
 
+/** What a 404 means for a run this browser knows. `expired`: the server
+ *  forgot it, and History now says so (as `recordExpired`). `other-owner`:
+ *  the record was filed under a different identity than the one the 404 was
+ *  asked as, so the run is held for someone else and nothing is written. A
+ *  record without an owner (written before auth) keeps the old rule. Never
+ *  rejects. */
+export type GoneOutcome = { kind: "expired"; againUrl: string | null } | { kind: "other-owner" };
+
+export async function recordGone(runId: string): Promise<GoneOutcome> {
+  const asked = callerIdentity.lastOwner();
+  try {
+    const record = await historyStore.get(runId);
+    if (record?.owner && asked && record.owner !== asked) {
+      lastWritten.delete(runId);
+      return { kind: "other-owner" };
+    }
+  } catch {
+    /* History unreadable: fall through to the old rule */
+  }
+  return { kind: "expired", againUrl: await recordExpired(runId) };
+}
+
 /* ---------- once per app load ---------- */
 
 let bootPromise: Promise<void> | null = null;
@@ -220,19 +254,56 @@ async function importOnce(): Promise<Set<string>> {
     return handled;
   }
   writeFlag();
+  await importSummaries(summaries, handled);
+  return handled;
+}
+
+/** Files each server-side run into History (skipping ones already holding a
+ *  result), noting each id in `handled`. Never rejects. */
+async function importSummaries(summaries: RunSummary[], handled: Set<string>): Promise<void> {
   for (const summary of summaries) {
     handled.add(summary.run_id);
     try {
       const existing = await historyStore.get(summary.run_id);
       if (existing?.result) continue;
-      await historyStore.upsert(patchFromSummary(summary));
+      const patch = patchFromSummary(summary);
+      /* Listed for the identity the list request went out as. A row this
+         browser already filed keeps the owner it was filed with. */
+      const owner = callerIdentity.lastOwner();
+      if (owner && !existing?.owner) patch.owner = owner;
+      await historyStore.upsert(patch);
       const run = await runsGateway.getRun(summary.run_id);
       await historyStore.upsert(patchFromRun(run));
     } catch {
       /* silent: whatever made it in, made it in */
     }
   }
-  return handled;
+}
+
+let identityImport: Promise<void> | null = null;
+
+/** Auth phase 2: the caller changed (someone signed in, or a different
+ *  person did), so the server's run owner changed with it. Asks
+ *  `GET /api/runs` again, now as the new identity, and files any run it holds
+ *  that this browser has not got: a run the same person started on another
+ *  device, or through an API key, within the server's one-hour hold. Runs
+ *  already in History stay whoever made them; History is the browser's.
+ *  One at a time; never rejects. */
+export function importServerRuns(): Promise<void> {
+  if (!identityImport) {
+    identityImport = (async () => {
+      try {
+        await bootHistory();
+        const summaries = (await runsGateway.listRuns()).runs;
+        await importSummaries(summaries, new Set());
+      } catch {
+        /* offline, or the server forgot: History is unchanged */
+      }
+    })().finally(() => {
+      identityImport = null;
+    });
+  }
+  return identityImport;
 }
 
 /** A run left queued/processing when the tab closed is asked about once. If
@@ -248,7 +319,7 @@ async function reconcileUnfinished(skip: Set<string>): Promise<void> {
       const run = await runsGateway.getRun(record.run_id);
       await historyStore.upsert(patchFromRun(run));
     } catch (err) {
-      if (isRunGone(err)) await recordExpired(record.run_id);
+      if (isRunGone(err)) await recordGone(record.run_id);
     }
   }
 }

@@ -116,7 +116,7 @@ as a question, not a fact. A defect found in a ▦ case names the viewport.
 | INT-03 | Untick terms, paste a valid link, submit. | Terms error; the checkbox is marked invalid and focused; Browse files stays enabled (click, Enter or Space shows the same error, opens no picker); no request. |
 | INT-04 | Two errors at once (empty link, terms unticked), one press. | Both errors show, each under its own field; focus goes to the link; no request; each message clears only when its own control is edited. |
 | INT-05 | Error clears on input. | Typing a valid URL clears the link error immediately (not on next submit). |
-| INT-06 | Terms persistence: tick, reload. | Still ticked (`videolens-media-terms-v1`). |
+| INT-06 | Terms persistence: tick, reload. | Still ticked (`videolens-media-terms-v3`). |
 | INT-07 | Terms links. | Terms and Privacy open the legal pages; Back returns to the intake with the typed link kept or cleanly empty (record which). |
 | INT-08 | Paste a link with tracking params (`?utm_source=…&igsh=…`). | Accepted unchanged; the displayed link in the run card matches. |
 | INT-09 | Whitespace-padded link and a link with a trailing newline. | Trimmed and accepted. |

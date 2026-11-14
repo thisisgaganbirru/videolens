@@ -80,6 +80,8 @@
      self-hosted files fail to load. ---- */
   --font-ui:    var(--font-hanken, "Hanken Grotesk"), system-ui, sans-serif;
   --font-serif: var(--font-newsreader, "Newsreader"), Georgia, serif;
+  /* system mono, for secrets and key prefixes (auth phase 2); no webfont */
+  --font-mono:  ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   /* ---- space ---- */
   --space-2xs: 0.5rem;

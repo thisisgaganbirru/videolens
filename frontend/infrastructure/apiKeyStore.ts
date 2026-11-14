@@ -2,6 +2,20 @@ import type { ApiKeyStore } from "@/domain/ports";
 
 const GEMINI_API_KEY_STORAGE_KEY = "videolens-gemini-api-key";
 
+/** `<html>` carries this attribute, empty, while a key is saved (2026-11-14,
+ *  Android QA run 22). Stamped pre-paint by `BYOK_INIT_SCRIPT` and kept in
+ *  step by `useFreeRuns`; CSS reads it to drop the free-runs strip's
+ *  reserved space before hydration, since a saved key never shows the strip.
+ *  Only presence is read: the key itself never leaves storage. */
+export const BYOK_ATTRIBUTE = "data-byok";
+
+/* Blocking, pre-paint (app/layout.tsx): the prerendered /app reserves the
+   free-runs strip's height, and the hook only learns about a saved key after
+   hydration. Without this a key holder would see that space collapse. */
+export const BYOK_INIT_SCRIPT = `(function(){try{if(localStorage.getItem(${JSON.stringify(
+  GEMINI_API_KEY_STORAGE_KEY
+)}))document.documentElement.setAttribute(${JSON.stringify(BYOK_ATTRIBUTE)},"");}catch(e){}})();`;
+
 // Bring-your-own-key: kept only on-device. Sent with run creation so the
 // user's own quota is spent instead of the shared one - never written
 // anywhere else, never logged.

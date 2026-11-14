@@ -16,7 +16,9 @@ import re
 from yt_dlp import YoutubeDL
 
 from ...domain.entities import CaptionTrack, SourceMetadata
+from ...domain.entitlements import MediaLimits
 from ..config import Settings
+from .limits import effective_limits
 from .net import validate_public_url
 from .thumbnails import dimensions_from_info, thumbnail_urls_from_info
 from .ytdlp_downloader import _cookie_options, _source_metadata_from_info
@@ -114,13 +116,17 @@ def _duration(value: object) -> float | None:
     return seconds if seconds > 0 else None
 
 
-async def fetch_captions(settings: Settings, url: str) -> CaptionTrack | None:
+async def fetch_captions(
+    settings: Settings, url: str, limits: MediaLimits | None = None
+) -> CaptionTrack | None:
     """Return the best available transcript for `url`, or None.
 
     Returns None rather than raising for every expected miss (no captions, an
     unparseable track, a network refusal): the caller is already handling a
     failed download and needs a yes/no, not a second error to reconcile.
     """
+    # The run's own limit (bigger for a signed-in caller with their own key).
+    max_duration = effective_limits(settings, limits).max_duration_seconds
     await asyncio.to_thread(validate_public_url, url)
 
     def run() -> CaptionTrack | None:
@@ -138,7 +144,7 @@ async def fetch_captions(settings: Settings, url: str) -> CaptionTrack | None:
             info = downloader.extract_info(url, download=False)
 
             duration = info.get("duration")
-            if duration and duration > settings.max_duration_seconds:
+            if duration and duration > max_duration:
                 # The duration cap is a product policy about how much media we
                 # will analyze, not an artefact of downloading it. A caption
                 # track must not become a way around it.

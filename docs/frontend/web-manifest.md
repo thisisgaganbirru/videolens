@@ -31,3 +31,4 @@ Not verified: how long a given browser takes to pick up the new `start_url` on a
 
 - 2026-11-01 · frontend agent · background_color/theme_color → #F6F4EE for the editorial redesign
 - 2026-11-01 · frontend agent (Phase 5c) · id pinned to "/", start_url "/app", scope "/", shortcuts and share_target.action moved to /app
+- 2026-11-12 · launch-checklist session · `icon-192.png`, `icon-512.png`, `apple-touch-icon.png` quantised to 255 colours (PSNR ≈ 50 dB; 31→10 KB, 199→65 KB, 27→9 KB), `icon-1024.png` stripped losslessly; `public/favicon.ico` added and listed first in `metadata.icons`

@@ -1,13 +1,14 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
-import type { Capability, MediaSource } from "@/domain/entities";
+import type { Capability, MediaLimits, MediaSource, FreeRunsPeriod } from "@/domain/entities";
 import type { SharedUrl } from "@/application/useSharedUrl";
 import { ArrowUpFromLine } from "lucide-react";
 import { CapabilityCallout } from "@/components/CapabilityNotice";
 import { isNoticeable } from "@/application/useCapabilities";
 import { revealField } from "@/application/useSoftKeyboard";
 import { goToMainTab, mainTabHref } from "@/application/useMainTab";
+import { FALLBACK_LIMITS, durationLabel } from "@/application/useMediaLimits";
 import { isPlainLeftClick } from "@/components/navClick";
 import { MEDIA_FILE_ACCEPT, readTermsAccepted, writeTermsAccepted } from "@/components/mediaTerms";
 
@@ -18,8 +19,6 @@ import { MEDIA_FILE_ACCEPT, readTermsAccepted, writeTermsAccepted } from "@/comp
 export type IntakeHandoff = { kind: "file"; file: File } | { kind: "terms" };
 
 const ACCEPTED_EXTENSIONS = [".mp3", ".mp4", ".mov"];
-const MAX_FILE_SIZE_MB = 200;
-const MAX_DURATION_SECONDS = 180;
 interface UploadFormProps {
   onSubmit: (source: MediaSource) => void;
   disabled?: boolean;
@@ -33,6 +32,10 @@ interface UploadFormProps {
    *  all refused — none of them could succeed — but the link field stays
    *  editable, so a typed link survives saving a key and coming back. */
   blocked?: boolean;
+  /** The period of the allowance that is spent when `blocked`: `day`
+   *  (default; a device or, since 2026-11-14, a free account) or `month`.
+   *  Only changes the wording of the blocked note. */
+  blockedPeriod?: FreeRunsPeriod;
   /** The most recent link shared into the app, or null. A new object per
    *  arrival, so re-sharing the same link still fills the field. `HomeScreen`
    *  owns the listener and has already returned the shell to a fresh intake by
@@ -51,6 +54,14 @@ interface UploadFormProps {
    *  it, so a later remount of the form cannot replay it. */
   handoff?: IntakeHandoff | null;
   onHandoffTaken?: () => void;
+  /** The upload limits for this person (`useMediaLimits`, 2026-11-13): the
+   *  hint under the drop title and the pre-upload checks both use them. The
+   *  server re-checks every upload. Defaults to the standard limits. */
+  limits?: MediaLimits;
+  /** Set (to the larger tier's minutes) only where sign-in is offered and a
+   *  key is saved but nobody is signed in: one quiet line under the limits
+   *  says signing in allows longer videos. */
+  signInForMinutes?: number | null;
 }
 
 type ErrorField = "url" | "file" | "terms";
@@ -59,7 +70,7 @@ type FieldErrors = Partial<Record<ErrorField, string>>;
 const FIELD_ORDER: ErrorField[] = ["url", "file", "terms"];
 const TERMS_MESSAGE = "Accept the media-use terms before analysis.";
 
-function validateFile(file: File): string | null {
+function validateFile(file: File, maxFileSizeMb: number): string | null {
   const dot = file.name.lastIndexOf(".");
   const ext = dot >= 0 ? file.name.slice(dot).toLowerCase() : "";
   if (!ACCEPTED_EXTENSIONS.includes(ext)) {
@@ -70,8 +81,8 @@ function validateFile(file: File): string | null {
   if (file.size === 0) {
     return "This file is empty. Choose another one.";
   }
-  if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
-    return `File is larger than the ${MAX_FILE_SIZE_MB}MB limit.`;
+  if (file.size > maxFileSizeMb * 1024 * 1024) {
+    return `File is larger than the ${maxFileSizeMb}MB limit.`;
   }
   return null;
 }
@@ -107,12 +118,16 @@ export default function UploadForm({
   disabled,
   submitting,
   blocked,
+  blockedPeriod = "day",
   sharedUrl,
   urlCapability,
   submitError,
   handoff,
   onHandoffTaken,
+  limits = FALLBACK_LIMITS.standard,
+  signInForMinutes = null,
 }: UploadFormProps) {
+  const { maxDurationSeconds, maxFileSizeMb } = limits;
   const busy = disabled || submitting;
   /* Every way of starting a run. `busy` alone still governs the link field and
      the terms box, which stay usable while blocked. */
@@ -201,7 +216,7 @@ export default function UploadForm({
 
   const handleFile = useCallback(
     async (file: File) => {
-      const validationError = validateFile(file);
+      const validationError = validateFile(file, maxFileSizeMb);
       if (validationError) {
         showError(validationError, "file");
         return;
@@ -211,9 +226,9 @@ export default function UploadForm({
       setChecking(true);
       try {
         const duration = await readMediaDuration(file);
-        if (duration > MAX_DURATION_SECONDS) {
+        if (duration > maxDurationSeconds) {
           showError(
-            `Media is ${Math.round(duration)}s long, which exceeds the ${MAX_DURATION_SECONDS}s limit.`,
+            `Media is ${Math.round(duration)}s long, which exceeds the ${durationLabel(maxDurationSeconds)} limit.`,
             "file"
           );
           return;
@@ -227,7 +242,7 @@ export default function UploadForm({
       setPendingKind("file");
       onSubmit({ file });
     },
-    [clearError, onSubmit, showError]
+    [clearError, maxDurationSeconds, maxFileSizeMb, onSubmit, showError]
   );
 
   const submitUrl = (event: FormEvent) => {
@@ -314,6 +329,11 @@ export default function UploadForm({
     event.preventDefault();
     goToMainTab("api-key");
   };
+  const openAccount = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (!isPlainLeftClick(event)) return;
+    event.preventDefault();
+    goToMainTab("account");
+  };
 
   /* The intake card: one white surface holding both entry points and the
      terms row, drawn on design/shots/Main.png. HomeScreen owns everything
@@ -331,7 +351,7 @@ export default function UploadForm({
       ) : null}
       {blocked ? (
         <p id="intake-blocked" className="intake-blocked">
-          No free runs left today, so analyzing is paused.{" "}
+          No free runs left {blockedPeriod === "month" ? "this month" : "today"}, so analyzing is paused.{" "}
           <a className="text-link" href={mainTabHref("api-key")} onClick={openApiKey}>
             Add key
           </a>{" "}
@@ -436,8 +456,19 @@ export default function UploadForm({
             <span className="only-touch">Add an audio or video file</span>
           </p>
           <p className="hint">
-            MP3, MP4, or MOV. Up to {MAX_FILE_SIZE_MB} MB and {MAX_DURATION_SECONDS / 60} minutes.
+            MP3, MP4, or MOV. Up to {maxFileSizeMb} MB and {durationLabel(maxDurationSeconds)}.
           </p>
+          {/* 2026-11-13: a key is saved but nobody is signed in, and signing
+              in would lift the limits. One quiet line in the same hint
+              voice; HomeScreen decides when it applies. */}
+          {signInForMinutes ? (
+            <p className="hint">
+              <a className="text-link" href={mainTabHref("account")} onClick={openAccount}>
+                Sign in
+              </a>{" "}
+              for videos up to {signInForMinutes} minutes.
+            </p>
+          ) : null}
         </div>
         <button
           ref={browseRef}

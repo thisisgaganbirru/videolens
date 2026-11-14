@@ -141,12 +141,47 @@ never a deployment manifest. See `docs/container-workflows.md`.
   - without a Gemini key of their own, callers need `X-Device-Token` and get
     `FREE_RUNS_PER_DEVICE` (3) runs per UTC day, `FREE_RUNS_PER_IP` (10) as a
     backstop: `401 {"code": "device_token_invalid"}` or
-    `402 {"code": "free_runs_used", "limit", "used"}`;
+    `402 {"code": "free_runs_used", "scope": "device", "period": "day", "limit", "used"}`.
+    A signed-in account (bearer JWT or API key) instead gets
+    `FREE_RUNS_PER_ACCOUNT_DAILY` (10) runs per UTC day, no device token
+    needed: `402 {"code": "free_runs_used", "scope": "account", "period": "day", "limit", "used"}`;
   - `DAILY_RUN_CAP` (200) across all callers per UTC day: `503`.
-  An `X-Gemini-Api-Key` header exempts the run from the last two.
-- `GET /api/free-runs` — `{ device_token, enabled, limit, used, remaining,
-  resets_at }`; issues a token when the sent one is missing or forged. Never
-  spends a run.
+  An `X-Gemini-Api-Key` header exempts the run from the last two. A paid
+  account (when billing is configured) takes `PAID_RUNS_PER_DAY` (30)
+  included runs a UTC day from its account counter, then each further run is
+  admitted and billed once it completes, up to `PAID_EXTRA_RUNS_MONTHLY_CAP`
+  (`402 {"code": "extra_runs_cap", "limit"}`); paid runs skip the daily cap
+  and get the paid media limits with or without a key.
+  Media limits depend on the caller: signed in (bearer JWT or account API
+  key) AND sending `X-Gemini-Api-Key` allows 10 minutes / 500 MB
+  (`SIGNED_IN_BYOK_MAX_*`); everyone else keeps 3 minutes / 200 MB
+  (`MAX_DURATION_SECONDS`, `MAX_FILE_SIZE_MB`). Over-limit refusals keep
+  their status and `{detail}` shape; the sentence may end with a hint such as
+  "Sign in and add your own Gemini key for videos up to 10:00." One run above
+  the standard limits may be in flight per account; a second is
+  `429 {"code": "long_run_in_progress"}` (a link only learns its length in the
+  worker, so there the same sentence arrives as the run's `error`).
+- `GET /api/limits` — `{ standard: { max_duration_seconds, max_file_size_mb },
+  signed_in_byok: { ... }, paid: { ... } }` from settings. No auth, read-rate-limited,
+  `Cache-Control: public, max-age=300`.
+- `GET /api/free-runs` — `{ device_token, enabled, scope, period, limit, used,
+  remaining, resets_at }`; issues a token when the sent one is missing or
+  forged. Never spends a run. `scope` is `device`, or `account` (today's
+  account runs) with a valid bearer; an invalid bearer is `401`. `period`
+  is `day` (device, free account and, since 2026-11-14, the paid plan;
+  `resets_at` = next UTC midnight); `month` stays in the contract but no
+  counter uses it now.
+  Signed in, also `plan` (`free` | `paid`) and `overage` (true on the paid
+  plan: runs past `limit` are billed, not refused).
+- `GET /api/billing` — the signed-in caller's plan: `{"enabled": false}`
+  with billing off, else `{ enabled, plan, status, interval,
+  current_period_end, cancel_at_period_end, runs: { limit, used }, prices:
+  { month, year, extra_run } }` (amounts in cents, read from Stripe; any may
+  be `null`). `POST /api/billing/checkout` `{ interval: "month" | "year" }`
+  and `POST /api/billing/portal` return `{ url }` for Stripe-hosted Checkout
+  or the Customer Portal (signed-in person only; `409 already_subscribed`,
+  `404 no_billing_account`). `POST /api/billing/webhook` is Stripe's,
+  verified by signature. `docs/backend/billing.md`.
 - `GET /api/runs/{run_id}` — `{ run_id, status, stage, result,
   source_metadata, completeness, error, source_kind, platform,
   duration_seconds, thumbnail, width, height, orientation }`. `status` is

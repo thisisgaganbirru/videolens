@@ -336,3 +336,166 @@ class DailyBudgetProbe:
             probed=True,
             log_detail=f"{remaining} shared runs remaining today",
         )
+
+
+class AuthProbe:
+    """Whether sign-in works on this deployment. This is how the frontend
+    learns whether to offer sign-in at all.
+
+    Unconfigured (`AUTH_JWKS_URL` blank) is `disabled`: anonymous-only is a
+    deployment shape, not a fault. Configured, it fetches the identity
+    provider's JWKS through the verifier's own caching client - free, and
+    the exact fetch a token verification would make - so `probed=True` means
+    the key set was really asked for. An unreachable or empty key set is
+    `degraded`, not `unavailable`: anonymous use still works.
+    """
+
+    def __init__(self, verifier) -> None:
+        self._verifier = verifier
+
+    @property
+    def name(self) -> str:
+        return "auth"
+
+    async def check(self) -> Capability:
+        if not self._verifier.configured:
+            return Capability(
+                name=self.name,
+                state=CapabilityState.DISABLED,
+                detail="Sign-in is not offered on this server.",
+                probed=False,
+            )
+        try:
+            key_count = await asyncio.to_thread(self._verifier.fetch_key_count)
+        except Exception as exc:  # noqa: BLE001 - the class name is all the log needs
+            return Capability(
+                name=self.name,
+                state=CapabilityState.DEGRADED,
+                detail="Sign-in is unavailable right now. You can keep using VideoLens without signing in.",
+                probed=True,
+                log_detail=f"JWKS fetch failed: {type(exc).__name__}",
+            )
+        if key_count == 0:
+            return Capability(
+                name=self.name,
+                state=CapabilityState.DEGRADED,
+                detail="Sign-in is unavailable right now. You can keep using VideoLens without signing in.",
+                probed=True,
+                log_detail="JWKS fetched but holds no keys",
+            )
+        return Capability(
+            name=self.name,
+            state=CapabilityState.OK,
+            detail="Sign-in is available.",
+            probed=True,
+            log_detail=f"JWKS fetched, {key_count} key(s)",
+        )
+
+
+_DATABASE_TIMEOUT_SECONDS = 5.0
+
+
+class DatabaseProbe:
+    """Whether the account store answers: one `SELECT 1` through the shared
+    engine (the pool's pre-ping makes this the same round trip a signed-in
+    request would make first).
+
+    No `DATABASE_URL` is `disabled`, not a fault: a local API keeps accounts
+    in process memory, and a distributed one runs without accounts, both by
+    design. A failed query is `degraded`, not `unavailable` (the same rule as
+    `AuthProbe`): anonymous use still works, and the detail says so. Host
+    names and driver errors stay in the log.
+    """
+
+    def __init__(self, database, *, distributed: bool) -> None:
+        self._database = database
+        self._distributed = distributed
+
+    @property
+    def name(self) -> str:
+        return "database"
+
+    async def check(self) -> Capability:
+        if not self._database.enabled:
+            return Capability(
+                name=self.name,
+                state=CapabilityState.DISABLED,
+                detail=(
+                    "Accounts are not available on this server."
+                    if self._distributed
+                    else "Accounts are kept in memory and are lost if the server restarts."
+                ),
+                probed=False,
+            )
+        try:
+            await asyncio.wait_for(self._database.ping(), timeout=_DATABASE_TIMEOUT_SECONDS)
+        except Exception as exc:  # noqa: BLE001 - logged here; the class name goes in log_detail
+            logger.warning("Database probe failed", exc_info=True)
+            return Capability(
+                name=self.name,
+                state=CapabilityState.DEGRADED,
+                detail="Accounts are unavailable right now. You can keep using VideoLens without signing in.",
+                probed=True,
+                log_detail=f"SELECT 1 failed: {type(exc).__name__}",
+            )
+        return Capability(
+            name=self.name,
+            state=CapabilityState.OK,
+            detail="Accounts are available.",
+            probed=True,
+        )
+
+
+class BillingProbe:
+    """Whether the paid plan can be bought on this deployment
+    (docs/backend/billing.md). This is how the frontend learns whether to
+    offer it at all.
+
+    Unconfigured (any required `STRIPE_*` blank) or with no account store is
+    `disabled`: free-only is a deployment shape, not a fault. Configured, it
+    reads the plan's Price objects through the gateway's own cache - free
+    (a read, never a charge), and at most one Stripe round trip an hour - so
+    `probed=True` means Stripe really answered. A monthly price Stripe would
+    not return is `degraded`: checkout cannot be offered, but everything a
+    run needs still works.
+    """
+
+    def __init__(self, gateway, accounts) -> None:
+        self._gateway = gateway
+        self._accounts = accounts
+
+    @property
+    def name(self) -> str:
+        return "billing"
+
+    async def check(self) -> Capability:
+        if not self._gateway.enabled or not self._accounts.enabled:
+            return Capability(
+                name=self.name,
+                state=CapabilityState.DISABLED,
+                detail="The paid plan is not offered on this server.",
+                probed=False,
+            )
+        mode = "test mode" if getattr(self._gateway, "test_mode", False) else "live mode"
+        try:
+            prices = await self._gateway.prices()
+        except Exception as exc:  # noqa: BLE001 - prices() should not raise; belt and braces
+            prices = None
+            failure = type(exc).__name__
+        else:
+            failure = None
+        if prices is None or prices.month is None:
+            return Capability(
+                name=self.name,
+                state=CapabilityState.DEGRADED,
+                detail="Upgrading is unavailable right now. Everything else works as usual.",
+                probed=True,
+                log_detail=f"Stripe ({mode}): monthly price unreadable" + (f" ({failure})" if failure else ""),
+            )
+        return Capability(
+            name=self.name,
+            state=CapabilityState.OK,
+            detail="The paid plan is available.",
+            probed=True,
+            log_detail=f"Stripe ({mode}): prices read",
+        )

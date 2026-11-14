@@ -10,7 +10,7 @@ shells").
 - `frontend/components/HomeScreen.tsx` — the shell for one tab: nav band, active view, footer band. Takes the tab as a prop; `RoutedHomeScreen` (same file) is the variant that reads it from the URL. Also the single caller of `useCapabilities()` — see `capability-reporting.md`.
 - `frontend/components/AppNav.tsx` — the top bar as one component: brand, the four tab links (desktop, web shell), theme toggle, phone hamburger + full-screen menu panel. Exports `TAB_LABEL`. Rendered by `HomeScreen`, `LegalShell` and `/offline`.
 - `frontend/components/SiteFooter.tsx` — the web shell's footer (one copy; was three).
-- `frontend/components/BottomTabBar.tsx` — the installed-app dock: Analyze, History, More. Owns the More sheet's open state.
+- `frontend/components/BottomTabBar.tsx` — the installed-app dock: Analyze, History, Account (only when sign-in is available, 2026-11-14), More. Owns the More sheet's open state.
 - `frontend/components/MoreSheet.tsx` — the More `<dialog>`; contents are `MORE_SHEET_GROUPS` (data).
 - `frontend/components/shell.ts` — `ShellMode`, `SHELL_STORAGE_KEY`; `navClick.ts` — `isPlainLeftClick` shared by every nav.
 - `frontend/application/useMainTab.ts` — the tab as a property of the URL: `MAIN_TABS`, `mainTabHref`, `goToMainTab`, `useMainTab`.
@@ -99,7 +99,7 @@ renders **both** chromes; CSS shows one.
 
 | | web (browser tab) | app (installed PWA / Capacitor) |
 |---|---|---|
-| Top bar | brand · tab links (≥ 48rem) · theme · hamburger (< 48rem) | ≤ 37.5rem: brand · theme only. Wider: same as web (links ≥ 48rem, hamburger between) |
+| Top bar | brand · tab links (≥ 48rem) · theme · Account button (≥ 48rem, when sign-in is offered) · hamburger (< 48rem) | ≤ 37.5rem: brand · theme only. Wider: same as web (links ≥ 48rem, hamburger between) |
 | Phone menu | `.menu-panel`, sibling of `.nav-wrap`, full-width 60px cards; hides the content section while open | none at ≤ 37.5rem |
 | Bottom | `SiteFooter` | ≤ 37.5rem: `BottomTabBar` (fixed dock, inset by `--page-gutter`/safe areas), no footer. Wider: `SiteFooter`, same as web |
 | Privacy / Terms | footer | ≤ 37.5rem: More sheet rows. Wider: the footer (owner decision 2026-11-01; not added to the top-bar menu) |
@@ -958,3 +958,8 @@ dark. `verify_reach.py` covers the reachability notice (32/32).
 - 2026-11-02 · frontend agent (refinement 13) · D-R12-1: top bar capped with `min(rem, px)` (44px icon buttons, 22px wordmark cap, 68px bar), fits at 320/360 × 100–200% on every route, normal scale identical; footer still wraps at 320/150% but its gaps/heights are capped (146 → 100px); More sheet theme control re-lays via em container queries (indent dropped, then stacked) with padded labels
 - 2026-11-02 · frontend agent (refinement 14) · no CSS change: Android now sets the system font scale as the root font-size (text zoom pinned to 100, see android-update-check.md), so the R13 caps and theme-control container queries work in the app; measured wordmark ≤ 22px, landscape bar 56px and the theme tiers at 320/360/390 × 1.0–2.0; repaired the mangled R13 harness path
 - 2026-11-02 · frontend (refinement 15) · dock capped with min(rem, px) (64px portrait / 52px sideways at every scale, labels ≤ 14/15px, 44px items); More-sheet icon tile, gap and chevron capped so labels never reach their chevrons (320/200% "Releases" −39 → +33px), theme indent follows; theme tiers and header unchanged; intake cards stack (see capability-reporting.md, free-runs.md)
+- 2026-11-08 · frontend subagent (auth phase 2) · new `account` tab (`MAIN_TABS`, `TAB_LABEL`, a More-sheet row with `CircleUserRound`), shown only when sign-in is configured and the `auth` capability is `ok` (`navTabs(showAccount)`); `/app?view=account` still renders the panel. See auth-sign-in.md
+- 2026-11-13 · frontend agent · top bar gains `.nav-account` (round Account link after the theme toggle, ≥ 48rem only, same visibility rules as `.nav-links`); Account leaves the inline text tabs. See auth-sign-in.md
+- 2026-11-14 · frontend agent · dock gains an Account item (4 items when `showAccount`, 62px each at 320, 52px tall, labels unclipped); the More sheet drops its Account row. See auth-sign-in.md
+- 2026-11-14 · frontend agent · top bar: `.nav-account--signin` modifier, a "Sign in" pill (auto width, 44px) in the `.nav-account` slot when signed out; same display rules (≥48rem, hidden in the sideways app shell); nothing in the slot until auth state is ready. See auth-sign-in.md
+- 2026-11-14 · frontend agent · landing, legal and 404 render `RouteNav`/`RouteTabBar` (AppNav/BottomTabBar plus the Account entry from `useAccountEntry`); `/offline` keeps plain AppNav/BottomTabBar. See auth-sign-in.md

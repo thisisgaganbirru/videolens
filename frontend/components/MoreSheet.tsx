@@ -14,6 +14,10 @@ import type { ThemePreference } from "@/components/theme";
  * room for. A native modal <dialog>, opened with showModal() by BottomTabBar —
  * the platform supplies the top layer, the inert page behind it (focus stays
  * inside), Escape, and ::backdrop; this component adds the backdrop click.
+ *
+ * Account is not a row here (2026-11-14): when sign-in is available it is a
+ * dock item, and the sheet is only reachable from that same dock, so a row
+ * would only ever duplicate it.
  */
 
 /** Which legal route this is, when it is one — so its row can be marked current. */

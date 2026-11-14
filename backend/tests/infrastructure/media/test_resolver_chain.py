@@ -27,7 +27,7 @@ class FakeResolver:
     def can_handle(self, url: str) -> bool:
         return self._handles
 
-    async def fetch(self, run_id: str, url: str) -> SavedUpload:
+    async def fetch(self, run_id: str, url: str, limits=None) -> SavedUpload:
         self.fetches.append((run_id, url))
         if self._error:
             raise self._error

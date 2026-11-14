@@ -128,7 +128,11 @@ class GeminiEngine:
             self._client = genai.Client(api_key=self._settings.gemini_api_key)
         return self._client
 
-    async def _wait_until_active(self, client: genai.Client, file_name: str, timeout: float = 120.0) -> None:
+    # 300 s (was 120): Gemini's file processing grows with the media, and a
+    # signed-in + BYOK run may now be 10 minutes long. A short file is ACTIVE
+    # within a few polls either way, so this only changes how long a stuck
+    # one is waited on, well inside WORKER_LONG_JOB_TIMEOUT_SECONDS.
+    async def _wait_until_active(self, client: genai.Client, file_name: str, timeout: float = 300.0) -> None:
         elapsed = 0.0
         interval = 2.0
         while elapsed < timeout:

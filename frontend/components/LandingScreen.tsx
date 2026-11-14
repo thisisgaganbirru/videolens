@@ -1,9 +1,10 @@
 import Link from "next/link";
-import AppNav from "@/components/AppNav";
-import BottomTabBar from "@/components/BottomTabBar";
+import RouteNav from "@/components/RouteNav";
+import RouteTabBar from "@/components/RouteTabBar";
 import SiteFooter from "@/components/SiteFooter";
 import SampleResult from "@/components/SampleResult";
-import { APP_PATH } from "@/application/useMainTab";
+import LandingAllowance from "@/components/LandingAllowance";
+import { ACCOUNT_FREE_RUNS_PER_DAY } from "@/application/accountAllowance";
 
 /* Hallmark · macrostructure: owner board (design/shots/Landing.png, LandingWeb.png)
  * genre: editorial · theme: custom (app/tokens.css — the owner's handoff)
@@ -14,7 +15,9 @@ import { APP_PATH } from "@/application/useMainTab";
  * action goes there.
  *
  * Chrome is the app's chrome, not a marketing variant: the same `.shell`,
- * `<AppNav />`, `<SiteFooter />` and `<BottomTabBar />` every route renders,
+ * `<AppNav />`, `<SiteFooter />` and `<BottomTabBar />` every route renders
+ * (through `RouteNav` / `RouteTabBar`, which add the Account entry where
+ * sign-in is available, 2026-11-14),
  * and the same `.view-scroll` band, so the nav and footer stay put and only
  * the content scrolls. None of the four tabs is current here (none of them is
  * where you are); the brand link is. The installed app never shows this page
@@ -22,13 +25,26 @@ import { APP_PATH } from "@/application/useMainTab";
  * dock is rendered anyway so the page is correct if that redirect is ever
  * skipped.
  *
- * Copy is held to what the product does today: a few free runs with no
- * account, your own Gemini key for more, History kept in this browser, files
- * deleted from the server once a run finishes. No numbers, no testimonials. */
+ * Copy is held to what the product does today: free runs with no account,
+ * your own Gemini key for more, History kept in this browser, files deleted
+ * from the server once a run finishes. The only numbers are the server's own
+ * (free runs, video length; LandingAllowance, client-side after the reads
+ * land) and the account allowance constant. No testimonials. */
 export default function LandingScreen() {
   return (
     <div className="shell" data-view="landing">
-      <AppNav activeTab={null} landing />
+      {/* Signed out, the account entry says what it gets you ("Get 10 free
+          runs"), so it invites new visitors without reading like a second
+          "Start analyzing". Outlined: the hero's green CTA is the view's one
+          green fill. Other routes keep "Sign in". Between 48rem and 50rem
+          the inline bar is 13px too narrow for it, so the pill says "Sign up
+          free" there (measured; app/globals.css). */}
+      <RouteNav
+        activeTab={null}
+        landing
+        signedOutLabel={`Get ${ACCOUNT_FREE_RUNS_PER_DAY} free runs`}
+        signedOutShortLabel="Sign up free"
+      />
 
       <main className="view-scroll" data-view="landing" aria-label="VideoLens AI">
         <div className="landing">
@@ -38,16 +54,17 @@ export default function LandingScreen() {
               <h1 className="landing-title">Turn any short video into clean notes.</h1>
               <p className="landing-lede">
                 Paste a link or add a file. You get a transcript, the text on screen, a short summary
-                and notes you can keep. A few free runs to start, no account needed.
+                and notes you can keep.
               </p>
               <div className="landing-actions">
-                <Link href={APP_PATH} className="btn btn-primary btn-pill landing-btn">
+                <Link href="/app" className="btn btn-primary btn-pill landing-btn">
                   Start analyzing
                 </Link>
                 <a href="#how" className="btn btn-secondary btn-pill landing-btn">
                   See how it works
                 </a>
               </div>
+              <LandingAllowance />
             </div>
 
             <SampleResult />
@@ -110,17 +127,32 @@ export default function LandingScreen() {
                 <dd>Text, code and charts from the frames.</dd>
               </div>
             </dl>
-            <p className="landing-wyg-foot">
-              Files are deleted from our servers as soon as a run finishes. Your History stays in this
-              browser. When the free runs are used up, add your own Gemini key and keep going.
-            </p>
+            <dl className="landing-wyg-foot landing-details">
+              <div>
+                <dt>Your files</dt>
+                <dd>Deleted from our servers as soon as a run finishes.</dd>
+              </div>
+              <div>
+                <dt>Your history</dt>
+                <dd>Saved in this browser, so you can come back to your notes.</dd>
+              </div>
+              <div>
+                <dt>After the free runs</dt>
+                <dd>
+                  Add your own Gemini key to keep going.{" "}
+                  <Link href="/app?view=api-key" className="text-link">
+                    Set up a key
+                  </Link>
+                </dd>
+              </div>
+            </dl>
           </section>
 
           <section className="landing-band" aria-labelledby="landing-band-title">
             <h2 id="landing-band-title" className="landing-band-title">
               Have a video in mind?
             </h2>
-            <Link href={APP_PATH} className="btn btn-primary btn-pill landing-btn">
+            <Link href="/app" className="btn btn-primary btn-pill landing-btn">
               Start analyzing
             </Link>
           </section>
@@ -128,7 +160,7 @@ export default function LandingScreen() {
       </main>
 
       <SiteFooter />
-      <BottomTabBar activeTab={null} />
+      <RouteTabBar activeTab={null} />
     </div>
   );
 }
