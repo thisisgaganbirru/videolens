@@ -21,6 +21,7 @@ import HistoryPanel from "@/components/panels/HistoryPanel";
 import VersionLogPanel from "@/components/panels/VersionLogPanel";
 import AccountPanel from "@/components/panels/AccountPanel";
 import { useAnalysisRun } from "@/application/useAnalysisRun";
+import { refreshSavedHistory, useSavedHistory } from "@/application/useSavedHistory";
 import { HISTORY_LIMIT, useHistoryBoot } from "@/application/useRunHistory";
 import { useDocumentTitle } from "@/application/useDocumentTitle";
 import { useCapabilities } from "@/application/useCapabilities";
@@ -30,7 +31,7 @@ import { useBilling } from "@/application/useBilling";
 import { formatPrice } from "@/components/format";
 import { useSharedUrl, type SharedUrl } from "@/application/useSharedUrl";
 import { canonicalizeAppPath, goToMainTab, useMainTab, type MainTab } from "@/application/useMainTab";
-import type { RunSourceKind } from "@/domain/entities";
+import type { RunSourceKind, SavedRunSummary } from "@/domain/entities";
 import { platformName } from "@/domain/platforms";
 
 /**
@@ -76,6 +77,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
     durationSeconds,
     canRetry,
     expired,
+    expiredReason,
     againUrl,
     reconnectIn,
     reconnecting,
@@ -86,6 +88,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
     reconnectNow,
     reset,
     openRun,
+    openSavedRun,
     resume,
   } = useAnalysisRun();
 
@@ -173,6 +176,11 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      carries `plan` too, and is the one read while no key is saved). */
   const paid = billing?.plan === "paid" || freeRuns.banner?.plan === "paid";
   const extraRunPrice = billing?.prices.extraRun ? formatPrice(billing.prices.extraRun) : null;
+  /* Paid saved history (2026-11-14): whether this account saves its runs,
+     read once someone is signed in where sign-in works. Off for everyone
+     else, and on a backend without the routes, so nothing changes there. */
+  const savedHistory = useSavedHistory(authUser.ready ? (authUser.user?.id ?? null) : null, showAccount, paid);
+  const savingRuns = savedHistory.mode === "saving";
   /* Upload limits (2026-11-13): the paid plan, or signed in on their own key,
      gets the larger tier. Read once per app load here, recomputed on
      sign-in/out, on a plan change, and when the key is saved or removed. The
@@ -246,6 +254,9 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      during render, no effect: the form itself applies whatever it is handed. */
   const [againPrefill, setAgainPrefill] = useState<SharedUrl | null>(null);
   const [fromHistory, setFromHistory] = useState(false);
+  /* Opened from the account's saved runs, rather than this browser's own
+     (2026-11-14): decides which "where it is kept" line the result shows. */
+  const [openedSaved, setOpenedSaved] = useState(false);
   const [dismissedShare, setDismissedShare] = useState<SharedUrl | null>(null);
   const liveShare = sharedUrl && sharedUrl !== dismissedShare ? sharedUrl : null;
   const formPrefill =
@@ -255,6 +266,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
    *  stay accepted (they are remembered by the form, not cleared here). */
   const startOver = () => {
     setFromHistory(false);
+    setOpenedSaved(false);
     setDismissedShare(sharedUrl);
     setAgainPrefill(null);
     reset();
@@ -263,6 +275,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   /** Expired run: back to the intake with its link in the field, if stored. */
   const analyzeAgain = () => {
     setFromHistory(false);
+    setOpenedSaved(false);
     setDismissedShare(sharedUrl);
     setAgainPrefill(againUrl ? { url: againUrl, receivedAt: Date.now() } : null);
     reset();
@@ -317,8 +330,31 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
        first status response arrives. */
     goToMainTab("analyze", { push: true });
     setFromHistory(true);
+    setOpenedSaved(false);
     void openRun(runId, sourceKind);
   };
+
+  /* A run saved to the account. The detail is fetched first, from History,
+     so a failure stays there with its reason; once it is on screen (or the
+     unavailable view is), the same push to Analyze as above. */
+  const handleOpenSaved = async (summary: SavedRunSummary) => {
+    const outcome = await openSavedRun(summary);
+    if (outcome.kind === "shown" || outcome.kind === "gone") {
+      goToMainTab("analyze", { push: true });
+      setFromHistory(true);
+      setOpenedSaved(outcome.kind === "shown");
+    }
+    return outcome;
+  };
+
+  /* The account's list is re-read when History opens and after a run of
+     this session finishes (the server has just saved it). */
+  useEffect(() => {
+    if (activeTab === "history") void refreshSavedHistory();
+  }, [activeTab]);
+  useEffect(() => {
+    if (status === "complete" && !fromHistory && savingRuns) void refreshSavedHistory();
+  }, [status, fromHistory, savingRuns]);
 
   /* UX fix spec 4.5: a run opened from History offers the way back to it.
      True only from `handleOpenRun`; every reset and every new submit clears
@@ -326,6 +362,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   const backToHistory = () => goToMainTab("history");
   const submitFresh: typeof submit = (...args) => {
     setFromHistory(false);
+    setOpenedSaved(false);
     return submit(...args);
   };
 
@@ -338,7 +375,9 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
           ? result?.title?.trim() || "Result"
           : status === "failed"
             ? expired
-              ? "Run expired"
+              ? expiredReason === "saved"
+                ? "Run unavailable"
+                : "Run expired"
               : "Run failed"
             : "Analyzing"
       : activeTab === "history"
@@ -445,8 +484,12 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                   limits={mediaLimits.limits}
                   signInForMinutes={signInForMinutes}
                 />
+                {/* Paid saved history (2026-11-14): for an account that saves
+                    its runs the result is kept on the account, not for an hour. */}
                 <p className="intake-retention">
-                  Your video is deleted from our servers when the run finishes. The result is kept for up to an hour, then deleted.
+                  {savingRuns
+                    ? "Your video is deleted from our servers when the run finishes. The result is saved to your account until you delete it."
+                    : "Your video is deleted from our servers when the run finishes. The result is kept for up to an hour, then deleted."}
                 </p>
               </div>
             </div>
@@ -470,6 +513,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                 onRetry={canRetry ? retry : undefined}
                 onRetryNow={reconnectNow}
                 expired={expired}
+                expiredReason={expiredReason}
                 canRefill={againUrl !== null}
                 onAnalyzeAgain={sourceKind === "file" && againUrl === null ? chooseFileAgain : analyzeAgain}
                 onBackToHistory={fromHistory ? backToHistory : undefined}
@@ -547,8 +591,13 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     it reserves its own height. Shown even when History cannot
                     be saved: that error is only known to the History panel's
                     own read, and a second IndexedDB read here is not cheap. */}
+                {/* Saved history (2026-11-14): a run this account saved (just
+                    finished while saving, or opened from its saved runs) says
+                    so; anything else is this browser's copy, as before. */}
                 <p className="result-saved">
-                  History keeps your last {HISTORY_LIMIT} runs in this browser. Not synced.
+                  {(fromHistory ? openedSaved : savingRuns)
+                    ? "Saved to your account. Open it from History on any device where you sign in."
+                    : `History keeps your last ${HISTORY_LIMIT} runs in this browser. Not synced.`}
                 </p>
                 {/* The same actions, placed under the card on a phone where
                     the source column is a pill above it. CSS shows exactly
@@ -576,7 +625,14 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
           renders at a time, so a page has exactly one main landmark. */}
       {activeTab === "history" && (
         <main className="view-scroll" data-view="history" aria-label="History">
-          <HistoryPanel onOpenRun={handleOpenRun} onAnalyze={() => goToMainTab("analyze")} />
+          <HistoryPanel
+            onOpenRun={handleOpenRun}
+            onAnalyze={() => goToMainTab("analyze")}
+            saved={savedHistory}
+            paid={paid}
+            onOpenSaved={handleOpenSaved}
+            onOpenAccount={() => goToMainTab("account")}
+          />
         </main>
       )}
 
@@ -612,6 +668,8 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
             billingFailed={billingFailed}
             checkoutReturn={checkoutReturn}
             limits={mediaLimits}
+            savedHistory={savedHistory.mode}
+            savedUntil={savedHistory.status?.expires_at ?? null}
           />
         </main>
       )}
