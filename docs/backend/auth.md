@@ -205,7 +205,7 @@ Upper bound on the Supabase side: about 7 days (backups, Auth logs), if Supabase
 
 The identity data lives in Postgres (Supabase), not in Redis. The four tables are:
 
-- `accounts`: `id`, `external_id` (unique; the IdP `sub`), `email`, `default_workspace_id` (FK `workspaces.id` `ON DELETE SET NULL` since 0009), `created_at`.
+- `accounts`: `id`, `external_id` (unique; the IdP `sub`), `email`, `default_workspace_id` (FK `workspaces.id` `ON DELETE SET NULL` since 0009), `created_at`; since 0006 `deleted_at`, `purge_at`, `saved_runs_expire_at`; since 0010 `complimentary_plus` (boolean, not null, default false: complimentary Plus, `billing.md`; written only by the owner's hand-run SQL, never by the code; a restore leaves it as it was, the purge removes it with the row).
 - `workspaces`: `id`, `name`, `owner_account_id` (FK `ON DELETE CASCADE` since 0007), `created_at`.
 - `workspace_members`: (`workspace_id`, `account_id`) PK, both FKs `ON DELETE CASCADE` since 0007, `role`.
 - `api_keys`: `id`, `workspace_id` (FK `ON DELETE CASCADE` since 0007, indexed), `name`, `prefix`, `key_hash` (unique), `scopes` (JSON), `active`, `last_used_at`, `revoked_at`, `created_at`.
@@ -360,3 +360,4 @@ The application code has not yet run against a real Supabase project: the SQL ad
 - 2026-11-14 · backend agent · migration `0007_identity_cascades`: the four identity foreign keys cascade on delete (Postgres; names kept); the purge keeps its explicit children-first deletes, which were already correct without the cascade
 - 2026-11-14 · backend agent · migration `0008_value_checks`: named check constraints on `workspace_members.role` and the two free-run `period` columns (plus billing and saved-run ones); pre-apply violation query in Storage
 - 2026-11-14 · backend agent · migration `0009_default_workspace_fk`: `accounts.default_workspace_id` references `workspaces(id)` `ON DELETE SET NULL` (not deferrable); why the cycle is safe for creation, purge and restore; pre-apply orphan query
+- 2026-11-14 · backend agent · migration `0010_complimentary_plus`: `accounts.complimentary_plus BOOLEAN NOT NULL DEFAULT false` (`billing.md`, "Complimentary Plus"), read into `Account.complimentary_plus` by `SqlAccountDirectory`; set only by hand in SQL, no API writes it; the existing `accounts` RLS policy and grants cover it; apply before deploying the code; restore and purge unchanged (restore leaves the flag, purge removes the row with it)

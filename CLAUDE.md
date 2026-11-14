@@ -65,7 +65,10 @@ Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
   client-side. See `docs/auth-plan.md` and `docs/backend/auth.md`.
 - One paid plan via Stripe hosted Checkout and Portal (`docs/backend/billing.md`,
   `docs/frontend/billing.md`). With any required `STRIPE_*` setting blank,
-  billing is off and nothing changes. Extra runs are billed through a Billing
+  billing is off and nothing changes, except for an account whose
+  `accounts.complimentary_plus` the owner set by hand in SQL: it is on the
+  paid plan with or without Stripe and is never billed (no API sets it).
+  Extra runs are billed through a Billing
   Meter keyed on the run id, only after a run succeeds; never bill from
   anywhere else.
 - Four spend limits gate Gemini: per-IP rate limit (429), per-device free
