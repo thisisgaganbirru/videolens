@@ -116,9 +116,10 @@ class SqlAccountDeleter:
             if account_id is None:
                 return False
             owned = select(workspaces.c.id).where(workspaces.c.owner_account_id == account_id)
-            # Children first: the identity foreign keys have no ON DELETE
-            # CASCADE. The free-run tables do (0003), but SQLite does not
-            # enforce it, so they go explicitly too.
+            # Children first, by hand. Every foreign key into `accounts` and
+            # `workspaces` cascades on Postgres (the identity ones since 0007,
+            # 0003/0004/0006 from the start), but SQLite, which the tests run,
+            # does not enforce foreign keys, so the explicit deletes stay.
             await conn.execute(delete(account_free_run_holds).where(account_free_run_holds.c.account_id == account_id))
             await conn.execute(delete(account_free_runs).where(account_free_runs.c.account_id == account_id))
             # Billing rows (0004) cascade too. The subscription itself was
