@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from ..domain.entities import FreeRunStatus, Principal
+from ..domain.entities import FreeRunPeriod, FreeRunStatus, Principal
 from ..domain.ports import AccountFreeRunAllowance, DeviceTokenSigner, FreeRunAllowance
 from .billing import BillingPlans
 
@@ -20,9 +20,9 @@ class FreeRunStanding:
 
 class GetFreeRunsUseCase:
     """Tells a caller how many free runs it has left: a signed-in account
-    this month's account runs (when that allowance is on), anyone else this
+    today's account runs (when that allowance is on), anyone else this
     device's runs for today. A paid account sees its included runs this
-    month instead (docs/backend/billing.md). Issues a device token first if
+    month instead (docs/backend/billing.md). `status.period` says which. Issues a device token first if
     the caller has none (or one this server didn't sign), signed in or not,
     so a person who signs out still holds a token.
 
@@ -66,10 +66,15 @@ class GetFreeRunsUseCase:
             # the counter a run would be taken from.
             paid = await self._billing.paid_account(principal.account_id) if self._billing is not None else None
             if paid is not None:
-                status = await accounts.status(principal.account_id, limit=self._billing.paid_runs_per_month)
+                status = await accounts.status(
+                    principal.account_id,
+                    limit=self._billing.paid_runs_per_month,
+                    period=self._billing.paid_runs_period,
+                )
                 return FreeRunStanding(token, status, plan="paid", overage=True)
             if accounts.enabled:
-                return FreeRunStanding(token, await accounts.status(principal.account_id), plan="free")
+                status = await accounts.status(principal.account_id, period=FreeRunPeriod.DAY)
+                return FreeRunStanding(token, status, plan="free")
         # Signed in with the account allowance off: the device rule, still
         # on the free plan.
         return FreeRunStanding(

@@ -64,13 +64,15 @@ class Settings(BaseSettings):
     # because shared networks (offices, campuses, carrier NAT) put many
     # people behind one IP. <= 0 disables the IP backstop only.
     free_runs_per_ip: int = 10
-    # Free runs per signed-in account per UTC calendar month, for callers
-    # without their own Gemini key. Counted against the account (so they
-    # follow the person across devices) INSTEAD of the device counter, not
-    # on top of it. Needs an account store (DATABASE_URL, or the in-memory
-    # one in local mode). <= 0 turns it off: signed-in callers then fall back
-    # to the device rule above.
-    free_runs_per_account_monthly: int = 10
+    # Free runs per signed-in account per UTC day, for callers without their
+    # own Gemini key (owner decision 2026-11-14; it was 10 per month, which
+    # gave a signed-in person less than an anonymous device's 3 a day).
+    # Counted against the account (so they follow the person across devices)
+    # INSTEAD of the device counter, not on top of it. Needs an account store
+    # (DATABASE_URL, or the in-memory one in local mode). <= 0 turns it off:
+    # signed-in callers then fall back to the device rule above. Replaces
+    # FREE_RUNS_PER_ACCOUNT_MONTHLY, which is no longer read.
+    free_runs_per_account_daily: int = 10
     # HMAC key for device tokens. Required in distributed mode (REDIS_URL
     # set) while free runs are on, or replicas would reject each other's
     # tokens; generated per process (with a warning) in local mode.

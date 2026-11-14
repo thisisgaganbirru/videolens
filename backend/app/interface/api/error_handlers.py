@@ -102,6 +102,7 @@ def register_error_handlers(app: FastAPI) -> None:
                 "detail": str(exc),
                 "code": "free_runs_used",
                 "scope": exc.scope,
+                "period": exc.period,
                 "limit": exc.limit,
                 "used": exc.used,
             },

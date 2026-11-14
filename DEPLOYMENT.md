@@ -115,10 +115,15 @@ Complete these items before making the application publicly available.
       backend and worker services, so the healthy 2026-11-06 production
       deploy implies it is set; confirm from the Railway dashboard rather
       than from this checkbox.
-- [ ] Signed-in free runs (`FREE_RUNS_PER_ACCOUNT_MONTHLY`, default 10 per
-      UTC month per account, added 2026-11-13). Apply Alembic `0003_account_free_runs`
+- [ ] Signed-in free runs (`FREE_RUNS_PER_ACCOUNT_DAILY`, default 10 per
+      UTC day per account; added 2026-11-13 as 10 per month, daily since
+      2026-11-14). Apply Alembic `0003_account_free_runs` and
+      `0005_account_daily_free_runs` (which needs `0004_billing` before it)
       to the environment's database **before** deploying the code: without
-      the tables every signed-in run without a key fails at admission.
+      the tables, or with `period` still varchar(7), every signed-in run
+      without a key fails at admission. Remove any
+      `FREE_RUNS_PER_ACCOUNT_MONTHLY` variable (no longer read); if it was
+      set to 0 to turn the allowance off, set `FREE_RUNS_PER_ACCOUNT_DAILY=0`.
 - [ ] Paid plan (Stripe, added 2026-11-13, `docs/backend/billing.md`). Off
       until the `STRIPE_*` variables are set. Order: apply Alembic
       `0004_billing`, deploy the code with `STRIPE_*` blank, create the
@@ -300,11 +305,11 @@ DAILY_RUN_CAP=200
 # Anonymous free runs per device / per IP, per UTC day (BYOK runs exempt).
 FREE_RUNS_PER_DEVICE=3
 FREE_RUNS_PER_IP=10
-# Signed-in accounts (no own key): free runs per UTC calendar month, counted
-# per account instead of per device. Needs migration 0003 applied first
-# (account_free_runs tables) wherever DATABASE_URL is set. <= 0 = off
-# (signed-in callers fall back to the device rule).
-FREE_RUNS_PER_ACCOUNT_MONTHLY=10
+# Signed-in accounts (no own key): free runs per UTC day, counted per
+# account instead of per device. Needs migrations 0003 and 0005 applied first
+# wherever DATABASE_URL is set. <= 0 = off (signed-in callers fall back to the
+# device rule). Replaces FREE_RUNS_PER_ACCOUNT_MONTHLY (no longer read).
+FREE_RUNS_PER_ACCOUNT_DAILY=10
 # REQUIRED while REDIS_URL is set and FREE_RUNS_PER_DEVICE > 0 (the API
 # refuses to start without it). Same value on backend and worker. Generate
 # with: python -c "import secrets; print(secrets.token_urlsafe(32))"
@@ -514,6 +519,13 @@ code that needs the new revision. Full detail, including the offline
       fails if `DATABASE_APP_ROLE` is missing) before any `STRIPE_*`
       variable is set. Harmless to apply early. Offline SQL:
       `alembic upgrade 0003_account_free_runs:0004_billing --sql`.
+- [ ] `0005_account_daily_free_runs` (signed-in free runs per UTC day:
+      widens `period` to varchar(10) on `account_free_runs` and
+      `account_free_run_holds`; catalog-only on Postgres, RLS, policies and
+      grants untouched) **before** the code that writes daily keys, or every
+      signed-in free run fails at admission. Needs `0004_billing` first.
+      Offline SQL: `alembic upgrade 0004_billing:0005_account_daily_free_runs --sql`
+      (or `0003_account_free_runs:0005_account_daily_free_runs` from 0003).
 - [ ] `GET /api/capabilities` shows `database: ok` (and `auth: ok`).
 
 ## Phase 3: Installable PWA
@@ -756,3 +768,4 @@ The release is complete when:
 - 2026-11-09 · backend subagent (auth phase 3, review fix) · 0002 now also creates `auth_user_exists`; the verify step checks both functions
 - 2026-11-13 · backend agent · `SIGNED_IN_BYOK_MAX_DURATION_SECONDS` / `SIGNED_IN_BYOK_MAX_FILE_SIZE_MB` and `WORKER_LONG_JOB_TIMEOUT_SECONDS` variables; capacity note for 500 MB uploads; release check for `GET /api/limits` and the long-run guard. Deploy the worker before (or with) the API: an old worker does not know `process_long_run` or the `limits` job argument
 - 2026-11-13 · backend agent · paid plan: `STRIPE_*`, `BILLING_RETURN_ORIGIN` and `PAID_*` variables (both services); release checklist item and migration step for `0004_billing`; deploy order (migration, code with billing off, Stripe objects, variables, webhook)
+- 2026-11-14 · backend agent · `FREE_RUNS_PER_ACCOUNT_DAILY` replaces `FREE_RUNS_PER_ACCOUNT_MONTHLY` (remove the old variable); migration step for `0005_account_daily_free_runs` before the daily code

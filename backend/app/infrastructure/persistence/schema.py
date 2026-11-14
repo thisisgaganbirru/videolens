@@ -64,15 +64,16 @@ api_keys = Table(
     Index("ix_api_keys_workspace", "workspace_id"),
 )
 
-# Signed-in free runs: one row per account per UTC month ("YYYY-MM") it has
-# used any. ON DELETE CASCADE so deleting the account always takes its usage
+# Signed-in free runs: one row per account per counter period it has used
+# any: "YYYY-MM-DD" (UTC day, the free plan, since 2026-11-14) or "YYYY-MM"
+# (UTC month, the paid plan's included runs). varchar(10) since 0005. ON DELETE CASCADE so deleting the account always takes its usage
 # with it (the deleter also removes these explicitly: SQLite does not
 # enforce foreign keys unless asked).
 account_free_runs = Table(
     "account_free_runs",
     metadata,
     Column("account_id", String(36), ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True),
-    Column("period", String(7), primary_key=True),
+    Column("period", String(10), primary_key=True),
     Column("used", Integer, nullable=False, default=0),
 )
 
@@ -85,7 +86,7 @@ account_free_run_holds = Table(
     metadata,
     Column("run_id", String(36), primary_key=True),
     Column("account_id", String(36), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False),
-    Column("period", String(7), nullable=False),
+    Column("period", String(10), nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Index("ix_account_free_run_holds_created", "created_at"),
     Index("ix_account_free_run_holds_account", "account_id"),
@@ -128,7 +129,7 @@ billing_extra_runs = Table(
     Column("run_id", String(36), primary_key=True),
     Column("account_id", String(36), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False),
     Column("stripe_customer_id", String(255), nullable=False),
-    Column("period", String(7), nullable=False),
+    Column("period", String(10), nullable=False),
     Column("state", String(16), nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("completed_at", DateTime(timezone=True), nullable=True),

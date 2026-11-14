@@ -90,8 +90,9 @@ async def free_runs(
     request: Request, principal: Principal | None = Depends(get_optional_signed_in_principal)
 ) -> FreeRunsResponse:
     """Free-run standing: this device's for today, or, with a valid bearer
-    (JWT or API key) and the account allowance on, the account's for this
-    month (`scope`). Never spends a run, and needs no X-Client-ID: it is the
+    (JWT or API key) and the account allowance on, the account's for today
+    (`scope`; the paid plan's for this month). `period` says "day" or
+    "month". Never spends a run, and needs no X-Client-ID: it is the
     first call a fresh install makes. An invalid bearer is a 401."""
     # Signed in, also `plan` and `overage` (docs/backend/billing.md); on the
     # paid plan `limit` is the plan's included runs. Anonymous callers get
@@ -102,6 +103,7 @@ async def free_runs(
         device_token=standing.device_token,
         enabled=status.enabled,
         scope=status.scope.value,
+        period=status.period.value,
         limit=status.limit,
         used=status.used,
         remaining=status.remaining,
@@ -317,8 +319,8 @@ def _prices(prices: BillingPrices | None) -> BillingPricesResponse:
 @router.get("/api/billing", response_model=BillingResponse)
 @limiter.limit(_READ_LIMIT, exempt_when=lambda: not _READS_LIMITED)
 async def billing(request: Request, principal: Principal = Depends(get_signed_in_principal)) -> Response:
-    """The caller's plan and this month's runs. Anonymous is 401; with
-    billing off (or no account store) just `{"enabled": false}`. Prices are
+    """The caller's plan and its runs (today's on the free plan, this
+    month's on the paid one). Anonymous is 401; with billing off (or no account store) just `{"enabled": false}`. Prices are
     read from Stripe (cached) and are null when Stripe could not be read."""
     view = await container.get_billing_use_case.execute(principal)
     if not view.enabled:
@@ -330,7 +332,7 @@ async def billing(request: Request, principal: Principal = Depends(get_signed_in
         interval=view.interval if view.interval in ("month", "year") else None,
         current_period_end=view.current_period_end,
         cancel_at_period_end=view.cancel_at_period_end,
-        runs=BillingRunsResponse(limit=view.runs_limit, used=view.runs_used),
+        runs=BillingRunsResponse(limit=view.runs_limit, used=view.runs_used, period=view.runs_period),
         prices=_prices(view.prices),
     )
 

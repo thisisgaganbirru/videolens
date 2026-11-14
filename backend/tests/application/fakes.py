@@ -9,6 +9,7 @@ from app.domain.entities import (
     AnalysisCompleteness,
     CaptionTrack,
     FreeRunClaim,
+    FreeRunPeriod,
     FreeRunScope,
     FreeRunStatus,
     MediaVisuals,
@@ -435,16 +436,21 @@ class FakeFreeRunAllowance:
 
 
 class FakeAccountFreeRunAllowance:
-    """Per account per `period` (set it to move to another month), like the
-    real adapters."""
+    """Per account per counter key, like the real adapters: `day` for the
+    free plan's daily counter, `month` for a monthly one (the paid plan).
+    Set either to move to another day or month."""
 
-    def __init__(self, *, enabled: bool = True, limit: int = 10, period: str = "2026-11") -> None:
+    def __init__(
+        self, *, enabled: bool = True, limit: int = 10, day: str = "2026-11-14", month: str = "2026-11"
+    ) -> None:
         self._enabled = enabled
         self.limit = limit
-        self.period = period
+        self.day = day
+        self.month = month
         self.counts: dict[tuple[str, str], int] = {}
         self.consume_calls = 0
         self.consume_limits: list[int | None] = []
+        self.consume_periods: list[FreeRunPeriod] = []
         self.refunds: list[AccountFreeRunClaim] = []
         self.held: dict[str, AccountFreeRunClaim] = {}
         self.release_calls: list[tuple[str, bool]] = []
@@ -453,29 +459,43 @@ class FakeAccountFreeRunAllowance:
     def enabled(self) -> bool:
         return self._enabled
 
-    def used(self, account_id: str, period: str | None = None) -> int:
-        return self.counts.get((account_id, period or self.period), 0)
+    def key(self, period: FreeRunPeriod = FreeRunPeriod.DAY) -> str:
+        return self.day if period is FreeRunPeriod.DAY else self.month
 
-    async def status(self, account_id: str, *, limit: int | None = None) -> FreeRunStatus:
-        used = self.used(account_id)
+    def used(self, account_id: str, period: FreeRunPeriod = FreeRunPeriod.DAY) -> int:
+        return self.counts.get((account_id, self.key(period)), 0)
+
+    async def status(
+        self, account_id: str, *, limit: int | None = None, period: FreeRunPeriod = FreeRunPeriod.DAY
+    ) -> FreeRunStatus:
+        used = self.used(account_id, period)
         limit = self.limit if limit is None else limit
+        resets_at = (
+            datetime(2026, 11, 15, tzinfo=timezone.utc)
+            if period is FreeRunPeriod.DAY
+            else datetime(2026, 12, 1, tzinfo=timezone.utc)
+        )
         return FreeRunStatus(
             enabled=self._enabled or limit != self.limit,
             limit=limit,
             used=min(used, limit),
             remaining=max(0, limit - used),
-            resets_at=datetime(2026, 12, 1, tzinfo=timezone.utc),
+            resets_at=resets_at,
             scope=FreeRunScope.ACCOUNT,
+            period=period,
         )
 
-    async def try_consume(self, account_id: str, *, limit: int | None = None) -> AccountFreeRunClaim | None:
+    async def try_consume(
+        self, account_id: str, *, limit: int | None = None, period: FreeRunPeriod = FreeRunPeriod.DAY
+    ) -> AccountFreeRunClaim | None:
         self.consume_calls += 1
         self.consume_limits.append(limit)
-        key = (account_id, self.period)
+        self.consume_periods.append(period)
+        key = (account_id, self.key(period))
         if self.counts.get(key, 0) >= (self.limit if limit is None else limit):
             return None
         self.counts[key] = self.counts.get(key, 0) + 1
-        return AccountFreeRunClaim(account_id=account_id, period=self.period)
+        return AccountFreeRunClaim(account_id=account_id, period=key[1])
 
     async def refund(self, claim: AccountFreeRunClaim) -> None:
         self.refunds.append(claim)

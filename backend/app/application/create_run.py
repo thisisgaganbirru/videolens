@@ -4,7 +4,15 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from ..domain.entities import AccountFreeRunClaim, BillingAccount, FreeRunClaim, FreeRunScope, Principal, Run
+from ..domain.entities import (
+    AccountFreeRunClaim,
+    BillingAccount,
+    FreeRunClaim,
+    FreeRunPeriod,
+    FreeRunScope,
+    Principal,
+    Run,
+)
 from ..domain.entitlements import MediaLimits
 from ..domain.errors import (
     DeviceTokenInvalidError,
@@ -36,7 +44,9 @@ from .billing import BillingPlans
 from .entitlements import EntitlementResolver
 
 FREE_RUNS_USED_MESSAGE = "You have used your free runs. Add your own Gemini key to keep going."
-ACCOUNT_FREE_RUNS_USED_MESSAGE = "You have used this month's free runs. Add your own Gemini key to keep going."
+ACCOUNT_FREE_RUNS_USED_MESSAGE = (
+    "You have used today's free runs. Add your own Gemini key to keep going, or come back tomorrow."
+)
 EXTRA_RUNS_CAP_MESSAGE = (
     "You have reached this month's limit on extra runs. Add your own Gemini key to keep going, "
     "or wait for next month."
@@ -209,7 +219,7 @@ class CreateRunUseCase:
         """Whether this caller may start a run on the shared Gemini key.
 
         The one seam a plan check slots into: "own key: always", "signed-in
-        account: within this month's account free runs", or "anyone else:
+        account: within today's account free runs", or "anyone else:
         within today's device free runs". Returns the free run taken, so it
         can be handed back if the intake is rejected after this point; None
         when nothing was taken.
@@ -225,14 +235,15 @@ class CreateRunUseCase:
             # Instead of the device counter, never on top of it: no device
             # token needed, the device count is not touched, and no IP
             # backstop (the account is the identity; docs/backend/free-runs.md).
-            account_claim = await accounts.try_consume(principal.account_id)
+            account_claim = await accounts.try_consume(principal.account_id, period=FreeRunPeriod.DAY)
             if account_claim is None:
-                status = await accounts.status(principal.account_id)
+                status = await accounts.status(principal.account_id, period=FreeRunPeriod.DAY)
                 raise FreeRunsExhaustedError(
                     ACCOUNT_FREE_RUNS_USED_MESSAGE,
                     limit=status.limit,
                     used=status.used,
                     scope=FreeRunScope.ACCOUNT.value,
+                    period=FreeRunPeriod.DAY.value,
                 )
             return _Admission(allowance=accounts, claim=account_claim)
         if not self._free_runs.enabled:
@@ -245,18 +256,26 @@ class CreateRunUseCase:
             status = await self._free_runs.status(device_id)
             # Same answer whichever counter tripped: the device's numbers.
             raise FreeRunsExhaustedError(
-                FREE_RUNS_USED_MESSAGE, limit=status.limit, used=status.used, scope=FreeRunScope.DEVICE.value
+                FREE_RUNS_USED_MESSAGE,
+                limit=status.limit,
+                used=status.used,
+                scope=FreeRunScope.DEVICE.value,
+                period=FreeRunPeriod.DAY.value,
             )
         return _Admission(allowance=self._free_runs, claim=claim)
 
     async def _admit_paid(self, paid: BillingAccount, accounts: AccountFreeRunAllowance) -> _Admission:
-        """The paid plan: the account's monthly counter with the plan's
-        bigger limit (the same row free runs use), then, past it, an extra
+        """The paid plan: the account's monthly counter ("YYYY-MM", a
+        different row from the free plan's daily ones, so nothing is counted
+        twice across an upgrade or downgrade) with the plan's limit, then,
+        past it, an extra
         run billed on completion. Never a 402 for running past the included
         runs; only the monthly safety cap on extra runs refuses."""
         billing = self._billing
         assert billing is not None
-        claim = await accounts.try_consume(paid.account_id, limit=billing.paid_runs_per_month)
+        claim = await accounts.try_consume(
+            paid.account_id, limit=billing.paid_runs_per_month, period=billing.paid_runs_period
+        )
         if claim is not None:
             return _Admission(allowance=accounts, claim=claim)
         period = utc_month(billing.now())

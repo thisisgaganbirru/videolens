@@ -61,7 +61,7 @@ account store, the response is exactly `{"enabled": false}`. Otherwise:
   "interval": "month" | "year" | null,
   "current_period_end": "2026-12-13T00:00:00Z" | null,
   "cancel_at_period_end": false,
-  "runs": {"limit": 100, "used": 12},
+  "runs": {"limit": 100, "used": 12, "period": "month"},
   "prices": {
     "month": {"amount": 1200, "currency": "usd"} | null,
     "year": {"amount": 12000, "currency": "usd"} | null,
@@ -75,8 +75,10 @@ account store, the response is exactly `{"enabled": false}`. Otherwise:
 - `plan` is `"paid"` only when the status is active or trialing and the
   current period (plus 3 days of grace) has not ended. `past_due`,
   `unpaid`, `canceled` and every other status read as `"free"`.
-- `runs` is this UTC month's counter. On the paid plan the limit is
-  `PAID_RUNS_PER_MONTH`. On the free plan it is `FREE_RUNS_PER_ACCOUNT_MONTHLY`.
+- `runs` is the plan's own counter, and `period` says which: on the paid
+  plan this UTC month's (`"month"`, limit `PAID_RUNS_PER_MONTH`); on the
+  free plan today's (`"day"`, limit `FREE_RUNS_PER_ACCOUNT_DAILY`, since
+  2026-11-14; it was the month's `FREE_RUNS_PER_ACCOUNT_MONTHLY` before).
 - `amount` is in the currency's smallest unit (cents). A price is `null`
   when it is not configured (yearly is optional), when Stripe could not be
   read just now, or when the Price is tiered.
@@ -140,8 +142,10 @@ gets ids only: event, customer, subscription and account.
 - `GET /api/free-runs`, signed in: gains `"plan": "free" | "paid"` and
   `"overage": bool`, which is true on the paid plan, where runs past
   `limit` are billed instead of refused. On the paid plan, `limit`,
-  `used` and `remaining` are the plan's included runs. Anonymous callers
-  get exactly the fields they always did (the new fields are left out).
+  `used` and `remaining` are the plan's included runs and `period` is
+  `"month"` (every response carries `period` since 2026-11-14; free
+  accounts and devices are `"day"`, `free-runs.md`). Anonymous callers
+  never get `plan` or `overage`.
 - `GET /api/limits` gains `"paid": {"max_duration_seconds", "max_file_size_mb"}`,
   listed whether or not billing is on.
 - `GET /api/me`: `entitlement.plan` is `"paid"` (with `metered: true`) for
@@ -160,11 +164,17 @@ gets ids only: event, customer, subscription and account.
 
 1. A run with the caller's own Gemini key is admitted first, as always. It
    is never counted against the 100 and never billed.
-2. A paid account takes a run from the same per-account monthly counter that
-   signed-in free runs use (`account_free_runs`), with the limit raised to
-   `PAID_RUNS_PER_MONTH`. Free runs used earlier in the month, before
-   upgrading, count toward the 100. The month is the UTC calendar month,
-   the same as free runs.
+2. A paid account takes a run from its per-account **monthly** counter in
+   `account_free_runs` (key `"YYYY-MM"`, UTC calendar month), with the limit
+   `PAID_RUNS_PER_MONTH`. This is unchanged by the 2026-11-14 switch of the
+   free plan to a daily counter: free accounts now count on daily rows
+   (`"YYYY-MM-DD"`), a different key, so a run is only ever on one of them.
+   Free runs used before upgrading no longer count toward the 100 (until
+   2026-11-14 they did: free and paid shared the monthly row; monthly rows
+   written that way in November 2026 still count). The period lives in one
+   place, `BillingPlans.PAID_RUNS_PERIOD`, and the limit in
+   `PAID_RUNS_PER_MONTH`, so the owner's pending decision on paid numbers is
+   a settings or one-line change.
 3. Past the limit, the run is admitted and an extra-run row is held in the
    ledger. The run is never refused for running past the included runs.
 4. The one refusal is the safety cap: when this month already has
@@ -401,3 +411,4 @@ Nothing in this repository creates Stripe objects.
 
 ## Changelog
 - 2026-11-13 · backend agent · created: paid plan through Stripe-hosted Checkout and Portal; `GET /api/billing`, `POST /api/billing/checkout|portal|webhook`; paid admission on the account counter (`PAID_RUNS_PER_MONTH`), extra runs through a held/due/reported ledger and a Billing Meter (identifier = run id), billed only on success; paid media tier; DAILY_RUN_CAP exemption; `extra_runs_cap` 402; deletion cancels the subscription first; migration 0004; `billing` capability row
+- 2026-11-14 · backend agent · the paid counter is still monthly (100/month, metered overage unchanged); the free plan moved to daily rows, so free and paid no longer share a row; `runs.period` on `GET /api/billing`; paid period in `BillingPlans.PAID_RUNS_PERIOD`

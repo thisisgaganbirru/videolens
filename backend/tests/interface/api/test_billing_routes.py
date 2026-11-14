@@ -50,7 +50,7 @@ def _settings(enabled: bool = True) -> Settings:
         stripe_price_yearly="price_year",
         stripe_price_extra_run="price_extra",
         allowed_origins="https://videolens.test",
-        free_runs_per_account_monthly=10,
+        free_runs_per_account_daily=10,
     )
 
 
@@ -178,7 +178,7 @@ class EnabledBillingRoutesTests(BillingRoutesTests):
                 "interval": None,
                 "current_period_end": None,
                 "cancel_at_period_end": False,
-                "runs": {"limit": 10, "used": 0},
+                "runs": {"limit": 10, "used": 0, "period": "day"},
                 "prices": {
                     "month": {"amount": 1200, "currency": "usd"},
                     "year": {"amount": 12000, "currency": "usd"},
@@ -202,7 +202,7 @@ class EnabledBillingRoutesTests(BillingRoutesTests):
 
         body = self.client.get("/api/billing", headers=TOKEN).json()
         self.assertEqual((body["plan"], body["status"], body["interval"]), ("paid", "active", "month"))
-        self.assertEqual(body["runs"], {"limit": 100, "used": 0})
+        self.assertEqual(body["runs"], {"limit": 100, "used": 0, "period": "month"})
 
     def test_an_invalid_interval_is_422(self) -> None:
         response = self.client.post("/api/billing/checkout", headers=TOKEN, json={"interval": "week"})
@@ -241,12 +241,16 @@ class EnabledBillingRoutesTests(BillingRoutesTests):
 
     def test_free_runs_gains_plan_and_overage(self) -> None:
         body = self.client.get("/api/free-runs", headers=TOKEN).json()
-        self.assertEqual((body["plan"], body["overage"], body["limit"]), ("free", False, 10))
+        self.assertEqual((body["plan"], body["overage"], body["limit"], body["period"]), ("free", False, 10, "day"))
+        self.assertRegex(body["resets_at"], r"T00:00:00(Z|\+00:00)$")
         self.client.post("/api/billing/checkout", headers=TOKEN, json={"interval": "month"})
         self.stripe.v1.subscriptions.retrieve.return_value = self._subscription()
         self._webhook("evt_1")
         body = self.client.get("/api/free-runs", headers=TOKEN).json()
         self.assertEqual((body["plan"], body["overage"], body["limit"], body["remaining"]), ("paid", True, 100, 100))
+        # The paid plan's included runs are still monthly.
+        self.assertEqual(body["period"], "month")
+        self.assertRegex(body["resets_at"], r"^\d{4}-\d{2}-01T00:00:00(Z|\+00:00)$")
         # Anonymous: the fields it always had, nothing more.
         anonymous = self.client.get("/api/free-runs").json()
         self.assertNotIn("plan", anonymous)

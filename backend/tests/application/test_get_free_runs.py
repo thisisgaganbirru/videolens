@@ -1,7 +1,8 @@
 import unittest
+from datetime import datetime, timezone
 
 from app.application.get_free_runs import GetFreeRunsUseCase
-from app.domain.entities import AuthMethod, FreeRunScope, Principal
+from app.domain.entities import AuthMethod, FreeRunPeriod, FreeRunScope, Principal
 
 from .fakes import FakeAccountFreeRunAllowance, FakeDeviceTokens, FakeFreeRunAllowance
 
@@ -21,7 +22,7 @@ class GetFreeRunsUseCaseTests(unittest.IsolatedAsyncioTestCase):
     async def test_anonymous_gets_the_device_standing(self) -> None:
         token, status = await self._make().execute(None, None)
         self.assertEqual(token, "good:device-1")
-        self.assertEqual(status.scope, FreeRunScope.DEVICE)
+        self.assertEqual((status.scope, status.period), (FreeRunScope.DEVICE, FreeRunPeriod.DAY))
         _, status = await self._make().execute("good:dev-a", ANON)
         self.assertEqual(status.scope, FreeRunScope.DEVICE)
 
@@ -31,6 +32,9 @@ class GetFreeRunsUseCaseTests(unittest.IsolatedAsyncioTestCase):
         token, status = await use_case.execute(None, PERSON)
         self.assertEqual(token, "good:device-1")
         self.assertEqual((status.scope, status.limit, status.used, status.remaining), (FreeRunScope.ACCOUNT, 10, 1, 9))
+        # The free plan's account counter is daily: it resets at the next UTC midnight.
+        self.assertEqual(status.period, FreeRunPeriod.DAY)
+        self.assertEqual(status.resets_at, datetime(2026, 11, 15, tzinfo=timezone.utc))
         self.assertEqual(self.accounts.consume_calls, 1)  # read-only
 
     async def test_a_genuine_token_is_echoed(self) -> None:
@@ -39,7 +43,7 @@ class GetFreeRunsUseCaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_falls_back_to_the_device_when_the_account_allowance_is_off_or_unwired(self) -> None:
         _, status = await self._make(enabled=False).execute(None, PERSON)
-        self.assertEqual(status.scope, FreeRunScope.DEVICE)
+        self.assertEqual((status.scope, status.period), (FreeRunScope.DEVICE, FreeRunPeriod.DAY))
         _, status = await self._make(wired=False).execute(None, PERSON)
         self.assertEqual(status.scope, FreeRunScope.DEVICE)
 

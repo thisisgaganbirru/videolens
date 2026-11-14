@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 from starlette.testclient import TestClient
@@ -28,9 +29,9 @@ class FreeRunsEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(
-            set(body), {"device_token", "enabled", "scope", "limit", "used", "remaining", "resets_at"}
+            set(body), {"device_token", "enabled", "scope", "period", "limit", "used", "remaining", "resets_at"}
         )
-        self.assertEqual(body["scope"], "device")
+        self.assertEqual((body["scope"], body["period"]), ("device", "day"))
         self.assertIsNotNone(container.device_tokens.verify(body["device_token"]))
         self.assertTrue(body["resets_at"].endswith("Z") or body["resets_at"].endswith("+00:00"))
 
@@ -81,6 +82,7 @@ class CreateRunFreeRunErrorTests(unittest.TestCase):
                 "detail": "You have used your free runs. Add your own Gemini key to keep going.",
                 "code": "free_runs_used",
                 "scope": "device",
+                "period": "day",
                 "limit": container.settings.free_runs_per_device,
                 "used": 0,
             },
@@ -125,7 +127,7 @@ class AccountFreeRunRouteTests(unittest.TestCase):
         self.accounts = InMemoryAccountDirectory()
         self.keys = InMemoryApiKeyRepository()
         self.account_runs = InMemoryAccountFreeRuns(
-            Settings(_env_file=None, gemini_api_key="k", free_runs_per_account_monthly=10)
+            Settings(_env_file=None, gemini_api_key="k", free_runs_per_account_daily=10)
         )
         replacements = {
             "identify_caller_use_case": IdentifyCallerUseCase(
@@ -165,16 +167,29 @@ class AccountFreeRunRouteTests(unittest.TestCase):
         # Signed in also carries the plan (docs/backend/billing.md).
         self.assertEqual(
             set(body),
-            {"device_token", "enabled", "scope", "limit", "used", "remaining", "resets_at", "plan", "overage"},
+            {
+                "device_token",
+                "enabled",
+                "scope",
+                "period",
+                "limit",
+                "used",
+                "remaining",
+                "resets_at",
+                "plan",
+                "overage",
+            },
         )
         self.assertEqual(
-            (body["enabled"], body["scope"], body["limit"], body["used"], body["remaining"]),
-            (True, "account", 10, 0, 10),
+            (body["enabled"], body["scope"], body["period"], body["limit"], body["used"], body["remaining"]),
+            (True, "account", "day", 10, 0, 10),
         )
         self.assertEqual((body["plan"], body["overage"]), ("free", False))
         # Still issued, so the person keeps a device token after signing out.
         self.assertIsNotNone(container.device_tokens.verify(body["device_token"]))
-        self.assertRegex(body["resets_at"], r"^\d{4}-\d{2}-01T00:00:00(Z|\+00:00)$")
+        # Daily since 2026-11-14: the next UTC midnight.
+        tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat()
+        self.assertRegex(body["resets_at"], rf"^{tomorrow}T00:00:00(Z|\+00:00)$")
 
     def test_a_genuine_device_token_is_echoed_for_a_signed_in_caller(self) -> None:
         token = self.client.get("/api/free-runs").json()["device_token"]
@@ -213,7 +228,7 @@ class AccountFreeRunRouteTests(unittest.TestCase):
         self.assertEqual(body["scope"], "device")
 
     def test_disabled_account_allowance_reports_the_device_standing(self) -> None:
-        with patch.object(self.account_runs._settings, "free_runs_per_account_monthly", 0):
+        with patch.object(self.account_runs._settings, "free_runs_per_account_daily", 0):
             body = self.client.get("/api/free-runs", headers=TOKEN).json()
         self.assertEqual(body["scope"], "device")
         self.assertEqual(body["limit"], container.settings.free_runs_per_device)
@@ -226,9 +241,12 @@ class AccountFreeRunRouteTests(unittest.TestCase):
         self.assertEqual(
             response.json(),
             {
-                "detail": "You have used this month's free runs. Add your own Gemini key to keep going.",
+                "detail": (
+                    "You have used today's free runs. Add your own Gemini key to keep going, or come back tomorrow."
+                ),
                 "code": "free_runs_used",
                 "scope": "account",
+                "period": "day",
                 "limit": 10,
                 "used": 0,
             },

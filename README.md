@@ -141,14 +141,14 @@ never a deployment manifest. See `docs/container-workflows.md`.
   - without a Gemini key of their own, callers need `X-Device-Token` and get
     `FREE_RUNS_PER_DEVICE` (3) runs per UTC day, `FREE_RUNS_PER_IP` (10) as a
     backstop: `401 {"code": "device_token_invalid"}` or
-    `402 {"code": "free_runs_used", "scope": "device", "limit", "used"}`.
+    `402 {"code": "free_runs_used", "scope": "device", "period": "day", "limit", "used"}`.
     A signed-in account (bearer JWT or API key) instead gets
-    `FREE_RUNS_PER_ACCOUNT_MONTHLY` (10) runs per UTC month, no device token
-    needed: `402 {"code": "free_runs_used", "scope": "account", "limit", "used"}`;
+    `FREE_RUNS_PER_ACCOUNT_DAILY` (10) runs per UTC day, no device token
+    needed: `402 {"code": "free_runs_used", "scope": "account", "period": "day", "limit", "used"}`;
   - `DAILY_RUN_CAP` (200) across all callers per UTC day: `503`.
   An `X-Gemini-Api-Key` header exempts the run from the last two. A paid
   account (when billing is configured) takes `PAID_RUNS_PER_MONTH` (100)
-  included runs from the same monthly counter, then each further run is
+  included runs from its own monthly counter, then each further run is
   admitted and billed once it completes, up to `PAID_EXTRA_RUNS_MONTHLY_CAP`
   (`402 {"code": "extra_runs_cap", "limit"}`); paid runs skip the daily cap
   and get the paid media limits with or without a key.
@@ -164,10 +164,12 @@ never a deployment manifest. See `docs/container-workflows.md`.
 - `GET /api/limits` — `{ standard: { max_duration_seconds, max_file_size_mb },
   signed_in_byok: { ... }, paid: { ... } }` from settings. No auth, read-rate-limited,
   `Cache-Control: public, max-age=300`.
-- `GET /api/free-runs` — `{ device_token, enabled, scope, limit, used,
+- `GET /api/free-runs` — `{ device_token, enabled, scope, period, limit, used,
   remaining, resets_at }`; issues a token when the sent one is missing or
-  forged. Never spends a run. `scope` is `device`, or `account` (this
-  month's account runs) with a valid bearer; an invalid bearer is `401`.
+  forged. Never spends a run. `scope` is `device`, or `account` (today's
+  account runs) with a valid bearer; an invalid bearer is `401`. `period`
+  is `day` (device, free account; `resets_at` = next UTC midnight) or
+  `month` (paid plan; the 1st of next month).
   Signed in, also `plan` (`free` | `paid`) and `overage` (true on the paid
   plan: runs past `limit` are billed, not refused).
 - `GET /api/billing` — the signed-in caller's plan: `{"enabled": false}`

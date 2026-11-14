@@ -7,6 +7,7 @@ from typing import Awaitable, Callable, Optional, Protocol
 from .entities import (
     Account,
     AccountFreeRunClaim,
+    FreeRunPeriod,
     BillingAccount,
     BillingPrices,
     BillingWebhookEvent,
@@ -271,28 +272,36 @@ class FreeRunAllowance(Protocol):
 
 class AccountFreeRunAllowance(Protocol):
     """How many runs a signed-in account without its own Gemini key may
-    start per UTC calendar month. Replaces the device counter for that
-    caller (never adds to it), so the runs follow the person across devices.
-    Same hold/release contract as `FreeRunAllowance`, so the pipeline can
-    hand a run back the same way."""
+    start per counter period: per UTC day on the free plan
+    (`FREE_RUNS_PER_ACCOUNT_DAILY`), per UTC month for the paid plan's
+    included runs (the caller passes `limit` and `period`). Replaces the
+    device counter for that caller (never adds to it), so the runs follow
+    the person across devices. Same hold/release contract as
+    `FreeRunAllowance`, so the pipeline can hand a run back the same way."""
 
     @property
     def enabled(self) -> bool: ...
 
-    async def status(self, account_id: str, *, limit: int | None = None) -> FreeRunStatus:
+    async def status(
+        self, account_id: str, *, limit: int | None = None, period: FreeRunPeriod = FreeRunPeriod.DAY
+    ) -> FreeRunStatus:
         """Read-only: never consumes. `scope` is ACCOUNT. `limit` overrides
-        the free monthly limit (the paid plan's included runs count on the
-        same counter, docs/backend/billing.md)."""
+        the free daily limit and `period` the free daily period (the paid
+        plan's included runs: docs/backend/billing.md). A daily and a
+        monthly counter are different rows ("YYYY-MM-DD" vs "YYYY-MM")."""
         ...
 
-    async def try_consume(self, account_id: str, *, limit: int | None = None) -> AccountFreeRunClaim | None:
-        """Atomically take one run if this month's count is below the
-        limit (`limit`, else the free monthly one), or None (taking
-        nothing). Concurrent calls can never take the account past it."""
+    async def try_consume(
+        self, account_id: str, *, limit: int | None = None, period: FreeRunPeriod = FreeRunPeriod.DAY
+    ) -> AccountFreeRunClaim | None:
+        """Atomically take one run if the current `period`'s count is below
+        the limit (`limit`, else the free daily one), or None (taking
+        nothing). Concurrent calls can never take the account past it. The
+        claim records the counter key, so a refund goes back to it."""
         ...
 
     async def refund(self, claim: AccountFreeRunClaim) -> None:
-        """Hand one run back to the claim's month, never below zero."""
+        """Hand one run back to the claim's day or month, never below zero."""
         ...
 
     async def hold(self, run_id: str, claim: AccountFreeRunClaim) -> None: ...

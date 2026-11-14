@@ -89,15 +89,17 @@ class DeviceTokenInvalidError(Exception):
 
 class FreeRunsExhaustedError(Exception):
     """This device (or its network) has used today's free runs, or, with
-    `scope="account"`, this account has used this month's. `limit` and
-    `used` are always the device's (or account's) own numbers, whichever
-    counter tripped."""
+    `scope="account"`, this account has used today's (per UTC day since
+    2026-11-14). `limit` and `used` are always the device's (or account's)
+    own numbers, whichever counter tripped; `period` ("day") is the
+    counter's period."""
 
-    def __init__(self, message: str, *, limit: int, used: int, scope: str = "device") -> None:
+    def __init__(self, message: str, *, limit: int, used: int, scope: str = "device", period: str = "day") -> None:
         super().__init__(message)
         self.limit = limit
         self.used = used
         self.scope = scope
+        self.period = period
 
 
 class AuthenticationError(Exception):
