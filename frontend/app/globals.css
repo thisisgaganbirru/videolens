@@ -3073,6 +3073,8 @@ h3 {
 
   .acct-page .acct-end {
     margin-top: var(--space-lg);
+    padding-top: var(--space-md);
+    border-top: var(--rule-w) solid var(--color-rule);
   }
   .acct-page .acct-end-item + .acct-end-item {
     margin-top: var(--space-xs);
@@ -3096,6 +3098,110 @@ h3 {
   }
   .acct-page .acct-delete-link:hover {
     color: var(--color-ink);
+  }
+
+  /* Account refinements (2026-11-14). While the plan is read (or after the
+     read failed) the Upgrade / Billing group keeps its stand-in's exact
+     height: the stand-in's card frame is shown with its contents hidden,
+     and the static lines or the "unavailable" line are painted inside that
+     frame by an overlay that never enters flow. The overlay's top is the
+     stand-in's own offset to its card: the group's top margin, one label
+     line (0.8125rem at 1.5) and the label's margin. */
+  .acct-page .acct-loading-group {
+    position: relative;
+    display: flow-root;
+  }
+  .acct-page .acct-loading-group > .acct-ghost .key-card {
+    visibility: visible;
+  }
+  .acct-page .acct-loading-group > .acct-ghost .key-card > * {
+    visibility: hidden;
+  }
+  .acct-page .acct-loading-overlay {
+    position: absolute;
+    top: calc(var(--space-lg) + 0.8125rem * 1.5 + var(--space-2xs));
+    left: 0;
+    right: 0;
+    padding: var(--space-md) 1.25rem;
+    pointer-events: none;
+  }
+  .acct-page .acct-loading-overlay > .key-help {
+    margin: 0;
+  }
+  .acct-page .acct-placeholder {
+    display: inline-block;
+    width: 8rem;
+    max-width: 100%;
+    height: 0.5rem;
+    vertical-align: middle;
+    border-radius: var(--radius-control);
+    background: var(--color-rule);
+  }
+  .acct-page .acct-loading-overlay .acct-placeholder {
+    display: block;
+    width: 65%;
+  }
+  .acct-page .acct-loading-overlay .acct-placeholder + .acct-placeholder {
+    margin-top: var(--space-md);
+  }
+  .acct-page .acct-loading-overlay .acct-placeholder:nth-last-child(2) {
+    width: 85%;
+  }
+  .acct-page .acct-usage {
+    padding: var(--space-xs) 0;
+    border-top: var(--rule-w) solid var(--color-rule);
+  }
+  /* The runs-left sentence is the card's largest line. Each value line holds
+     one line's height before its read lands. Measured at 320px (239px of
+     line): "30 of 30 runs left today" 212, "On your own Gemini key" 222,
+     "No daily limit with your Gemini key" 216, the video-length note 198,
+     so one line holds them all; only below 20rem does each hold two. (Two
+     everywhere under 40rem left a blank line under every value on a phone.)
+     The legacy monthly wording ("... this month", 257) can still wrap at
+     320 and move the rows under it, inside the card. */
+  .acct-page .acct-usage-count {
+    margin: 0;
+    min-height: 1.4em;
+    font-size: 1.25rem;
+    line-height: 1.4;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+  .acct-page .acct-usage-count[data-none] {
+    font-weight: 600;
+    color: var(--color-muted);
+  }
+  .acct-page .acct-usage-reset {
+    margin: var(--space-2xs) 0 0;
+    min-height: 1.5em;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--color-muted);
+    overflow-wrap: anywhere;
+  }
+  .acct-page .acct-group-primary .acct-fact-note {
+    min-height: 1.5em;
+  }
+  @media (width < 20rem) {
+    .acct-page .acct-usage-count { min-height: 2.8em; }
+    .acct-page .acct-usage-reset { min-height: 3em; }
+    .acct-page .acct-group-primary .acct-fact-note { min-height: 3em; }
+  }
+  .acct-page .acct-group-primary > .acct-group-label {
+    font-weight: 700;
+    margin-bottom: var(--space-xs);
+  }
+  .acct-page .acct-group-information > .acct-group-label {
+    font-weight: 400;
+  }
+  @media (width < 40rem) {
+    .acct-page .acct-sign-in .acct-send-code { width: 100%; }
+  }
+  @media (min-width: 40rem) {
+    .acct-page .acct-loading-overlay {
+      padding-inline: 1.75rem;
+    }
   }
 
   @media (min-width: 40rem) {
@@ -3848,10 +3954,9 @@ h3 {
      is the one scroller (see the SHELL rules and app-shell-layout.md).
      ======================================================================== */
 
-  /* Tracked-out small caps label: "NEW ANALYSIS", "WHAT YOU GET", "SOURCE". */
+  /* Shared tracked-out small caps labels. */
   .eyebrow,
-  .section-label,
-  .wyg-title {
+  .section-label {
     margin: 0;
     font-size: 0.8125rem;
     font-weight: 600;
@@ -3861,33 +3966,31 @@ h3 {
   .eyebrow {
     color: var(--color-accent);
   }
-  .section-label,
-  .wyg-title {
+  .section-label {
     color: var(--color-ink-2);
   }
 
   /* ---- intake ----
-     One column on a phone (service notice if any, the form column, then the
-     panel); two from 60rem, the form column at the board's 620px and the panel
-     at 460px, with the service notice at the top of the panel column so it
-     never pushes the intake card down.
+     One centred task column at every width. The allowance remains above
+     the title; the existing service-notice slot is first and empty when
+     healthy. Neither grid track has an intrinsic minimum.
 
-     Both wide tracks are minmax(0, max): neither has a floor, so the grid can
-     never be wider than its container. (The panel used to be
-     minmax(17rem, 28.75rem); the floor bought nothing at 60rem+, where the
-     panel is never that narrow, and was the one way this grid could overflow.)
-     Rows have no gap because the notice slot is always in the DOM (it is the
-     live region) and is zero-height when healthy; spacing is margins. */
+     Width (owner, 2026-11-14: "don't wrap anything, extend the box"): 46rem
+     is the card's longest line, the consent sentence (625px at 14px), plus
+     the checkbox column (32px) and the card's padding and border (50px),
+     with ~29px to spare. The retention line under the card (688px) and the
+     allowance strip (same column, so the same width and left edge) fit too.
+     rem, so it scales with the text. Narrower windows simply fill the
+     gutters and wrap. */
   .intake-layout {
     width: 100%;
     min-width: 0;
-    max-width: 38.75rem;
+    max-width: 46rem;
     margin-inline: auto;
     padding-block: var(--space-lg) var(--space-xl);
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "cap" "intake" "wyg";
-    row-gap: 0;
+    grid-template-areas: "cap" "intake";
     align-items: start;
   }
   .intake-layout > .cap-slot {
@@ -3897,70 +4000,42 @@ h3 {
   .intake-layout > .intake {
     grid-area: intake;
   }
-  .intake-layout > .wyg {
-    grid-area: wyg;
+  .intake {
+    display: flex;
+    flex-direction: column;
     min-width: 0;
-    margin-top: var(--space-lg);
   }
-  .wyg-long {
-    display: none;
+  .intake-title {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-weight: 400;
+    font-size: clamp(2.25rem, 1.75rem + 1.6vw, 3rem);
+    line-height: 1.1;
+    letter-spacing: -0.015em;
+    color: var(--color-ink);
+  }
+  .intake-retention {
+    margin: var(--space-sm) 0 0;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--color-muted);
+    text-wrap: pretty;
+  }
+  /* Where a phone has to wrap these lines, no single word is left alone on
+     the last line, and "Privacy Policy" (like "200 MB" in the hint, a
+     no-break space in UploadForm) never splits across two. */
+  .terms-row > span:last-child,
+  .drop .hint,
+  .free-runs__text,
+  .intake-blocked__text {
+    text-wrap: pretty;
+  }
+  .terms-row .text-link {
+    white-space: nowrap;
   }
   @media (min-width: 60rem) {
-    .wyg-short {
-      display: none;
-    }
-    .wyg-long {
-      display: inline;
-    }
-    /* Prefixed only to outrank the phone values defined further down. */
-    .intake-layout .wyg {
-      padding: var(--space-lg) var(--space-lg) var(--space-md);
-    }
-    .intake-layout .wyg-list {
-      margin-top: var(--space-md);
-      gap: var(--space-md);
-    }
-    .intake-layout .intake-card {
-      padding: var(--space-md);
-    }
     .intake-layout {
-      max-width: none;
-      margin-inline: 0;
-      grid-template-columns: minmax(0, 38.75rem) minmax(0, 28.75rem);
-      grid-template-rows: auto 1fr;
-      grid-template-areas: "intake cap" "intake wyg";
-      column-gap: 4rem;
-      padding-top: 4.5rem;
-    }
-    .intake-layout > .wyg {
-      margin-top: 0;
-    }
-    /* The desktop intake header, to the owner's spec (2026-11-01): a 40px
-       top, eyebrow 13/600/0.08em with 16px under it, the headline in
-       Newsreader 50/500 at 1.05 and -0.02em with 20px under it, the intro
-       18px at 1.55 in ink-2 with a 480px measure and 24px under it. Fixed
-       sizes, so the intake fits one desktop screen without the page
-       scrolling. */
-    .intake-layout {
-      padding-top: 2.5rem;
-      padding-bottom: var(--space-md);
-    }
-    .intake-layout .eyebrow {
-      letter-spacing: 0.08em;
-      margin-bottom: var(--space-sm);
-    }
-    .intake-layout .intake-title {
-      margin: 0 0 1.25rem;
-      font-size: 3.125rem;
-      font-weight: 500;
-      line-height: 1.05;
-      letter-spacing: -0.02em;
-    }
-    .intake-layout .intake-lede {
-      margin: 0;
-      max-width: 30rem;
-      font-size: 1.125rem;
-      line-height: 1.55;
+      padding-block: var(--space-lg) var(--space-md);
     }
     .intake-layout .intake-card {
       margin-top: var(--space-md);
@@ -3970,11 +4045,9 @@ h3 {
       margin-top: var(--space-sm);
     }
   }
-  /* A short desktop window (a 768px laptop screen after browser chrome):
-     tighten the card's inner rhythm too, so the intake still fits whole. */
   @media (min-width: 60rem) and (max-height: 50rem) {
     .intake-layout {
-      padding-bottom: var(--space-sm);
+      padding-block: var(--space-sm);
     }
     .intake-layout .intake-card {
       margin-top: var(--space-sm);
@@ -3983,50 +4056,65 @@ h3 {
     .intake-layout .divider {
       margin: var(--space-xs) 0;
     }
-    /* Phase 5b: the free-run banner adds ~90px above the eyebrow, which made
-       a 1366x768 window scroll by 43px (measured). Win it back only while the
-       banner is showing, so the bannerless intake is unchanged. */
-    .intake-layout:has(.free-runs) {
-      padding-top: var(--space-sm);
-    }
-    .intake-layout:has(.free-runs) .intake-title {
-      margin-bottom: var(--space-sm);
-    }
     .intake-layout .free-runs-slot {
       margin-bottom: var(--space-sm);
     }
     .intake-layout .free-runs {
       padding-block: var(--space-2xs);
     }
-    /* The spent sentence is two lines; at 1.45 it stood 3px taller than the
-       pill and tipped the window into scrolling. */
     .intake-layout .free-runs__text {
       line-height: 1.35;
     }
   }
-  .intake {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-  .intake-title {
-    margin: var(--space-xs) 0 0;
-    font-family: var(--font-serif);
-    font-weight: 400;
-    font-size: clamp(2.25rem, 1.4rem + 3.4vw, 3.5rem);
-    line-height: 1.06;
-    letter-spacing: -0.015em;
-    color: var(--color-ink);
-    /* pretty, not balance: balance splits the desktop line after "video",
-       where Main.png fills the first line and breaks before "clean notes." */
-    text-wrap: pretty;
-  }
-  .intake-lede {
-    margin: var(--space-sm) 0 0;
-    max-width: 30rem;
-    font-size: clamp(1rem, 0.95rem + 0.3vw, 1.125rem);
-    line-height: 1.55;
-    color: var(--color-ink-2);
+  /* Desktop intake (owner, 2026-11-14, viewed at ~1900px).
+     1. Centred in the content band. While the scroller holds the intake it
+        is a size container, and the layout's top margin is half of what the
+        band has left over a fixed 27rem (the runs-left intake's height,
+        417-450px measured at 1280x800 and 1920x900), never below 0. Fixed,
+        not measured (auto margins in a flex column were tried first): the
+        out-of-runs card grows after the count lands, and true centring
+        moved the whole block up 57px (CLS 0.022); this way the block only
+        grows downward. A taller block than the band starts at the top and
+        scrolls; nothing is clipped (no align-items:center). The run, result
+        and failed views are other children and are untouched.
+     2. The allowance on the title's row, at its right end, sized to its
+        words (max two lines, then it wraps inside its own box; the title is
+        never pushed). The box is kept shorter than the title (0.875rem at
+        1.35, 4px padding: two lines are ~47px, the title 49-53px), so the
+        row is always the title's height: the card's top edge is the same
+        with the strip, with the stand-in, and with no strip at all (BYOK).
+     Below 60rem the strip stays stacked above the title, as before. */
+  @media (min-width: 60rem) {
+    .shell > main.view-scroll:has(> .intake-layout) {
+      container-type: size;
+    }
+    .shell > main.view-scroll > .intake-layout {
+      margin-top: max(0px, (100cqb - 27rem) / 2);
+    }
+    .intake-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas: "title runs";
+      align-items: center;
+      column-gap: var(--space-md);
+    }
+    .intake-head > .intake-title {
+      grid-area: title;
+    }
+    .intake-layout .intake-head > .free-runs-slot {
+      grid-area: runs;
+      justify-self: end;
+      min-width: 0;
+      max-width: 26rem;
+      margin-bottom: 0;
+    }
+    .intake-layout .intake-head .free-runs {
+      padding: var(--space-2xs) var(--space-sm);
+    }
+    .intake-layout .intake-head .free-runs__text {
+      font-size: 0.875rem;
+      line-height: 1.35;
+    }
   }
   /* Form-level submit error, first thing inside the intake card (owner fix
      2026-11-01; it used to be a bare red line under the card). The failed
@@ -4090,32 +4178,8 @@ h3 {
     }
   }
 
-  /* Phone-only intake header (UX fix spec 3.5): the landing already said the
-     headline and the lede, so below 32rem the h1 is the short "New analysis"
-     and the eyebrow (which said the same) and the lede go, lifting the link
-     field and Analyze link into the first screen. Both h1 spans are in the
-     DOM; `display: none` keeps the hidden one out of the accessibility tree,
-     so the h1 reads as one phrase at every width. Desktop is untouched. */
-  .intake-title__short {
-    display: none;
-  }
-  @media (width < 32rem) {
-    .intake-title__long {
-      display: none;
-    }
-    .intake-title__short {
-      display: inline;
-    }
-    .intake .eyebrow {
-      display: none;
-    }
-    .intake-lede {
-      display: none;
-    }
-  }
-
   /* ---- free runs (Phase 5b · IntakeFreeApp.png, IntakeLimitApp.png) ----
-     A white strip of text above the eyebrow (the "Add key" pill was removed
+     A white strip of text above the title (the "Add key" pill was removed
      2026-11-14, UX fix spec; the way out is in the intake card). The spent state only swaps the sentence and draws the strip's
      hairline in --color-danger-border — a decorative edge, so its contrast is
      not load-bearing; the words say the state. The slot is the live region
@@ -4397,19 +4461,7 @@ h3 {
     color: var(--color-ink);
   }
 
-  /* "What you get": the quiet tint panel. Chips are a fixed width so the four
-     descriptions start on one left edge, as drawn. */
-  .wyg {
-    padding: 1.25rem;
-    border-radius: var(--radius-card);
-    background: var(--color-tint);
-  }
-  .wyg-list {
-    margin: var(--space-sm) 0 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-sm);
-  }
+  /* Output rows and chips remain shared by the landing page. */
   .wyg-row {
     display: grid;
     grid-template-columns: 5.5rem minmax(0, 1fr);
@@ -4435,15 +4487,6 @@ h3 {
     background: var(--color-accent-soft);
     white-space: nowrap;
   }
-  .wyg-foot {
-    margin: var(--space-md) 0 0;
-    padding-top: var(--space-md);
-    border-top: var(--rule-w) solid var(--color-border-strong);
-    font-size: 0.875rem;
-    line-height: 1.5;
-    color: var(--color-ink-2);
-  }
-
   /* ---- progress ----
      A centred column: pill, serif title, lede, filmstrip, source chip, then
      the notice card or the reset link. */

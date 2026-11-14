@@ -14,8 +14,9 @@ Portal are Stripe-hosted pages reached by a top-level redirect.
 **Billing off looks exactly like before.** Nothing is fetched and nothing is
 drawn unless the server's `billing` capability is `ok` *and* someone is
 signed in (the same gate as the Account tab) *and* `GET /api/billing` answers
-`{"enabled": true, ...}`. Any failure hides the Upgrade / Billing group (the
-Plan and usage card stays: it is not billing's).
+`{"enabled": true, ...}`. A failed request retains the reserved Upgrade /
+Billing space with "Billing unavailable."; disabled billing still draws
+nothing. The Plan and usage card remains independent of billing.
 
 ## Contract used
 
@@ -95,10 +96,20 @@ Gemini key needed") is gone: it read as if a free account needed a key.
   failure). Meanwhile the panel lays out the group it expects (Upgrade, or
   Billing if `/api/free-runs` already said `paid`) with stand-in values,
   `visibility: hidden`, `aria-hidden`, `inert`, so the groups below do not
-  drop when the real one lands. With billing off nothing is reserved. The
+  drop when the real one lands. The stand-in's card frame is shown (its
+  contents stay hidden), and static muted placeholder lines are painted
+  inside that frame by an absolutely positioned overlay, so the dimensions
+  never change. On failure the same framed card says "Billing unavailable.";
+  a later successful read recovers it. (Codex's first pass drew the lines
+  over an invisible group, which read as a blank hole; reviewed 2026-11-14.)
+  The stand-in is the Billing card when `/api/free-runs`, `/api/billing` or
+  the session's `/api/me` entitlement already says `paid`.
+  `useBilling().failed` distinguishes failure from disabled billing; a
+  failed refresh keeps the last-known data for sizing and entitlements.
+  With billing off nothing is reserved. The
   paid stand-in carries an extra-runs row (0 of 200), so the row is reserved
-  too; only an older backend without the field drops it once, when the card
-  lands.
+  too; an older backend without the field leaves the row invisible and
+  unannounced, preserving its space when the card lands.
 - **Actions.** A press asks the server for the URL (label "Opening…",
   `aria-disabled` on every control), then `window.location.assign(url)`.
   `already_subscribed` → "You are already on the paid plan." + re-read;
@@ -205,9 +216,12 @@ record for invoices and tax. Terms "Paid plan" and Privacy "Payments" say so
 
 ## Changelog
 
+- 2026-11-14 · Codex · added static billing loading lines and an unavailable overlay within the existing reservation, retained the paid extra-runs row's space for older responses, and strengthened Account usage emphasis without changing the upgrade comparison
+
 - 2026-11-13 · frontend agent · created: billing gateway + `useBilling`, Account Plan group, checkout-return notice, paid strip copy and "or upgrade" link, paid upload tier, Terms "Paid plan" and Privacy "Payments" drafts, terms key v3, CSP reviewed (no change)
 - 2026-11-13 · frontend agent · handled 402 `extra_runs_cap`, 503 `subscription_cancel_failed` on account deletion, and 400 `invalid_interval` / 503 `billing_disabled`/`billing_unavailable` on checkout and portal; Terms and Privacy say deleting the account cancels the subscription immediately
 - 2026-11-14 · frontend agent · free-plan pitch no longer leads with "100 runs a month" (the free account is now 10 a day): "videos up to 10 minutes without your own key, and runs past the daily limit", included runs and extra-run price as a trailing clause; offer flagged for an owner rethink
 - 2026-11-14 · frontend agent · paid plan is 30 runs a day: pitch "The paid plan: 30 runs a day instead of 10, videos up to 10 minutes, and no Gemini key needed. Past the 30, extra runs are $X each, up to 200 a month."; paid card "N of L used today." and "Extra runs are $X each, up to 200 a month."; identity "Runs left today"; `runs.period` read (missing = day); `PAID_RUNS_PER_MONTH` removed; Terms and Privacy follow
 - 2026-11-14 · frontend agent · Account refinement: the Plan group is split into Plan and usage (always, see auth-sign-in.md), Upgrade (two-column comparison, price, one "Upgrade to paid" action, yearly as a quiet link, extra-run terms on their own line) and Billing (price, renews/ends, terms, Manage billing); pitch sentence removed; `useBilling().pending` + an inert stand-in reserve the group's height; extra runs used this month not shown (not in the API)
 - 2026-11-14 · frontend agent · paid Billing card shows "Extra runs this month" ("N of L", or "N" when the cap is off) from the new `extra_runs` field (`BillingExtraRuns`, normalised to null when absent/unreadable or on a free plan); the reserved paid stand-in includes the row; terms sentence unchanged
+- 2026-11-14 · frontend agent · loading / failed billing now shows the reserved card's frame with the static lines or "Billing unavailable." inside it (was a blank hole); `/api/me`'s plan also picks the paid stand-in; extra-runs row and reserved heights re-verified in the browser

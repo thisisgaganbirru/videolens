@@ -953,7 +953,25 @@ expired", result the result title (or "Result"); "History", "Gemini key",
   plain `AppNav`, by design). The variant that drops Gemini key and Releases
   when Account exists was not built (needs the owner's yes).
 
+## Simplified idle Analyze column (2026-11-14)
+
+The idle Analyze view now uses one centred column capped at 46rem at all
+widths (38.75rem in Codex's first pass; widened the same day so the intake's
+lines do not wrap on desktop, see `upload-form.md`). The service-notice slot precedes it; within it the allowance strip
+(including its existing pending reservation) precedes the single h1 "New
+analysis", the intake card and the exact retention sentence below it. The
+old desktop marketing header and companion output panel are removed. Shell
+scrolling/dock clearance, landing, run, result and failed layouts are unchanged.
+This supersedes earlier descriptions of the two-column idle intake.
+Verified in Playwright (frontend agent review, 2026-11-14) at 320, 412,
+1024, 1280 and 1440, light and dark, web shell and (320/412) app shell: one
+h1, no horizontal overflow, the Account tab is in the DOM, the idle page does
+not scroll at 1280x800, and in the app shell "Analyze link" sits above the
+dock (bottom 434 vs dock top 560 at 320x640; 374 vs 835 at 412x915).
+
 ## Changelog
+
+- 2026-11-14 · Codex · idle Analyze now uses one centred 38.75rem column at every width with a New analysis h1, allowance above and retention below the card; removed the idle companion panel while retaining shared landing styles and existing run/result/failed layouts
 
 - 2026-08-15 · frontend agent (foundation) · rebuilt the shell to the Terminal direction: one-viewport flex chain, pill nav, mobile drawer, 4 tabs, theme toggle
 - 2026-08-15 · main session · added the tab-alignment margin so History/API key/Releases match .workspace; verified nav + drawer geometry with Playwright
@@ -992,3 +1010,4 @@ expired", result the result title (or "Result"); "History", "Gemini key",
 - 2026-11-14 · frontend agent · the `api-key` tab is labelled "Gemini key" in the top bar, phone menu and More sheet; id and URL unchanged (UX fix spec batch a)
 - 2026-11-14 · frontend agent · UX fix spec batch c: per-view document titles via `useDocumentTitle`
 - 2026-11-14 · frontend agent · UX fix spec batch e: phone menu order Analyze, History, Account, Gemini key, Releases with a gap before the minor pair; signed-out menu row "Sign in for 10 runs a day" on every route
+- 2026-11-14 · frontend agent · idle Analyze column widened to 46rem (one line per intake line on desktop); Codex's single-column layout verified in the browser at 320-1440, both shells, both themes
