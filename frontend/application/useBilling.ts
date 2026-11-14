@@ -37,10 +37,15 @@ type Snapshot = {
    *  being read (signed out, or the server sells no plan). */
   owner: string | null;
   status: BillingStatus | null;
+  /** A read has answered for `owner`, success or failure (2026-11-14). False
+   *  from the moment an owner is set until then: the Account panel keeps the
+   *  billing group's height reserved meanwhile, so it does not push the
+   *  groups under it down when it lands. */
+  settled: boolean;
   notice: CheckoutReturn | null;
 };
 
-let snapshot: Snapshot = { owner: null, status: null, notice: null };
+let snapshot: Snapshot = { owner: null, status: null, settled: false, notice: null };
 const listeners = new Set<() => void>();
 let owner: string | null = null;
 let epoch = 0;
@@ -72,7 +77,7 @@ export function refreshBilling(): Promise<BillingStatus | null> {
       inFlight = null;
       if (asked !== epoch) return refreshBilling();
       const confirmed = isPaid(status) && (snapshot.notice === "confirming" || snapshot.notice === "unconfirmed");
-      publish({ owner, status, ...(confirmed ? { notice: "paid" as const } : {}) });
+      publish({ owner, status, settled: true, ...(confirmed ? { notice: "paid" as const } : {}) });
       return status;
     },
     (): null | Promise<BillingStatus | null> => {
@@ -80,6 +85,7 @@ export function refreshBilling(): Promise<BillingStatus | null> {
       if (asked !== epoch) return refreshBilling();
       /* Keep a plan already shown (a blip should not make it vanish); with
          none yet, the group simply stays hidden. */
+      if (!snapshot.settled) publish({ settled: true });
       return null;
     }
   );
@@ -92,7 +98,7 @@ function setOwner(next: string | null): void {
   owner = next;
   epoch += 1;
   inFlight = null;
-  publish({ owner: next, status: null });
+  publish({ owner: next, status: null, settled: false });
   if (next) void refreshBilling();
 }
 
@@ -172,6 +178,9 @@ export function useBilling(userId: string | null, enabled: boolean) {
     /** `{enabled: true, ...}` only once read; null while unknown, signed
      *  out, failed, or when the server sells no plan. */
     billing: (status && status.enabled ? status : null) as BillingDetails | null,
+    /** The server sells a plan, someone is signed in, and the plan has not
+     *  answered yet: the billing group may be about to appear. */
+    pending: active && !(current.owner === userId && current.settled),
     /** The checkout-return notice, if this load came back from Checkout. */
     notice: current.notice,
   };

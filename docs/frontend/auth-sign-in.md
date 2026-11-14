@@ -434,6 +434,83 @@ revoked, and neither sign-out control nor delete was used. Phone width and
 the installed-app shell were not checked in a browser (the Chrome window
 cannot be resized); check them on the bundled APK.
 
+## Account refinement (2026-11-14, owner's six items)
+
+Supersedes the wording and order above wherever they differ. Same editorial
+system, single column, shared chrome; no new tokens.
+
+**Order, signed in:** identity row · Plan and usage · Upgrade or Billing
+(billing on only) · On this device · Developer tools · Information · the
+account-ending controls (sr-only heading "Security and account removal":
+Sign out everywhere, Delete account).
+
+- **Header.** "Account" and nothing else: the lede is gone (it changed text
+  between states and moved the page).
+- **Loading.** While the capability report or the session is unknown the
+  panel shows the title and "Loading…" only (`useCapabilities().settled`).
+  The "sign-in is not available" card no longer flashes on every load, and
+  the device/information groups are drawn once, in their final place.
+- **Identity row** (`IdentityRow`, class `acct-id`, no card): the email and
+  a text control "Sign out" ("Signing out…"), run guard underneath. Sign
+  out stays one tap away but is no longer a button.
+- **Plan and usage** (`PlanUsageGroup`), for every signed-in account, with
+  or without billing:
+  - Plan name: "Free account" or "Paid plan" (paid if `/api/billing` or
+    `/api/free-runs` says so).
+  - "Runs left today" → "N of L" (from `/api/free-runs`; " on this device"
+    for a device-scoped count; `/api/billing`'s count if that read failed;
+    "Not available" if neither answered). "this month" only if `period` is.
+  - "Video length" → "Up to 3 minutes" with the note "or 10 with your own
+    Gemini key"; paid: "Up to 10 minutes" / "No Gemini key needed"; free
+    with a saved key: "Up to 10 minutes" / "With your own Gemini key".
+    Numbers are `/api/limits`' and are not quoted until that read and the
+    plan have both answered (`useMediaLimits().settled`).
+  - "Resets at" → `resets_at` in the reader's own time zone
+    (`formatClockTime`, e.g. "7:00 PM" in New York). Never "midnight" or
+    "tomorrow": the reset is UTC midnight. Unknown: an em dash, announced
+    as "Not available".
+  - With a saved Gemini key no count is read, so the rows become "Runs" →
+    "On your own Gemini key" and "Daily limit" → "None with your key".
+  - The three rows are in the first paint and each value's line is held
+    (`min-height`) until its read lands; the rows are top-aligned, not
+    baseline-aligned, because an empty cell has no baseline.
+- **Upgrade / Billing:** `billing.md`.
+- **On this device** (`DeviceGroup`): "Recent history" / "Up to 20 runs
+  saved in this browser. Not synced between devices." (`HISTORY_LIMIT`,
+  re-exported from `useRunHistory`), and "Your Gemini key (optional)" / "A
+  Gemini key lets VideoLens use your own Google AI access." Signed in, the
+  note "Both stay in this browser when you sign out."
+- **Developer tools:** one collapsed row, "VideoLens API access" /
+  "VideoLens API keys let other tools submit runs through your account."
+  Same disclosure behaviour as before (fetch on first open, count, unseen
+  secret flag). The row is drawn while `/api/me` is still loading, so it
+  does not arrive late; opened that early it says "Loading your account…".
+  Body copy says "VideoLens API key(s)" throughout.
+- **Information** (was "Help"): Privacy policy, Terms of use, What's new.
+  No support or contact row.
+- **Signed out** (`SignedOut`): card heading "Get 10 free runs a day"
+  (`ACCOUNT_FREE_RUNS_PER_DAY`), "Sign in or create an account with your
+  email. No password needed.", the email field, help "We’ll email you a
+  code. New here? Entering it creates your account.", "Send code". The code
+  step is unchanged (resend, change email, expiry, errors). Under the card:
+  the text link "Continue without an account" (to Analyze), then, muted,
+  "An account also unlocks videos up to 10 minutes with your own Gemini
+  key, and VideoLens API keys for scripts and other tools." (without a
+  longer tier: "An account also gives you VideoLens API keys for scripts
+  and other tools."). Then On this device and Information.
+- **Props.** `capabilitiesSettled`, `freeRunsPending`, `billingPending`,
+  `limits` (the whole `MediaLimitsState`) are new; `paidMinutes` and
+  `signInMinutes` are gone.
+- **Top gap.** `.acct-page` padding-top is `clamp(1.25rem, 0.75rem +
+  2.4vw, 2.75rem)` (was the shared `clamp(1.875rem, …, 3.875rem)`).
+
+Verified 2026-11-14 with Playwright at 412, 320 and 1280: signed out
+against the local servers; free (billing off), free (billing on), paid and
+free-with-a-key with the session and API responses mocked (staggered
+250–1200 ms). No horizontal overflow; the panel contributes no layout
+shift (the 0.001–0.002 left is the shared nav/dock when the Account entry
+appears). Not exercised: the code step, checkout, sign-out, key actions.
+
 ## Known limits
 
 - Legal and offline routes render `AppNav` without `showAccount`, so the
@@ -471,3 +548,4 @@ cannot be resized); check them on the bundled APK.
 - 2026-11-14 · codex · landing nav and phone menu back to the default "Sign in", so the account entry reads differently from the no-account "Start analyzing"; the `signedOutLabel` prop stays
 - 2026-11-14 · frontend agent · landing signed-out entry reads "Get 10 free runs" (10 from `ACCOUNT_FREE_RUNS_PER_MONTH`, now in `application/accountAllowance.ts`), bar pill and phone-menu row; new `signedOutShortLabel` prop: the bar pill says "Sign up free" from 48rem to 50rem, where the long label overran the gutter by 13px; other routes keep "Sign in"
 - 2026-11-14 · frontend agent · daily account allowance: signed-out lede "Sign in for 10 free runs a day, ..."; identity line "Free runs left today: N of 10" (from `period`)
+- 2026-11-14 · frontend agent · Account refinement (six items): compact identity row with a text Sign out; Plan and usage card for every account (plan, runs left, video length, reset in local time; rows reserved); signed-out card leads with "Get 10 free runs a day" + "Continue without an account"; "VideoLens API access" under a collapsed Developer tools group; "Recent history" / "Your Gemini key (optional)" wording; Help renamed Information; lede removed; Loading state until capabilities settle; top gap trimmed

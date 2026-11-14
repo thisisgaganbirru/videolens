@@ -2626,12 +2626,6 @@ h3 {
   }
 
   /* Account-only refinement; retains the editorial tokens and shared controls. */
-  .acct-page .view-lede {
-    max-width: 36rem;
-  }
-  .acct-page .acct-identity-details {
-    min-width: 0;
-  }
   .acct-page .acct-create {
     padding-top: var(--space-md);
     border-top: var(--rule-w) solid var(--color-rule);
@@ -2673,24 +2667,6 @@ h3 {
       flex-basis: 100%;
     }
   }
-  @media (min-width: 40rem) {
-    .acct-page .acct-identity {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      align-items: center;
-      gap: var(--space-sm) var(--space-md);
-    }
-    .acct-page .acct-identity > .key-actions {
-      grid-column: 2;
-      grid-row: 1;
-      margin-top: 0;
-    }
-    .acct-page .acct-identity > .acct-guard {
-      grid-column: 1 / -1;
-      margin: 0;
-    }
-  }
-
   /* Account form states reuse the page's existing type and spacing scale. */
   .acct-page .acct-form-intro {
     margin: var(--space-2xs) 0 var(--space-md);
@@ -2806,12 +2782,6 @@ h3 {
   .acct-page .acct-group-note {
     margin-top: var(--space-2xs);
   }
-  .acct-page .acct-identity-meta {
-    margin-top: 0.25rem;
-  }
-  .acct-page .acct-nowrap {
-    white-space: nowrap;
-  }
 
   /* Plan (2026-11-13, docs/frontend/billing.md). One plan, so one card of
      plain text and at most two buttons, padded like a row; no pricing table.
@@ -2829,16 +2799,16 @@ h3 {
   .acct-page .acct-plan > .key-status-slot:empty {
     display: none;
   }
+  /* The plan's name, in the card-title serif. Its line is held while the
+     plan is still unknown, so the rows under it do not move. */
   .acct-page .acct-plan-name {
     margin: 0;
-    font-size: 1rem;
-    font-weight: 600;
-    line-height: 1.4;
-    color: var(--color-ink);
-  }
-  .acct-page .acct-plan-interval {
+    min-height: 1.2em;
+    font-family: var(--font-serif);
     font-weight: 400;
-    color: var(--color-muted);
+    font-size: 1.5rem;
+    line-height: 1.2;
+    color: var(--color-ink);
   }
   .acct-page .acct-plan-warning {
     margin-top: var(--space-xs);
@@ -2860,6 +2830,229 @@ h3 {
     .acct-page .acct-plan-notice {
       padding-inline: 1.75rem;
     }
+  }
+
+  /* Refinement, 2026-11-14 (owner's six items). Tokens only.
+     The title sits a little higher than on the other pages: this one is a
+     list to act on, and the board's gap pushed the plan card down. */
+  .acct-page {
+    padding-top: clamp(1.25rem, 0.75rem + 2.4vw, 2.75rem);
+  }
+  /* Who is signed in and the way out: one line, no card. */
+  .acct-page .acct-id {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0 var(--space-sm);
+    margin-top: var(--space-2xs);
+    min-width: 0;
+  }
+  .acct-page .acct-id .acct-email {
+    flex: 1 1 12rem;
+    min-width: 0;
+    font-size: 1rem;
+    line-height: 1.4;
+  }
+  .acct-page .acct-signout {
+    flex: 0 0 auto;
+    font-size: 0.875rem;
+    font-weight: 400;
+    color: var(--color-ink-2);
+  }
+  .acct-page .acct-signout:hover {
+    color: var(--color-ink);
+  }
+  .acct-page .acct-signout[aria-disabled="true"] {
+    color: var(--color-muted);
+  }
+  .acct-page .acct-id > .acct-guard {
+    flex: 1 0 100%;
+    margin: 0;
+  }
+  .acct-page .acct-id + .acct-group,
+  .acct-page .acct-id + .sr-only + .acct-group {
+    margin-top: var(--space-sm);
+  }
+
+  /* Label left, value right, a hairline between rows. Every row is drawn
+     from the first paint; a value that has not arrived leaves its line
+     empty (min-height), so nothing moves when it lands. */
+  .acct-page .acct-facts {
+    margin: var(--space-sm) 0 0;
+  }
+  .acct-page .acct-facts-flush {
+    margin-top: 0;
+  }
+  .acct-page .acct-fact {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: var(--space-sm);
+    /* Not baseline: an empty value has none, and the row would change
+       height when its text arrived. Both cells share one line box. */
+    align-items: start;
+    padding: var(--space-xs) 0;
+    border-top: var(--rule-w) solid var(--color-rule);
+  }
+  .acct-page .acct-facts-flush > .acct-fact:first-child {
+    padding-top: 0;
+    border-top: 0;
+  }
+  .acct-page .acct-fact:last-child {
+    padding-bottom: 0;
+  }
+  .acct-page .acct-fact > dt {
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    color: var(--color-muted);
+  }
+  .acct-page .acct-fact > dd {
+    margin: 0;
+    min-height: 1.5em;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    line-height: 1.5;
+    color: var(--color-ink);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+  .acct-page .acct-fact > .acct-fact-note {
+    grid-column: 1 / -1;
+    min-height: 1.5em;
+    font-size: 0.875rem;
+    font-weight: 400;
+    color: var(--color-muted);
+  }
+
+  /* The two tiers side by side: two equal columns, a feature label over
+     each pair of values, a hairline between features. A real table, so the
+     pairing is announced; it never scrolls sideways (fixed layout, text
+     wraps inside its half). */
+  .acct-page .acct-compare {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    text-align: left;
+  }
+  .acct-page .acct-compare th,
+  .acct-page .acct-compare td {
+    padding: 0;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+  }
+  .acct-page .acct-compare th + th,
+  .acct-page .acct-compare td + td {
+    padding-left: var(--space-sm);
+  }
+  .acct-page .acct-compare thead th {
+    padding-bottom: var(--space-xs);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--color-ink);
+  }
+  .acct-page .acct-compare tbody th {
+    padding-top: var(--space-xs);
+    border-top: var(--rule-w) solid var(--color-rule);
+    font-size: 0.8125rem;
+    font-weight: 400;
+    line-height: 1.5;
+    color: var(--color-muted);
+  }
+  .acct-page .acct-compare td {
+    padding-top: 0.125rem;
+    padding-bottom: var(--space-xs);
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--color-muted);
+  }
+  .acct-page .acct-compare tbody:last-child td {
+    padding-bottom: 0;
+  }
+  .acct-page .acct-compare td > strong {
+    display: block;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  .acct-page .acct-compare td > .acct-figure {
+    font-family: var(--font-serif);
+    font-weight: 400;
+    font-size: 1.5rem;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+  }
+  .acct-page .acct-price {
+    margin: var(--space-sm) 0 0;
+    padding-top: var(--space-sm);
+    border-top: var(--rule-w) solid var(--color-rule);
+    font-size: 0.9375rem;
+    line-height: 1.4;
+    color: var(--color-ink-2);
+  }
+  .acct-page .acct-price > strong {
+    font-family: var(--font-serif);
+    font-weight: 400;
+    font-size: 1.5rem;
+    line-height: 1.2;
+    color: var(--color-ink);
+  }
+  .acct-page .acct-plan > .key-actions {
+    gap: var(--space-2xs) var(--space-md);
+    margin-top: var(--space-sm);
+  }
+  .acct-page .acct-plan > .acct-extra-terms {
+    margin-top: var(--space-sm);
+  }
+  /* The yearly price is a second way to pay, not a second call to action. */
+  .acct-page .acct-yearly {
+    font-size: 0.875rem;
+    font-weight: 400;
+    color: var(--color-ink-2);
+  }
+  .acct-page .acct-yearly:hover {
+    color: var(--color-ink);
+  }
+  /* The narrowest phones: give the two columns the card's spare padding so
+     "Up to 10 minutes" keeps to one line. */
+  @media (max-width: 22.5rem) {
+    .acct-page .acct-plan {
+      padding-inline: var(--space-sm);
+    }
+    .acct-page .acct-compare th + th,
+    .acct-page .acct-compare td + td {
+      padding-left: var(--space-2xs);
+    }
+    .acct-page .acct-compare td > strong:not(.acct-figure) {
+      font-size: 0.9375rem;
+    }
+  }
+  /* Holds a group's height while its read is on the way: laid out, never
+     seen, never announced (aria-hidden + inert in the markup). */
+  .acct-page .acct-ghost {
+    visibility: hidden;
+  }
+
+  /* Signed out: the way on without an account, then what else one unlocks. */
+  .acct-page .acct-continue-row {
+    margin: var(--space-2xs) 0 0;
+  }
+  .acct-page .acct-continue {
+    font-size: 0.9375rem;
+    font-weight: 400;
+    color: var(--color-ink-2);
+  }
+  .acct-page .acct-continue:hover {
+    color: var(--color-ink);
+  }
+  .acct-page .acct-also {
+    margin: var(--space-2xs) 0 0;
+    max-width: 36rem;
+  }
+  .acct-page .acct-optional {
+    font-weight: 400;
+    color: var(--color-muted);
   }
 
   .acct-page .acct-end {

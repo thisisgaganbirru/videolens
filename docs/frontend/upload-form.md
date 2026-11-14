@@ -386,13 +386,15 @@ Owner decision "Level 2": signed in **and** a Gemini key saved → videos up to
   (an older server answers 404), both tiers are 180 s / 200 MB
   (`FALLBACK_LIMITS`), so an older server is never promised 10 minutes.
   `useMediaLimits(signedIn, paid)` watches the saved key (`apiKeyStore.subscribe`)
-  and returns `{limits, extended, upgradeMinutes, paidMinutes, hasKey}`. The
+  and returns `{limits, extended, upgradeMinutes, paidMinutes, hasKey}` plus,
+  since 2026-11-14, `settled` (the read has answered, either way),
+  `standardSeconds` and `byokMinutes` for the Account panel. The
   tier is `paid` when signed in on the paid plan and the server reported one,
   else `signed_in_byok` when signed in with a key, else `standard`. Called
   once from `HomeScreen` with `Boolean(authUser.user)` and the plan (from
   `useBilling` or the free-runs read), so sign-in/out, the plan and saving or
   removing the key recompute it. `paidMinutes` (null without a `paid` tier)
-  feeds the Account Plan pitch.
+  feeds the Account panel's Upgrade comparison.
 - `UploadForm` props `limits` (defaults to standard) and `signInForMinutes`.
   The drop hint reads "MP3, MP4, or MOV. Up to 500 MB and 10 minutes." (or
   200 MB / 3 minutes); the size and duration errors quote the same numbers
@@ -453,3 +455,4 @@ already records acceptance. `.link-row` is back to three grid areas.
 - 2026-11-13 · frontend agent · "By analyzing, you agree to the Terms." under Analyze link (`.link-consent`, new `consent` grid area of `.link-row`)
 - 2026-11-13 · frontend agent · removed the "By analyzing, you agree to the Terms." line and its `consent` grid area (the checkbox covers acceptance); terms key bumped to `videolens-media-terms-v2`, v1 cleared from storage; rule: bump the version whenever the Terms change materially
 - 2026-11-13 · frontend agent · terms key bumped to `videolens-media-terms-v3` for the Terms' Paid plan section, v2 added to `RETIRED_KEYS`; `useMediaLimits(signedIn, paid)` picks the `paid` tier from `GET /api/limits` when the plan is paid (docs/frontend/billing.md)
+- 2026-11-14 · frontend agent · `useMediaLimits` also returns `settled`, `standardSeconds` and `byokMinutes` (Account panel's Plan and usage card and Upgrade comparison); upload form unchanged

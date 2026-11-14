@@ -14,7 +14,8 @@ Portal are Stripe-hosted pages reached by a top-level redirect.
 **Billing off looks exactly like before.** Nothing is fetched and nothing is
 drawn unless the server's `billing` capability is `ok` *and* someone is
 signed in (the same gate as the Account tab) *and* `GET /api/billing` answers
-`{"enabled": true, ...}`. Any failure hides the Plan group.
+`{"enabled": true, ...}`. Any failure hides the Upgrade / Billing group (the
+Plan and usage card stays: it is not billing's).
 
 ## Contract used
 
@@ -42,41 +43,58 @@ signed in (the same gate as the Account tab) *and* `GET /api/billing` answers
 | infrastructure | `infrastructure/container.ts` | `billingGateway` |
 | application | `application/useBilling.ts` | Module store (like `useFreeRuns`) with an owner epoch. `useBilling(userId, enabled)` (called once, HomeScreen) and `useBillingActions()` (Plan group) |
 | application | `application/useMainTab.ts` | `takeSearchParam(name)`: read a query param and strip it with `replaceState`, keeping Next's history state |
-| components | `components/panels/AccountPanel.tsx` | `PlanGroup`, the checkout-return notice, the paid identity line |
+| components | `components/panels/AccountPanel.tsx` | `UpgradeGroup`, `BillingGroup` (and their reserved stand-in), the checkout-return notice; `PlanUsageGroup` reads the plan name |
 | components | `components/FreeRunsBanner.tsx` | Paid strip copy; the "or upgrade" link on a spent free account |
 | components | `components/format.ts` | `formatPrice` (Intl, the currency's own exponent, whole amounts without decimals), `formatLongDay` |
 
-## Account: the Plan group
+## Account: Plan and usage, then Upgrade or Billing (2026-11-14)
 
-A group labelled "Plan" above "Your account" (option A grouped list, one
-padded card, no pricing table: there is one plan).
+The single "Plan" group is now three (`AccountPanel.tsx`). The earlier pitch
+sentence ("30 runs a day instead of 10, videos up to 10 minutes, and no
+Gemini key needed") is gone: it read as if a free account needed a key.
 
-- **Free.** "Free", then (2026-11-14, paid 30 a day) "The paid plan: 30 runs
-  a day instead of 10, videos up to 10 minutes, and no Gemini key needed.
-  Past the 30, extra runs are $0.xx each, up to 200 a month." Without a
-  `paid` tier in `/api/limits` the video clause is left out; without an
-  extra-run price the second sentence is "Past the 30, extra runs are billed
-  per run, up to 200 a month." Counts come from `PAID_RUNS_PER_DAY`,
-  `ACCOUNT_FREE_RUNS_PER_DAY` and `PAID_EXTRA_RUNS_PER_MONTH`
-  (`application/accountAllowance.ts`). Earlier the same day the pitch avoided
-  a run-count comparison because 100 a month was below a free account's 10 a
-  day; at 30 a day the comparison is honest. Then "Upgrade — $12/month" (primary) and "Yearly — $X/year"
-  (secondary). A null price hides its button; no prices, no buttons. Note
-  under the card: "Billed through Stripe. Cancel anytime. Runs with your own
-  Gemini key never count."
-- **Paid.** "Paid · Monthly|Yearly", "Renews <date>" or "Ends <date>" when
-  `cancel_at_period_end`, "Payment failed — update your card in Manage
-  billing." when `status` is `past_due` or `unpaid` (and Manage billing turns
-  primary), "N of L used today." ("this month" only if `runs.period` says
-  `month`) and "Extra runs are $0.xx each, up to 200 a month.", then
-  "Manage billing".
+- **Plan and usage** (`PlanUsageGroup`) is drawn for every signed-in
+  account and does **not** depend on billing; it is documented in
+  `auth-sign-in.md`. With billing on it takes the plan name from this read
+  as well as from `/api/free-runs`.
+- **Upgrade** (`UpgradeGroup`; free account, billing on). A two-column table
+  (real `<table>`, sr-only caption "Your free account compared with the paid
+  plan"), columns "Your free account" and "Paid plan":
+  - "Runs a day": `runs.limit` (10) against `PAID_RUNS_PER_DAY` (30).
+  - "Video length" (only when `/api/limits` reports a `paid` tier): "Up to 3
+    minutes" + "or 10 with your own Gemini key" against "Up to 10 minutes" +
+    "with no Gemini key". "No key needed" is never offered as a paid benefit
+    on its own: a free account's runs need no key either. The one
+    paid-only point is the longer video without a key.
+  - Then the price ("$12 a month"; the yearly price when there is no monthly
+    one), one primary button "Upgrade to paid" (monthly checkout, yearly when
+    that is the only price), and, when both prices exist, a quiet text
+    control "Or pay $120 a year". No price, no button.
+  - On its own line: "Past the 30, extra runs are $0.15 each, up to 200 a
+    month." (no extra-run price: "…are billed per run, up to 200 a month.").
+    Never "unlimited".
+  - Note under the card: "Billed through Stripe. Cancel anytime. Runs with
+    your own Gemini key never count."
+- **Billing** (`BillingGroup`; paid). Rows "Price" → "$12 a month" / "$120 a
+  year" ("Billed monthly|yearly" if that price is null) and "Renews" /
+  "Ends" (`cancel_at_period_end`) → the date; "Payment failed. Update your
+  card in Manage billing." when `status` is `past_due` or `unpaid` (Manage
+  billing turns primary); the extra-run terms line; "Manage billing". Runs
+  left today is in the Plan and usage card directly above and is not
+  repeated. **Extra runs used this month is not shown: `GET /api/billing`
+  does not return it** (only the 402 `extra_runs_cap` knows the cap).
+- **Reserved height.** `useBilling().pending` is true from the moment an
+  owner is set until the read answers (`Snapshot.settled`, success or
+  failure). Meanwhile the panel lays out the group it expects (Upgrade, or
+  Billing if `/api/free-runs` already said `paid`) with stand-in values,
+  `visibility: hidden`, `aria-hidden`, `inert`, so the groups below do not
+  drop when the real one lands. With billing off nothing is reserved.
 - **Actions.** A press asks the server for the URL (label "Opening…",
-  `aria-disabled` on both buttons), then `window.location.assign(url)`.
+  `aria-disabled` on every control), then `window.location.assign(url)`.
   `already_subscribed` → "You are already on the paid plan." + re-read;
   `no_billing_account` → a sentence + re-read; anything else through
   `classifyGatewayError`. A `pageshow` with `persisted` (back button from
   Stripe restoring the page from bfcache) clears "Opening…" and re-reads.
-- **Identity line.** Paid: "Runs left today: N of L" (no "Free").
 
 ## Returning from Checkout
 
@@ -162,7 +180,7 @@ record for invoices and tax. Terms "Paid plan" and Privacy "Payments" say so
 
 ## Known limits
 
-- The pitch's "30 a day" and "200 a month" are constants (`PAID_RUNS_PER_DAY`,
+- The comparison's "30 a day" and the terms line's "200 a month" are constants (`PAID_RUNS_PER_DAY`,
   `PAID_EXTRA_RUNS_PER_MONTH`), because the free-plan body's `runs.limit` is
   the free allowance and no body carries the extra-run cap except the 402.
   If the server's cap setting changes, change the constant too.
@@ -175,3 +193,4 @@ record for invoices and tax. Terms "Paid plan" and Privacy "Payments" say so
 - 2026-11-13 · frontend agent · handled 402 `extra_runs_cap`, 503 `subscription_cancel_failed` on account deletion, and 400 `invalid_interval` / 503 `billing_disabled`/`billing_unavailable` on checkout and portal; Terms and Privacy say deleting the account cancels the subscription immediately
 - 2026-11-14 · frontend agent · free-plan pitch no longer leads with "100 runs a month" (the free account is now 10 a day): "videos up to 10 minutes without your own key, and runs past the daily limit", included runs and extra-run price as a trailing clause; offer flagged for an owner rethink
 - 2026-11-14 · frontend agent · paid plan is 30 runs a day: pitch "The paid plan: 30 runs a day instead of 10, videos up to 10 minutes, and no Gemini key needed. Past the 30, extra runs are $X each, up to 200 a month."; paid card "N of L used today." and "Extra runs are $X each, up to 200 a month."; identity "Runs left today"; `runs.period` read (missing = day); `PAID_RUNS_PER_MONTH` removed; Terms and Privacy follow
+- 2026-11-14 · frontend agent · Account refinement: the Plan group is split into Plan and usage (always, see auth-sign-in.md), Upgrade (two-column comparison, price, one "Upgrade to paid" action, yearly as a quiet link, extra-run terms on their own line) and Billing (price, renews/ends, terms, Manage billing); pitch sentence removed; `useBilling().pending` + an inert stand-in reserve the group's height; extra runs used this month not shown (not in the API)

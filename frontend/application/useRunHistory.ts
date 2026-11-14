@@ -180,3 +180,7 @@ export function useRunHistory() {
 
   return { runs, error, retrying, retry };
 }
+
+/** How many runs History keeps on this device, for copy that names the
+ *  number (the Account panel). Components do not import infrastructure. */
+export { HISTORY_LIMIT } from "@/infrastructure/historyStore";

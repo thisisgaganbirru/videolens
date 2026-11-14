@@ -48,6 +48,10 @@ function find(report: CapabilityReport | null, name: string): Capability | null 
 
 export function useCapabilities() {
   const [report, setReport] = useState<CapabilityReport | null>(null);
+  /* The first read has answered, success or failure (2026-11-14). The
+     Account panel shows "Loading" until then instead of the "sign-in is not
+     available" card, which used to flash on every load. */
+  const [settled, setSettled] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -71,6 +75,7 @@ export function useCapabilities() {
         })
         .finally(() => {
           pending = false;
+          if (!cancelled) setSettled(true);
         });
     };
     load();
@@ -86,6 +91,8 @@ export function useCapabilities() {
   return {
     /** The whole report, or `null` when it has not arrived or never will. */
     report,
+    /** The first read has answered (a failure counts). */
+    settled,
     /** The report *only when it is worth surfacing*. `null` covers healthy,
      *  not-yet-loaded and never-loaded alike, so a component can render this
      *  without re-deciding what counts as a problem. */

@@ -175,11 +175,11 @@ Backend contract: `GET /api/free-runs` gains `"scope": "device" | "account"`
 
 | Where | device (unchanged unless noted) | account |
 |---|---|---|
-| Analyze strip, runs left | "**3 free runs left today.** Add your own key for more." Signed out where sign-in is offered (`showAccount`, 2026-11-14): "**3 free runs left today.** [Sign in] for 10 a month, or add your own key." | "**7 free runs left this month.** Add your own key for more." |
+| Analyze strip, runs left | "**3 free runs left today.** Add your own key for more." Signed out where sign-in is offered (`showAccount`, 2026-11-14): "**3 free runs left today.** [Sign in] for 10 a day, or add your own key." | "**7 free runs left this month.** Add your own key for more." |
 | Analyze strip, spent | "**You have used your free runs.** Add your own key to keep going." | "**You have used this month's free runs.** Add your own Gemini key to keep going." (the server's 402 `detail`, word for word) |
-| Analyze strip, spent, signed out where sign-in is offered (`showAccount`) | "**You have used your free runs.** Add your own key, or [sign in] for 10 free runs a month." (new; inline `.text-link` to `/app?view=account`, ink + 600 like the blocked note's link) | n/a |
+| Analyze strip, spent, signed out where sign-in is offered (`showAccount`) | "**You have used your free runs.** Add your own key, or [sign in] for 10 free runs a day." (new; inline `.text-link` to `/app?view=account`, ink + 600 like the blocked note's link) | n/a |
 | Blocked note in the intake card | "No free runs left today, so analyzing is paused." | "No free runs left this month, so analyzing is paused." (`UploadForm` `blockedScope`) |
-| Account panel identity line | "Free runs left on this device: N" | "Free runs left this month: N of 10" (`limit` from the server) |
+| Account panel, Plan and usage card (2026-11-14; was the identity line) | "Runs left today" → "N of L on this device" | "Runs left today" → "N of L" (`limit` from the server; "this month" only if `period` says so), and "Resets at" → `resets_at` as a local clock time. See `auth-sign-in.md`, "Account refinement (2026-11-14)" |
 
 The sign-in nudge is only on the spent device strip: that is where signing in
 actually unblocks someone, and it adds no chrome. The "10" there is a
@@ -314,3 +314,4 @@ Not yet re-measured on the device (the QA run's own numbers were on Android).
 - 2026-11-14 · frontend agent · free account allowance is daily (10/day): `period` (`day`|`month`) on `FreeRunsStatus`/`FreeRunsBanner`, inferred by plan when the server omits it; copy keyed on period ("N free runs left today", spent "You have used today's 10 free runs. They reset tomorrow.", hints "Sign in for 10 a day"); `blockedScope` -> `blockedPeriod`; `ACCOUNT_FREE_RUNS_PER_MONTH` -> `ACCOUNT_FREE_RUNS_PER_DAY`
 - 2026-11-14 · frontend agent · paid plan is 30 runs a day: missing `period` reads as `day` for every plan; paid strip "N of 30 runs left today.", past the 30 "Extra runs are billed at $X each, up to 200 a month."; spent free account "...or upgrade for 30 a day."; 402 `extra_runs_cap` "Your included runs come back tomorrow."; `PAID_RUNS_PER_DAY` / `PAID_EXTRA_RUNS_PER_MONTH` in `accountAllowance.ts`
 - 2026-11-14 · frontend agent · Android QA run 22: strip height reserved before the first read (invisible inert stand-in, `useFreeRuns().pending`, `Snapshot.settled`) and dropped pre-paint for key holders (`BYOK_INIT_SCRIPT` stamps `data-byok`); CLS at 412/320 ~0 for runs-left states, numbers and residue under "Reserved strip height"
+- 2026-11-14 · frontend agent · copy table corrected to the code: the signed-out strip says "10 a day" and "10 free runs a day" (the table still said a month); `FreeRunsBanner.resetsAt` added for the Account panel's Plan and usage card, which replaces the identity line's count
