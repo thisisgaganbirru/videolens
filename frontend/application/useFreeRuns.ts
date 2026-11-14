@@ -130,15 +130,20 @@ export function markFreeRunsUsed(limit?: number, used?: number, scope?: string):
      what the last read said, then to this device. */
   const refusedScope: FreeRunsScope =
     scope === "account" || scope === "device" ? scope : (prev?.scope ?? "device");
+  /* A 402 is sent to the free plan, and (2026-11-14) to complimentary Plus
+     past its 30: that account's runs past the allowance are not billed. A
+     subscriber's never are refused this way. So the plan of the last read
+     for the same allowance stands, else free. */
+  const same = prev && prev.scope === refusedScope ? prev : null;
+  const complimentary = same?.complimentary === true;
   publish({
     status: {
       scope: refusedScope,
-      /* A 402 is only ever sent to the free plan (a paid account's runs past
-         its allowance are billed instead). */
-      plan: "free",
-      /* Both free allowances count a day (2026-11-14). */
+      plan: complimentary ? "paid" : "free",
+      /* Every allowance counts a day (2026-11-14). */
       period: "day",
       overage: false,
+      complimentary,
       deviceToken: prev?.deviceToken ?? "",
       limit: lim,
       used: used ?? Math.max(lim, prev?.used ?? 0),
@@ -208,6 +213,8 @@ export type FreeRunsBanner = {
   exhausted: boolean;
   /** Paid only: runs past the allowance are allowed and billed. */
   overage: boolean;
+  /** Complimentary Plus (2026-11-14): paid, never billed, nothing to buy. */
+  complimentary: boolean;
   /** ISO 8601 UTC instant the count resets (next UTC midnight for `day`),
    *  or "" when unknown (a 402 that came before any read). The Account
    *  panel shows it in the reader's local time. */
@@ -332,6 +339,7 @@ export function useFreeRuns(identity: string | null = ""): {
       limit: status.limit,
       exhausted,
       overage,
+      complimentary: status.complimentary,
       resetsAt: status.resetsAt,
     },
     /* Paid with overage: the allowance running out costs money per run, it

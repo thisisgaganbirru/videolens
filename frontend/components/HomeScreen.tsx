@@ -56,6 +56,7 @@ const FREE_RUNS_GHOST: FreeRunsBannerState = {
   limit: 3,
   exhausted: false,
   overage: false,
+  complimentary: false,
   /* A valid time, so the stand-in carries the "Resets at …" sentence and is
      as long as the real strip (UX fix spec 3.2). */
   resetsAt: "2026-01-01T00:00:00Z",
@@ -191,6 +192,10 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   /* Either read can say so first: the plan, or the free-run count (which
      carries `plan` too, and is the one read while no key is saved). */
   const paid = billing?.plan === "paid" || freeRuns.banner?.plan === "paid";
+  /* Complimentary Plus (2026-11-14): paid, with nothing to buy or manage.
+     Either read can say so; with Stripe off only the run count does (the
+     plan is not read there), and the Account panel adds `/api/me`. */
+  const complimentary = billing?.complimentary === true || freeRuns.banner?.complimentary === true;
   const extraRunPrice = billing?.prices.extraRun ? formatPrice(billing.prices.extraRun) : null;
   /* Paid saved history (2026-11-14): whether this account saves its runs,
      read once someone is signed in where sign-in works. Off for everyone
@@ -237,7 +242,8 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   });
   useRememberPlan(
     billing?.plan ?? freeRuns.banner?.plan ?? null,
-    authUser.ready && !authUser.user
+    authUser.ready && !authUser.user,
+    complimentary
   );
   /* The Gemini key page's "Sign in" line needs the session, the auth
      capability and `/api/limits`. It is known not to apply as soon as any of
@@ -709,6 +715,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
             billing={billing}
             billingPending={billingPending}
             billingFailed={billingFailed}
+            complimentary={complimentary}
             checkoutReturn={checkoutReturn}
             limits={mediaLimits}
             savedHistory={savedHistory.mode}

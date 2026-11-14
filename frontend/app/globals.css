@@ -2976,6 +2976,22 @@ h3 {
     line-height: 1.2;
     color: var(--color-ink);
   }
+  /* Complimentary Plus (2026-11-14): one muted line under the name. The
+     held copy (plan not yet named) takes space only when the pre-paint
+     stamp says the last read here was complimentary. */
+  .acct-page .acct-plan-sub {
+    margin: var(--space-2xs) 0 0;
+    min-height: 1.5em;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--color-muted);
+  }
+  .acct-page .acct-plan-sub-held {
+    display: none;
+  }
+  :root[data-plan-paid="complimentary"] .acct-page .acct-plan-sub-held {
+    display: block;
+  }
   .acct-page .acct-plan-warning {
     margin-top: var(--space-xs);
   }
@@ -3273,6 +3289,11 @@ h3 {
   }
   :root[data-plan-paid] .acct-page .acct-ghost-plan[data-plan="paid"] {
     display: contents;
+  }
+  /* Complimentary Plus last time (2026-11-14): it has no Upgrade or Billing
+     card, so while nothing has named the plan no stand-in is held. */
+  :root[data-plan-paid="complimentary"] .acct-page .acct-loading-group[data-plan-unnamed] {
+    display: none;
   }
   .acct-page .acct-loading-group > .acct-ghost .key-card {
     visibility: visible;
