@@ -224,6 +224,17 @@ class NoBillingAccountError(BillingError):
         super().__init__(message)
 
 
+class ComplimentaryPlanError(BillingError):
+    """The account is on complimentary Plus (`accounts.complimentary_plus`)
+    with no paying subscription: there is nothing to buy and no Stripe
+    customer to manage (409 `complimentary_plan`)."""
+
+    code = "complimentary_plan"
+
+    def __init__(self, message: str = "Your account has complimentary Plus. There is nothing to pay for.") -> None:
+        super().__init__(message)
+
+
 class BillingIntervalError(BillingError):
     """`interval` is not one this deployment sells (400): not "month" or
     "year", or "year" with no yearly price configured."""

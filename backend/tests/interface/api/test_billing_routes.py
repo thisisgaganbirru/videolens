@@ -19,6 +19,7 @@ from starlette.testclient import TestClient
 
 from app.application.billing import BillingPlans
 from app.application.delete_account import DeleteAccountUseCase
+from app.application.get_account import GetAccountUseCase
 from app.application.get_billing import GetBillingUseCase
 from app.application.get_free_runs import GetFreeRunsUseCase
 from app.application.handle_billing_webhook import HandleBillingWebhookUseCase
@@ -90,6 +91,8 @@ class BillingRoutesTests(unittest.TestCase):
         plans = BillingPlans(
             gateway=self.gateway, accounts=self.billing_accounts, ledger=ledger, paid_runs_per_day=30,
             extra_runs_monthly_cap=settings.paid_extra_runs_monthly_cap,
+            # Complimentary Plus is read here; nobody has it unless a test sets it.
+            directory=self.directory,
         )
         self.plans = plans
         replacements = {
@@ -100,6 +103,9 @@ class BillingRoutesTests(unittest.TestCase):
                 allow_anonymous=True,
             ),
             "get_billing_use_case": GetBillingUseCase(plans=plans, account_free_runs=self.account_runs),
+            "get_account_use_case": GetAccountUseCase(
+                accounts=self.directory, entitlements=container.entitlements, billing=plans
+            ),
             "start_checkout_use_case": StartCheckoutUseCase(plans=plans),
             "open_billing_portal_use_case": OpenBillingPortalUseCase(plans=plans),
             "handle_billing_webhook_use_case": HandleBillingWebhookUseCase(plans=plans),
@@ -188,6 +194,8 @@ class EnabledBillingRoutesTests(BillingRoutesTests):
                     "year": {"amount": 12000, "currency": "usd"},
                     "extra_run": {"amount": 15, "currency": "usd"},
                 },
+                # Added 2026-11-14 (complimentary Plus); false for everyone else.
+                "complimentary": False,
             },
         )
 
@@ -316,6 +324,101 @@ class DisabledBillingRoutesTests(BillingRoutesTests):
     def test_free_runs_is_the_free_plan(self) -> None:
         body = self.client.get("/api/free-runs", headers=TOKEN).json()
         self.assertEqual((body["plan"], body["overage"], body["limit"]), ("free", False, 10))
+
+
+_NO_PRICES = {"month": None, "year": None, "extra_run": None}
+_PRICES = {
+    "month": {"amount": 1200, "currency": "usd"},
+    "year": {"amount": 12000, "currency": "usd"},
+    "extra_run": {"amount": 15, "currency": "usd"},
+}
+
+
+class _ComplimentaryCases:
+    """Complimentary Plus (`accounts.complimentary_plus`, set by hand in SQL;
+    here the in-memory stand-in): the contract the frontend builds against,
+    with Stripe off and on."""
+
+    def _complimentary(self) -> str:
+        account_id = self._account_id()
+        self.assertTrue(self.directory.set_complimentary_plus(account_id))
+        return account_id
+
+    def test_billing_contract(self) -> None:
+        self._complimentary()
+        response = self.client.get("/api/billing", headers=TOKEN)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(
+            response.json(),
+            {
+                # Still "is Stripe billing on here", so checkout is offered or not.
+                "enabled": self.enabled,
+                "plan": "paid",
+                "status": None,
+                "interval": None,
+                "current_period_end": None,
+                "cancel_at_period_end": False,
+                "runs": {"limit": 30, "used": 0, "period": "day"},
+                "extra_runs": None,
+                "prices": _PRICES if self.enabled else _NO_PRICES,
+                "complimentary": True,
+            },
+        )
+
+    def test_me_and_free_runs_say_paid_and_complimentary(self) -> None:
+        self._complimentary()
+        entitlement = self.client.get("/api/me", headers=TOKEN).json()["entitlement"]
+        self.assertEqual((entitlement["plan"], entitlement["complimentary"]), ("paid", True))
+        # Never billed per run.
+        self.assertFalse(entitlement["metered"])
+        paid = container.entitlements.paid
+        self.assertEqual(
+            (entitlement["max_duration_seconds"], entitlement["max_file_size_mb"]),
+            (paid.max_duration_seconds, paid.max_file_size_mb),
+        )
+        body = self.client.get("/api/free-runs", headers=TOKEN).json()
+        self.assertEqual(
+            (body["plan"], body["overage"], body["complimentary"], body["limit"], body["period"]),
+            ("paid", False, True, 30, "day"),
+        )
+
+    def test_checkout_and_portal_are_409_complimentary_plan(self) -> None:
+        self._complimentary()
+        for path in ("/api/billing/checkout", "/api/billing/portal"):
+            response = self.client.post(path, headers=TOKEN, json={"interval": "month"})
+            self.assertEqual(response.status_code, 409, path)
+            self.assertEqual(response.json()["code"], "complimentary_plan", path)
+        self.stripe.v1.customers.create.assert_not_called()
+        self.stripe.v1.checkout.sessions.create.assert_not_called()
+        self.stripe.v1.billing_portal.sessions.create.assert_not_called()
+
+
+class ComplimentaryStripeOffRoutesTests(_ComplimentaryCases, BillingRoutesTests):
+    enabled = False
+
+    def test_an_ordinary_account_is_unchanged(self) -> None:
+        self.assertEqual(self.client.get("/api/billing", headers=TOKEN).json(), {"enabled": False})
+        entitlement = self.client.get("/api/me", headers=TOKEN).json()["entitlement"]
+        self.assertEqual((entitlement["plan"], entitlement["complimentary"]), ("free", False))
+
+
+class ComplimentaryStripeOnRoutesTests(_ComplimentaryCases, BillingRoutesTests):
+    enabled = True
+
+    def test_a_real_subscription_wins(self) -> None:
+        self.client.post("/api/billing/checkout", headers=TOKEN, json={"interval": "month"})
+        self.stripe.v1.subscriptions.retrieve.return_value = self._subscription()
+        self._webhook("evt_1")
+        self._complimentary()
+        body = self.client.get("/api/billing", headers=TOKEN).json()
+        self.assertEqual((body["plan"], body["complimentary"], body["status"]), ("paid", False, "active"))
+        self.assertIsNotNone(body["extra_runs"])
+        free_runs = self.client.get("/api/free-runs", headers=TOKEN).json()
+        self.assertEqual((free_runs["overage"], free_runs["complimentary"]), (True, False))
+        # Manage billing works as for any subscriber; checkout is already_subscribed.
+        self.assertEqual(self.client.post("/api/billing/portal", headers=TOKEN).status_code, 200)
+        again = self.client.post("/api/billing/checkout", headers=TOKEN, json={"interval": "month"})
+        self.assertEqual((again.status_code, again.json()["code"]), (409, "already_subscribed"))
 
 
 class CapabilityRowTests(unittest.TestCase):

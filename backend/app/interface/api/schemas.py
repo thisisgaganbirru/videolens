@@ -81,7 +81,10 @@ class FreeRunsResponse(BaseModel):
 
     Signed in only (left out for anonymous callers, so their response is
     unchanged): `plan` "free" or "paid"; `overage` true on the paid plan,
-    where runs past `limit` are billed as extra runs instead of refused."""
+    where runs past `limit` are billed as extra runs instead of refused
+    (false on complimentary Plus, which is refused past `limit`);
+    `complimentary` true on complimentary Plus (no subscription, never
+    billed), false otherwise."""
 
     device_token: str
     enabled: bool
@@ -93,6 +96,7 @@ class FreeRunsResponse(BaseModel):
     resets_at: datetime
     plan: Optional[Literal["free", "paid"]] = None
     overage: Optional[bool] = None
+    complimentary: Optional[bool] = None
 
 
 class PriceResponse(BaseModel):
@@ -131,7 +135,10 @@ class BillingExtraRunsResponse(BaseModel):
 
 class BillingResponse(BaseModel):
     """`GET /api/billing`. With billing off only `{"enabled": false}` is
-    sent (every other field is left out)."""
+    sent (every other field is left out), except to a complimentary Plus
+    account, which gets the full body with `enabled: false`.
+    `complimentary`: on the paid plan through complimentary Plus, not a
+    paying subscription (hide checkout and "Manage billing")."""
 
     enabled: bool
     plan: Optional[Literal["free", "paid"]] = None
@@ -140,9 +147,10 @@ class BillingResponse(BaseModel):
     current_period_end: Optional[datetime] = None
     cancel_at_period_end: Optional[bool] = None
     runs: Optional[BillingRunsResponse] = None
-    # null unless plan is "paid".
+    # null unless plan is "paid" through a subscription.
     extra_runs: Optional[BillingExtraRunsResponse] = None
     prices: Optional[BillingPricesResponse] = None
+    complimentary: bool = False
 
 
 class CheckoutRequest(BaseModel):
@@ -174,6 +182,9 @@ class EntitlementResponse(BaseModel):
     metered: bool
     api_access: bool
     library: bool
+    # `plan` is "paid" through complimentary Plus, not a paying
+    # subscription: no checkout, no portal, never billed.
+    complimentary: bool = False
 
 
 class SavedHistoryResponse(BaseModel):
