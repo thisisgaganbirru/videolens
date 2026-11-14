@@ -101,7 +101,7 @@ Source of truth: `design/shots/HistoryA.png`, `HistoryADark.png`,
 `HistoryMobile.png` (installed app), `HistoryWeb.png` (phone browser).
 
 - **Header**: `h1.history-title` "History" in Newsreader (36→48px; shares the `.view-title` rule with API key, Releases and the legal pages since Phase 4), lede
-  "Your recent analyses. Open one to read its notes again."
+  "Your last {HISTORY_LIMIT} runs, saved in this browser. Not synced." (since 2026-11-14, UX fix spec batch d)
 - **Controls** (populated state only): filter pills All / Instagram / TikTok /
   YouTube / Files (`button[aria-pressed]` in a `role="group"`; active = filled
   ink pill), search (`input[type=search].field.field-pill`, matches title +
@@ -368,6 +368,12 @@ reproduce in desktop Chromium, so it needs a device recheck.
 (`submitFresh` wraps `submit`). While true, the result view and the expired
 view offer "Back to History", which is `goToMainTab("history")`.
 
+## UX fix spec, batch d (2026-11-14)
+
+- Lede: "Your last 20 runs, saved in this browser. Not synced." (`HISTORY_LIMIT`), on every state.
+- The empty state and the storage state's "Analyze a video" is the filled `btn btn-primary` (the one way forward); "Show all runs" and the read-failure "Try again" stay outline.
+- Measured: below the lede the populated grid is unchanged at 320, 412 and 1280 (every control, label and poster at the same offset from the lede's bottom); at 412 the lede is now one line, so the grid starts 24px higher.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported HistoryPanel to day-grouped rows with status dots; fixed duplicate React keys on non-adjacent "Undated" groups
@@ -385,3 +391,4 @@ view offer "Back to History", which is `goToMainTab("history")`.
 - 2026-11-02 · frontend agent (refinement 12) · search field floor is now `calc(12ch + 2rem)` (the placeholder's own width) instead of 8.5rem, so the sort wraps under the field before "Search runs" can clip at large text (device QA, 320 / font scale 1.5)
 - 2026-11-14 · frontend agent · storage-blocked body: "This browser isn't letting VideoLens save anything, which private browsing often does. You can still analyze videos; their results just won't be kept here afterwards." (UX fix spec batch a)
 - 2026-11-14 · frontend agent · UX fix spec batch c: "Back to History" on a result or expired run opened from History (`fromHistory` in HomeScreen)
+- 2026-11-14 · frontend agent · UX fix spec batch d: lede names the limit and this browser; empty and storage states get the filled "Analyze a video"
