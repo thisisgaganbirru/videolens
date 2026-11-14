@@ -109,6 +109,21 @@ session.
   and the More sheet keep Account as a text row; the dock is unchanged.
   `UserRound` rather than the More sheet's `CircleUserRound` because the
   button's own round frame already draws the circle.
+- **Dock entry (2026-11-14).** In the installed app's phone dock
+  (`BottomTabBar`, app shell at ≤ 37.5rem wide or ≤ 31.25rem tall) Account is
+  a fourth item: Analyze / History / Account / More, under the same
+  `showAccount` gate; with sign-in off the dock stays three items. Lucide
+  `CircleUserRound` plus the label "Account", the same stroke family as
+  `CircleDot` and `Clock`; no email initial, because a 20px letter reads as
+  an avatar badge rather than a dock glyph. `aria-current="page"` on
+  `?view=account`, same in-place switch as the other dock tabs. The More
+  sheet no longer has an Account row at all: the sheet is only reachable from
+  the dock, so whenever the row could show, the dock item shows too. On a
+  leftover session with sign-in unavailable, `?view=account` lights no dock
+  item (before, More lit with no matching row). Routes that do not pass
+  `showAccount` (landing, Privacy, Terms, 404, offline) keep a three-item
+  dock, as their More sheet had no Account row before either. The top-bar
+  round button stays ≥ 48rem only; the web phone menu keeps its text row.
 - The panel uses the **same gate** for its sign-in form: capability still
   loading, failed to load, or not `ok` all show the calm "Sign-in is not
   available on this server" card and no form. The same card shows when
@@ -385,3 +400,4 @@ cannot be resized); check them on the bundled APK.
 - 2026-11-13 · frontend agent · signed in + saved Gemini key unlocks the larger upload tier (10 min / 500 MB from `GET /api/limits`); signed out with a key, the drop well says "Sign in for videos up to 10 minutes." (link to Account) where sign-in is offered. See `upload-form.md`, "Upload limits per tier"
 - 2026-11-13 · frontend agent · Account gains a "Plan" group above "Your account" (only when the `billing` capability is ok and `/api/billing` says enabled), a checkout-return notice under the header, and "Runs left this month: N of L" on the identity line for a paid account; props `billing`, `checkoutReturn`, `paidMinutes`. See `billing.md`
 - 2026-11-13 · frontend agent · account deletion: 503 `subscription_cancel_failed` gets its own message (nothing deleted, account and subscription unchanged), form stays usable. See `billing.md`
+- 2026-11-14 · frontend agent · Account moves into the installed-app dock as a 4th item (Analyze / History / Account / More, `CircleUserRound`, `aria-current` on `?view=account`) under the same `showAccount` gate; the More sheet's Account row is removed; top-bar round button unchanged

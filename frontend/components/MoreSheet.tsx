@@ -2,7 +2,7 @@
 
 import type { MouseEvent, Ref } from "react";
 import Link from "next/link";
-import { ChevronRight, CircleUserRound, FileText, KeyRound, Shield, SunMoon, Tag, type LucideIcon } from "lucide-react";
+import { ChevronRight, FileText, KeyRound, Shield, SunMoon, Tag, type LucideIcon } from "lucide-react";
 import { isPlainLeftClick } from "@/components/navClick";
 import { mainTabHref, type MainTab } from "@/application/useMainTab";
 import type { ThemePreference } from "@/components/theme";
@@ -14,6 +14,10 @@ import type { ThemePreference } from "@/components/theme";
  * room for. A native modal <dialog>, opened with showModal() by BottomTabBar —
  * the platform supplies the top layer, the inert page behind it (focus stays
  * inside), Escape, and ::backdrop; this component adds the backdrop click.
+ *
+ * Account is not a row here (2026-11-14): when sign-in is available it is a
+ * dock item, and the sheet is only reachable from that same dock, so a row
+ * would only ever duplicate it.
  */
 
 /** Which legal route this is, when it is one — so its row can be marked current. */
@@ -46,7 +50,6 @@ export const MORE_SHEET_GROUPS: MoreSheetRow[][] = [
   [
     { kind: "tab", tab: "api-key", label: "API key", icon: KeyRound },
     { kind: "tab", tab: "releases", label: "Releases", icon: Tag },
-    { kind: "tab", tab: "account", label: "Account", icon: CircleUserRound },
     { kind: "theme", label: "Theme", icon: SunMoon },
   ],
   [
@@ -74,9 +77,6 @@ type MoreSheetProps = {
   onChooseTheme: (preference: ThemePreference) => void;
   /** Fired by the dialog's own `close` event, however it closed. */
   onClose: () => void;
-  /** Show the Account row (auth phase 2); off unless `/app` says sign-in is
-   *  available. */
-  showAccount?: boolean;
 };
 
 export default function MoreSheet({
@@ -87,7 +87,6 @@ export default function MoreSheet({
   themePreference,
   onChooseTheme,
   onClose,
-  showAccount = false,
 }: MoreSheetProps) {
   /* The dialog has no padding of its own (it is on `.sheet-body`), so the only
      click whose target is the <dialog> element itself is one on ::backdrop. */
@@ -195,11 +194,9 @@ export default function MoreSheet({
         </h2>
         {MORE_SHEET_GROUPS.map((group, index) => (
           <ul key={index} className="sheet-list">
-            {group
-              .filter((row) => showAccount || row.kind !== "tab" || row.tab !== "account")
-              .map((row) => (
-                <li key={row.label}>{renderRow(row)}</li>
-              ))}
+            {group.map((row) => (
+              <li key={row.label}>{renderRow(row)}</li>
+            ))}
           </ul>
         ))}
       </div>

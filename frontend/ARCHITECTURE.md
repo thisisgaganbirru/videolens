@@ -72,7 +72,7 @@ pre-paint theme / shell / redirect / splash scripts), `manifest.ts`, CSS
 one tab (and the sole caller of `useCapabilities`). The chrome is two shells
 picked before first paint by `<html data-shell>` (`shell.ts`): `web` is
 `AppNav` with four tabs plus `SiteFooter`; `app` (installed, phone width) is
-`AppNav` brand-only, `BottomTabBar` (Analyze, History, More) and `MoreSheet`
+`AppNav` brand-only, `BottomTabBar` (Analyze, History, Account when sign-in is available, More) and `MoreSheet`
 (API key, Releases, Privacy, Terms, theme). Both are always rendered; CSS
 hides one. `panels/` holds one component per tab; `UploadForm`,
 `RunStatusView`, `ResultsView`, the notices and `UpdatePrompt` are

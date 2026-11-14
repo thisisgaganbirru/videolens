@@ -10,7 +10,7 @@ shells").
 - `frontend/components/HomeScreen.tsx` — the shell for one tab: nav band, active view, footer band. Takes the tab as a prop; `RoutedHomeScreen` (same file) is the variant that reads it from the URL. Also the single caller of `useCapabilities()` — see `capability-reporting.md`.
 - `frontend/components/AppNav.tsx` — the top bar as one component: brand, the four tab links (desktop, web shell), theme toggle, phone hamburger + full-screen menu panel. Exports `TAB_LABEL`. Rendered by `HomeScreen`, `LegalShell` and `/offline`.
 - `frontend/components/SiteFooter.tsx` — the web shell's footer (one copy; was three).
-- `frontend/components/BottomTabBar.tsx` — the installed-app dock: Analyze, History, More. Owns the More sheet's open state.
+- `frontend/components/BottomTabBar.tsx` — the installed-app dock: Analyze, History, Account (only when sign-in is available, 2026-11-14), More. Owns the More sheet's open state.
 - `frontend/components/MoreSheet.tsx` — the More `<dialog>`; contents are `MORE_SHEET_GROUPS` (data).
 - `frontend/components/shell.ts` — `ShellMode`, `SHELL_STORAGE_KEY`; `navClick.ts` — `isPlainLeftClick` shared by every nav.
 - `frontend/application/useMainTab.ts` — the tab as a property of the URL: `MAIN_TABS`, `mainTabHref`, `goToMainTab`, `useMainTab`.
@@ -960,3 +960,4 @@ dark. `verify_reach.py` covers the reachability notice (32/32).
 - 2026-11-02 · frontend (refinement 15) · dock capped with min(rem, px) (64px portrait / 52px sideways at every scale, labels ≤ 14/15px, 44px items); More-sheet icon tile, gap and chevron capped so labels never reach their chevrons (320/200% "Releases" −39 → +33px), theme indent follows; theme tiers and header unchanged; intake cards stack (see capability-reporting.md, free-runs.md)
 - 2026-11-08 · frontend subagent (auth phase 2) · new `account` tab (`MAIN_TABS`, `TAB_LABEL`, a More-sheet row with `CircleUserRound`), shown only when sign-in is configured and the `auth` capability is `ok` (`navTabs(showAccount)`); `/app?view=account` still renders the panel. See auth-sign-in.md
 - 2026-11-13 · frontend agent · top bar gains `.nav-account` (round Account link after the theme toggle, ≥ 48rem only, same visibility rules as `.nav-links`); Account leaves the inline text tabs. See auth-sign-in.md
+- 2026-11-14 · frontend agent · dock gains an Account item (4 items when `showAccount`, 62px each at 320, 52px tall, labels unclipped); the More sheet drops its Account row. See auth-sign-in.md
