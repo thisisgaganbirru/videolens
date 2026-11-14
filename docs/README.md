@@ -42,6 +42,7 @@ Every new feature or component should get (or update) a doc here. Scope is stric
 | `results-view.md` | The finished result: notes, transcript, screen text, export |
 | `run-analysis-hook.md` | `useAnalysisRun`: submit/poll/open/reset, the active-run store |
 | `run-history.md` | History in IndexedDB, the poster grid, filters and sort |
+| `saved-history.md` | Paid saved history (the account's runs on History, load more, delete, opening a saved run) and the 30-day account deletion hold (held state, restore) |
 | `free-runs.md` | The client half of free runs: device token, banner, 401 retry and 402 handling |
 | `byok-api-key.md` | The API key tab |
 | `auth-sign-in.md` | Optional sign-in (emailed code), the Account tab, VideoLens API keys, the bearer on every request |
@@ -131,3 +132,4 @@ someone else's entry.
 - 2026-11-08 · frontend subagent (auth phase 2) · indexed `frontend/auth-sign-in.md`
 - 2026-11-13 · backend agent · indexed `backend/billing.md`
 - 2026-11-14 · backend agent · indexed `backend/saved-history.md`
+2026-11-14 · frontend agent · indexed `frontend/saved-history.md`

@@ -376,6 +376,16 @@ view offer "Back to History", which is `goToMainTab("history")`.
 - The empty state and the storage state's "Analyze a video" is the filled `btn btn-primary` (the one way forward); "Show all runs" and the read-failure "Try again" stay outline.
 - Measured: below the lede the populated grid is unchanged at 320, 412 and 1280 (every control, label and poster at the same offset from the lede's bottom); at 412 the lede is now one line, so the grid starts 24px higher.
 
+## Paid saved history (2026-11-14)
+
+While the signed-in account saves its runs (`saving`) or its plan ended and
+they are kept until a date (`window`), this page lists the account's runs
+instead, a page at a time with "Load more runs", and moves what only this
+browser has into a quieter "Only in this browser" group. Filters, search and
+sort are not drawn there. Every other case (anonymous, free, an older
+backend, sign-in or billing off) is this page exactly as described above.
+The whole design is in `saved-history.md`.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported HistoryPanel to day-grouped rows with status dots; fixed duplicate React keys on non-adjacent "Undated" groups
@@ -395,3 +405,4 @@ view offer "Back to History", which is `goToMainTab("history")`.
 - 2026-11-14 · frontend agent · UX fix spec batch c: "Back to History" on a result or expired run opened from History (`fromHistory` in HomeScreen)
 - 2026-11-14 · frontend agent · UX fix spec batch d: lede names the limit and this browser; empty and storage states get the filled "Analyze a video"
 - 2026-11-14 · frontend agent · UX fix spec follow-up: the shared-link effect no longer clears `fromHistory` (lint: setter used before its declaration); the next submit clears it
+2026-11-14 · frontend agent · paid saved history: while the account saves runs (or the plan ended) History lists the account's runs with Load more, browser-only runs in a quieter second group, no filters/search/sort; free and anonymous unchanged (see saved-history.md)
