@@ -21,7 +21,8 @@ import HistoryPanel from "@/components/panels/HistoryPanel";
 import VersionLogPanel from "@/components/panels/VersionLogPanel";
 import AccountPanel from "@/components/panels/AccountPanel";
 import { useAnalysisRun } from "@/application/useAnalysisRun";
-import { useHistoryBoot } from "@/application/useRunHistory";
+import { HISTORY_LIMIT, useHistoryBoot } from "@/application/useRunHistory";
+import { useDocumentTitle } from "@/application/useDocumentTitle";
 import { useCapabilities } from "@/application/useCapabilities";
 import { useAuthUser } from "@/application/useAuthSession";
 import { useMediaLimits } from "@/application/useMediaLimits";
@@ -204,6 +205,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   useEffect(() => {
     if (!sharedUrl) return;
     goToMainTab("analyze");
+    setFromHistory(false);
     reset();
   }, [sharedUrl, reset]);
 
@@ -230,6 +232,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      remounts on reset and would otherwise take the same share again). Derived
      during render, no effect: the form itself applies whatever it is handed. */
   const [againPrefill, setAgainPrefill] = useState<SharedUrl | null>(null);
+  const [fromHistory, setFromHistory] = useState(false);
   const [dismissedShare, setDismissedShare] = useState<SharedUrl | null>(null);
   const liveShare = sharedUrl && sharedUrl !== dismissedShare ? sharedUrl : null;
   const formPrefill =
@@ -238,6 +241,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   /** Every "analyze another" / "stop watching": a fresh, empty intake. Terms
    *  stay accepted (they are remembered by the form, not cleared here). */
   const startOver = () => {
+    setFromHistory(false);
     setDismissedShare(sharedUrl);
     setAgainPrefill(null);
     reset();
@@ -245,6 +249,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
 
   /** Expired run: back to the intake with its link in the field, if stored. */
   const analyzeAgain = () => {
+    setFromHistory(false);
     setDismissedShare(sharedUrl);
     setAgainPrefill(againUrl ? { url: againUrl, receivedAt: Date.now() } : null);
     reset();
@@ -298,8 +303,41 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
        `source_kind`, when it has one, seeds the run's frames before the
        first status response arrives. */
     goToMainTab("analyze", { push: true });
+    setFromHistory(true);
     void openRun(runId, sourceKind);
   };
+
+  /* UX fix spec 4.5: a run opened from History offers the way back to it.
+     True only from `handleOpenRun`; every reset and every new submit clears
+     it. */
+  const backToHistory = () => goToMainTab("history");
+  const submitFresh: typeof submit = (...args) => {
+    setFromHistory(false);
+    return submit(...args);
+  };
+
+  /* UX fix spec 4.6: the tab title names the view and the run state. */
+  const titleLabel =
+    activeTab === "analyze"
+      ? status === "idle"
+        ? "Analyze a video"
+        : status === "complete"
+          ? result?.title?.trim() || "Result"
+          : status === "failed"
+            ? expired
+              ? "Run expired"
+              : "Run failed"
+            : "Analyzing"
+      : activeTab === "history"
+        ? "History"
+        : activeTab === "api-key"
+          ? "Gemini key"
+          : activeTab === "releases"
+            ? "Releases"
+            : activeTab === "account"
+              ? "Account"
+              : null;
+  useDocumentTitle(titleLabel);
 
   /* No `data-frame` here any more. Phase 2 retired the inner results pane:
      the whole Analyze band is the one scroller (from 32rem up it scrolls
@@ -376,7 +414,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                   transcript, the text on screen, a short summary, and notes you can keep.
                 </p>
                 <UploadForm
-                  onSubmit={submit}
+                  onSubmit={submitFresh}
                   submitting={submitting}
                   blocked={freeRuns.blocked && stripKnown}
                   blockedPeriod={freeRuns.banner?.period}
@@ -473,6 +511,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                 expired={expired}
                 canRefill={againUrl !== null}
                 onAnalyzeAgain={sourceKind === "file" && againUrl === null ? chooseFileAgain : analyzeAgain}
+                onBackToHistory={fromHistory ? backToHistory : undefined}
                 mediaKind={mediaKind}
                 freeRunRefunded={freeRunRefunded}
               />
@@ -524,6 +563,11 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     </p>
                   )}
                 </div>
+                {fromHistory ? (
+                  <button type="button" className="btn btn-secondary btn-block reset-wide" onClick={backToHistory}>
+                    Back to History
+                  </button>
+                ) : null}
                 <button type="button" className="btn btn-secondary btn-block reset-wide" onClick={startOver}>
                   Analyze another
                 </button>
@@ -538,9 +582,21 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     completeness={completeness}
                   />
                 </article>
-                {/* The same action, placed under the card on a phone where
+                {/* UX fix spec 4.4: where the result is kept. Static text, so
+                    it reserves its own height. Shown even when History cannot
+                    be saved: that error is only known to the History panel's
+                    own read, and a second IndexedDB read here is not cheap. */}
+                <p className="result-saved">
+                  History keeps your last {HISTORY_LIMIT} runs in this browser. Not synced.
+                </p>
+                {/* The same actions, placed under the card on a phone where
                     the source column is a pill above it. CSS shows exactly
-                    one of the two. */}
+                    one of each pair. */}
+                {fromHistory ? (
+                  <button type="button" className="btn btn-secondary btn-block reset-narrow" onClick={backToHistory}>
+                    Back to History
+                  </button>
+                ) : null}
                 <button type="button" className="btn btn-secondary btn-block reset-narrow" onClick={startOver}>
                   Analyze another
                 </button>

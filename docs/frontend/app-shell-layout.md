@@ -927,6 +927,15 @@ dark. `verify_reach.py` covers the reachability notice (32/32).
   the coarse-pointer `2.75rem` floor. Sheet rows still keep their `3.5rem`
   min-height. Both are outside this pass.
 
+## Document titles (UX fix spec, 2026-11-14)
+
+`application/useDocumentTitle.ts` sets `document.title` in an effect to
+`<label> · <suffix>`; the suffix is the prerendered title's last " · " part
+(the site name), read once. `HomeScreen` labels: Analyze idle "Analyze a
+video", queued/processing/lost "Analyzing", failed "Run failed", expired "Run
+expired", result the result title (or "Result"); "History", "Gemini key",
+"Releases", "Account". No render-time DOM read, no localStorage.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent (foundation) · rebuilt the shell to the Terminal direction: one-viewport flex chain, pill nav, mobile drawer, 4 tabs, theme toggle
@@ -964,3 +973,4 @@ dark. `verify_reach.py` covers the reachability notice (32/32).
 - 2026-11-14 · frontend agent · top bar: `.nav-account--signin` modifier, a "Sign in" pill (auto width, 44px) in the `.nav-account` slot when signed out; same display rules (≥48rem, hidden in the sideways app shell); nothing in the slot until auth state is ready. See auth-sign-in.md
 - 2026-11-14 · frontend agent · landing, legal and 404 render `RouteNav`/`RouteTabBar` (AppNav/BottomTabBar plus the Account entry from `useAccountEntry`); `/offline` keeps plain AppNav/BottomTabBar. See auth-sign-in.md
 - 2026-11-14 · frontend agent · the `api-key` tab is labelled "Gemini key" in the top bar, phone menu and More sheet; id and URL unchanged (UX fix spec batch a)
+- 2026-11-14 · frontend agent · UX fix spec batch c: per-view document titles via `useDocumentTitle`

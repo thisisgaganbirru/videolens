@@ -666,9 +666,9 @@ export default function ResultsView({
           the download used to live under the last panel, where it read as part
           of that panel and was a long scroll away on a full transcript. */}
       <div className="result-head">
-        <h2 className="result-title" dir="auto">
+        <h1 className="result-title" dir="auto">
           {result.title}
-        </h2>
+        </h1>
         <div className="result-actions">
           <span className="copy-wrap">
             <button

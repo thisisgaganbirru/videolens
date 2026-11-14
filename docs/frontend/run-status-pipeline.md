@@ -183,6 +183,28 @@ back to "Connection lost".
   with `_BLOCKED_DOWNLOAD` in `backend/app/infrastructure/media/ytdlp_downloader.py`.
   If that wording drifts, it falls back to the ordinary download advice.
 
+## UX fix spec, batch c (2026-11-14)
+
+- **Failed order.** For `mode === "failed"` only, `RunStatusView` renders
+  pill, h1, lede, then `.run-notice`, `.run-refund`, `.run-actions` (Try
+  again ink, Analyze another outline) and the `.filmstrip` last, so the reason
+  and the way on are in the first screen on a phone (departs from
+  ProgressFailed.png; owner decision). The strip and the stop block are two
+  constants (`filmstrip`, `stopBlock`) so the order is one branch. Lost keeps
+  the board's order (strip, then card and actions). Gaps that changed are
+  `var(--space-md)`: `.run-notice[data-tone="failed"]` margin-top, and
+  `.run-actions + .filmstrip` / `.run-refund + .filmstrip`.
+  Measured at 412x915: notice ends at y=357, Try again at y=455.
+- **Phone strip.** Below 32rem `.frame` is `min-height: 3.25rem;
+  padding-block: 0.375rem` and `.frame-label` 1rem. At 320x640 the fourth
+  frame is fully on screen (509 to 562, footer at 568). The strip is 270px at
+  phone widths and 220px at 1280 in every stage (measured across a stage
+  change), so nothing moves.
+- **Expired from History.** `ExpiredRunView` (and `RunStatusView`, which
+  passes it through) take `onBackToHistory`; when set, an outline "Back to
+  History" follows the ink button in `.run-actions`. `HomeScreen` passes it
+  only for a run opened from History.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported RunStatusView to the centred .run-state pipeline; returns a fragment (.run-state > .status is a direct-child selector)
@@ -196,3 +218,4 @@ back to "Connection lost".
 - 2026-11-02 · frontend agent (refinement 6) · RUN-08 server-trouble wording for 5xx polls (lostCause prop)
 - 2026-11-02 · frontend agent (refinement 9) · stage- and media-aware progress copy (no "video" on audio, normalize hint only while normalizing); expired copy covers expiry and server loss; refund line on the failed view; blocked-download (403/429) next-step advice via a phrase match on the backend message
 - 2026-11-14 · frontend agent · wording (UX fix spec batch a): "Analyze another", "Stop watching and start another", "never reached this browser", "This didn't use one of your runs."
+- 2026-11-14 · frontend agent · UX fix spec batch c: failed run draws the reason, refund line and actions above the strip (lost unchanged); phone frame compaction below 32rem; `onBackToHistory` on the expired view
