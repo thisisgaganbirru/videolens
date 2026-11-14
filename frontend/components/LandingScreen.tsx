@@ -130,11 +130,11 @@ export default function LandingScreen() {
             <dl className="landing-wyg-foot landing-details">
               <div>
                 <dt>Your files</dt>
-                <dd>Your video is deleted when the run finishes. The result is kept for an hour, or saved to your account on the paid plan.</dd>
+                <dd>Your video is deleted when the run finishes. The result is kept for an hour, or saved to your account on Plus.</dd>
               </div>
               <div>
                 <dt>Your history</dt>
-                <dd>Saved in this browser, so you can come back to your notes. On the paid plan, on every device where you sign in.</dd>
+                <dd>Saved in this browser, so you can come back to your notes. On Plus, on every device where you sign in.</dd>
               </div>
               <div>
                 <dt>When today&apos;s runs are used</dt>
