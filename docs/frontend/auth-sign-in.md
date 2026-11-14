@@ -18,6 +18,9 @@ loaded, no bearer on any request.
 Blank either one and `buildAuthSession()` returns `NullAuthSession`. Both
 are build-time values: changing them needs a rebuild (and a dev server
 restart, since `next.config.mjs` computes the CSP header once at start).
+In the container build they reach `next build` only because
+`frontend/Dockerfile` declares both as `ARG`s; a service variable the
+Dockerfile does not declare is ignored and sign-in stays hidden.
 
 ## Layers
 
@@ -583,3 +586,4 @@ copy now explains the hold. Everything is in `saved-history.md`.
 - 2026-11-14 · frontend agent · reviewed Codex's Account refinements in the browser (320-1440, both themes, both shells, signed out / free / paid with and without `extra_runs` / loading / failed); one-line value reservations from 20rem, framed billing stand-in, muted "Runs unavailable", "Plan unavailable" instead of a false "Free account" when the plan read failed
 2026-11-14 · frontend agent · `DELETE /api/me` now answers 200 `{status, purge_at}` (30-day hold; legacy 204 still handled); delete form, deleted card and the new held/restore states rewritten for the hold; `AccountProblem` gains `held`; `useAccount` re-reads after a restore (see saved-history.md)
 - 2026-11-14 · frontend agent · paid plan is named Plus in the UI (Plan card name)
+- 2026-11-14 · orchestrator · `frontend/Dockerfile` declares the two `NEXT_PUBLIC_SUPABASE_*` values as build ARGs; without them the Railway dev build had no sign-in
