@@ -39,6 +39,12 @@ interface UploadFormProps {
   blockedPeriod?: FreeRunsPeriod;
   /** What to offer when `blocked`. */
   blockedOffer?: "sign-in" | "upgrade" | "key"; // default "key"
+  /** Not blocked yet, but it may be once the allowance answers
+   *  (2026-11-14): an unseen, inert copy of the block holds its space when
+   *  the pre-paint `data-runs-spent` stamp says this device was out of runs
+   *  last time (CSS picks the copy for the stamped offer; otherwise it takes
+   *  no space). */
+  blockedHeld?: boolean;
   /** The most recent link shared into the app, or null. A new object per
    *  arrival, so re-sharing the same link still fills the field. `HomeScreen`
    *  owns the listener and has already returned the shell to a fresh intake by
@@ -122,6 +128,7 @@ export default function UploadForm({
   submitting,
   blocked,
   blockedOffer = "key",
+  blockedHeld = false,
   sharedUrl,
   urlCapability,
   submitError,
@@ -359,26 +366,11 @@ export default function UploadForm({
            works), upgrade (a free account where the plan is sold), else the
            Gemini key. One green button at most; Analyze link is disabled, so
            this is the screen's one enabled filled button. */
-        <div id="intake-blocked" className="intake-blocked">
-          <p className="intake-blocked__text">Analyzing is paused until your runs reset.</p>
-          <div className="intake-blocked__actions">
-            {blockedOffer === "key" ? (
-              <a className="btn btn-secondary btn-pill" href={mainTabHref("api-key")} onClick={openApiKey}>
-                Use your own Gemini key
-              </a>
-            ) : (
-              <>
-                <a className="btn btn-primary btn-pill" href={mainTabHref("account")} onClick={openAccount}>
-                  {blockedOffer === "sign-in"
-                    ? `Sign in for ${ACCOUNT_FREE_RUNS_PER_DAY} runs a day`
-                    : `Upgrade for ${PAID_RUNS_PER_DAY} runs a day`}
-                </a>
-                <a className="text-link" href={mainTabHref("api-key")} onClick={openApiKey}>
-                  Use your own Gemini key
-                </a>
-              </>
-            )}
-          </div>
+        <BlockedBlock id="intake-blocked" offer={blockedOffer} onApiKey={openApiKey} onAccount={openAccount} />
+      ) : blockedHeld ? (
+        <div className="intake-blocked-ghost" aria-hidden="true" inert>
+          <BlockedBlock offer="key" />
+          <BlockedBlock offer="sign-in" />
         </div>
       ) : null}
       {/* noValidate: the field is type="url" for the keyboard and autofill,
@@ -571,6 +563,44 @@ export default function UploadForm({
           {errors.terms}
         </p>
       )}
+      </div>
+    </div>
+  );
+}
+
+/* The out-of-runs block. Rendered for real when blocked, and as an unseen
+   stand-in (no id, no handlers, inside an inert wrapper) while it may be. */
+function BlockedBlock({
+  id,
+  offer,
+  onApiKey,
+  onAccount,
+}: {
+  id?: string;
+  offer: "sign-in" | "upgrade" | "key";
+  onApiKey?: (event: MouseEvent<HTMLAnchorElement>) => void;
+  onAccount?: (event: MouseEvent<HTMLAnchorElement>) => void;
+}) {
+  return (
+    <div id={id} className="intake-blocked" data-offer={offer === "key" ? "key" : "pair"}>
+      <p className="intake-blocked__text">Analyzing is paused until your runs reset.</p>
+      <div className="intake-blocked__actions">
+        {offer === "key" ? (
+          <a className="btn btn-secondary btn-pill" href={mainTabHref("api-key")} onClick={onApiKey}>
+            Use your own Gemini key
+          </a>
+        ) : (
+          <>
+            <a className="btn btn-primary btn-pill" href={mainTabHref("account")} onClick={onAccount}>
+              {offer === "sign-in"
+                ? `Sign in for ${ACCOUNT_FREE_RUNS_PER_DAY} runs a day`
+                : `Upgrade for ${PAID_RUNS_PER_DAY} runs a day`}
+            </a>
+            <a className="text-link" href={mainTabHref("api-key")} onClick={onApiKey}>
+              Use your own Gemini key
+            </a>
+          </>
+        )}
       </div>
     </div>
   );
