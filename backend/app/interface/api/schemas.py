@@ -176,6 +176,16 @@ class EntitlementResponse(BaseModel):
     library: bool
 
 
+class SavedHistoryResponse(BaseModel):
+    """Server-side saved history (docs/backend/saved-history.md). `saving`:
+    new runs are saved (the account is on the paid plan now). `expires_at`:
+    the paid plan ended and the saved runs are removed for good at this time
+    (null while paid, and when there is nothing to remove)."""
+
+    saving: bool = False
+    expires_at: Optional[datetime] = None
+
+
 class AccountResponse(BaseModel):
     """`GET /api/me`. Identity and entitlement, no usage. Kept separate from
     the domain entities so nothing internal (key hashes, other members)
@@ -190,6 +200,63 @@ class AccountResponse(BaseModel):
     # False on a deployment with no account store: sign-in still works, but
     # there is nowhere to keep API keys.
     accounts_enabled: bool
+    saved_history: SavedHistoryResponse = SavedHistoryResponse()
+
+
+class AccountDeletionResponse(BaseModel):
+    """`DELETE /api/me`: the account is in the deletion hold. Signing in
+    again before `purge_at` can restore it (`POST /api/me/restore`)."""
+
+    status: Literal["pending_deletion"] = "pending_deletion"
+    purge_at: datetime
+
+
+class AccountRestoreResponse(BaseModel):
+    """`POST /api/me/restore`. `restored` false: it was not in the hold."""
+
+    restored: bool
+
+
+class SavedRunSourceResponse(BaseModel):
+    source_kind: Optional[Literal["link", "file"]] = None
+    platform: Optional[str] = None
+    # The public link a link run was made from; null for a file run (the
+    # server never keeps a file name).
+    source_url: Optional[str] = None
+    source_title: Optional[str] = None
+    uploader: Optional[str] = None
+    duration_seconds: Optional[float] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+
+
+class SavedRunSummaryResponse(BaseModel):
+    """One saved-history card: no transcript, no notes."""
+
+    run_id: str
+    title: str
+    summary_snippet: Optional[str] = None
+    completeness: AnalysisCompleteness = AnalysisCompleteness.FULL
+    created_at: datetime
+    source: SavedRunSourceResponse
+
+
+class SavedRunListResponse(SavedHistoryResponse):
+    """`GET /api/history`: newest first. `next_cursor` is opaque; send it
+    back as `?cursor=` for the next page; null on the last page."""
+
+    items: list[SavedRunSummaryResponse]
+    next_cursor: Optional[str] = None
+
+
+class SavedRunResponse(SavedRunSummaryResponse):
+    """`GET /api/history/{run_id}`: the full saved result."""
+
+    result: VideoAnalysis
+
+
+class SavedRunsDeletedResponse(BaseModel):
+    deleted: int
 
 
 class ApiKeyCreateRequest(BaseModel):

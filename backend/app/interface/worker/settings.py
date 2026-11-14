@@ -64,13 +64,24 @@ async def flush_extra_runs(ctx: dict) -> None:
         await container.extra_run_billing.flush_due()
 
 
+async def account_cleanup(ctx: dict) -> None:
+    """Hourly: accounts past their 30-day deletion hold are removed for good
+    (Supabase user, then every row), and saved runs past their post-cancel
+    window are removed (docs/backend/saved-history.md). Bounded per tick and
+    idempotent; a no-op without a database."""
+    await container.account_cleanup_use_case.run()
+
+
 class WorkerSettings:
     functions = [
         process_run,
         func(process_long_run, name="process_long_run", timeout=container.settings.long_job_timeout_seconds),
     ]
     # Every 10 minutes; one worker runs each tick (arq's cron lock).
-    cron_jobs = [cron(flush_extra_runs, minute=set(range(0, 60, 10)), run_at_startup=False)]
+    cron_jobs = [
+        cron(flush_extra_runs, minute=set(range(0, 60, 10)), run_at_startup=False),
+        cron(account_cleanup, minute={25}, run_at_startup=False),
+    ]
     on_startup = startup
     on_shutdown = shutdown
     # Keep imports and local tooling usable without Redis. startup() still refuses

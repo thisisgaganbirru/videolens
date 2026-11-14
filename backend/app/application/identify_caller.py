@@ -11,13 +11,24 @@ Order, strongest credential first:
    the prefix alone, so a JWT never costs a key lookup and vice versa.
 2. A bearer token from the identity provider (Supabase): a signed-in person.
 3. `X-Client-ID`: an anonymous browser, when the deployment allows it.
+
+An account in the 30-day deletion hold (docs/backend/saved-history.md) is
+refused here, once, for every endpoint: a session gets
+`AccountPendingDeletionError` (410, so the client can offer the restore),
+an API key of that account is simply invalid (401). Only the restore route
+asks with `allow_pending_deletion=True`.
 """
 
 import asyncio
 import logging
 
 from ..domain.entities import AuthMethod, Principal
-from ..domain.errors import AuthenticationError, AuthNotConfiguredError, ClientIdInvalidError
+from ..domain.errors import (
+    AccountPendingDeletionError,
+    AuthenticationError,
+    AuthNotConfiguredError,
+    ClientIdInvalidError,
+)
 from ..domain.policies import SIGNED_IN_ROLE, bearer_credential, is_valid_client_id, looks_like_api_key
 from ..domain.ports import AccountDirectory, ApiKeyRepository, TokenVerifier
 
@@ -44,18 +55,25 @@ class IdentifyCallerUseCase:
         self._verifier = verifier
         self._allow_anonymous = allow_anonymous
 
-    async def resolve(self, *, authorization: str = "", api_key: str = "", client_id: str = "") -> Principal:
+    async def resolve(
+        self,
+        *,
+        authorization: str = "",
+        api_key: str = "",
+        client_id: str = "",
+        allow_pending_deletion: bool = False,
+    ) -> Principal:
         bearer = _bearer(authorization)
         secret = api_key.strip() or (bearer if looks_like_api_key(bearer) else "")
         if secret:
             return await self.from_api_key(secret)
         if bearer:
-            return await self.from_token(bearer)
+            return await self.from_token(bearer, allow_pending_deletion=allow_pending_deletion)
         if not self._allow_anonymous:
             raise AuthenticationError("Sign in is required.")
         return self.from_client_id(client_id)
 
-    async def from_token(self, token: str) -> Principal:
+    async def from_token(self, token: str, *, allow_pending_deletion: bool = False) -> Principal:
         try:
             # Off the event loop: a JWKS cache miss is a blocking HTTP fetch.
             claims = await asyncio.to_thread(self._verifier.decode, token)
@@ -65,9 +83,9 @@ class IdentifyCallerUseCase:
             # The failure class only; never the token. The verifier logs the kid.
             logger.info("Access token rejected (%s)", type(exc).__name__)
             raise AuthenticationError("Invalid access token.") from exc
-        return await self.from_token_claims(claims)
+        return await self.from_token_claims(claims, allow_pending_deletion=allow_pending_deletion)
 
-    async def from_token_claims(self, claims: dict) -> Principal:
+    async def from_token_claims(self, claims: dict, *, allow_pending_deletion: bool = False) -> Principal:
         subject = str(claims.get("sub", "") or "").strip()
         if not subject:
             raise AuthenticationError("Access token has no subject.")
@@ -84,6 +102,8 @@ class IdentifyCallerUseCase:
             # accounts existed - a bare subject, the deployment's limits.
             return Principal(subject=f"user:{subject}", authenticated=True, method=AuthMethod.TOKEN, email=email)
         account = await self._accounts.resolve_account(subject, email)
+        if account.pending_deletion and not allow_pending_deletion:
+            raise AccountPendingDeletionError(account.purge_at)
         workspace = (
             await self._accounts.get_workspace(account.default_workspace_id)
             if account.default_workspace_id
@@ -106,6 +126,12 @@ class IdentifyCallerUseCase:
         workspace = await self._accounts.get_workspace(key.workspace_id)
         if workspace is None:
             logger.info("API key rejected (workspace %s missing)", key.workspace_id)
+            raise AuthenticationError("Invalid API key.")
+        owner = await self._accounts.get_account(workspace.owner_account_id)
+        if owner is not None and owner.pending_deletion:
+            # A deleted account's keys stop working at once; they come back
+            # with the account if it is restored.
+            logger.info("API key rejected (account %s pending deletion)", workspace.owner_account_id)
             raise AuthenticationError("Invalid API key.")
         return Principal(
             subject=f"key:{key.key_id}",
