@@ -9,6 +9,7 @@ import { isNoticeable } from "@/application/useCapabilities";
 import { revealField } from "@/application/useSoftKeyboard";
 import { goToMainTab, mainTabHref } from "@/application/useMainTab";
 import { FALLBACK_LIMITS, durationLabel } from "@/application/useMediaLimits";
+import { ACCOUNT_FREE_RUNS_PER_DAY, PAID_RUNS_PER_DAY } from "@/application/accountAllowance";
 import { isPlainLeftClick } from "@/components/navClick";
 import { MEDIA_FILE_ACCEPT, readTermsAccepted, writeTermsAccepted } from "@/components/mediaTerms";
 
@@ -27,15 +28,17 @@ interface UploadFormProps {
    *  request (so a rejection does not wipe the typed URL), which means it is
    *  the form that has to show the wait. */
   submitting?: boolean;
-  /** Out of free runs and no key saved (Phase 5b): the free-run banner above
-   *  the card says so and offers "Add key". Analyze, Browse files and drop are
+  /** Out of runs and no key saved (Phase 5b): the strip above the card says
+   *  so, and the card offers the way out (`blockedOffer`). Analyze, Browse files and drop are
    *  all refused — none of them could succeed — but the link field stays
    *  editable, so a typed link survives saving a key and coming back. */
   blocked?: boolean;
   /** The period of the allowance that is spent when `blocked`: `day`
    *  (default; a device or, since 2026-11-14, a free account) or `month`.
-   *  Only changes the wording of the blocked note. */
+   *  Kept for callers; since 2026-11-14 the blocked note no longer names it. */
   blockedPeriod?: FreeRunsPeriod;
+  /** What to offer when `blocked`. */
+  blockedOffer?: "sign-in" | "upgrade" | "key"; // default "key"
   /** The most recent link shared into the app, or null. A new object per
    *  arrival, so re-sharing the same link still fills the field. `HomeScreen`
    *  owns the listener and has already returned the shell to a fresh intake by
@@ -118,7 +121,7 @@ export default function UploadForm({
   disabled,
   submitting,
   blocked,
-  blockedPeriod = "day",
+  blockedOffer = "key",
   sharedUrl,
   urlCapability,
   submitError,
@@ -350,20 +353,39 @@ export default function UploadForm({
         </p>
       ) : null}
       {blocked ? (
-        <p id="intake-blocked" className="intake-blocked">
-          No free runs left {blockedPeriod === "month" ? "this month" : "today"}, so analyzing is paused.{" "}
-          <a className="text-link" href={mainTabHref("api-key")} onClick={openApiKey}>
-            Add key
-          </a>{" "}
-          to keep going.
-        </p>
+        /* UX fix spec (2026-11-14): the one way out, in the order the
+           business wants it offered: sign in (signed out, where sign-in
+           works), upgrade (a free account where the plan is sold), else the
+           Gemini key. One green button at most; Analyze link is disabled, so
+           this is the screen's one enabled filled button. */
+        <div id="intake-blocked" className="intake-blocked">
+          <p className="intake-blocked__text">Analyzing is paused until your runs reset.</p>
+          <div className="intake-blocked__actions">
+            {blockedOffer === "key" ? (
+              <a className="btn btn-secondary btn-pill" href={mainTabHref("api-key")} onClick={openApiKey}>
+                Use your own Gemini key
+              </a>
+            ) : (
+              <>
+                <a className="btn btn-primary btn-pill" href={mainTabHref("account")} onClick={openAccount}>
+                  {blockedOffer === "sign-in"
+                    ? `Sign in for ${ACCOUNT_FREE_RUNS_PER_DAY} runs a day`
+                    : `Upgrade for ${PAID_RUNS_PER_DAY} runs a day`}
+                </a>
+                <a className="text-link" href={mainTabHref("api-key")} onClick={openApiKey}>
+                  Use your own Gemini key
+                </a>
+              </>
+            )}
+          </div>
+        </div>
       ) : null}
       {/* noValidate: the field is type="url" for the keyboard and autofill,
           but the browser's own "Please enter a URL." bubble would pre-empt
           the app's messages below (refinement 2, #4). submitUrl validates. */}
       <form onSubmit={submitUrl} className="link-form" noValidate data-reveal-group>
         <label htmlFor="media-url" className="intake-card__label">
-          Paste a link
+          Paste a public link
         </label>
         <div className="link-row">
           <input

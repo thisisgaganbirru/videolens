@@ -53,7 +53,9 @@ const FREE_RUNS_GHOST: FreeRunsBannerState = {
   limit: 3,
   exhausted: false,
   overage: false,
-  resetsAt: "",
+  /* A valid time, so the stand-in carries the "Resets at …" sentence and is
+     as long as the real strip (UX fix spec 3.2). */
+  resetsAt: "2026-01-01T00:00:00Z",
 };
 
 export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
@@ -180,6 +182,12 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   /* Signing in or out changes who owns runs on the server, so a run being
      watched would stop answering. The Account panel holds both meanwhile. */
   const runInProgress = submitting || status === "queued" || status === "processing";
+  /* The strip and the out-of-runs offer both depend on whether sign-in is
+     offered, which is known only once the capabilities read and the session
+     have answered. Until then the slot keeps its stand-in, so the strip
+     never lands short and then grows a "Sign in" sentence (a measured 0.037
+     layout shift at 412 px, UX fix spec 3.6). */
+  const stripKnown = capabilitiesSettled && authUser.ready;
 
   /* A link shared into the app is a request to analyze *that*, so it takes the
      screen over: whatever tab is showing, and whatever run is on it, gives way
@@ -340,21 +348,26 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     commonest sentence, so the real one lands in space already
                     taken at every width instead of pushing the page down. */}
                 <div className="free-runs-slot" role="status" data-pending={freeRuns.pending || undefined}>
-                  {freeRuns.banner ? (
+                  {freeRuns.banner && stripKnown ? (
                     <FreeRunsBanner
                       banner={freeRuns.banner}
                       offerSignIn={showAccount && authUser.ready && !authUser.user}
                       offerUpgrade={billing !== null && billing.plan === "free"}
                       extraRunPrice={extraRunPrice}
                     />
-                  ) : freeRuns.pending ? (
+                  ) : freeRuns.pending || freeRuns.banner ? (
                     <div className="free-runs-ghost" aria-hidden="true" inert>
                       <FreeRunsBanner banner={FREE_RUNS_GHOST} offerSignIn />
                     </div>
                   ) : null}
                 </div>
                 <p className="eyebrow">New analysis</p>
-                <h1 className="intake-title">Turn any short video into clean notes.</h1>
+                {/* Phone (below 32rem): the short title, no eyebrow, no lede
+                    (UX fix spec 3.5); CSS shows one span. */}
+                <h1 className="intake-title">
+                  <span className="intake-title__long">Turn any short video into clean notes.</span>
+                  <span className="intake-title__short">New analysis</span>
+                </h1>
                 <p className="intake-lede">
                   {/* Same pointer/touch swap as the drop zone's title
                       (globals.css): "drop" is a lie on a touch screen. */}
@@ -365,8 +378,16 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                 <UploadForm
                   onSubmit={submit}
                   submitting={submitting}
-                  blocked={freeRuns.blocked}
+                  blocked={freeRuns.blocked && stripKnown}
                   blockedPeriod={freeRuns.banner?.period}
+                  /* The out-of-runs offer, in order: sign in, upgrade, key. */
+                  blockedOffer={
+                    showAccount && authUser.ready && !authUser.user
+                      ? "sign-in"
+                      : billing !== null && billing.plan === "free"
+                        ? "upgrade"
+                        : "key"
+                  }
                   sharedUrl={formPrefill}
                   urlCapability={urlDownload}
                   /* Back at idle with an error means the submit was rejected,
