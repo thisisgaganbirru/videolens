@@ -370,6 +370,8 @@ export interface AccountResponse {
   /** False when the server has nowhere to keep accounts: sign-in works, but
    *  there is no workspace and `/api/keys` answers 503. */
   accounts_enabled: boolean;
+  /** Paid saved history (2026-11-14). Absent on older backends. */
+  saved_history?: SavedHistoryStatus | null;
 }
 
 /** A VideoLens API key as a listing shows it. Never carries the secret. */
@@ -392,4 +394,59 @@ export interface ApiKeyCreated extends ApiKeySummary {
 
 export interface ApiKeyListResponse {
   keys: ApiKeySummary[];
+}
+
+/* ---- saved history (paid, 2026-11-14; contract in docs/backend/saved-history.md) ----
+   A paid account's successful runs are saved on the server. Every field is
+   optional-tolerant: an older backend has no `/api/history` (404) and no
+   `saved_history` on `/api/me`, and the gateways cast rather than validate. */
+
+/** Whether the account is saving runs now, and when its saved runs are
+ *  removed after a plan ended (ISO, or null while paid / never paid). */
+export interface SavedHistoryStatus {
+  saving: boolean;
+  expires_at: string | null;
+}
+
+/** What the server kept about where a saved run came from. Any field may be
+ *  null; a file run has no `source_url` (the server never keeps a name). */
+export interface SavedRunSource {
+  source_kind?: RunSourceKind | null;
+  platform?: RunPlatform | null;
+  source_url?: string | null;
+  source_title?: string | null;
+  uploader?: string | null;
+  duration_seconds?: number | null;
+  width?: number | null;
+  height?: number | null;
+}
+
+/** One saved run as `GET /api/history` lists it: light fields only. */
+export interface SavedRunSummary {
+  run_id: string;
+  title: string | null;
+  summary_snippet?: string | null;
+  completeness?: AnalysisCompleteness | string | null;
+  created_at: string;
+  source?: SavedRunSource | null;
+  /** The poster, same shape as a finished run's `thumbnail`: a
+   *  `data:image/jpeg;base64,...` URL (<= ~20 KB) or null. Absent on a
+   *  backend that predates it. */
+  thumbnail?: string | null;
+}
+
+export interface SavedRunPage extends SavedHistoryStatus {
+  items: SavedRunSummary[];
+  next_cursor: string | null;
+}
+
+/** `GET /api/history/{run_id}`: the summary plus the full saved result. */
+export interface SavedRunDetail extends SavedRunSummary {
+  result: VideoAnalysis;
+}
+
+/** `DELETE /api/me` (2026-11-14): the account is held, not removed. Null
+ *  `purgeAt` from an older backend that answered 204 and removed it at once. */
+export interface AccountDeletionOutcome {
+  purgeAt: string | null;
 }

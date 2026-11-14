@@ -3,7 +3,10 @@
    they go through a hook, which goes through the shared container. */
 
 import type {
+  AccountDeletionOutcome,
   AccountResponse,
+  SavedRunDetail,
+  SavedRunPage,
   BillingInterval,
   BillingStatus,
   ApiKeyCreated,
@@ -339,8 +342,42 @@ export interface AccountGateway {
   listKeys(): Promise<ApiKeyListResponse>;
   createKey(name: string): Promise<ApiKeyCreated>;
   revokeKey(keyId: string): Promise<void>;
-  /** `DELETE /api/me` (auth phase 3): the account, its workspace, API keys
-   *  and any runs the server still holds for it. Resolves on 204; rejects
-   *  with `ApiError` (401, 403, 503, anything unexpected) or `NetworkError`. */
-  deleteAccount(): Promise<void>;
+  /** `DELETE /api/me`. Since 2026-11-14 it starts a 30-day hold: 200
+   *  `{status: "pending_deletion", purge_at}`, resolved as `purgeAt`. An
+   *  older backend's 204 (removed at once) resolves with `purgeAt: null`.
+   *  Rejects with `ApiError` (401, 403, 410, 503, anything unexpected) or
+   *  `NetworkError`. */
+  deleteAccount(): Promise<AccountDeletionOutcome>;
+  /** `POST /api/me/restore`: lifts the hold. True when it was held and now
+   *  is not; false when it was not held. Rejects with `ApiError` (410
+   *  `restore_window_closed` once `purge_at` has passed) or `NetworkError`. */
+  restoreAccount(): Promise<boolean>;
+}
+
+/** Paid saved history (2026-11-14): the account's saved runs on the server.
+ *  Signed-in sessions only (401 anonymous, 403 an API key, 410 a held
+ *  account). An older backend answers 404 to all of it. */
+export interface SavedHistoryGateway {
+  /** `GET /api/history?limit=&cursor=`, newest first. */
+  list(limit: number, cursor: string | null): Promise<SavedRunPage>;
+  /** `GET /api/history/{run_id}`; `ApiError` 404 when it is not saved. */
+  get(runId: string): Promise<SavedRunDetail>;
+  /** `DELETE /api/history/{run_id}`; 204. */
+  remove(runId: string): Promise<void>;
+  /** `DELETE /api/history`; how many were removed. */
+  removeAll(): Promise<number>;
+}
+
+/** A held account was refused (410 `account_pending_deletion`, any route),
+ *  as the API client heard it: which identity the request went out as
+ *  (`user:<id>`) and when the account is removed for good. */
+export interface AccountHoldNotice {
+  owner: string | null;
+  purgeAt: string | null;
+}
+
+/** Every 410 `account_pending_deletion` the API client receives, whichever
+ *  gateway made the request. Returns unsubscribe. */
+export interface AccountHoldSource {
+  subscribe(listener: (notice: AccountHoldNotice) => void): () => void;
 }

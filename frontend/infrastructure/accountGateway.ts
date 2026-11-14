@@ -1,4 +1,4 @@
-import type { AccountResponse, ApiKeyCreated, ApiKeyListResponse } from "@/domain/entities";
+import type { AccountDeletionOutcome, AccountResponse, ApiKeyCreated, ApiKeyListResponse } from "@/domain/entities";
 import type { AccountGateway } from "@/domain/ports";
 import type { ApiClient } from "./apiClient";
 
@@ -27,9 +27,22 @@ export class FetchAccountGateway implements AccountGateway {
     if (!res.ok) await this.client.reject(res, "Could not revoke the API key");
   }
 
-  /* No body either way: 204 is the only success. */
-  async deleteAccount(): Promise<void> {
+  /* 200 `{status: "pending_deletion", purge_at}` since 2026-11-14 (the
+     30-day hold); an older backend's 204 has no body and removed the
+     account at once, which `purgeAt: null` reports. */
+  async deleteAccount(): Promise<AccountDeletionOutcome> {
     const res = await this.client.send("/api/me", { method: "DELETE" });
     if (!res.ok) await this.client.reject(res, "Could not delete your account");
+    if (res.status === 204) return { purgeAt: null };
+    const body = await res.json().catch(() => null);
+    return { purgeAt: typeof body?.purge_at === "string" ? body.purge_at : null };
+  }
+
+  /** `POST /api/me/restore`: true when a held account was restored. */
+  async restoreAccount(): Promise<boolean> {
+    const res = await this.client.send("/api/me/restore", { method: "POST" });
+    if (!res.ok) await this.client.reject(res, "Could not restore your account");
+    const body = await res.json().catch(() => null);
+    return body?.restored === true;
   }
 }

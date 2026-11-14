@@ -8,6 +8,7 @@ import type {
   RunStatus,
   RunSourceKind,
   RunStatusResponse,
+  SavedRunSummary,
   SourceMetadata,
   VideoAnalysis,
 } from "@/domain/entities";
@@ -29,7 +30,15 @@ import {
   usingOwnKey,
 } from "@/application/useFreeRuns";
 import { ApiError } from "@/domain/errors";
-import { activeRunStore, apiKeyStore, historyStore, runsGateway, sharedUrlSource } from "@/infrastructure/container";
+import { markSavedRunGone } from "@/application/useSavedHistory";
+import {
+  activeRunStore,
+  apiKeyStore,
+  historyStore,
+  runsGateway,
+  savedHistoryGateway,
+  sharedUrlSource,
+} from "@/infrastructure/container";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -67,6 +76,20 @@ function describeSource(source: MediaSource): string {
 const SUBMIT_FALLBACK = "Could not submit media.";
 const OPEN_FALLBACK = "Could not load that run.";
 const POLL_FALLBACK = "Something went wrong.";
+const SAVED_OPEN_FALLBACK = "That saved run could not be opened.";
+/** Said when a run listed as saved to the account is no longer there (a 404
+ *  on opening it): deleted on another device, or removed when the plan's
+ *  30 days ran out. */
+export const SAVED_GONE_MESSAGE = "This run is no longer saved to your account.";
+
+/** How opening a saved run went, for History: `shown` (on Analyze now),
+ *  `gone` (the unavailable view is on Analyze), `error` (nothing changed on
+ *  screen; History says why), `stale` (something else was opened meanwhile). */
+export type SavedOpenOutcome = { kind: "shown" | "gone" | "stale" } | { kind: "error"; message: string };
+
+/** Why the expired view is showing: the server forgot a live run
+ *  (`server`), or a run saved to the account is gone (`saved`). */
+export type ExpiredReason = "server" | "saved";
 
 /** Why the poll is down (refinement 6, RUN-08). `network`: no answer at all
  *  (offline, refused, DNS). `server`: the server answered, with an error
@@ -177,7 +200,7 @@ export function useAnalysisRun() {
      source was wrong, so the failed view drops its "try a different link"
      advice and offers to analyze it again. `againUrl` is the link to put back
      in the field, when this browser stored one. */
-  const [expired, setExpired] = useState<{ againUrl: string | null } | null>(null);
+  const [expired, setExpired] = useState<{ againUrl: string | null; reason?: ExpiredReason } | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const runIdRef = useRef<string | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -677,6 +700,84 @@ export function useAnalysisRun() {
     return true;
   }, [openRun]);
 
+  /* Paid saved history (2026-11-14): open a run saved to the account. This
+     browser's own finished copy, when it has one, opens with no network (as
+     History always has). Otherwise the saved detail is fetched *before*
+     anything on screen changes, so a failure leaves History where it was
+     and History can say why; a 404 shows the unavailable view. */
+  const openSavedRun = useCallback(
+    async (summary: SavedRunSummary): Promise<SavedOpenOutcome> => {
+      const generation = ++generationRef.current;
+      try {
+        const record = await historyStore.get(summary.run_id);
+        if (generationRef.current !== generation) return { kind: "stale" };
+        if (record?.status === "complete" && record.result) {
+          void openRun(summary.run_id, record.source_kind);
+          return { kind: "shown" };
+        }
+      } catch {
+        /* no usable History here; ask the account */
+      }
+      if (generationRef.current !== generation) return { kind: "stale" };
+      const source = summary.source ?? null;
+      const resetScreen = () => {
+        stopTimers();
+        clearReconnect();
+        activeRunStore.clear();
+        runIdRef.current = null;
+        liveUrlRef.current = null;
+        freeRunsBeforeRef.current = null;
+        setFreeRunRefunded(false);
+        setRetrySource(null);
+        setSourceName(null);
+        setStage(null);
+        setSourceKind(source?.source_kind === "link" ? "url" : "file");
+        setMediaKind(mediaKindOfPlatform(source?.platform ?? null));
+        setDurationSeconds(typeof source?.duration_seconds === "number" ? source.duration_seconds : null);
+      };
+      try {
+        const detail = await savedHistoryGateway.get(summary.run_id);
+        if (generationRef.current !== generation) return { kind: "stale" };
+        const known = detail.source ?? source;
+        resetScreen();
+        setSourceKind(known?.source_kind === "link" ? "url" : "file");
+        setSourceMetadata(
+          known?.source_url
+            ? {
+                platform: known.platform ?? "other",
+                source_url: known.source_url,
+                title: known.source_title ?? null,
+                uploader: known.uploader ?? null,
+              }
+            : null
+        );
+        setError(null);
+        setExpired(null);
+        setResult(detail.result);
+        setCompleteness(detail.completeness === "captions_only" ? "captions_only" : "full");
+        setStatus("complete");
+        return { kind: "shown" };
+      } catch (err) {
+        if (generationRef.current !== generation) return { kind: "stale" };
+        if (err instanceof ApiError && err.status === 404) {
+          /* Not redrawn now: History is on its way out and must not drop
+             the card first. It is left out of the list next time. */
+          markSavedRunGone(summary.run_id);
+          resetScreen();
+          setSourceMetadata(null);
+          setResult(null);
+          setCompleteness("full");
+          setError(SAVED_GONE_MESSAGE);
+          setExpired({ againUrl: source?.source_url ?? null, reason: "saved" });
+          setStatus("failed");
+          return { kind: "gone" };
+        }
+        return { kind: "error", message: classifyGatewayError(err, SAVED_OPEN_FALLBACK).message };
+      }
+    },
+    [clearReconnect, openRun, stopTimers]
+  );
+
   /* Resubmit the run that just failed, same link or same file. Only offered
      while `canRetry` is true. */
   const retry = useCallback(() => {
@@ -699,6 +800,7 @@ export function useAnalysisRun() {
     canRetry: retrySource !== null,
     expired: expired !== null,
     againUrl: expired?.againUrl ?? null,
+    expiredReason: (expired?.reason ?? "server") as ExpiredReason,
     reconnectIn,
     reconnecting,
     reconnectAttempt,
@@ -708,6 +810,7 @@ export function useAnalysisRun() {
     reconnectNow,
     reset,
     openRun,
+    openSavedRun,
     resume,
   };
 }
