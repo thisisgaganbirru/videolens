@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
-import AppNav from "@/components/AppNav";
+import AppNav, { type AccountState } from "@/components/AppNav";
 import BottomTabBar from "@/components/BottomTabBar";
 import SiteFooter from "@/components/SiteFooter";
 import CapabilityNotice from "@/components/CapabilityNotice";
@@ -148,8 +148,10 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   const mediaLimits = useMediaLimits(Boolean(authUser.user), paid);
   const signInForMinutes =
     showAccount && authUser.ready && !authUser.user && mediaLimits.hasKey ? mediaLimits.upgradeMinutes : null;
-  /* The top bar's Account button shows the signed-in person's initial; null
-     (signed out, or no email) draws the person glyph instead. */
+  /* The top bar's Account control: a "Sign in" pill signed out, the
+     signed-in person's initial (null, no email: the person glyph), nothing
+     until the session is known. */
+  const accountState: AccountState = !authUser.ready ? "loading" : authUser.user ? "signed-in" : "signed-out";
   const accountInitial = authUser.user?.email?.trim().charAt(0).toUpperCase() || null;
   /* Signing in or out changes who owns runs on the server, so a run being
      watched would stop answering. The Account panel holds both meanwhile. */
@@ -274,7 +276,13 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      only on the standalone routes that still opt into it. */
   return (
     <div className="shell" data-view={activeTab}>
-      <AppNav activeTab={activeTab} onSelectTab={goToMainTab} showAccount={showAccount} accountInitial={accountInitial} />
+      <AppNav
+        activeTab={activeTab}
+        onSelectTab={goToMainTab}
+        showAccount={showAccount}
+        accountState={accountState}
+        accountInitial={accountInitial}
+      />
 
       {activeTab === "analyze" && (
         <main ref={analyzeRef} className="view-scroll" data-view="analyze" aria-label="Analyze">
@@ -528,6 +536,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
             billing={billing}
             checkoutReturn={checkoutReturn}
             paidMinutes={mediaLimits.paidMinutes}
+            signInMinutes={mediaLimits.upgradeMinutes}
           />
         </main>
       )}

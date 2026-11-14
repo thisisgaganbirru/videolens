@@ -39,8 +39,9 @@ import { isPlainLeftClick } from "@/components/navClick";
 
 /* The signed-in monthly allowance, as the owner set it (2026-11-13). Only
    quoted to signed-out people, who have no account read to take it from;
-   signed-in copy always uses the server's own `limit`. */
-const ACCOUNT_FREE_RUNS_PER_MONTH = 10;
+   signed-in copy always uses the server's own `limit`. Also quoted by the
+   Account panel's signed-out lede. */
+export const ACCOUNT_FREE_RUNS_PER_MONTH = 10;
 
 function openApiKey(event: MouseEvent<HTMLAnchorElement>) {
   if (!isPlainLeftClick(event)) return;

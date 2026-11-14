@@ -99,7 +99,8 @@ session.
   `BottomTabBar` and `MoreSheet` (`navTabs(showAccount)`).
 - **Top bar entry (2026-11-13).** From 48rem the web top bar draws Account
   not as a text tab but as a round 44px link at the far right, after the
-  theme toggle (`.nav-account` in `AppNav`): lucide `UserRound` signed out,
+  theme toggle (`.nav-account` in `AppNav`): lucide `UserRound` signed out
+  (superseded 2026-11-14 by the "Sign in" pill, below),
   the email's first character uppercased signed in (`accountInitial`,
   computed in `HomeScreen` from `authUser.user.email`; null falls back to
   the glyph). `aria-label` and `title` "Account", same href and in-place
@@ -124,6 +125,28 @@ session.
   `showAccount` (landing, Privacy, Terms, 404, offline) keep a three-item
   dock, as their More sheet had no Account row before either. The top-bar
   round button stays ≥ 48rem only; the web phone menu keeps its text row.
+- **Sign in call to action (2026-11-14).** Owner: the bare person glyph did
+  not say what it did. From 48rem, signed out, the top bar's Account control
+  is a labelled pill "Sign in" (`.nav-account.nav-account--signin`: secondary
+  button voice, ink hairline on transparent, 15px/600, 44px tall, same href
+  and in-place switch, filled ink with `aria-current` on `?view=account`).
+  Not green: the view's own primary (Analyze link, Download .md) keeps the one
+  green fill. Signed in, the round initial button is unchanged (a signed-in
+  user with no email gets the `UserRound` glyph). While the session loads
+  (`authUser.ready` false) the bar draws neither, so the right-aligned row
+  never jumps from pill to circle. `HomeScreen` passes
+  `accountState: "loading" | "signed-out" | "signed-in"` to `AppNav`. The web
+  phone menu's Account row reads "Sign in" while signed out ("Account"
+  loading or signed in). The dock item stays "Account" (owner-approved
+  4-item dock). Other routes do not pass `showAccount`, so the landing page
+  keeps its own "Start analyzing" CTAs and gains nothing. With auth off
+  nothing renders, as before.
+- **Signed-out lede (2026-11-14).** "Sign in for 10 free runs a month,
+  videos up to N minutes with your own key, and API keys for your scripts.
+  An account is optional." The 10 is `ACCOUNT_FREE_RUNS_PER_MONTH` (now
+  exported from `FreeRunsBanner.tsx`); N is `useMediaLimits().upgradeMinutes`
+  passed as the panel's `signInMinutes` prop. When that is null (limits not
+  read, or no larger tier) the video clause is left out rather than promised.
 - The panel uses the **same gate** for its sign-in form: capability still
   loading, failed to load, or not `ok` all show the calm "Sign-in is not
   available on this server" card and no form. The same card shows when
@@ -401,3 +424,4 @@ cannot be resized); check them on the bundled APK.
 - 2026-11-13 · frontend agent · Account gains a "Plan" group above "Your account" (only when the `billing` capability is ok and `/api/billing` says enabled), a checkout-return notice under the header, and "Runs left this month: N of L" on the identity line for a paid account; props `billing`, `checkoutReturn`, `paidMinutes`. See `billing.md`
 - 2026-11-13 · frontend agent · account deletion: 503 `subscription_cancel_failed` gets its own message (nothing deleted, account and subscription unchanged), form stays usable. See `billing.md`
 - 2026-11-14 · frontend agent · Account moves into the installed-app dock as a 4th item (Analyze / History / Account / More, `CircleUserRound`, `aria-current` on `?view=account`) under the same `showAccount` gate; the More sheet's Account row is removed; top-bar round button unchanged
+- 2026-11-14 · frontend agent · signed out, the ≥48rem top-bar Account control is a labelled "Sign in" pill (secondary voice, 44px); signed in keeps the round initial; nothing drawn until the session is known (`accountState` prop); phone-menu row reads "Sign in" signed out; dock unchanged; signed-out Account lede now lists 10 free runs a month, longer videos with your own key (minutes from limits), and API keys

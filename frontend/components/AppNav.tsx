@@ -17,9 +17,12 @@ import { mainTabHref, navTabs, type MainTab } from "@/application/useMainTab";
  *                       destinations in a full-screen menu (Web "Menu" board)
  *
  * Account (auth phase 2) is a fifth destination, drawn only when `showAccount`.
- * From 48rem it is not a text tab but a round button at the far right of the
- * bar (after the theme toggle): the person glyph signed out, the email's
- * initial signed in. The phone menu keeps it as a text row.
+ * From 48rem it is not a text tab but a control at the far right of the bar
+ * (after the theme toggle): signed out, a labelled "Sign in" pill (owner,
+ * 2026-11-14: the bare person glyph did not say what it did); signed in, a
+ * round button with the email's initial. Until the session is known it draws
+ * nothing, so neither flashes. The phone menu keeps it as a text row, labelled
+ * "Sign in" while signed out.
  *  - app:               brand · theme toggle; the destinations live in the
  *                       bottom tab bar instead (BottomTabBar)
  *
@@ -51,10 +54,20 @@ type AppNavProps = {
   /** Draw the Account tab (auth phase 2). Only `/app` knows whether sign-in
    *  is available, so every other route leaves it off. */
   showAccount?: boolean;
+  /** Where the session stands, for the Account control: "loading" draws
+   *  nothing in the bar (the phone menu row says "Account"), "signed-out" the
+   *  "Sign in" pill, "signed-in" the round initial button. Supplied by `/app`,
+   *  which has the session. */
+  accountState?: AccountState;
   /** The signed-in person's initial for the Account button; null or absent
-   *  draws the person glyph. Supplied by `/app`, which has the session. */
+   *  draws the person glyph. */
   accountInitial?: string | null;
 };
+
+export type AccountState = "loading" | "signed-out" | "signed-in";
+
+/** What the Account entry says where it is a text label. */
+const SIGN_IN_LABEL = "Sign in";
 
 /** The ring-and-dot mark from the boards. Decorative: the word beside it is the
  *  name. Exported for the installed app's splash and Welcome (Phase 5d), which
@@ -73,8 +86,10 @@ export default function AppNav({
   onSelectTab,
   landing = false,
   showAccount = false,
+  accountState = "loading",
   accountInitial = null,
 }: AppNavProps) {
+  const signedOut = accountState === "signed-out";
   const tabs = navTabs(showAccount);
   /* Inline text tabs leave Account out: it is the round button instead. */
   const inlineTabs = tabs.filter((tab) => tab !== "account");
@@ -143,8 +158,22 @@ export default function AppNav({
             <ThemeToggle />
 
             {/* Shown only where the inline tabs are (CSS, from 48rem). Same
-                href and in-place switch as the text tab it replaces. */}
-            {showAccount && (
+                href and in-place switch as the text tab it replaces. Signed
+                out it is a labelled pill, a call to action; signed in, the
+                round initial. Nothing while the session loads: the bar is
+                right-aligned, so a pill that turned into a circle (or the
+                reverse) would jump the theme toggle and the tabs. */}
+            {showAccount && signedOut && (
+              <Link
+                className="nav-account nav-account--signin"
+                href={mainTabHref("account")}
+                aria-current={activeTab === "account" ? "page" : undefined}
+                onClick={handleTabClick("account")}
+              >
+                {SIGN_IN_LABEL}
+              </Link>
+            )}
+            {showAccount && accountState === "signed-in" && (
               <Link
                 className="nav-account"
                 href={mainTabHref("account")}
@@ -191,7 +220,7 @@ export default function AppNav({
             aria-current={activeTab === tab ? "page" : undefined}
             onClick={handleTabClick(tab)}
           >
-            {TAB_LABEL[tab]}
+            {tab === "account" && signedOut ? SIGN_IN_LABEL : TAB_LABEL[tab]}
             <ChevronRight aria-hidden="true" />
           </Link>
         ))}
