@@ -428,6 +428,24 @@ A one-line "By analyzing, you agree to the Terms." under Analyze link was
 added and removed the same day (owner decision): the required checkbox
 already records acceptance. `.link-row` is back to three grid areas.
 
+## UX fix spec, batch b (2026-11-14)
+
+- **Link label** is "Paste a public link" (placeholder unchanged).
+- **Out-of-runs block.** `#intake-blocked` is now a `div`
+  (`.intake-blocked__text` + `.intake-blocked__actions`) offering one way out
+  by the new `blockedOffer` prop (`"sign-in" | "upgrade" | "key"`, default
+  `"key"`). The `aria-describedby` wiring on Analyze link and Browse files is
+  unchanged. `blockedPeriod` stays a prop but is no longer read. Copy and
+  rules in `free-runs.md`, "Strip and out-of-runs offer".
+- **Phone header (below 32rem).** The h1 holds two spans,
+  `.intake-title__long` ("Turn any short video into clean notes.") and
+  `.intake-title__short` ("New analysis"); CSS shows one, so the h1 reads as
+  one phrase. The intake's eyebrow and lede are hidden there. Desktop is
+  untouched. Measured: at 320x640 web, Analyze link ends at y=444; at 320x640
+  app shell, the link field and Analyze link (392-444) sit above the dock
+  (560); at 412x915 both are in the first screen; at 1280x800 the idle intake
+  does not scroll (band scrollHeight = clientHeight = 666).
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported UploadForm to the unboxed .intake; returns a fragment since HomeScreen supplies the wrapper
@@ -457,3 +475,4 @@ already records acceptance. `.link-row` is back to three grid areas.
 - 2026-11-13 · frontend agent · terms key bumped to `videolens-media-terms-v3` for the Terms' Paid plan section, v2 added to `RETIRED_KEYS`; `useMediaLimits(signedIn, paid)` picks the `paid` tier from `GET /api/limits` when the plan is paid (docs/frontend/billing.md)
 - 2026-11-14 · frontend agent · `useMediaLimits` also returns `settled`, `standardSeconds` and `byokMinutes` (Account panel's Plan and usage card and Upgrade comparison); upload form unchanged
 - 2026-11-14 · frontend agent · "What you get" foot reads "Your video is deleted from our servers when the run finishes. The result is kept for up to an hour, then deleted." (UX fix spec batch a)
+- 2026-11-14 · frontend agent · UX fix spec batch b: "Paste a public link"; out-of-runs block with `blockedOffer` (sign-in / upgrade / key) and `.intake-blocked__*` classes; phone-only short h1 "New analysis" with eyebrow and lede hidden below 32rem

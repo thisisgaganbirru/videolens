@@ -4049,10 +4049,58 @@ h3 {
     font-weight: 600;
     color: var(--color-ink);
   }
+  /* UX fix spec (2026-11-14): the block names the one way out under its
+     sentence: a filled button and a text link, or one outline button. The
+     link gets a 44px hit row of its own; below 32rem the button is full
+     width. */
+  .intake-blocked__text {
+    margin: 0;
+  }
+  .intake-blocked__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-xs) var(--space-md);
+    margin-top: var(--space-xs);
+  }
+  .intake-blocked__actions .text-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+  }
+  @media (width < 32rem) {
+    .intake-blocked__actions .btn {
+      width: 100%;
+    }
+  }
+
+  /* Phone-only intake header (UX fix spec 3.5): the landing already said the
+     headline and the lede, so below 32rem the h1 is the short "New analysis"
+     and the eyebrow (which said the same) and the lede go, lifting the link
+     field and Analyze link into the first screen. Both h1 spans are in the
+     DOM; `display: none` keeps the hidden one out of the accessibility tree,
+     so the h1 reads as one phrase at every width. Desktop is untouched. */
+  .intake-title__short {
+    display: none;
+  }
+  @media (width < 32rem) {
+    .intake-title__long {
+      display: none;
+    }
+    .intake-title__short {
+      display: inline;
+    }
+    .intake .eyebrow {
+      display: none;
+    }
+    .intake-lede {
+      display: none;
+    }
+  }
 
   /* ---- free runs (Phase 5b · IntakeFreeApp.png, IntakeLimitApp.png) ----
-     A white strip above the eyebrow: sentence left, near-black "Add key"
-     pill right. The spent state only swaps the sentence and draws the strip's
+     A white strip of text above the eyebrow (the "Add key" pill was removed
+     2026-11-14, UX fix spec; the way out is in the intake card). The spent state only swaps the sentence and draws the strip's
      hairline in --color-danger-border — a decorative edge, so its contrast is
      not load-bearing; the words say the state. The slot is the live region
      and is always rendered, empty (zero-height, no margin) when quiet. */
@@ -4072,11 +4120,9 @@ h3 {
   }
   .free-runs-slot {
     margin-bottom: var(--space-md);
-    /* Refinement 15: the strip stacks when the sentence would get too narrow
-       beside the pill (the @container rule after .free-runs__action). The
-       query is in em of this slot, so its font-size is pinned to the root;
-       everything inside is rem. */
-    container: free-runs / inline-size;
+    /* Font-size pinned to the root; everything inside is rem. (The
+       container query that stacked the "Add key" pill went with the pill,
+       2026-11-14.) */
     font-size: 1rem;
   }
   .free-runs {
@@ -4110,30 +4156,15 @@ h3 {
     font-weight: 600;
     color: var(--color-ink);
   }
-  /* The spent sentence is two lines on the board, the headline on its own. */
-  .free-runs[data-state="spent"] .free-runs__text strong {
-    display: block;
-  }
-  .free-runs__action {
-    flex: 0 0 auto;
-    min-height: 2.5rem;
-    padding: 0.5rem 1.125rem;
-    font-size: 0.9375rem;
-  }
-  /* Refinement 15 (device round 16): the "Add key" pill scales with the text,
-     so at 200% it left the sentence one word a line. Measured in rem: the
-     strip's padding, border and gap take ~2.85, the pill 5.68, so the
-     sentence gets the slot less ~8.5rem. Below 17em that is under ~9em of
-     its own 0.9375rem text, so the pill goes under the sentence, left-aligned
-     with it. 320px at 100% has 18em and keeps the row it always had. */
-  @container free-runs (width < 17em) {
-    .free-runs {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: var(--space-xs);
-    }
-    .free-runs__text {
-      align-self: stretch;
+  /* The spent headline sits on a line of its own on phones, as on the board
+     (IntakeLimitApp.png is a phone board). From 32rem it flows like the
+     runs-left sentence: without the pill (2026-11-14) a two-line spent strip
+     was a line taller than the stand-in at desktop widths and pushed the
+     headline down when the count landed. On phones both are two lines
+     (measured at 320 and 412), so nothing above the card moves either way. */
+  @media (width < 32rem) {
+    .free-runs[data-state="spent"] .free-runs__text strong {
+      display: block;
     }
   }
 

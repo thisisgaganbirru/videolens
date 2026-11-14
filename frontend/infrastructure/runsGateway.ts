@@ -86,13 +86,15 @@ function createRunFailureMessage(status: number, body: unknown, retryAfter: stri
   /* 2026-11-13, paid plan: a paid account past its monthly cap on extra
      runs. Its own quiet sentence and no upgrade offer (it is already paid);
      the cap comes from the body's `limit`. Since 2026-11-14 the included
-     runs count a day, so they come back tomorrow even though the extra-run
-     cap holds until next month. */
+     runs count a day, so they come back at the daily reset even though the
+     extra-run cap holds until next month. Never "tomorrow" (UX fix spec,
+     2026-11-14): the reset is a fixed UTC time, which is today for many
+     readers. */
   const extras = errorExtras(body);
   if (status === 402 && extras.code === "extra_runs_cap") {
     return extras.limit !== undefined
-      ? `You’ve reached this month’s limit of ${extras.limit} extra runs. Your included runs come back tomorrow.`
-      : "You’ve reached this month’s limit of extra runs. Your included runs come back tomorrow.";
+      ? `You’ve reached this month’s limit of ${extras.limit} extra runs. Your included runs still reset every day.`
+      : "You’ve reached this month’s limit of extra runs. Your included runs still reset every day.";
   }
   if (status === 429) {
     const wait = retryAfterSeconds(retryAfter);

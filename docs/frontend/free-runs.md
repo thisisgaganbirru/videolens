@@ -53,12 +53,11 @@ hydration agree.
 
 ## UI (IntakeFreeApp.png, IntakeLimitApp.png, IntakeWeb.png)
 
-- One white strip above the "New analysis" eyebrow on **every** shell (installed app, phone web, desktop web; in the left column on desktop). The sentence is on the left and the near-black `btn btn-ink btn-pill` "Add key" is on the right.
-- Copy: "**3 free runs left today.** Add your own key for more." The singular is "**1 free run left today.**". Signed out where sign-in is offered, the second sentence is "[Sign in] for 10 a day, or add your own key." (2026-11-14; "a month" until the daily account allowance the same day). When spent: "**You have used your free runs.**" with "Add your own key to keep going." on its own line, and the strip gets a `--color-danger-border` hairline. Nothing else turns red.
-- "Add key" is a real link to `/app?view=api-key` (was `/?view=api-key` before Phase 5c moved the tool) (plain click goes through `goToMainTab`; middle-click opens a new tab).
+- One white strip of text above the "New analysis" eyebrow on **every** shell (installed app, phone web, desktop web; in the left column on desktop). Since 2026-11-14 (UX fix spec) it has **no button**: the "Add key" pill is gone from every branch, and the way out of a spent allowance is offered in the intake card (see "Strip and out-of-runs offer (UX fix spec)" below).
+- Copy: see the table in that section. The words are "runs", "today" and the local reset time; never "free runs", "tomorrow" or "midnight". When spent the strip gets a `--color-danger-border` hairline. Nothing else turns red.
 - Blocked: Analyze link uses the existing `.btn-primary:disabled` grey. **Browse files is disabled too, and drop is refused** (`dropEffect = "none"`, no highlight). The board draws Browse looking normal, but a control that cannot succeed should not look pressable. The link field and the terms box stay usable, so a typed link survives saving a key and coming back.
 - Accessibility: the `.free-runs-slot` wrapper is always rendered with `role="status"` (implicitly polite), so the count and the switch to "used" are announced without moving focus. It is `display: none` while empty.
-- Large text (refinement 15): the "Add key" pill scales with the text, so at 200% it left the sentence one word a line. `.free-runs-slot` is now a size container (`free-runs`, font-size pinned to 1rem; the strip is all rem). Below **17em** of slot width the strip stacks: sentence on top at full width, pill underneath, left-aligned with it. 17em is where the sentence would get under ~9em of its own text beside the pill (5.68rem; padding, border and gap ~2.85rem). 320px at 100% has 18em and keeps the row, pixel-identical to before.
+- Large text (refinement 15): the size container that stacked the "Add key" pill under the sentence went with the pill (2026-11-14). The slot's font-size stays pinned to 1rem; the strip is all rem and wraps like any paragraph.
 - Short desktop windows (`min-width: 60rem` and `max-height: 50rem`): while the banner is shown (`.intake-layout:has(.free-runs)`), the top padding drops to 1rem, the headline margin to 1rem, the banner's block padding to 0.5rem and its line-height to 1.35. Measured: 1366×768 fits with no scroll in all six states (3 left, spent, none × light/dark).
 
 ## Known issues
@@ -256,6 +255,54 @@ per run with a hard cap of 200 extra runs a calendar month.
 | Account identity line | "Runs left today: N of 30" |
 | 402 `extra_runs_cap` | "You’ve reached this month’s limit of N extra runs. Your included runs come back tomorrow." (was "Runs reset next month.", wrong once the included runs are daily) |
 
+## Strip and out-of-runs offer (UX fix spec, 2026-11-14)
+
+The tables in the dated sections above are history; this is the current copy.
+`FreeRunsBanner` reads `banner.resetsAt` and formats it with the Account
+formatters (`formatClockTime` for a day, `formatDay` for a month). When the
+time is unknown the reset sentence is left out. The first sentence is
+`<strong>`; "run" when the limit is 1.
+
+| State | Text |
+|---|---|
+| Free, runs left, signed out, sign-in offered | **3 of 3 runs left today.** Resets at 7:00 PM. [Sign in] for 10 a day. |
+| Free, runs left, otherwise | **7 of 10 runs left today.** Resets at 7:00 PM. |
+| Free, spent | **You've used today's 3 runs.** They reset at 7:00 PM. ("today's runs" when the limit is unknown; "this month's" / "They reset on Dec 1, 2026." for a monthly period) |
+| Paid, runs left | **12 of 30 runs left today.** Resets at 7:00 PM. |
+| Paid, past the 30 (`overage`) | **You've used today's 30 runs.** Extra runs are billed at $X each, up to 200 a month. |
+| Paid, spent, no overage | **You've used today's 30 runs.** They reset at 7:00 PM. |
+
+The spent headline sits on its own line below 32rem only (as on the phone
+board); from 32rem it flows, so the spent strip is the stand-in's height at
+desktop widths and nothing above the card moves when the count lands.
+
+**Out-of-runs block** (`UploadForm` `blockedOffer`, computed in
+`HomeScreen`): `#intake-blocked` is a `div` with "Analyzing is paused until
+your runs reset." and one way out:
+
+| `blockedOffer` | When | Actions |
+|---|---|---|
+| `sign-in` | sign-in offered, nobody signed in | green pill "Sign in for 10 runs a day" (`/app?view=account`), then text link "Use your own Gemini key" |
+| `upgrade` | billing read says the free plan | green pill "Upgrade for 30 runs a day" (`/app?view=account`), then the same text link |
+| `key` | otherwise | outline pill "Use your own Gemini key", the only action |
+
+Both links switch tabs in place on a plain left click and keep a real href.
+Every link and button in the block is 44px tall (measured); below 32rem the
+button is full width.
+
+**Waiting for the sign-in answer.** The strip and the block both depend on
+whether sign-in is offered, known only once the capabilities read has
+settled and the session is ready. Until then (`stripKnown` in `HomeScreen`)
+the slot keeps its stand-in and `blocked` stays false, so the strip never
+lands short and then grows a "Sign in" sentence (measured 0.037 at 412 before
+this). The stand-in now carries a valid `resetsAt`, so it is as long as the
+real strip.
+
+Measured (Playwright, mocked `/api/`, CLS from `layout-shift` entries):
+runs left, signed out: 0 at 320 and 412 (web and app shell), 0.0016 at 1280
+(the nav's account pill, not the strip). Spent: one shift inside the card
+(0.08 to 0.11 on phones, 0.019 at 1280); nothing above the card moves.
+
 ## Reserved strip height (2026-11-14, Android QA run 22)
 
 The strip used to be inserted when the read landed, with no space reserved,
@@ -316,3 +363,4 @@ Not yet re-measured on the device (the QA run's own numbers were on Android).
 - 2026-11-14 · frontend agent · Android QA run 22: strip height reserved before the first read (invisible inert stand-in, `useFreeRuns().pending`, `Snapshot.settled`) and dropped pre-paint for key holders (`BYOK_INIT_SCRIPT` stamps `data-byok`); CLS at 412/320 ~0 for runs-left states, numbers and residue under "Reserved strip height"
 - 2026-11-14 · frontend agent · copy table corrected to the code: the signed-out strip says "10 a day" and "10 free runs a day" (the table still said a month); `FreeRunsBanner.resetsAt` added for the Account panel's Plan and usage card, which replaces the identity line's count
 - 2026-11-14 · frontend agent · refund line reads "This didn't use one of your runs." (UX fix spec batch a)
+- 2026-11-14 · frontend agent · UX fix spec batch b: strip is text only (no "Add key" pill, container query removed), "N of L runs left today. Resets at <local time>." with the inline Sign in where offered, spent "You've used today's L runs. They reset at <time>."; out-of-runs offer moved into the intake card (`blockedOffer`: sign-in / upgrade / key); strip and block wait for `stripKnown`; ghost has a valid `resetsAt`; 402 `extra_runs_cap` no longer says "tomorrow"
