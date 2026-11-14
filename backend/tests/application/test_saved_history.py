@@ -19,6 +19,7 @@ from app.domain.entities import (
     AnalysisCompleteness,
     AuthMethod,
     BillingWebhookEvent,
+    MediaVisuals,
     Principal,
     RunStatus,
     SavedRunCursor,
@@ -34,6 +35,7 @@ from .fakes import FakeRunRepository
 from .test_billing import ACCOUNT, ANALYSIS, CUSTOMER, SETTINGS, URL, _Billing, _Pipeline, _snapshot
 
 OTHER = "acct-2"
+POSTER = "data:image/jpeg;base64," + "A" * 4000
 
 
 class _Clock:
@@ -72,9 +74,15 @@ class _History:
         await self.billing.accounts.apply_subscription(account_id, snapshot)
 
     async def finished_run(
-        self, run_id: str, account_id: str | None = ACCOUNT, result: VideoAnalysis = ANALYSIS
+        self,
+        run_id: str,
+        account_id: str | None = ACCOUNT,
+        result: VideoAnalysis = ANALYSIS,
+        thumbnail: str | None = None,
     ) -> str:
         await self.runs.create(run_id, "user:sub-1", source_kind="link", platform="direct", account_id=account_id)
+        if thumbnail is not None:
+            await self.runs.set_visuals(run_id, MediaVisuals(thumbnail=thumbnail, width=1280, height=720))
         await self.runs.set_result(run_id, result, AnalysisCompleteness.FULL)
         return run_id
 
@@ -157,6 +165,59 @@ class SavingTests(unittest.IsolatedAsyncioTestCase):
         await tiny.subscribe()
         with self.assertLogs("videolens", "ERROR"):
             self.assertFalse(await tiny.history.save_completed(await tiny.finished_run("r", result=big)))
+        self.assertEqual(await tiny.saved.count(ACCOUNT), 0)
+
+
+    async def test_the_poster_is_saved_as_the_live_run_exposes_it(self) -> None:
+        await self.h.subscribe()
+        await self.h.history.save_completed(await self.h.finished_run("with", thumbnail=POSTER))
+        await self.h.history.save_completed(await self.h.finished_run("without"))
+
+        self.assertEqual((await self.h.queries.get(_person(), "with")).thumbnail, POSTER)
+        self.assertIsNone((await self.h.queries.get(_person(), "without")).thumbnail)
+        listed = {item.run_id: item.thumbnail for item in (await self.h.queries.list(_person())).items}
+        self.assertEqual(listed, {"with": POSTER, "without": None})
+
+    async def test_the_size_guard_drops_segments_before_the_poster(self) -> None:
+        big = VideoAnalysis.model_validate(
+            {
+                **ANALYSIS.model_dump(),
+                "transcript_segments": [
+                    {"start_seconds": i, "end_seconds": i + 1, "text": "x" * 200} for i in range(50)
+                ],
+            }
+        )
+        full = len(big.model_dump_json()) + len(POSTER)
+        no_segments = len(ANALYSIS.model_dump_json()) + len(POSTER)
+
+        # Room for the poster once the segments are gone: poster kept.
+        keeps = _History(max_bytes=no_segments + 50)
+        self.assertLess(keeps.history.max_bytes, full)
+        await keeps.subscribe()
+        with self.assertLogs("videolens", "WARNING") as logs:
+            self.assertTrue(await keeps.history.save_completed(await keeps.finished_run("r", result=big, thumbnail=POSTER)))
+        saved = await keeps.queries.get(_person(), "r")
+        self.assertNotIn("transcript_segments", saved.result)
+        self.assertEqual(saved.thumbnail, POSTER)
+        self.assertIn("segment lists", logs.output[0])
+        self.assertNotIn("poster", logs.output[0])
+
+        # Still over without segments: the poster goes next, the text stays.
+        drops = _History(max_bytes=no_segments - 100)
+        await drops.subscribe()
+        with self.assertLogs("videolens", "WARNING") as logs:
+            self.assertTrue(await drops.history.save_completed(await drops.finished_run("r", result=big, thumbnail=POSTER)))
+        saved = await drops.queries.get(_person(), "r")
+        self.assertNotIn("transcript_segments", saved.result)
+        self.assertIsNone(saved.thumbnail)
+        self.assertEqual(saved.result["transcript"], "Tx")
+        self.assertIn("segment lists and poster", logs.output[0])
+
+        # Still over without both: not saved.
+        tiny = _History(max_bytes=10)
+        await tiny.subscribe()
+        with self.assertLogs("videolens", "ERROR"):
+            self.assertFalse(await tiny.history.save_completed(await tiny.finished_run("r", result=big, thumbnail=POSTER)))
         self.assertEqual(await tiny.saved.count(ACCOUNT), 0)
 
 

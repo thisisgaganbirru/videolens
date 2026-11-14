@@ -45,8 +45,8 @@ Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
   forgets a run `RUN_TTL_SECONDS` (1 hour) after its last write. The one
   exception (owner decision 2026-11-14, `docs/backend/saved-history.md`):
   a **paid** account's successful results are also saved in `saved_runs`
-  (result text and a source descriptor only; never media, the poster or a
-  key), kept 30 days after the plan ends, then removed. Do not add
+  (result text, a source descriptor and the small poster thumbnail only;
+  never other media or a key), kept 30 days after the plan ends, then removed. Do not add
   server-side persistence for free or anonymous runs, and do not save
   anything else. `DELETE /api/me` is a 30-day hold (`accounts.purge_at`;
   410 `account_pending_deletion` everywhere but `POST /api/me/restore`),

@@ -239,6 +239,9 @@ class SavedRunSummaryResponse(BaseModel):
     completeness: AnalysisCompleteness = AnalysisCompleteness.FULL
     created_at: datetime
     source: SavedRunSourceResponse
+    # The poster, same field and shape as a live run's `thumbnail`: a
+    # <=20 KB `data:image/jpeg;base64,...` URL, or null when it has none.
+    thumbnail: Optional[str] = None
 
 
 class SavedRunListResponse(SavedHistoryResponse):

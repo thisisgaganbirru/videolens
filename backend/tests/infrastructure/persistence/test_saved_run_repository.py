@@ -33,7 +33,10 @@ def _settings(**overrides) -> Settings:
     return Settings(_env_file=None, gemini_api_key="k", **overrides)
 
 
-def _saved(account_id: str, run_id: str, minutes_ago: int = 0) -> SavedRun:
+POSTER = "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
+
+
+def _saved(account_id: str, run_id: str, minutes_ago: int = 0, thumbnail: str | None = None) -> SavedRun:
     return SavedRun(
         run_id=run_id,
         account_id=account_id,
@@ -43,6 +46,7 @@ def _saved(account_id: str, run_id: str, minutes_ago: int = 0) -> SavedRun:
         result={"title": f"Title {run_id}", "summary": "A summary.", "transcript": "words", "markdown": "# T"},
         completeness="full",
         created_at=NOW - timedelta(minutes=minutes_ago),
+        thumbnail=thumbnail,
     )
 
 
@@ -63,6 +67,14 @@ class _Behaviour:
         self.assertEqual(saved.source.platform, "youtube")
         self.assertEqual(saved.created_at, NOW)
         self.assertIsNone(await self.repo.get(self.other_id, "run-1"))
+
+    async def test_the_poster_round_trips_on_get_and_list(self) -> None:
+        await self.repo.save(_saved(self.account_id, "with", minutes_ago=1, thumbnail=POSTER))
+        await self.repo.save(_saved(self.account_id, "without"))
+        self.assertEqual((await self.repo.get(self.account_id, "with")).thumbnail, POSTER)
+        self.assertIsNone((await self.repo.get(self.account_id, "without")).thumbnail)
+        page = await self.repo.list_page(self.account_id, limit=10)
+        self.assertEqual([(i.run_id, i.thumbnail) for i in page.items], [("without", None), ("with", POSTER)])
 
     async def test_keyset_pages_newest_first(self) -> None:
         for index in range(5):
@@ -246,6 +258,8 @@ class AlembicSavedHistoryTests(unittest.TestCase):
                     fk = inspector.get_foreign_keys("saved_runs")[0]
                     self.assertEqual((fk["referred_table"], fk["options"].get("ondelete")), ("accounts", "CASCADE"))
                     unique = {tuple(u["column_names"]) for u in inspector.get_unique_constraints("saved_runs")}
+                    saved_columns = {c["name"]: c for c in inspector.get_columns("saved_runs")}
+                    self.assertTrue(saved_columns["thumbnail"]["nullable"])
                     self.assertIn(("account_id", "run_id"), unique)
                     columns = {c["name"] for c in inspector.get_columns("accounts")}
                     self.assertTrue({"deleted_at", "purge_at", "saved_runs_expire_at"} <= columns)

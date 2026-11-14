@@ -7,8 +7,9 @@
   then, its result is saved once (`save_completed`, called by the pipeline
   right after the result is stored and the extra run billed). Idempotent on
   the run id; a failure is logged and never fails, un-bills or refunds the
-  run. Result text and a source descriptor only: never the media, never the
-  poster image, never a key.
+  run. Result text, a source descriptor and the run's small poster
+  thumbnail (`thumbnail`, as the live run exposes it): no other media,
+  never a key.
 - The post-cancel window. Once the paid plan has ended
   (`policies.subscription_has_ended`) the account's saved runs stay
   readable and deletable for `PAID_SAVED_RUNS_GRACE_DAYS`, then the cleanup
@@ -62,6 +63,12 @@ def _utcnow() -> datetime:
 
 def _json_bytes(value: dict) -> int:
     return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _saved_bytes(result: dict, thumbnail: str | None) -> int:
+    """What the size guard measures: the result as compact UTF-8 JSON plus
+    the poster data URL (ASCII), so both count toward the one limit."""
+    return _json_bytes(result) + len((thumbnail or "").encode("utf-8"))
 
 
 def encode_cursor(cursor: SavedRunCursor | None) -> str | None:
@@ -153,13 +160,20 @@ class SavedHistory:
             height=facts.height,
         )
         result = run.result.model_dump(mode="json")
-        size = _json_bytes(result)
+        thumbnail = run.thumbnail or None
+        size = _saved_bytes(result, thumbnail)
         if size > self.max_bytes:
+            # Over the guard: drop the segment lists first (they only time
+            # text that is kept in full), then the poster, then give up.
             result = {key: value for key, value in result.items() if key not in _SEGMENT_FIELDS}
-            trimmed_size = _json_bytes(result)
+            dropped = ["segment lists"]
+            if _saved_bytes(result, thumbnail) > self.max_bytes and thumbnail is not None:
+                thumbnail = None
+                dropped.append("poster")
+            trimmed_size = _saved_bytes(result, thumbnail)
             if trimmed_size > self.max_bytes:
                 logger.error(
-                    "Run %s not saved to history: result is %d bytes (%d without segments), over "
+                    "Run %s not saved to history: %d bytes (%d without segments and poster), over "
                     "PAID_SAVED_RUN_MAX_BYTES=%d",
                     run.run_id,
                     size,
@@ -168,8 +182,9 @@ class SavedHistory:
                 )
                 return None
             logger.warning(
-                "Run %s saved without its segment lists: %d bytes, over PAID_SAVED_RUN_MAX_BYTES=%d",
+                "Run %s saved without its %s: %d bytes, over PAID_SAVED_RUN_MAX_BYTES=%d",
                 run.run_id,
+                " and ".join(dropped),
                 size,
                 self.max_bytes,
             )
@@ -182,6 +197,7 @@ class SavedHistory:
             result=result,
             completeness=run.completeness.value,
             created_at=run.created_at,
+            thumbnail=thumbnail,
         )
 
     # ---------------------------------------------------------- the window

@@ -53,6 +53,7 @@ def _summary(row) -> SavedRunSummary:
         completeness=row.completeness,
         created_at=as_utc(row.created_at),
         saved_id=row.id,
+        thumbnail=row.thumbnail,
     )
 
 
@@ -67,6 +68,7 @@ def _full(row) -> SavedRun:
         completeness=row.completeness,
         created_at=as_utc(row.created_at),
         saved_id=row.id,
+        thumbnail=row.thumbnail,
     )
 
 
@@ -78,6 +80,7 @@ _LIGHT_COLUMNS = (
     saved_runs.c.source,
     saved_runs.c.completeness,
     saved_runs.c.created_at,
+    saved_runs.c.thumbnail,
 )
 
 
@@ -110,6 +113,7 @@ class SqlSavedRuns:
                 source=run.source.to_dict(),
                 result=run.result,
                 result_bytes=_result_bytes(run.result),
+                thumbnail=run.thumbnail or None,
                 created_at=run.created_at,
             )
             .on_conflict_do_nothing(index_elements=["account_id", "run_id"])
@@ -304,6 +308,7 @@ class InMemorySavedRuns:
                 completeness=r.completeness,
                 created_at=r.created_at,
                 saved_id=r.saved_id,
+                thumbnail=r.thumbnail,
             )
             for r in rows[:limit]
         ]

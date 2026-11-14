@@ -25,6 +25,7 @@ from sqlalchemy import (
     MetaData,
     String,
     Table,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -166,8 +167,10 @@ billing_extra_runs = Table(
 )
 
 # A paid account's saved run results (0006, docs/backend/saved-history.md).
-# Result text and a source descriptor only: never media, never the poster,
-# never a key. (account_id, run_id) is unique, so saving is idempotent.
+# Result text, a source descriptor and the run's small poster thumbnail
+# (the same <=20 KB JPEG data URL the live run exposes as `thumbnail`): never
+# other media, never a key. (account_id, run_id) is unique, so saving is
+# idempotent.
 saved_runs = Table(
     "saved_runs",
     metadata,
@@ -180,6 +183,7 @@ saved_runs = Table(
     Column("source", JSON_DOCUMENT, nullable=False),
     Column("result", JSON_DOCUMENT, nullable=False),
     Column("result_bytes", Integer, nullable=False),
+    Column("thumbnail", Text, nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     UniqueConstraint("account_id", "run_id", name="uq_saved_runs_account_run"),
     # The list: newest first per account, keyset on (created_at, id).

@@ -45,7 +45,10 @@ class EnabledGateway:
     enabled = True
 
 
-def _saved(account_id: str, run_id: str, minutes_ago: int = 0) -> SavedRun:
+POSTER = "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
+
+
+def _saved(account_id: str, run_id: str, minutes_ago: int = 0, thumbnail: str | None = None) -> SavedRun:
     return SavedRun(
         run_id=run_id,
         account_id=account_id,
@@ -61,6 +64,7 @@ def _saved(account_id: str, run_id: str, minutes_ago: int = 0) -> SavedRun:
         },
         completeness="full",
         created_at=NOW - timedelta(minutes=minutes_ago),
+        thumbnail=thumbnail,
     )
 
 
@@ -118,8 +122,8 @@ class HistoryRoutesTests(unittest.TestCase):
 
         self._run(go())
 
-    def _save(self, account_id: str, run_id: str, minutes_ago: int = 0) -> None:
-        self._run(self.saved.save(_saved(account_id, run_id, minutes_ago)))
+    def _save(self, account_id: str, run_id: str, minutes_ago: int = 0, thumbnail: str | None = None) -> None:
+        self._run(self.saved.save(_saved(account_id, run_id, minutes_ago, thumbnail)))
 
     def test_anonymous_is_401_and_an_api_key_is_403(self) -> None:
         secret = self.client.post("/api/keys", headers=TOKEN, json={"name": "ci"}).json()["secret"]
@@ -164,6 +168,21 @@ class HistoryRoutesTests(unittest.TestCase):
         self.assertEqual(self.client.delete("/api/history/theirs", headers=TOKEN).status_code, 404)
         self.assertEqual(self.client.delete("/api/history", headers=TOKEN).json(), {"deleted": 2})
         self.assertEqual(self._run(self.saved.count("someone-else")), 1)
+
+    def test_the_poster_is_on_list_items_and_the_detail_as_thumbnail(self) -> None:
+        self._subscribe()
+        self._save(self.account_id, "with", minutes_ago=1, thumbnail=POSTER)
+        self._save(self.account_id, "without")
+
+        items = self.client.get("/api/history", headers=TOKEN).json()["items"]
+        self.assertEqual([(i["run_id"], i["thumbnail"]) for i in items], [("without", None), ("with", POSTER)])
+        for item in items:
+            self.assertIn("thumbnail", item)  # always present, null when none
+            self.assertNotIn("thumbnail", item["source"])
+        self.assertEqual(self.client.get("/api/history/with", headers=TOKEN).json()["thumbnail"], POSTER)
+        detail = self.client.get("/api/history/without", headers=TOKEN).json()
+        self.assertIn("thumbnail", detail)
+        self.assertIsNone(detail["thumbnail"])
 
     def test_the_post_cancel_window_shows_its_expiry(self) -> None:
         self._subscribe("canceled")
