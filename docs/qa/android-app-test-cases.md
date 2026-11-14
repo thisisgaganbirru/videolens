@@ -135,7 +135,7 @@ couldn't verify as a question, not a fact.
 | RUN-06d | *(refinement 3)* Reopen from History a row the server has forgotten that is still marked Processing (e.g. start a run, restart the backend and then force-stop the app before the screen updates; relaunch with the backend still down so the startup check cannot reach it, then bring the backend up and tap the row). | Expired view with its actions, never the intake with a bare "Run not found."; the row turns expired. |
 | RUN-06e | *(refinement 3, regression)* During a run, turn on airplane mode, wait, then turn it off. | "Connection lost" with the countdown and "Retry now" as before (not expired); with the network back the run resumes. |
 | RUN-07 | Double-tap Analyze fast. | Exactly one run is created (check the banner only decrements by 1). |
-| RUN-08 | "Analyze another file" after a result. | Form with an **empty** link field; terms stay ticked. |
+| RUN-08 | "Analyze another" after a result. | Form with an **empty** link field; terms stay ticked. |
 
 ## 8. Result view
 

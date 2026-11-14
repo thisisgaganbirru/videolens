@@ -7,6 +7,7 @@ import ThemeToggle from "@/components/ThemeToggle";
 import { isPlainLeftClick } from "@/components/navClick";
 import { mainTabHref, navTabs, type MainTab } from "@/application/useMainTab";
 import type { AccountState } from "@/application/useAccountEntry";
+import { ACCOUNT_FREE_RUNS_PER_DAY } from "@/application/accountAllowance";
 
 /* Hallmark · theme: editorial (app/tokens.css) · nav: flat top bar
  *
@@ -35,7 +36,7 @@ import type { AccountState } from "@/application/useAccountEntry";
 export const TAB_LABEL: Record<MainTab, string> = {
   analyze: "Analyze",
   history: "History",
-  "api-key": "API key",
+  "api-key": "Gemini key",
   releases: "Releases",
   account: "Account",
 };
@@ -64,13 +65,14 @@ type AppNavProps = {
   /** The signed-in person's initial for the Account button; null or absent
    *  draws the person glyph. */
   accountInitial?: string | null;
-  /** The signed-out label of the Account entry (bar pill and phone-menu
-   *  row). "Sign in" by default; the landing page, for new visitors, passes
-   *  "Get 10 free runs" (2026-11-14). The dock keeps "Account". */
+  /** The signed-out label of the Account bar pill. "Sign in" by default;
+   *  the landing page, for new visitors, passes "Get 10 free runs"
+   *  (2026-11-14). The phone-menu row ignores it and always says "Sign in
+   *  for 10 runs a day" (UX fix spec 6.1). The dock keeps "Account". */
   signedOutLabel?: string;
   /** A shorter bar-pill label for the narrow end of the inline bar
    *  (48rem to 50rem), where a long `signedOutLabel` would run into the
-   *  page gutter. The phone-menu row always uses `signedOutLabel`. */
+   *  page gutter. */
   signedOutShortLabel?: string;
 };
 
@@ -103,6 +105,12 @@ export default function AppNav({
   const tabs = navTabs(showAccount);
   /* Inline text tabs leave Account out: it is the round button instead. */
   const inlineTabs = tabs.filter((tab) => tab !== "account");
+  /* UX fix spec 6.1 (2026-11-14): the phone menu reads as two groups, the
+     places you work (Analyze, History, Account) and then the two minor ones
+     (Gemini key, Releases). Picked from `tabs` in that order, so a tab that
+     is not offered (Account without sign-in) simply is not there. */
+  const MENU_ORDER: MainTab[] = ["analyze", "history", "account", "api-key", "releases"];
+  const menuTabs = MENU_ORDER.filter((tab) => tabs.includes(tab));
   const [menuOpen, setMenuOpen] = useState(false);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
@@ -229,15 +237,17 @@ export default function AppNav({
           Labelled "Main" like the inline links: below 48rem it is the main
           navigation, and the two are never on screen together. */}
       <nav id="site-menu" className="menu-panel" aria-label="Main">
-        {tabs.map((tab) => (
+        {menuTabs.map((tab) => (
           <Link
             key={tab}
-            className="menu-item"
+            className={tab === "api-key" ? "menu-item menu-item--minor-first" : "menu-item"}
             href={mainTabHref(tab)}
             aria-current={activeTab === tab ? "page" : undefined}
             onClick={handleTabClick(tab)}
           >
-            {tab === "account" && signedOut ? signedOutLabel : TAB_LABEL[tab]}
+            {/* Signed out, the menu row says what signing in gets you, on
+                every route (the bar pill keeps `signedOutLabel`). */}
+            {tab === "account" && signedOut ? `Sign in for ${ACCOUNT_FREE_RUNS_PER_DAY} runs a day` : TAB_LABEL[tab]}
             <ChevronRight aria-hidden="true" />
           </Link>
         ))}

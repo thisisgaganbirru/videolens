@@ -1,4 +1,4 @@
-import type { BillingInterval, BillingPrice, BillingStatus } from "@/domain/entities";
+import type { BillingExtraRuns, BillingInterval, BillingPrice, BillingStatus } from "@/domain/entities";
 import { ApiError } from "@/domain/errors";
 import type { BillingGateway } from "@/domain/ports";
 import type { ApiClient } from "./apiClient";
@@ -30,6 +30,25 @@ function price(raw: unknown): BillingPrice | null {
   return { amount, currency: row.currency.toLowerCase() };
 }
 
+/* `extra_runs` (2026-11-14): only on a paid account. Missing, null or
+   unreadable all become null, which hides the row: an older server must not
+   break the card, and a malformed count is never shown as a number. */
+function extraRuns(raw: unknown): BillingExtraRuns | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const row = raw as Record<string, unknown>;
+  const used = count(row.used);
+  if (used === null) return null;
+  const limit = row.limit === null ? null : count(row.limit);
+  if (limit === null && row.limit !== null) return null;
+  return {
+    used,
+    limit,
+    period: "month",
+    resetsAt:
+      typeof row.resets_at === "string" && !Number.isNaN(Date.parse(row.resets_at)) ? row.resets_at : null,
+  };
+}
+
 function normalise(raw: unknown): BillingStatus {
   const body = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
   /* Only a literal `true` turns billing on: the failure to avoid is drawing
@@ -56,6 +75,7 @@ function normalise(raw: unknown): BillingStatus {
     /* 2026-11-14: both plans count a UTC day (free 10, paid 30); only a
        literal "month" (an older server) reads otherwise. */
     runs: { limit, used, period: runs.period === "month" ? "month" : "day" },
+    extraRuns: body.plan === "paid" ? extraRuns(body.extra_runs) : null,
     prices: { month: price(prices.month), year: price(prices.year), extraRun: price(prices.extra_run) },
   };
 }

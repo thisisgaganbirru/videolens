@@ -144,7 +144,7 @@ the user is standing on survives a second failure.
 
 **Known gap this does not fix.** `FetchVersionLogGateway` throws a plain
 `Error` for both a rejected `fetch` and a non-2xx, so the hook writes one
-generic string ("Could not load the version log.") rather than the honest
+generic string ("Could not load the releases."; was "…the version log." until 2026-11-14) rather than the honest
 wording `useRunHistory` gets from `NetworkError` / `ApiError` (see
 `run-history.md`). Still open after the move to `/api/releases`: the endpoint
 swap was deliberately kept behaviour-neutral, and `capabilitiesGateway.ts` is
@@ -201,6 +201,12 @@ Separately, `next.config.mjs` currently sets `output: "standalone"`, so
 routes) — the export in `out/` served over a plain static server is the working
 harness.
 
+## UX fix spec 6.3 (2026-11-14)
+
+The Releases lede is "Each version and its date. Release notes open on
+GitHub." followed by the existing " You are on version X.Y.Z." when the build
+knows its version.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported VersionLogPanel by analogy — no drawn spec, needs a design review pass
@@ -211,3 +217,5 @@ harness.
 - 2026-08-29 · frontend agent · repointed the panel's gateway from the CI-committed `/releases.json` onto `GET /api/releases`; `StaticVersionLogGateway` → `FetchVersionLogGateway`, snake_case→camelCase mapped at the adapter boundary
 - 2026-11-01 · frontend agent (Phase 4) · restyled as the editorial Releases page (view-title + lede, hairline release rows with ArrowUpRight, `formatDay` dates replacing `formatDate`); no board, built in the ApiKey board's language; no Latest badge (endpoint order not guaranteed)
 - 2026-11-01 · frontend agent (Phase 4, boards) · rebuilt as per-release cards to design/phase4-boards/Releases*.png: "Version X.Y.Z" serif title, Latest pill on the newest, date; client-side newest-first sort (components/releases.ts) because the endpoint does not guarantee order (supersedes the earlier "no Latest badge" call); lede names the running version via NEXT_PUBLIC_APP_VERSION from next.config.mjs; no bullet notes (endpoint has no body) — release name + GitHub link instead
+- 2026-11-14 · frontend agent · error string "Could not load the releases." (UX fix spec batch a)
+- 2026-11-14 · frontend agent · UX fix spec batch e: Releases lede says what the list holds and where the notes open

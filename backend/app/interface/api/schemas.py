@@ -117,6 +117,18 @@ class BillingRunsResponse(BaseModel):
     period: Literal["day", "month"] = "day"
 
 
+class BillingExtraRunsResponse(BaseModel):
+    """Paid plan only: billed extra runs this UTC month, counted as the
+    `PAID_EXTRA_RUNS_MONTHLY_CAP` check counts them (held, due and reported;
+    not voided). `limit` is null when the cap is off. `resets_at` is 00:00
+    UTC on the first of next month."""
+
+    used: int
+    limit: Optional[int] = None
+    period: Literal["month"] = "month"
+    resets_at: datetime
+
+
 class BillingResponse(BaseModel):
     """`GET /api/billing`. With billing off only `{"enabled": false}` is
     sent (every other field is left out)."""
@@ -128,6 +140,8 @@ class BillingResponse(BaseModel):
     current_period_end: Optional[datetime] = None
     cancel_at_period_end: Optional[bool] = None
     runs: Optional[BillingRunsResponse] = None
+    # null unless plan is "paid".
+    extra_runs: Optional[BillingExtraRunsResponse] = None
     prices: Optional[BillingPricesResponse] = None
 
 

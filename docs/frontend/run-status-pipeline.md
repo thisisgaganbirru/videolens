@@ -56,7 +56,7 @@ different link, or download the video and upload the file instead.", at
 normalizing "Try a different link|file." The server's own error sits alone in the
 `p.run-notice` card (danger border, max 40rem), and the actions sit centred
 under it in `.run-actions` (ProgressFailed.png): **Try again** (ink button,
-only when the hook has a source to resubmit) and **Analyze another file**.
+only when the hook has a source to resubmit) and **Analyze another**.
 Side by side from 40rem, full-width and stacked below.
 
 **Connection lost** (`connectionLost` from `HomeScreen`: error while queued or
@@ -74,7 +74,8 @@ attempt ("Connection lost. Trying again in 8 seconds.", from
 `reconnectDelayFor`); the ticking countdown is outside any live region.
 
 **Deliberate deviations from the shots**
-- "Stop watching and analyze another file" (processing, captions) instead of
+- "Stop watching and start another" (processing, captions; was "Stop watching and
+  analyze another file" until 2026-11-14) instead of
   "Cancel": `reset()` stops polling; there is no server cancel endpoint yet (see
   the deferred item below). ProgressCaptions.png and ProgressUploadMobile.png
   already use this wording; ProgressLostWeb.png's "Stop watching" is used
@@ -90,8 +91,8 @@ attempt ("Connection lost. Trying again in 8 seconds.", from
 the phone vertical layout get it.
 
 **Deferred by owner decision (2026-11-01): server-side cancel.** The wording
-stays "Stop watching and analyze another file" / "Stop watching" / "Analyze
-another file" because the client only stops polling; the run keeps going on
+stays "Stop watching and start another" / "Stop watching" / "Analyze
+another" because the client only stops polling; the run keeps going on
 the server and still spends quota. A real cancel endpoint is planned for a
 later phase; when it lands, these buttons can call it and the copy can say
 "Cancel". "Try again" stays a brand-new run with the same source (it does not
@@ -129,7 +130,7 @@ wrong: nothing was wrong with the link, and the stages were unknown.
 `RunStatusView` now takes `expired`, `canRefill` and `onAnalyzeAgain` and,
 for a failed + expired run, renders `ExpiredRunView`: pill "Expired", title
 "This run expired", one sentence (the server keeps a run for an hour; this
-one's result never reached this device; nothing was wrong with the
+one's result never reached this browser; nothing was wrong with the
 link/file), **no filmstrip**, one button: "Analyze it again" (link runs, or
 any run with a stored link) / "Choose the file again" (uploads). Measured at
 390×844: title, pill, lede and single button as above, no `.filmstrip`;
@@ -162,13 +163,13 @@ back to "Connection lost".
   An mp3 at Analyzing now reads "Listening to your audio". Queued reads
   "In line".
 - **Expired copy is true for both causes.** "The server no longer has this run,
-  and its result never reached this device." It used to say the server keeps
+  and its result never reached this browser." It used to say the server keeps
   runs an hour, but a restart loses them too, inside the hour. It names no
   cause, because the client cannot know which.
 - **"Choose the file again" opens the picker** (expired file runs). See
   `upload-form.md`, "Refinement 9".
 - **Refund line on the failed view.** `<p class="run-refund">` under the notice
-  says "This didn't use one of your free runs." only when a re-read of
+  says "This didn't use one of your runs." only when a re-read of
   `/api/free-runs` proves it. See `free-runs.md`.
 - **Blocked downloads (item 11).** The backend reports a temporary 403/429 block
   as "The site blocked this download for now - the video itself is fine. Try
@@ -182,6 +183,28 @@ back to "Connection lost".
   with `_BLOCKED_DOWNLOAD` in `backend/app/infrastructure/media/ytdlp_downloader.py`.
   If that wording drifts, it falls back to the ordinary download advice.
 
+## UX fix spec, batch c (2026-11-14)
+
+- **Failed order.** For `mode === "failed"` only, `RunStatusView` renders
+  pill, h1, lede, then `.run-notice`, `.run-refund`, `.run-actions` (Try
+  again ink, Analyze another outline) and the `.filmstrip` last, so the reason
+  and the way on are in the first screen on a phone (departs from
+  ProgressFailed.png; owner decision). The strip and the stop block are two
+  constants (`filmstrip`, `stopBlock`) so the order is one branch. Lost keeps
+  the board's order (strip, then card and actions). Gaps that changed are
+  `var(--space-md)`: `.run-notice[data-tone="failed"]` margin-top, and
+  `.run-actions + .filmstrip` / `.run-refund + .filmstrip`.
+  Measured at 412x915: notice ends at y=357, Try again at y=455.
+- **Phone strip.** Below 32rem `.frame` is `min-height: 3.25rem;
+  padding-block: 0.375rem` and `.frame-label` 1rem. At 320x640 the fourth
+  frame is fully on screen (509 to 562, footer at 568). The strip is 270px at
+  phone widths and 220px at 1280 in every stage (measured across a stage
+  change), so nothing moves.
+- **Expired from History.** `ExpiredRunView` (and `RunStatusView`, which
+  passes it through) take `onBackToHistory`; when set, an outline "Back to
+  History" follows the ink button in `.run-actions`. `HomeScreen` passes it
+  only for a run opened from History.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported RunStatusView to the centred .run-state pipeline; returns a fragment (.run-state > .status is a direct-child selector)
@@ -194,3 +217,5 @@ back to "Connection lost".
 - 2026-11-01 · frontend agent (refinement 1) · expired-run view: honest copy, no stage strip, "Analyze it again" with the link refilled
 - 2026-11-02 · frontend agent (refinement 6) · RUN-08 server-trouble wording for 5xx polls (lostCause prop)
 - 2026-11-02 · frontend agent (refinement 9) · stage- and media-aware progress copy (no "video" on audio, normalize hint only while normalizing); expired copy covers expiry and server loss; refund line on the failed view; blocked-download (403/429) next-step advice via a phrase match on the backend message
+- 2026-11-14 · frontend agent · wording (UX fix spec batch a): "Analyze another", "Stop watching and start another", "never reached this browser", "This didn't use one of your runs."
+- 2026-11-14 · frontend agent · UX fix spec batch c: failed run draws the reason, refund line and actions above the strip (lost unchanged); phone frame compaction below 32rem; `onBackToHistory` on the expired view

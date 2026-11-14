@@ -23,7 +23,7 @@ export function useVersionLog() {
         setError(null);
       })
       .catch(() => {
-        if (!cancelled) setError("Could not load the version log.");
+        if (!cancelled) setError("Could not load the releases.");
       })
       .finally(() => {
         if (!cancelled) setRetrying(false);
