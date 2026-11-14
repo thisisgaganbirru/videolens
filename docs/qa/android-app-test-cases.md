@@ -838,6 +838,31 @@ No runs submitted; no sign-in, key, account or checkout actions.
   - Pages: unchanged from run 18 (sections present, no overflow).
 - **Observation.** The /terms More sheet is API key, Releases, Privacy, Terms (no Theme and no Account), so Account is reached through Analyze from there.
 
+### 2026-11-14 · android-66 (device QA) · run 20 (Sign in / Get started entries and the landing page, feat/auth-supabase at 9b3b466)
+
+**Setup**
+- **APK.** Built from a clean tree at 9b3b466.
+- **Landing.** Checked in the emulator's Chrome against the dev server on :3005 (`adb reverse tcp:3005`). By then the working copy had uncommitted LandingScreen/landing.css edits from another session, so the dev server served those.
+- **Taps.** Real adb taps: offset 63 in the app, 211 in Chrome (under the URL bar).
+- **Evidence.** In `%TEMP%\qa20\` (30–48). Probe scripts: `entry.js` (Sign in / Get started entries, dock) and `acct.js` (heading and help-line wrap, words split across lines).
+- **Session.** Signed out.
+
+**Results**
+- **Landing in the installed app. N/A by design.** The app never shows `/`: `location.href='/'` inside the WebView lands on `/app.html` (redirect in the root layout `<head>`, `application/landingRedirect.ts`). The first-launch "Notes from any short video" screen is the in-app welcome (`videolens-welcome-v1`), not the landing page.
+- **Landing, signed out (Chrome). PASS on layout; wording changed.**
+  - Phone bar: brand, theme and Menu. The bar pill is hidden below 48rem.
+  - Menu rows: Analyze, History, API key, Releases, then the entry.
+  - Entry label: "Sign in", not "Get started". The uncommitted working-copy LandingScreen drops `signedOutLabel="Get started"`; commit 9b3b466 had it.
+  - Tapping the entry opens `/app?view=account` with the new heading.
+  - "Start analyzing" is 156×50 at 412 and 320 (stacked over "See how it works" at 320).
+  - No document overflow. The sample-result tabs scroll inside their own `overflow-x:auto` row.
+- **/app, /terms, /privacy and 404. PASS.**
+  - App, phone width: the bar pill and menu row exist and read "Sign in" but are hidden in the app shell, as designed. The dock is Analyze / History / Account / More (89px each) on all four routes, including the legal pages and 404.
+  - Account tap: from /terms, /privacy and 404 it opens `/app.html?view=account` with Account current.
+  - Web menu: on /terms and /privacy the row reads "Sign in".
+- **Account card. PASS.** "Sign in or create an account" and "New here? Verifying your first code sets it up." are one line each at 412 and two lines each at 320 (37–283 px), with no split words. Same in the app and on the web.
+- **First-visitor notes.** Free-run counts differ across screens: landing "Free runs to start", the app strip "3 free runs left", the Account lede "Sign in for 10 free runs a month". The landing's only sign-in path on a phone is inside the hamburger. The Next dev indicator overlaps the footer brand (dev server only).
+
 ## Changelog
 
 - 2026-11-02 · android-66 (device QA) · added section 19 (update banner, UPD-01..07) and run 9 (UPD partial on the mock: UPD-01/03 PASS, UPD-04 partial, rest PAUSED) and run 10 (real runs: terms persistence, RUN-01 retry with a YouTube link, RUN-02/02b/03/04/05/07/08, ORI-02, HIS-01, FREE-01..05, RUN-06b/06c/06d/06e, LCH-06b/06c, FREE-02b PASS; FREE-02c not exercised (YouTube 403 mid-download); stale free-runs count after a refund logged as known (R9); stage timings incl. Normalizing ~60 s for a 170 s file); added FREE-02b/02c rows to section 6
@@ -862,3 +887,4 @@ No runs submitted; no sign-in, key, account or checkout actions.
 - 2026-11-02 · android-66 (device QA) · run 17: refinement 15 retest on refine15-debug.apk (9605e43): intake cards stack (320/360 from 1.3, 412 from 1.5) with no mid-word breaks; More-sheet labels clear their chevrons (Releases +33px at 320/2.0) with icons fixed at 40px and labels aligned; dock 64px portrait at every scale, 52px landscape with a 235px band at 2.0; header, wordmark and theme-control numbers unchanged apart from the expected 48px rise of the stacked control; live change and smoke PASS; pinch still NOT VERIFIED
 - 2026-11-14 · android-66 (device QA) · run 18: accounts/free-runs/billing UI on local feat/auth-supabase (c494698), API 36 emulator, signed out: Account reachable via the More sheet (top-bar button hidden below 48rem by design); free-runs strip, drop hint, API key wrap, terms gate v3 and the new Terms/Privacy sections PASS; signed-in items not tested (no session)
 - 2026-11-14 · android-66 (device QA) · run 19: four-item phone dock (Analyze/History/Account/More) PASS at 412/360/320 (66px items at 320, labels on one line, above the gesture bar); Account tab opens the signed-out panel and shows as current; /app More sheet has no Account row; /terms and /privacy keep the three-item dock
+- 2026-11-14 · android-66 (device QA) · run 20: Sign in / Get started entries at 9b3b466: the app never shows the landing page (redirect to /app.html); landing checked in emulator Chrome against :3005, entry sits only in the phone menu and reads Sign in (uncommitted LandingScreen edits drop Get started); 4-item dock on /app, legal and 404 pages; new Account heading and help line wrap cleanly at 320
