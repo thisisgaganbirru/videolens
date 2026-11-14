@@ -4,7 +4,7 @@ import LegalShell, { LegalSection } from "@/components/LegalShell";
 export const metadata: Metadata = {
   title: "Terms",
   description:
-    "The terms for using VideoLens AI: what you may submit, prohibited use, your own Gemini key, the paid plan, generated results and availability.",
+    "The terms for using VideoLens AI: what you may submit, prohibited use, your own Gemini key, the Plus plan, generated results and availability.",
   alternates: { canonical: "/terms" },
 };
 
@@ -21,8 +21,8 @@ export default function TermsPage() {
         If you add your own Google Gemini API key, it is stored only in your browser and sent with your requests so we can run your analysis. We do not store it. You are responsible for keeping it safe, for all usage and charges on your Google account, and for complying with Google&apos;s terms.
       </LegalSection>
       {/* Draft for the owner's legal review (docs/frontend/billing.md). */}
-      <LegalSection heading="Paid plan">
-        The paid plan is a subscription, billed monthly or yearly, that renews automatically at the end of each period until you cancel. You can cancel at any time under Account, in Manage billing; you keep the paid plan until the end of the period you have paid for, and it does not renew after that. The plan includes a set number of runs each day (UTC). Runs beyond that daily allowance are billed per run, at the price shown at checkout, on your next invoice, up to a fixed number of extra runs each calendar month; past that limit, extra runs stop until the next month, and the included runs still come back each day. Runs made with your own Gemini key do not count toward the allowance. Except where the law requires otherwise, we do not refund partial periods. If we change the price, we will tell you before your next renewal, and the new price applies from that renewal on. Deleting your account cancels your subscription immediately; restoring the account within 30 days brings it back on the free plan, not the paid one. On the paid plan your runs are saved to your account until you delete them, until 30 days after the plan ends, or until the deletion of your account completes. Payments are handled by Stripe.
+      <LegalSection heading="Plus">
+        Plus is a subscription, billed monthly or yearly, that renews automatically at the end of each period until you cancel. You can cancel at any time under Account, in Manage billing; you keep Plus until the end of the period you have paid for, and it does not renew after that. The plan includes a set number of runs each day (UTC). Runs beyond that daily allowance are billed per run, at the price shown at checkout, on your next invoice, up to a fixed number of extra runs each calendar month; past that limit, extra runs stop until the next month, and the included runs still come back each day. Runs made with your own Gemini key do not count toward the allowance. Except where the law requires otherwise, we do not refund partial periods. If we change the price, we will tell you before your next renewal, and the new price applies from that renewal on. Deleting your account cancels your subscription immediately; restoring the account within 30 days brings it back on the free plan, not on Plus. On Plus your runs are saved to your account until you delete them, until 30 days after the plan ends, or until the deletion of your account completes. Payments are handled by Stripe.
       </LegalSection>
       <LegalSection heading="Generated results">
         Transcripts and analyses may contain errors. Review important output before relying on or publishing it.

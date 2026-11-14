@@ -414,10 +414,10 @@ function SavedHistory({
       {saved.mode === "window" ? (
         <div className="history-notice" role="status">
           <p>
-            Your plan has ended, so new runs are no longer saved.{" "}
+            Your Plus plan has ended, so new runs are no longer saved.{" "}
             {keptUntil
               ? `These are kept until ${keptUntil}, then deleted. Resubscribe before then and they stay.`
-              : "These are kept for 30 days after the plan ended, then deleted. Resubscribe before then and they stay."}
+              : "These are kept for 30 days after Plus ended, then deleted. Resubscribe before then and they stay."}
           </p>
           {onOpenAccount ? (
             <button type="button" className="acct-link" onClick={onOpenAccount}>
@@ -456,7 +456,7 @@ function SavedHistory({
           <p className="history-empty-title">No saved runs yet.</p>
           <p className="history-empty-body">
             {saved.mode === "window"
-              ? "Nothing was saved to your account while the plan was active."
+              ? "Nothing was saved to your account while Plus was active."
               : "Every run you finish is saved here, and shows up in History on any device where you sign in."}
           </p>
           {saved.mode === "saving" ? (

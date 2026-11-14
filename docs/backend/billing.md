@@ -1,5 +1,7 @@
 # Billing: the paid plan (Stripe)
 
+User-facing name: the paid plan is called **Plus** everywhere a user reads it (owner, 2026-11-14). "Paid plan" / "paid tier" stays the technical term in these docs and in code, settings and API values (`plan: "paid"`, `PAID_RUNS_PER_DAY`); do not write "VideoLens Plus".
+
 One paid plan. It costs $12 a month (a yearly price is optional; the owner
 has not settled the yearly amount) and includes 30 runs a day (UTC day) on
 the shared Gemini key. Runs past those 30 in a day are billed as extra runs,
@@ -472,3 +474,4 @@ Nothing in this repository creates Stripe objects.
 - 2026-11-14 · backend agent · `GET /api/billing` gains `extra_runs` `{used, limit, period: "month", resets_at}` on the paid plan (null otherwise): this month's extra runs counted by the cap's own definition (`BillingPlans.extra_runs_used`, held + due + reported, not void), shared with admission; no migration, no new setting
 - 2026-11-14 · backend agent · saved history follows the plan: paid results saved after billing, the webhook starts or clears the 30-day post-cancel window (`saved-history.md`); deletion is a 30-day hold, the subscription still cancelled at once
 - 2026-11-14 · backend agent · migration `0008_value_checks`: check constraints on `billing_extra_runs.state` and `.period` (`YYYY-MM`); none on `billing_accounts.status`/`interval`, which come from Stripe verbatim
+- 2026-11-14 · frontend agent · paid plan is named Plus in the UI

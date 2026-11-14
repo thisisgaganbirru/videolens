@@ -1,5 +1,7 @@
 # Billing (client half)
 
+User-facing name: the paid plan is called **Plus** everywhere a user reads it (owner, 2026-11-14). "Paid plan" / "paid tier" stays the technical term in these docs and in code, settings and API values (`plan: "paid"`, `PAID_RUNS_PER_DAY`); do not write "VideoLens Plus".
+
 The paid plan, owner's "Level 3, one paid plan" (2026-11-13): $12 a month (or
 a yearly price) for **30 runs a day** (UTC; 100 a month until 2026-11-14) on
 our Gemini key, videos up to 10 minutes / 500 MB without a key of your own,
@@ -66,7 +68,7 @@ Gemini key needed") is gone: it read as if a free account needed a key.
   as well as from `/api/free-runs`.
 - **Upgrade** (`UpgradeGroup`; free account, billing on). A two-column table
   (real `<table>`, sr-only caption "Your free account compared with the paid
-  plan"), columns "Your free account" and "Paid plan":
+  plan"), columns "Your free account" and "Plus":
   - "Runs a day": `runs.limit` (10) against `PAID_RUNS_PER_DAY` (30).
   - "Video length" (only when `/api/limits` reports a `paid` tier): "Up to 3
     minutes" + "or 10 with your own Gemini key" against "Up to 10 minutes" +
@@ -74,7 +76,7 @@ Gemini key needed") is gone: it read as if a free account needed a key.
     on its own: a free account's runs need no key either. The one
     paid-only point is the longer video without a key.
   - Then the price ("$12 a month"; the yearly price when there is no monthly
-    one), one primary button "Upgrade to paid" (monthly checkout, yearly when
+    one), one primary button "Upgrade to Plus" (monthly checkout, yearly when
     that is the only price), and, when both prices exist, a quiet text
     control "Or pay $120 a year". No price, no button.
   - On its own line: "Past the 30, extra runs are $0.15 each, up to 200 a
@@ -112,7 +114,7 @@ Gemini key needed") is gone: it read as if a free account needed a key.
   unannounced, preserving its space when the card lands.
 - **Actions.** A press asks the server for the URL (label "Opening…",
   `aria-disabled` on every control), then `window.location.assign(url)`.
-  `already_subscribed` → "You are already on the paid plan." + re-read;
+  `already_subscribed` → "You are already on Plus." + re-read;
   `no_billing_account` → a sentence + re-read; anything else through
   `classifyGatewayError`. A `pageshow` with `persisted` (back button from
   Stripe restoring the page from bfcache) clears "Opening…" and re-reads.
@@ -126,7 +128,7 @@ in an always-mounted `role="status"` slot (empty, it takes no space):
 - `cancel` → "Checkout cancelled. Nothing was charged." (quiet tone).
 - `success` → "Confirming payment…" while the plan is re-read at 0, 1.5, 4,
   8, 13 and 20 s (the webhook can land after the redirect); it stops at the
-  first `paid` and becomes "You’re on the paid plan.", else "We have not seen
+  first `paid` and becomes "You’re on Plus.", else "We have not seen
   your payment yet. If you completed checkout, it will show here shortly."
   Either way the free-runs read is revalidated so the strip and upload limits
   follow.
@@ -174,7 +176,7 @@ No inline script was added, so the hashes are unchanged.
 
 ## Legal (drafts)
 
-Terms gain a "Paid plan" section (auto-renewing monthly/yearly until
+Terms gain a "Paid plan" section (headed "Plus" since 2026-11-14) (auto-renewing monthly/yearly until
 cancelled; cancel in Manage billing and keep access to the end of the paid
 period; extra runs billed per run at the checkout price; BYOK runs do not
 count; no refunds for partial periods except where the law requires; price
@@ -196,7 +198,7 @@ legal review.** The media-terms key moved to `videolens-media-terms-v3`
 
 Deleting an account cancels any subscription immediately (no refund for the
 rest of the period); billing rows are deleted, Stripe keeps its customer
-record for invoices and tax. Terms "Paid plan" and Privacy "Payments" say so
+record for invoices and tax. Terms "Plus" and Privacy "Payments" say so
 (still drafts).
 
 ## Known limits
@@ -236,3 +238,4 @@ back on the free plan. See `saved-history.md`.
 - 2026-11-14 · frontend agent · loading / failed billing now shows the reserved card's frame with the static lines or "Billing unavailable." inside it (was a blank hole); `/api/me`'s plan also picks the paid stand-in; extra-runs row and reserved heights re-verified in the browser
 2026-11-14 · frontend agent · Upgrade comparison gains a History row (last 20 in this browser vs saved to your account, on every device); restoring a held account re-reads the plan (`refreshBilling`); the plan-ended window for saved runs is shown on History and the Account History row (see saved-history.md)
 - 2026-11-14 · frontend agent · Account stand-in: until a read names the plan both stand-ins are rendered and the pre-paint `data-plan-paid` hint (last plan read, `videolens-plan-paid`; written from billing/free-runs in HomeScreen and from a paid `/api/me` entitlement in AccountPanel, cleared by a free read and on sign-out) picks Billing vs Upgrade: paid at 412 0.0239 -> 0.0000 with the hint (first visit and a stale hint still 0.0239 once). Paid plan with failed reads shows "Length unavailable" instead of the free length
+- 2026-11-14 · frontend agent · paid plan is named Plus in the UI
