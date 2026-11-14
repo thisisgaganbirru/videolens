@@ -49,3 +49,6 @@ keystore.properties
 
 # Owner design handoff (boards, screenshots, tokens): local only, kept out of dev
 design/
+
+# Scratch channel between AI tools; not project content
+relay.md
