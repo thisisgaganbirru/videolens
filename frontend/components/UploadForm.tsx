@@ -340,8 +340,9 @@ export default function UploadForm({
 
   /* The intake card: one white surface holding both entry points and the
      terms row, drawn on design/shots/Main.png. HomeScreen owns everything
-     around it (eyebrow, headline, lede, the "What you get" panel), so this
-     component stays the form and nothing else. */
+     around it (the allowance strip, the "New analysis" title, the retention
+     line under the card), so this component stays the form and nothing
+     else. */
   return (
     <div className="intake-card">
       {/* The owner wanted the submit error inside the card, above "Paste a
@@ -478,7 +479,7 @@ export default function UploadForm({
             <span className="only-touch">Add an audio or video file</span>
           </p>
           <p className="hint">
-            MP3, MP4, or MOV. Up to {maxFileSizeMb} MB and {durationLabel(maxDurationSeconds)}.
+            MP3, MP4, or MOV. Up to {maxFileSizeMb}{" "}MB and {durationLabel(maxDurationSeconds)}.
           </p>
           {/* 2026-11-13: a key is saved but nobody is signed in, and signing
               in would lift the limits. One quiet line in the same hint
