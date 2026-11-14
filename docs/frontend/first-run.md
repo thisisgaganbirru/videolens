@@ -147,7 +147,8 @@ modal dialog sits in the top layer and would cover the splash.
 
 ### Why the board's copy changed
 
-- The note says "a few free runs to start", not a number: the limit is server
+- The note says "You get runs every day, no account needed." (2026-11-14; was
+  "a few free runs to start"), not a number: the limit is server
   configuration (see `free-runs.md`).
 - "Use my own Gemini key" is the board's secondary button, kept because BYOK
   is the way to keep going after the free runs.
@@ -210,3 +211,4 @@ switch, then correct from the next launch). See `app-shell-layout.md`.
 - 2026-11-02 · frontend agent (refinement 2) · noted that the device-following default theme makes the launch screen and first page agree when no theme is stored (LCH-02/03)
 - 2026-11-02 · frontend agent (refinement 3) · window + WebView background follow the OS night mode (`@color/app_background`, `MainActivity.applyNightBackground`), closing the dark-launch light flash (LCH-02)
 - 2026-11-02 · frontend agent (refinement 5) · launch screen, window and bars follow the in-app theme choice via NativeThemePlugin (AppCompat night mode at attachBaseContext; UiModeManager on API 31+) (THM-01b)
+- 2026-11-14 · frontend agent · welcome note reads "You get runs every day, no account needed. Add your own Gemini key any time for more." (UX fix spec batch a)

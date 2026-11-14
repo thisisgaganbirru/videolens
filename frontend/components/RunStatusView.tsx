@@ -429,7 +429,7 @@ export default function RunStatusView({
               finishes a moment after the failure is shown). */}
           {mode === "failed" ? (
             <p className="run-refund" aria-live="polite">
-              {freeRunRefunded ? "This didn't use one of your free runs." : null}
+              {freeRunRefunded ? "This didn't use one of your runs." : null}
             </p>
           ) : null}
           <div className="run-actions">
@@ -460,7 +460,7 @@ export default function RunStatusView({
                  stops this page watching it (ProgressLostWeb's own label).
                  Failed: there is nothing left to watch. */
               <button type="button" className="btn btn-secondary" onClick={onReset}>
-                {mode === "lost" ? "Stop watching" : "Analyze another file"}
+                {mode === "lost" ? "Stop watching" : "Analyze another"}
               </button>
             ) : null}
           </div>
@@ -470,7 +470,7 @@ export default function RunStatusView({
            the server finishes the run regardless, and it still lands in
            History. The label says what the button actually does. */
         <button type="button" className="reset-link" onClick={onReset}>
-          Stop watching and analyze another file
+          Stop watching and start another
         </button>
       ) : null}
     </>
@@ -495,7 +495,7 @@ function ExpiredRunView({
   /* Refinement 9: "the server keeps a run for an hour" was only half the
      story — a server restart loses runs too, well inside the hour. This says
      what is true either way, without naming a cause we cannot know. */
-  const gone = "The server no longer has this run, and its result never reached this device.";
+  const gone = "The server no longer has this run, and its result never reached this browser.";
   const lede =
     sourceKind === "url"
       ? canRefill
@@ -511,7 +511,7 @@ function ExpiredRunView({
       <h1 className="run-title">This run expired</h1>
       <p className="run-lede">{lede}</p>
       <p className="sr-only" aria-live="polite" aria-atomic="true">
-        This run is no longer on the server, and its result never reached this device.
+        This run is no longer on the server, and its result never reached this browser.
       </p>
       {onAnalyzeAgain ? (
         <div className="run-actions">

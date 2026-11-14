@@ -376,3 +376,4 @@ reproduce in desktop Chromium, so it needs a device recheck.
 - 2026-11-02 · frontend agent (refinement 9) · platform chip uses the shared domain/platforms.ts names; link runs that failed before metadata show a platform from the URL host and a title like "Instagram link" or the host
 - 2026-11-02 · frontend agent (refinement 11) · History placeholder "Search runs"; phone toolbar wraps the sort under the search when large text leaves no room (device QA)
 - 2026-11-02 · frontend agent (refinement 12) · search field floor is now `calc(12ch + 2rem)` (the placeholder's own width) instead of 8.5rem, so the sort wraps under the field before "Search runs" can clip at large text (device QA, 320 / font scale 1.5)
+- 2026-11-14 · frontend agent · storage-blocked body: "This browser isn't letting VideoLens save anything, which private browsing often does. You can still analyze videos; their results just won't be kept here afterwards." (UX fix spec batch a)

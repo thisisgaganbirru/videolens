@@ -166,7 +166,7 @@ changes and brought the new pieces into the editorial system:
   | Signed out, device allowance known | **3 free runs a day**, no account needed. | Videos up to 3 minutes. [Sign in] for 10 a day. |
   | Signed in, account allowance | **10 free runs a day** with your account. | Videos up to N minutes. |
   | Paid plan | **30 runs a day** on your plan. (2026-11-14; was 100 a month) | Videos up to N minutes. |
-  | Key saved on this device | Runs use the Gemini key saved on this device. | Videos up to N minutes. |
+  | Key saved in this browser | Runs use the Gemini key saved in this browser. | Videos up to N minutes. |
 
   "3 a day" and "10 a day" side by side make the two tiers read as two
   tiers (both daily since 2026-11-14, so signing in reads as more; the period
@@ -258,3 +258,4 @@ LandingScreen uses literal /app route hrefs: useMainTab is a client module, so i
 - 2026-11-14 · frontend agent · refinement on codex's pass: `LandingAllowance` states the server's free runs and video length (fallback sentence prerendered, line height reserved, no layout shift) with an inline "Sign in for 10 a month" that is also the phone's visible account entry; details terms in serif to match the page; nav "Get 10 free runs" ("Sign up free" at 48–50rem); stray blank lines tidied
 - 2026-11-14 · frontend agent · daily account allowance: signed-out line two "Sign in for 10 a day.", signed-in line "10 free runs a day with your account." (period from the server's `period`); fallback and reserved height unchanged; nav label "Get 10 free runs" / short "Sign up free" kept ("Get 10 free runs a day" would not fit the measured 768-799 bar, and the hero line under it carries the period)
 - 2026-11-14 · frontend agent · paid line reads "30 runs a day on your plan." from the server's `limit`/`period` (no change in `LandingAllowance`; a missing `period` now reads as a day for paid too)
+- 2026-11-14 · frontend agent · UX fix spec batch a: key line "saved in this browser"; "Your files" says the video is deleted when the run finishes and the result is kept up to an hour; third card is "When today's runs are used" / "They come back every day. To keep going sooner, use your own Gemini key." with link "Use your own Gemini key"; meta description tail "Free runs every day, no account needed."

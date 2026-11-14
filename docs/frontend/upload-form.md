@@ -221,7 +221,7 @@ link is 52px tall (`.link-row .btn` min-height 3.25rem), Browse files 44px.
 - **Prefill (#7, #14).** The `sharedUrl` prop is now `HomeScreen`'s
   `formPrefill`: the newer of the live share and an expired run's "Analyze it
   again" link. A share already used is dismissed when the user starts over
-  ("Analyze another file", "Stop watching"), so the remounted form comes back
+  ("Analyze another", "Stop watching"), so the remounted form comes back
   empty instead of re-taking the old share. Terms stay ticked. Measured: share
   `/app?share-target=1&url=…` fills the field; after the run, "Analyze another
   file" shows an empty field with terms still ticked.
@@ -456,3 +456,4 @@ already records acceptance. `.link-row` is back to three grid areas.
 - 2026-11-13 · frontend agent · removed the "By analyzing, you agree to the Terms." line and its `consent` grid area (the checkbox covers acceptance); terms key bumped to `videolens-media-terms-v2`, v1 cleared from storage; rule: bump the version whenever the Terms change materially
 - 2026-11-13 · frontend agent · terms key bumped to `videolens-media-terms-v3` for the Terms' Paid plan section, v2 added to `RETIRED_KEYS`; `useMediaLimits(signedIn, paid)` picks the `paid` tier from `GET /api/limits` when the plan is paid (docs/frontend/billing.md)
 - 2026-11-14 · frontend agent · `useMediaLimits` also returns `settled`, `standardSeconds` and `byokMinutes` (Account panel's Plan and usage card and Upgrade comparison); upload form unchanged
+- 2026-11-14 · frontend agent · "What you get" foot reads "Your video is deleted from our servers when the run finishes. The result is kept for up to an hour, then deleted." (UX fix spec batch a)
