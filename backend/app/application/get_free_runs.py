@@ -21,8 +21,8 @@ class FreeRunStanding:
 class GetFreeRunsUseCase:
     """Tells a caller how many free runs it has left: a signed-in account
     today's account runs (when that allowance is on), anyone else this
-    device's runs for today. A paid account sees its included runs this
-    month instead (docs/backend/billing.md). `status.period` says which. Issues a device token first if
+    device's runs for today. A paid account sees its included runs
+    today (`PAID_RUNS_PER_DAY`) instead (docs/backend/billing.md). `status.period` says which. Issues a device token first if
     the caller has none (or one this server didn't sign), signed in or not,
     so a person who signs out still holds a token.
 
@@ -68,7 +68,7 @@ class GetFreeRunsUseCase:
             if paid is not None:
                 status = await accounts.status(
                     principal.account_id,
-                    limit=self._billing.paid_runs_per_month,
+                    limit=self._billing.paid_runs_per_day,
                     period=self._billing.paid_runs_period,
                 )
                 return FreeRunStanding(token, status, plan="paid", overage=True)

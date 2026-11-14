@@ -323,9 +323,10 @@ class FreeRunScope(str, Enum):
 class FreeRunPeriod(str, Enum):
     """How long a counter runs before it resets. DAY: a UTC day, keyed
     "YYYY-MM-DD" (the device allowance, and the free plan's account
-    allowance). MONTH: a UTC calendar month, keyed "YYYY-MM" (the paid
-    plan's included runs). The two key formats never overlap, so a free and
-    a paid counter of one account can share a table without colliding."""
+    allowance, and since 2026-11-14 the paid plan's included runs). MONTH: a
+    UTC calendar month, keyed "YYYY-MM" (the paid plan's included runs
+    before 2026-11-14; still a valid key). The two key formats never
+    overlap, so day and month counters can share a table without colliding."""
 
     DAY = "day"
     MONTH = "month"
@@ -364,8 +365,8 @@ class FreeRunClaim:
 @dataclass(frozen=True)
 class AccountFreeRunClaim:
     """One run taken from an account's counter. `period` is the counter's
-    key: "YYYY-MM-DD" (UTC day, the free plan) or "YYYY-MM" (UTC month, the
-    paid plan's included runs). It pins a refund to the day or month the
+    key: "YYYY-MM-DD" (UTC day: the free plan, and the paid plan's included
+    runs) or "YYYY-MM" (UTC month, if a plan counts monthly). It pins a refund to the day or month the
     run was taken from, even if midnight or the month turns in between."""
 
     account_id: str
@@ -375,8 +376,8 @@ class AccountFreeRunClaim:
 # ------------------------------------------------------------------ billing
 #
 # The paid plan (docs/backend/billing.md): one Stripe subscription per
-# account, monthly or yearly, with `PAID_RUNS_PER_MONTH` shared-key runs
-# included and every run past them billed as one "extra run" (a Stripe
+# account, monthly or yearly, with `PAID_RUNS_PER_DAY` shared-key runs
+# a UTC day included and every run past them billed as one "extra run" (a Stripe
 # Billing Meter event, sent only once the run completed). Amounts are never
 # here: they live in Stripe Prices, read through `BillingGateway.prices`.
 

@@ -1,5 +1,6 @@
 """The AccountFreeRunAllowance adapters (signed-in free runs, per account per
-UTC day since 2026-11-14; the paid plan's included runs, per UTC month): SQL
+UTC day since 2026-11-14; the paid plan's included runs, per UTC day too
+since 2026-11-14; monthly keys stay supported): SQL
 (SQLite through aiosqlite, standing in for Postgres) and in-memory share one
 behaviour suite, so their rules cannot drift apart. Also: account deletion
 clears the usage, and migrations 0003 and 0005."""

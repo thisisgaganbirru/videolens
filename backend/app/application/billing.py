@@ -27,11 +27,11 @@ def _utcnow() -> datetime:
 
 class BillingPlans:
     # The period the paid plan's included runs count over (the account
-    # counter's key, "YYYY-MM"). One place to change it: admission,
-    # GET /api/free-runs and GET /api/billing all read it from here. The
-    # extra-run ledger and its cap stay per month regardless (Stripe bills
-    # the meter monthly).
-    PAID_RUNS_PERIOD = FreeRunPeriod.MONTH
+    # counter's key, "YYYY-MM-DD": a UTC day since 2026-11-14, it was the
+    # month). One place to change it: admission, GET /api/free-runs and
+    # GET /api/billing all read it from here. The extra-run ledger and its
+    # cap stay per month regardless (Stripe bills the meter monthly).
+    PAID_RUNS_PERIOD = FreeRunPeriod.DAY
 
     def __init__(
         self,
@@ -39,14 +39,14 @@ class BillingPlans:
         gateway: BillingGateway,
         accounts: BillingAccounts,
         ledger: ExtraRunLedger,
-        paid_runs_per_month: int,
+        paid_runs_per_day: int,
         extra_runs_monthly_cap: int = 0,
         clock: Clock | None = None,
     ) -> None:
         self.gateway = gateway
         self.accounts = accounts
         self.ledger = ledger
-        self.paid_runs_per_month = max(0, paid_runs_per_month)
+        self.paid_runs_per_day = max(0, paid_runs_per_day)
         self.paid_runs_period = self.PAID_RUNS_PERIOD
         self.extra_runs_monthly_cap = extra_runs_monthly_cap
         self._clock = clock or _utcnow

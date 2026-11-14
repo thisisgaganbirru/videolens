@@ -139,13 +139,14 @@ def _as_utc(now: datetime) -> datetime:
 
 def utc_month(now: datetime) -> str:
     """The UTC calendar month `now` falls in, as "YYYY-MM": the period the
-    paid plan's included runs and the extra-run ledger count against."""
+    extra-run ledger and its safety cap count against (the paid plan's
+    included runs count per day since 2026-11-14)."""
     return f"{_as_utc(now):%Y-%m}"
 
 
 def start_of_next_utc_month(now: datetime) -> datetime:
-    """00:00 UTC on the first day of the month after `now`'s: when an
-    paid plan's monthly included runs reset."""
+    """00:00 UTC on the first day of the month after `now`'s: when a
+    monthly counter resets."""
     current = _as_utc(now)
     year, month = (current.year + 1, 1) if current.month == 12 else (current.year, current.month + 1)
     return datetime(year, month, 1, tzinfo=timezone.utc)
@@ -153,7 +154,8 @@ def start_of_next_utc_month(now: datetime) -> datetime:
 
 def utc_day(now: datetime) -> str:
     """The UTC day `now` falls in, as "YYYY-MM-DD": the period the free
-    plan's account allowance counts against (since 2026-11-14)."""
+    plan's account allowance and the paid plan's included runs count
+    against (since 2026-11-14)."""
     return f"{_as_utc(now):%Y-%m-%d}"
 
 

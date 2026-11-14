@@ -47,7 +47,8 @@ Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
   The only server-side tables are the four identity tables
   (`accounts`, `workspaces`, `workspace_members`, `api_keys`), the two
   run counters (`account_free_runs`, `account_free_run_holds`; daily rows
-  for free accounts, monthly rows for paid) and
+  for free and paid accounts; paid extras are counted monthly in
+  `billing_extra_runs`) and
   the three billing tables (`billing_accounts`, `billing_events`,
   `billing_extra_runs`) in `infrastructure/persistence/`, owned by Alembic in
   `backend/migrations/`.

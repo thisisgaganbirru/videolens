@@ -136,7 +136,7 @@ class Container:
             gateway=self.billing_gateway,
             accounts=self.billing_accounts,
             ledger=self.extra_run_ledger,
-            paid_runs_per_month=settings.paid_runs_per_month,
+            paid_runs_per_day=settings.paid_runs_per_day,
             extra_runs_monthly_cap=settings.paid_extra_runs_monthly_cap,
         )
         self.extra_run_billing = ExtraRunBilling(plans=self.billing)

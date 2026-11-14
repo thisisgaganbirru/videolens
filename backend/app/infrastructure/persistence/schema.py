@@ -65,8 +65,8 @@ api_keys = Table(
 )
 
 # Signed-in free runs: one row per account per counter period it has used
-# any: "YYYY-MM-DD" (UTC day, the free plan, since 2026-11-14) or "YYYY-MM"
-# (UTC month, the paid plan's included runs). varchar(10) since 0005. ON DELETE CASCADE so deleting the account always takes its usage
+# any: "YYYY-MM-DD" (UTC day: the free plan and the paid plan's included runs,
+# since 2026-11-14) or "YYYY-MM" (UTC month, rows from before then). varchar(10) since 0005. ON DELETE CASCADE so deleting the account always takes its usage
 # with it (the deleter also removes these explicitly: SQLite does not
 # enforce foreign keys unless asked).
 account_free_runs = Table(

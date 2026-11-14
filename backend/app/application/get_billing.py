@@ -35,10 +35,11 @@ class GetBillingUseCase:
             return BillingView(enabled=False)
         account = await self._plans.accounts.get(account_id)
         paid = await self._plans.paid_account(account_id)
-        # The plan's own counter: the paid plan's included runs this month,
-        # or the free plan's runs today (different rows, docs/backend/free-runs.md).
+        # The plan's own counter: the paid plan's included runs today, or the
+        # free plan's runs today (the same daily row, the plan's own limit;
+        # docs/backend/free-runs.md).
         if paid is not None:
-            limit, period = self._plans.paid_runs_per_month, self._plans.paid_runs_period
+            limit, period = self._plans.paid_runs_per_day, self._plans.paid_runs_period
         else:
             limit, period = None, FreeRunPeriod.DAY
         used, shown_limit = 0, 0

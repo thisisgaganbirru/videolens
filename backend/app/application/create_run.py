@@ -265,16 +265,16 @@ class CreateRunUseCase:
         return _Admission(allowance=self._free_runs, claim=claim)
 
     async def _admit_paid(self, paid: BillingAccount, accounts: AccountFreeRunAllowance) -> _Admission:
-        """The paid plan: the account's monthly counter ("YYYY-MM", a
-        different row from the free plan's daily ones, so nothing is counted
-        twice across an upgrade or downgrade) with the plan's limit, then,
-        past it, an extra
-        run billed on completion. Never a 402 for running past the included
-        runs; only the monthly safety cap on extra runs refuses."""
+        """The paid plan: the account's daily counter ("YYYY-MM-DD", the same
+        row the free plan counts on, so a run is counted once whichever plan
+        took it) with the plan's limit (`PAID_RUNS_PER_DAY`), then, past it,
+        an extra run billed on completion. Never a 402 for running past the
+        included runs; only the monthly safety cap on extra runs (keyed on
+        the UTC month, not the day) refuses."""
         billing = self._billing
         assert billing is not None
         claim = await accounts.try_consume(
-            paid.account_id, limit=billing.paid_runs_per_month, period=billing.paid_runs_period
+            paid.account_id, limit=billing.paid_runs_per_day, period=billing.paid_runs_period
         )
         if claim is not None:
             return _Admission(allowance=accounts, claim=claim)

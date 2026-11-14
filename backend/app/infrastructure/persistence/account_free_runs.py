@@ -1,6 +1,7 @@
 """AccountFreeRunAllowance adapters: signed-in free runs, counted per account
 per UTC day (`FREE_RUNS_PER_ACCOUNT_DAILY`, since 2026-11-14; it was per
-month before), and the paid plan's included runs, per UTC month.
+month before), and the paid plan's included runs, per UTC day too (since
+2026-11-14; per month before).
 
 They live with the identity tables rather than in Redis because they belong
 to the account: they follow the person across devices, have to survive a
@@ -14,12 +15,14 @@ On Postgres the conflict path locks the row, so concurrent requests are
 serialised on it and can never take an account past its limit. SQLite (tests)
 runs the same statement.
 
-`period` is the counter's key: "YYYY-MM-DD" for the free plan's daily
-runs, "YYYY-MM" for the paid plan's included runs (`PAID_RUNS_PER_MONTH`,
-docs/backend/billing.md, passed in as `limit` and `period` by the caller).
-The keys differ in length, so the free and the paid counter of one account
-are always different rows: a run is counted on exactly one of them, and an
-upgrade or downgrade mid-day or mid-month never double counts. `period` is
+`period` is the counter's key: "YYYY-MM-DD" for a daily counter, "YYYY-MM"
+for a monthly one. Both plans count per day now: the free plan against
+`FREE_RUNS_PER_ACCOUNT_DAILY`, the paid plan against `PAID_RUNS_PER_DAY`
+(docs/backend/billing.md, passed in as `limit` and `period` by the caller),
+on the same row. A run is counted once whichever plan took it; on an
+upgrade mid-day the day's free runs count toward the paid limit, and on a
+downgrade the day's paid runs count toward the free one. Monthly rows from
+before 2026-11-14 are left in place and no longer read. `period` is
 varchar(10) since `0005_account_daily_free_runs`.
 
 `InMemoryAccountFreeRuns` is the counterpart for the in-memory account store
