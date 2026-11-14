@@ -214,6 +214,15 @@ record for invoices and tax. Terms "Paid plan" and Privacy "Payments" say so
 - A user who pays in the browser and never signs in there sees the plan only
   after the app next reads billing (resume or tab visible).
 
+## Saved history and the plan (2026-11-14)
+
+The Upgrade comparison has a third row group, History: "Last 20 in this
+browser" against "Saved to your account, on every device". After a plan
+ends, saved runs are kept until `expires_at`; History shows a quiet notice
+with the date and the Account page's History row says "Saved to your account
+until <date>". Restoring a held account calls `refreshBilling()`; it comes
+back on the free plan. See `saved-history.md`.
+
 ## Changelog
 
 - 2026-11-14 · Codex · added static billing loading lines and an unavailable overlay within the existing reservation, retained the paid extra-runs row's space for older responses, and strengthened Account usage emphasis without changing the upgrade comparison
@@ -225,3 +234,5 @@ record for invoices and tax. Terms "Paid plan" and Privacy "Payments" say so
 - 2026-11-14 · frontend agent · Account refinement: the Plan group is split into Plan and usage (always, see auth-sign-in.md), Upgrade (two-column comparison, price, one "Upgrade to paid" action, yearly as a quiet link, extra-run terms on their own line) and Billing (price, renews/ends, terms, Manage billing); pitch sentence removed; `useBilling().pending` + an inert stand-in reserve the group's height; extra runs used this month not shown (not in the API)
 - 2026-11-14 · frontend agent · paid Billing card shows "Extra runs this month" ("N of L", or "N" when the cap is off) from the new `extra_runs` field (`BillingExtraRuns`, normalised to null when absent/unreadable or on a free plan); the reserved paid stand-in includes the row; terms sentence unchanged
 - 2026-11-14 · frontend agent · loading / failed billing now shows the reserved card's frame with the static lines or "Billing unavailable." inside it (was a blank hole); `/api/me`'s plan also picks the paid stand-in; extra-runs row and reserved heights re-verified in the browser
+2026-11-14 · frontend agent · Upgrade comparison gains a History row (last 20 in this browser vs saved to your account, on every device); restoring a held account re-reads the plan (`refreshBilling`); the plan-ended window for saved runs is shown on History and the Account History row (see saved-history.md)
+- 2026-11-14 · frontend agent · Account stand-in: until a read names the plan both stand-ins are rendered and the pre-paint `data-plan-paid` hint (last plan read, `videolens-plan-paid`; written from billing/free-runs in HomeScreen and from a paid `/api/me` entitlement in AccountPanel, cleared by a free read and on sign-out) picks Billing vs Upgrade: paid at 412 0.0239 -> 0.0000 with the hint (first visit and a stale hint still 0.0239 once). Paid plan with failed reads shows "Length unavailable" instead of the free length

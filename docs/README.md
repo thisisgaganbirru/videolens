@@ -21,6 +21,7 @@ Every new feature or component should get (or update) a doc here. Scope is stric
 | `free-runs.md` | The per-device daily free-run allowance: device tokens, `GET /api/free-runs`, the 401/402 codes, refunds, how easy it is to bypass |
 | `byok.md` | Bring-your-own-key and the single-use key vault |
 | `billing.md` | The paid plan: Stripe Checkout/Portal, `/api/billing*`, the webhook, paid admission and extra runs (billed once, on success), migration 0004, the owner's Stripe setup |
+| `saved-history.md` | A paid account's results saved on the server (`/api/history*`), the 30-day post-cancel window, the 30-day account deletion hold with `POST /api/me/restore`, the hourly cleanup cron, migration 0006 |
 | `auth.md` | Caller identity (API key, Supabase bearer token, `X-Client-ID`), accounts and workspaces, API keys, `/api/me`, `/api/keys`, the identity database and its migration |
 | `cors.md` | `ALLOWED_ORIGINS` and the native WebView origins |
 | `capabilities.md` | `GET /api/capabilities` and the probes |
@@ -41,6 +42,7 @@ Every new feature or component should get (or update) a doc here. Scope is stric
 | `results-view.md` | The finished result: notes, transcript, screen text, export |
 | `run-analysis-hook.md` | `useAnalysisRun`: submit/poll/open/reset, the active-run store |
 | `run-history.md` | History in IndexedDB, the poster grid, filters and sort |
+| `saved-history.md` | Paid saved history (the account's runs on History, load more, delete, opening a saved run) and the 30-day account deletion hold (held state, restore) |
 | `free-runs.md` | The client half of free runs: device token, banner, 401 retry and 402 handling |
 | `byok-api-key.md` | The API key tab |
 | `auth-sign-in.md` | Optional sign-in (emailed code), the Account tab, VideoLens API keys, the bearer on every request |
@@ -129,3 +131,5 @@ someone else's entry.
 - 2026-11-08 · backend subagent (auth phase 1) · widened the `auth.md` row to cover accounts, API keys and the identity database
 - 2026-11-08 · frontend subagent (auth phase 2) · indexed `frontend/auth-sign-in.md`
 - 2026-11-13 · backend agent · indexed `backend/billing.md`
+- 2026-11-14 · backend agent · indexed `backend/saved-history.md`
+2026-11-14 · frontend agent · indexed `frontend/saved-history.md`

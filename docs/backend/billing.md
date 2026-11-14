@@ -172,7 +172,12 @@ gets ids only: event, customer, subscription and account.
   This is a new code; the frontend shows "add your own key or wait for next month".
 - `DELETE /api/me`: 503 `{"detail","code":"subscription_cancel_failed"}`
   when the subscription could not be cancelled. Nothing was deleted, so
-  the client can retry.
+  the client can retry. Since 2026-11-14 a successful call starts a 30-day
+  hold rather than removing the account (`saved-history.md`); the
+  subscription is still cancelled at once, and the cleanup cancels again
+  before the final removal if one is somehow live.
+- `GET /api/me` gains `saved_history {saving, expires_at}`: a paid
+  account's results are saved on the server (`saved-history.md`).
 - `GET /api/capabilities` gains a `billing` row (see below).
 
 ## Rules
@@ -306,6 +311,16 @@ stays in Stripe after deletion. The app cannot delete it, because Stripe
 keeps invoices for tax records. The owner deletes it from the dashboard if
 asked.
 
+### Saved history follows the plan
+
+Since 2026-11-14 a paid account's results are saved on success, right
+after the extra run is billed (`saved-history.md`); a save failure never
+fails or un-bills the run. The webhook (`HandleBillingWebhookUseCase`)
+calls `SavedHistory.sync_expiry` after each subscription change: an ended
+plan (`policies.subscription_has_ended`: not paid, and not `past_due` /
+`incomplete`) starts the 30-day post-cancel window, a resubscribe clears
+it. The cleanup cron arms any window the webhook missed.
+
 ## Settings
 
 | Variable | Default | |
@@ -436,3 +451,4 @@ Nothing in this repository creates Stripe objects.
 - 2026-11-14 · backend agent · the paid counter is still monthly (100/month, metered overage unchanged); the free plan moved to daily rows, so free and paid no longer share a row; `runs.period` on `GET /api/billing`; paid period in `BillingPlans.PAID_RUNS_PERIOD`
 - 2026-11-14 · backend agent · paid included runs are daily: `PAID_RUNS_PER_DAY` (30) replaces `PAID_RUNS_PER_MONTH` (100, no alias); `BillingPlans.PAID_RUNS_PERIOD` is day, on the same daily row as the free plan; `runs.period` and `/api/free-runs` `period` are "day" for paid; extra runs and `PAID_EXTRA_RUNS_MONTHLY_CAP` unchanged (ledger still keyed on the month); no migration
 - 2026-11-14 · backend agent · `GET /api/billing` gains `extra_runs` `{used, limit, period: "month", resets_at}` on the paid plan (null otherwise): this month's extra runs counted by the cap's own definition (`BillingPlans.extra_runs_used`, held + due + reported, not void), shared with admission; no migration, no new setting
+- 2026-11-14 · backend agent · saved history follows the plan: paid results saved after billing, the webhook starts or clears the 30-day post-cancel window (`saved-history.md`); deletion is a 30-day hold, the subscription still cancelled at once

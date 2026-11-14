@@ -2,7 +2,7 @@
    together, mirroring the backend's container.py. Hooks in application/
    import instances from here - they never construct an adapter directly. */
 
-import type { CallerIdentity } from "@/domain/ports";
+import type { AccountHoldSource, CallerIdentity } from "@/domain/ports";
 import { SessionStorageActiveRunStore } from "./activeRunStore";
 import { FetchAccountGateway } from "./accountGateway";
 import { FetchBillingGateway } from "./billingGateway";
@@ -15,6 +15,7 @@ import { FetchFreeRunsGateway } from "./freeRunsGateway";
 import { FetchLimitsGateway } from "./limitsGateway";
 import { IndexedDbHistoryStore } from "./historyStore";
 import { FetchRunsGateway } from "./runsGateway";
+import { FetchSavedHistoryGateway } from "./savedHistoryGateway";
 import { MemoryServerAuthStatus } from "./serverAuthStatus";
 import { ApiUpdateChecker } from "./updateCheck";
 import { LocalStorageUpdateDismissalStore } from "./updateDismissalStore";
@@ -42,11 +43,16 @@ export const serverAuthStatus = new MemoryServerAuthStatus();
 export const apiClient = new ApiClient(authSession, deviceTokenStore, serverAuthStatus);
 /* The identity the last caller request went out as (History run ownership). */
 export const callerIdentity: CallerIdentity = apiClient;
+/* Every 410 `account_pending_deletion`, whichever gateway heard it (the
+   30-day deletion hold, 2026-11-14). */
+export const accountHoldSource: AccountHoldSource = apiClient;
 export const runsGateway = new FetchRunsGateway(apiClient, apiKeyStore);
 export const freeRunsGateway = new FetchFreeRunsGateway(apiClient, deviceTokenStore);
 export const accountGateway = new FetchAccountGateway(apiClient);
 /* The paid plan (2026-11-13): Stripe-hosted pages, reached by redirect. */
 export const billingGateway = new FetchBillingGateway(apiClient);
+/* A paid account's saved runs on the server (2026-11-14). */
+export const savedHistoryGateway = new FetchSavedHistoryGateway(apiClient);
 /* Upload limits per tier (2026-11-13); public, no caller identity. */
 export const limitsGateway = new FetchLimitsGateway();
 export const capabilitiesGateway = new FetchCapabilitiesGateway(serverAuthStatus);

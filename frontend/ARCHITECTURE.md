@@ -23,7 +23,9 @@ and host → platform), `ports.ts` (the interfaces below).
 |---|---|---|
 | `RunsGateway` | `runsGateway.ts` | `/api/runs`; adds `X-Gemini-Api-Key` on create, the rest from `ApiClient` |
 | `AuthSession` | `authSession.ts` | Supabase Auth (dynamic import), or `NullAuthSession` when unconfigured |
-| `AccountGateway` | `accountGateway.ts` | `/api/me`, `/api/keys` |
+| `AccountGateway` | `accountGateway.ts` | `/api/me`, `/api/me/restore`, `/api/keys` |
+| `SavedHistoryGateway` | `savedHistoryGateway.ts` | `/api/history`, `/api/history/{run_id}` (paid saved runs) |
+| `AccountHoldSource` | `apiClient.ts` | the shared client itself: tells listeners about every 410 `account_pending_deletion` |
 | `ServerAuthStatus`, `CallerIdentity` | `serverAuthStatus.ts`, `apiClient.ts` | the server's `auth` capability (fed by the capabilities adapter, gates the bearer); the identity requests go out as (History `owner`) |
 | `CapabilitiesGateway` | `capabilitiesGateway.ts` | `/api/capabilities`, no caller identity |
 | `FreeRunsGateway`, `DeviceTokenStore` | `freeRunsGateway.ts`, `deviceTokenStore.ts` | `/api/free-runs`; `localStorage` |
@@ -152,3 +154,4 @@ scale into the WebView before first paint).
 - 2026-11-08 · frontend subagent (auth phase 2) · `AuthSession` + `SupabaseAuthSession`/`NullAuthSession`, `AccountGateway`, shared `ApiClient` (runs and free-runs gateways now take it), hooks `useAuthSession`/`useAccount`/`useApiKeys`, `account` tab and `AccountPanel`; see docs/frontend/auth-sign-in.md
 - 2026-11-08 · frontend subagent (auth phase 2, review fixes) · `ServerAuthStatus` + `MemoryServerAuthStatus`, `CallerIdentity` on `ApiClient`, `HistoryRecord.owner` and `recordGone`; see docs/frontend/auth-sign-in.md
 - 2026-11-13 · frontend agent · `BillingGateway` + `FetchBillingGateway`, hook `useBilling` (`useBilling`, `useBillingActions`), `takeSearchParam` in `useMainTab`; see docs/frontend/billing.md
+2026-11-14 · frontend agent · `SavedHistoryGateway` + `FetchSavedHistoryGateway`, `AccountHoldSource` (the `ApiClient` itself), `AccountGateway.restoreAccount`, hooks `useSavedHistory` and `accountHold` (`useAccountHold`, `useAccountRestore`, `useRestoredEpoch`), `ConfirmDialog`; see docs/frontend/saved-history.md

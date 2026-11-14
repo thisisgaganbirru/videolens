@@ -162,6 +162,18 @@ class Settings(BaseSettings):
     # Safety net on extra runs per account per UTC month: past it a paid run
     # is refused (402 extra_runs_cap) instead of growing the bill. <= 0 = no cap.
     paid_extra_runs_monthly_cap: int = 200
+    # Saved history (docs/backend/saved-history.md). A paid account's run
+    # results are saved on the server; once its paid plan ends they stay
+    # readable and deletable this many days, then are removed for good.
+    paid_saved_runs_grace_days: int = 30
+    # Largest result one saved run may store, in bytes of JSON. Over it the
+    # segment lists are dropped first; a result still over it is not saved
+    # (logged). A 10-minute run is tens of KB, so normal runs never hit it.
+    paid_saved_run_max_bytes: int = 2 * 1024 * 1024
+    # DELETE /api/me holds the account this many days (it stops working at
+    # once; the person can sign in and restore it), then the worker's
+    # cleanup removes it, its saved runs and its Supabase user for good.
+    account_deletion_hold_days: int = 30
 
     github_repo: str = "thisisgaganbirru/videolens"
     github_token: str = ""

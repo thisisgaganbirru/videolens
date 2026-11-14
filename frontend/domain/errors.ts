@@ -18,6 +18,9 @@ export class ApiError extends Error {
   /** Whose allowance a 402 `free_runs_used` refers to (`device` or
    *  `account`). Absent on other errors and from servers that predate it. */
   readonly scope?: string;
+  /** When a held account is removed for good (ISO), sent with the 410
+   *  `account_pending_deletion` (2026-11-14). Absent on every other error. */
+  readonly purgeAt?: string;
 
   /** `status` is the HTTP status, when there was one. Lets a caller tell "this
    *  run no longer exists" (404 — the server forgot it) from every other
@@ -25,13 +28,14 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status?: number,
-    extra: { code?: string; limit?: number; used?: number; scope?: string } = {}
+    extra: { code?: string; limit?: number; used?: number; scope?: string; purgeAt?: string } = {}
   ) {
     super(message);
     this.code = extra.code;
     this.limit = extra.limit;
     this.used = extra.used;
     this.scope = extra.scope;
+    this.purgeAt = extra.purgeAt;
   }
 }
 

@@ -1,7 +1,9 @@
-"""`DeleteAccountUseCase`: who may delete, in what order, and what a
-partial failure or a repeat call leaves behind."""
+"""`DeleteAccountUseCase`: who may delete, what the 30-day hold changes at
+once, and what a failure or a repeat call leaves behind
+(docs/backend/saved-history.md)."""
 
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from app.application.delete_account import DeleteAccountUseCase
 from app.domain.entities import AuthMethod, Principal
@@ -12,6 +14,8 @@ from app.infrastructure.persistence.account_directory import InMemoryAccountDire
 from app.infrastructure.persistence.api_key_repository import InMemoryApiKeyRepository
 
 from .fakes import FakeAccountDeleter, FakeRunRepository
+
+NOW = datetime(2026, 11, 14, 12, 0, tzinfo=timezone.utc)
 
 
 def _person(account) -> Principal:
@@ -39,19 +43,25 @@ class DeleteAccountUseCaseTests(unittest.IsolatedAsyncioTestCase):
         self.runs.delete_for_owner = logged_delete  # type: ignore[method-assign]
         self.deleter = FakeAccountDeleter(self.log)
         self.use_case = DeleteAccountUseCase(
-            accounts=self.accounts, deleter=self.deleter, api_keys=self.keys, runs=self.runs
+            accounts=self.accounts,
+            deleter=self.deleter,
+            api_keys=self.keys,
+            runs=self.runs,
+            hold_days=30,
+            clock=lambda: NOW,
         )
         self.person = _person(await self.accounts.resolve_account("sub-1", "a@b.test"))
 
-    async def test_runs_then_rows_then_identity_last(self) -> None:
+    async def test_runs_then_the_hold_and_nothing_is_removed_for_good(self) -> None:
         key = await self.keys.issue(self.person.workspace_id, "ci", [], max_active=10)
 
-        await self.use_case.execute(self.person)
+        purge_at = await self.use_case.execute(self.person)
 
-        self.assertEqual(
-            self.log,
-            ["runs:user:sub-1", f"runs:key:{key.key.key_id}", "rows:sub-1", "identity:sub-1"],
-        )
+        self.assertEqual(self.log, ["runs:user:sub-1", f"runs:key:{key.key.key_id}", "hold:sub-1"])
+        self.assertEqual(purge_at, NOW + timedelta(days=30))
+        # The Supabase user and the rows stay until the hold ends.
+        self.assertNotIn("identity:sub-1", self.log)
+        self.assertNotIn("rows:sub-1", self.log)
 
     async def test_only_the_persons_runs_are_deleted(self) -> None:
         await self.runs.create("mine", "user:sub-1")
@@ -89,8 +99,8 @@ class DeleteAccountUseCaseTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(log, [])
         self.assertEqual(self.log, [])
 
-    async def test_a_row_failure_is_a_500_and_the_identity_is_kept(self) -> None:
-        self.deleter.rows_error = RuntimeError("connection reset by db.internal")
+    async def test_a_hold_failure_is_a_500_without_internals(self) -> None:
+        self.deleter.hold_error = RuntimeError("connection reset by db.internal")
 
         with self.assertLogs("videolens", level="ERROR"), self.assertRaises(AccountDeletionError) as caught:
             await self.use_case.execute(self.person)
@@ -98,15 +108,6 @@ class DeleteAccountUseCaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("db.internal", str(caught.exception))
         self.assertIn("RuntimeError", caught.exception.log_detail)
         self.assertNotIn("identity:sub-1", self.log)
-
-    async def test_an_identity_failure_is_a_500_after_the_rows_went(self) -> None:
-        self.deleter.identity_error = RuntimeError("permission denied for table users")
-
-        with self.assertLogs("videolens", level="ERROR"), self.assertRaises(AccountDeletionError) as caught:
-            await self.use_case.execute(self.person)
-
-        self.assertNotIn("permission", str(caught.exception))
-        self.assertEqual(self.log[-2:], ["rows:sub-1", "identity:sub-1"])
 
     async def test_a_run_store_failure_does_not_stop_the_deletion(self) -> None:
         async def broken(owner_id: str) -> int:
@@ -117,36 +118,41 @@ class DeleteAccountUseCaseTests(unittest.IsolatedAsyncioTestCase):
         with self.assertLogs("videolens", level="WARNING"):
             await self.use_case.execute(self.person)
 
-        self.assertEqual(self.log, ["rows:sub-1", "identity:sub-1"])
+        self.assertEqual(self.log, ["hold:sub-1"])
 
-    async def test_an_already_deleted_account_is_not_an_error(self) -> None:
-        self.deleter.rows_exist = False
+    async def test_a_repeat_keeps_the_first_deadline(self) -> None:
+        first = await self.use_case.execute(self.person)
+        later = DeleteAccountUseCase(
+            accounts=self.accounts,
+            deleter=self.deleter,
+            api_keys=self.keys,
+            runs=self.runs,
+            clock=lambda: NOW + timedelta(days=5),
+        )
+        self.assertEqual(await later.execute(self.person), first)
 
-        await self.use_case.execute(self.person)
-        await self.use_case.execute(self.person)
-
-        # The identity step still runs: a retry after an identity failure
-        # finds no rows but must still remove the provider user.
-        self.assertEqual(self.log.count("identity:sub-1"), 2)
-
-    async def test_a_skipped_identity_step_still_succeeds(self) -> None:
-        self.deleter.identity_supported = False
-        await self.use_case.execute(self.person)
-        self.assertIn("identity:sub-1", self.log)
+    async def test_hold_days_comes_from_the_setting(self) -> None:
+        use_case = DeleteAccountUseCase(
+            accounts=self.accounts,
+            deleter=FakeAccountDeleter(),
+            api_keys=self.keys,
+            runs=self.runs,
+            hold_days=7,
+            clock=lambda: NOW,
+        )
+        self.assertEqual(await use_case.execute(self.person), NOW + timedelta(days=7))
 
 
 class DeleteAccountInMemoryTests(unittest.IsolatedAsyncioTestCase):
     """End to end over the in-memory adapters a local `uvicorn` uses."""
 
-    async def test_the_person_goes_and_everyone_else_stays(self) -> None:
+    async def test_the_person_is_held_and_everyone_else_is_untouched(self) -> None:
         accounts = InMemoryAccountDirectory()
         keys = InMemoryApiKeyRepository()
         runs = FakeRunRepository()
+        deleter = InMemoryAccountDeleter(Settings(_env_file=None), accounts=accounts, api_keys=keys)
         use_case = DeleteAccountUseCase(
-            accounts=accounts,
-            deleter=InMemoryAccountDeleter(Settings(_env_file=None), accounts=accounts, api_keys=keys),
-            api_keys=keys,
-            runs=runs,
+            accounts=accounts, deleter=deleter, api_keys=keys, runs=runs, clock=lambda: NOW
         )
         mine = await accounts.resolve_account("sub-1")
         theirs = await accounts.resolve_account("sub-2")
@@ -156,16 +162,37 @@ class DeleteAccountInMemoryTests(unittest.IsolatedAsyncioTestCase):
         await runs.create("their-run", "user:sub-2")
         person = _person(mine)
 
-        await use_case.execute(person)
-        await use_case.execute(person)  # idempotent
+        purge_at = await use_case.execute(person)
+        self.assertEqual(await use_case.execute(person), purge_at)  # idempotent
 
-        self.assertIsNone(await accounts.get_workspace(mine.default_workspace_id))
-        self.assertIsNone(await keys.authenticate(my_key.secret))
+        held = await accounts.resolve_account("sub-1")
+        self.assertEqual(held.account_id, mine.account_id)
+        self.assertTrue(held.pending_deletion)
+        self.assertEqual(held.purge_at, NOW + timedelta(days=30))
+        # Rows are kept (hidden by the caller checks), the key too.
+        self.assertIsNotNone(await accounts.get_workspace(mine.default_workspace_id))
+        self.assertFalse((await accounts.resolve_account("sub-2")).pending_deletion)
         self.assertIsNotNone(await keys.authenticate(their_key.secret))
-        self.assertIsNotNone(await accounts.get_workspace(theirs.default_workspace_id))
         self.assertEqual(sorted(runs.runs), ["their-run"])
+
+        # After the hold, removal for good: a later sign-in is a new account.
+        self.assertEqual(
+            [p.external_id for p in await deleter.due_for_purge(NOW + timedelta(days=31), limit=10)], ["sub-1"]
+        )
+        self.assertTrue(await deleter.delete_account("sub-1", due_before=NOW + timedelta(days=31)))
+        self.assertIsNone(await keys.authenticate(my_key.secret))
         again = await accounts.resolve_account("sub-1")
         self.assertNotEqual(again.account_id, mine.account_id)
+
+    async def test_purge_is_refused_before_the_deadline(self) -> None:
+        accounts = InMemoryAccountDirectory()
+        keys = InMemoryApiKeyRepository()
+        deleter = InMemoryAccountDeleter(Settings(_env_file=None), accounts=accounts, api_keys=keys)
+        mine = await accounts.resolve_account("sub-1")
+        await deleter.schedule_deletion("sub-1", now=NOW, purge_at=NOW + timedelta(days=30))
+
+        self.assertFalse(await deleter.delete_account("sub-1", due_before=NOW + timedelta(days=29)))
+        self.assertEqual((await accounts.resolve_account("sub-1")).account_id, mine.account_id)
 
 
 if __name__ == "__main__":

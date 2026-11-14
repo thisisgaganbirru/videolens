@@ -346,6 +346,47 @@ no worse than before; keeping a blank band up after a failure, or guessing a
 spent state before the read, would each be wrong more often than it helps.
 Not yet re-measured on the device (the QA run's own numbers were on Android).
 
+## Remembered spent state (2026-11-14)
+
+The out-of-runs block appears inside the card only once the allowance is
+read, which pushed the card's contents down (0.094 at 412, 0.025 at 1280).
+The prerender cannot know, so the last answer is remembered:
+
+- `useRememberRunsSpent` (HomeScreen) writes `videolens-runs-spent` =
+  `"<reset ms> <offer>"` when the block is shown (`resetsAt`, or the next
+  UTC midnight when unknown; offer `sign-in` / `upgrade` / `key`), and
+  removes it as soon as a read says runs can be started (runs left, billed
+  overage, or a saved key). A failed read leaves it to expire.
+- `LAYOUT_HINTS_INIT_SCRIPT` (last in the pre-paint script) stamps
+  `<html data-runs-spent="<offer>">` while the reset is in the future; an
+  expired or malformed value is removed instead. A `sign-in` hint with a
+  stored session (`data-session`), or an `upgrade` one without, was written
+  by the other identity and is dropped the same way.
+- While the block may still appear (`pending`, or blocked but `stripKnown`
+  not yet), `UploadForm` gets `blockedHeld` and renders an inert, unseen
+  copy of the block in each shape (one outline button / button + link);
+  CSS shows the stamped one and nothing without a stamp. The strip slot
+  renders three stand-ins (signed out two-line, signed in one-line, spent)
+  and CSS shows one: spent when stamped, else signed in when
+  `data-session`, else signed out. `:root[data-byok]` never reserves.
+
+Measured (mocked `/api/`, light web, CLS on load):
+
+| Case | 412 | 1280 |
+|---|---|---|
+| First spent visit (no hint; the old behaviour) | 0.0938 | 0.0254 |
+| Returning spent visit | 0.0000 | 0.0016 (nav pill) |
+| Stale hint, runs available (unexpired) | 0.0938, one collapse | 0.0254 |
+| Expired hint | 0.0000 | 0.0016 |
+| `sign-in` hint, now signed in | 0.0000 | 0.0009 |
+| Key saved with a hint | 0.0041 (key effect, pre-existing) | 0.0027 |
+| Signed in, runs left: before / after | 0.0164 / 0.0000 | 0.0022 / 0.0009 |
+
+Still shifts: the first spent visit on a device (no hint yet); a hint whose
+offer differs from the one shown (for example `key` stamped, sign-in shown:
+0.027 at 412); an unexpired hint after runs came back early. Each happens
+once, then the hint is rewritten or removed.
+
 ## Changelog
 
 - 2026-11-01 · frontend agent (Phase 5b) · created: device token store, free-runs gateway/port, `useFreeRuns` store, 401 retry-once and 402 limit state in `useAnalysisRun`, `FreeRunsBanner` on all shells, `UploadForm` `blocked`, API key lede and Privacy sentence
@@ -365,3 +406,4 @@ Not yet re-measured on the device (the QA run's own numbers were on Android).
 - 2026-11-14 · frontend agent · refund line reads "This didn't use one of your runs." (UX fix spec batch a)
 - 2026-11-14 · frontend agent · UX fix spec batch b: strip is text only (no "Add key" pill, container query removed), "N of L runs left today. Resets at <local time>." with the inline Sign in where offered, spent "You've used today's L runs. They reset at <time>."; out-of-runs offer moved into the intake card (`blockedOffer`: sign-in / upgrade / key); strip and block wait for `stripKnown`; ghost has a valid `resetsAt`; 402 `extra_runs_cap` no longer says "tomorrow"
 - 2026-11-14 · frontend agent · desktop (60rem up): the strip sits at the right end of the "New analysis" row (`.intake-head` grid, `justify-self: end`, max 26rem, 0.875rem/1.35 with 8px block padding so two lines stay shorter than the h1 and the card never moves); ghost stand-in and `data-byok` rule unchanged; below 60rem the stacked strip is as before
+- 2026-11-14 · frontend agent · out-of-runs and signed-in strip shifts: `data-runs-spent` pre-paint hint (`infrastructure/layoutHints.ts`, `application/useLayoutHints.ts`) reserves the spent strip and the out-of-runs block (`UploadForm` `blockedHeld`) for a returning spent visitor; three strip stand-ins chosen by `data-session` / `data-runs-spent`. Numbers under "Remembered spent state"

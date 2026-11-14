@@ -13,6 +13,7 @@ import logging
 from ..domain.entities import BillingWebhookEvent
 from ..domain.errors import BillingNotConfiguredError
 from .billing import BillingPlans
+from .saved_history import SavedHistory
 
 logger = logging.getLogger("videolens")
 
@@ -33,8 +34,11 @@ HANDLED_EVENTS = frozenset(
 
 
 class HandleBillingWebhookUseCase:
-    def __init__(self, *, plans: BillingPlans) -> None:
+    def __init__(self, *, plans: BillingPlans, history: SavedHistory | None = None) -> None:
         self._plans = plans
+        # Starts or clears the saved-history window as the plan ends or
+        # comes back (docs/backend/saved-history.md). None = not tracked.
+        self._history = history
 
     async def execute(self, payload: bytes, signature: str) -> str:
         """What happened ("handled" | "duplicate" | "ignored"), for tests and
@@ -77,6 +81,9 @@ class HandleBillingWebhookUseCase:
             )
             return "ignored"
         applied = await accounts.apply_subscription(account.account_id, snapshot)
+        if self._history is not None:
+            # From the stored row, applied or not; never raises.
+            await self._history.sync_expiry(account.account_id)
         if applied:
             logger.info("Account %s subscription %s is %s", account.account_id, snapshot.subscription_id, snapshot.status)
         return "handled" if applied else "ignored"

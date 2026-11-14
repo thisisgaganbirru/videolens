@@ -538,6 +538,20 @@ appears). Not exercised: the code step, checkout, sign-out, key actions.
 - Errors on the email and code fields are `role="alert"` and also take
   focus, so a refusal after pressing Enter is announced.
 
+## The 30-day deletion hold (2026-11-14)
+
+`DELETE /api/me` now answers **200** `{"status": "pending_deletion",
+"purge_at": "…"}` instead of 204: the account stops working at once and is
+held for 30 days. `AccountGateway.deleteAccount()` returns `{purgeAt}` (null
+for a legacy 204), `useAccountDeletion` hands it to the panel, and the
+deleted card names the date. A retry whose 200 was lost gets 410
+`account_pending_deletion`, which also counts as done. Signed in to a held
+account, every route answers 410 `account_pending_deletion`; the API client
+hears it whichever gateway asked, and the Account page shows the held card
+with "Restore account" (`POST /api/me/restore`) and "Sign out".
+`useAccount` maps the 410 to `problem.kind === "held"`. The delete form's
+copy now explains the hold. Everything is in `saved-history.md`.
+
 ## Changelog
 
 - 2026-11-14 · Codex · emphasised runs left with reset below, shortened device descriptions, added static loading/failure feedback, separated ending actions, made Send code full width on phones, and adjusted section heading emphasis; browser verification unavailable this session
@@ -567,3 +581,4 @@ appears). Not exercised: the code step, checkout, sign-out, key actions.
 - 2026-11-14 · frontend agent · Account refinement (six items): compact identity row with a text Sign out; Plan and usage card for every account (plan, runs left, video length, reset in local time; rows reserved); signed-out card leads with "Get 10 free runs a day" + "Continue without an account"; "VideoLens API access" under a collapsed Developer tools group; "Recent history" / "Your Gemini key (optional)" wording; Help renamed Information; lede removed; Loading state until capabilities settle; top gap trimmed
 - 2026-11-14 · frontend agent · delete-account note says "under History and Gemini key" (tab renamed); paid Billing card gains "Extra runs this month" (see billing.md); new pre-paint `data-session` stamp and `useStoredSessionHint()` (`infrastructure/authSessionStamp.ts`; `providerStorageKey` now shared with `SupabaseAuthSession`), used only to hold layout on the Gemini key page (see byok-api-key.md)
 - 2026-11-14 · frontend agent · reviewed Codex's Account refinements in the browser (320-1440, both themes, both shells, signed out / free / paid with and without `extra_runs` / loading / failed); one-line value reservations from 20rem, framed billing stand-in, muted "Runs unavailable", "Plan unavailable" instead of a false "Free account" when the plan read failed
+2026-11-14 · frontend agent · `DELETE /api/me` now answers 200 `{status, purge_at}` (30-day hold; legacy 204 still handled); delete form, deleted card and the new held/restore states rewritten for the hold; `AccountProblem` gains `held`; `useAccount` re-reads after a restore (see saved-history.md)

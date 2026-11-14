@@ -5,19 +5,23 @@ import type { AccountResponse } from "@/domain/entities";
 import { ApiError, NetworkError } from "@/domain/errors";
 import { classifyGatewayError } from "@/application/gatewayError";
 import { signOut } from "@/application/useAuthSession";
+import { useRestoredEpoch } from "@/application/accountHold";
 import { accountGateway } from "@/infrastructure/container";
 
 /** How `/api/me` went, in the terms the Account panel draws:
  *  - `unavailable`: 503, the server has no sign-in configured. Calm, not red.
  *  - `rejected`: 401, this server did not accept the session (a token from a
  *    different project, or one revoked since). Offer to sign out.
+ *  - `held`: 410 `account_pending_deletion` (2026-11-14): the account is in
+ *    the 30-day deletion hold and can be restored until `purgeAt`.
  *  - `failed`: anything else; retry. */
 export type AccountProblem =
   | { kind: "unavailable" }
   | { kind: "rejected" }
+  | { kind: "held"; purgeAt: string | null }
   | { kind: "failed"; message: string };
 
-type Loaded = { userId: string; account: AccountResponse | null; problem: AccountProblem | null };
+type Loaded = { userId: string; epoch: number; account: AccountResponse | null; problem: AccountProblem | null };
 
 const FALLBACK = "Your account could not be loaded.";
 
@@ -35,6 +39,8 @@ const FALLBACK = "Your account could not be loaded.";
 export function useAccount(userId: string | null) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [attempt, setAttempt] = useState(0);
+  /* A restore lifts the hold: read the account again. */
+  const restoredEpoch = useRestoredEpoch();
 
   useEffect(() => {
     if (!userId) return;
@@ -42,7 +48,7 @@ export function useAccount(userId: string | null) {
     accountGateway
       .fetchAccount()
       .then((account) => {
-        if (!cancelled) setLoaded({ userId, account, problem: null });
+        if (!cancelled) setLoaded({ userId, epoch: restoredEpoch, account, problem: null });
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -52,20 +58,24 @@ export function useAccount(userId: string | null) {
             ? { kind: "unavailable" }
             : status === 401
               ? { kind: "rejected" }
-              : { kind: "failed", message: classifyGatewayError(err, FALLBACK).message };
-        setLoaded({ userId, account: null, problem });
+              : err instanceof ApiError && err.code === "account_pending_deletion"
+                ? { kind: "held", purgeAt: err.purgeAt ?? null }
+                : { kind: "failed", message: classifyGatewayError(err, FALLBACK).message };
+        setLoaded({ userId, epoch: restoredEpoch, account: null, problem });
       });
     return () => {
       cancelled = true;
     };
-  }, [userId, attempt]);
+  }, [userId, attempt, restoredEpoch]);
 
   const reload = useCallback(() => {
     setLoaded(null);
     setAttempt((n) => n + 1);
   }, []);
 
-  const current = userId && loaded?.userId === userId ? loaded : null;
+  /* An answer from before the last restore is stale (it may be the 410). */
+  const current =
+    userId && loaded?.userId === userId && loaded.epoch === restoredEpoch ? loaded : null;
   return {
     account: current?.account ?? null,
     problem: current?.problem ?? null,
@@ -112,9 +122,11 @@ function deletionProblem(err: unknown): DeletionProblem {
 }
 
 /**
- * `DELETE /api/me` for the signed-in person (auth phase 3).
+ * `DELETE /api/me` for the signed-in person (auth phase 3; the 30-day hold
+ * since 2026-11-14: a 200 with `purge_at`, handed on as `purgeAt`; an older
+ * backend's 204 removed the account at once and hands on null).
  *
- * On 204 it starts `AuthSession.signOut()` and hands the settling promise to
+ * On success it starts `AuthSession.signOut()` and hands the settling promise to
  * `onDeleted` at once, so the panel swaps to its "deleted" card immediately
  * but can hold "Back to sign in" until the stored session is really gone.
  * (supabase-js awaits a `/logout` request before clearing it; a signed-in
@@ -127,7 +139,7 @@ function deletionProblem(err: unknown): DeletionProblem {
  * Whether to allow the call (the typed email, the run guard) is the panel's
  * decision; this hook only refuses a second call while one is in flight.
  */
-export function useAccountDeletion(onDeleted: (signedOut: Promise<void>) => void) {
+export function useAccountDeletion(onDeleted: (signedOut: Promise<void>, purgeAt: string | null) => void) {
   const [state, setState] = useState<DeletionState>({ phase: "idle" });
   const inFlight = useRef(false);
 
@@ -135,18 +147,25 @@ export function useAccountDeletion(onDeleted: (signedOut: Promise<void>) => void
     if (inFlight.current) return;
     inFlight.current = true;
     setState({ phase: "deleting" });
+    let purgeAt: string | null = null;
     try {
-      await accountGateway.deleteAccount();
+      ({ purgeAt } = await accountGateway.deleteAccount());
     } catch (err: unknown) {
-      inFlight.current = false;
-      const problem = deletionProblem(err);
-      setState({ phase: "failed", problem, message: DELETION_MESSAGE[problem] });
-      return;
+      /* A retry whose 200 was lost: the account is already held, which is
+         exactly what was asked for. */
+      if (err instanceof ApiError && err.code === "account_pending_deletion") {
+        purgeAt = err.purgeAt ?? null;
+      } else {
+        inFlight.current = false;
+        const problem = deletionProblem(err);
+        setState({ phase: "failed", problem, message: DELETION_MESSAGE[problem] });
+        return;
+      }
     }
-    /* The account is gone whatever happens next; `signOut` removes the
-       stored session by hand even when the provider call fails. */
+    /* The account stops working whatever happens next; `signOut` removes
+       the stored session by hand even when the provider call fails. */
     const signedOut = signOut().catch(() => undefined);
-    onDeleted(signedOut);
+    onDeleted(signedOut, purgeAt);
     await signedOut;
     inFlight.current = false;
   }, [onDeleted]);

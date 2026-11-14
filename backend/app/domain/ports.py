@@ -2,6 +2,7 @@
 implement these structurally (Protocol = duck typing, no inheritance
 required) so use cases never import a framework or a driver library."""
 
+from datetime import datetime
 from typing import Awaitable, Callable, Optional, Protocol
 
 from .entities import (
@@ -21,9 +22,13 @@ from .entities import (
     FreeRunClaim,
     FreeRunStatus,
     MediaVisuals,
+    PendingAccountPurge,
     ReleaseIndex,
     Run,
     RunStatus,
+    SavedRun,
+    SavedRunCursor,
+    SavedRunPage,
     SavedUpload,
     SourceMetadata,
     VideoAnalysis,
@@ -56,6 +61,7 @@ class RunRepository(Protocol):
         duration_seconds: float | None = None,
         media_tier: str | None = None,
         admitted_byok: bool = False,
+        account_id: str | None = None,
     ) -> Run: ...
 
     async def get(self, run_id: str) -> Optional[Run]: ...
@@ -349,6 +355,11 @@ class AccountDirectory(Protocol):
 
     async def get_workspace(self, workspace_id: str) -> Optional[Workspace]: ...
 
+    async def get_account(self, account_id: str) -> Optional[Account]:
+        """The account by its own id (an API key's workspace owner), or None.
+        Never creates anything."""
+        ...
+
     async def member_role(self, workspace_id: str, account_id: str) -> Optional[str]: ...
 
     async def close(self) -> None: ...
@@ -395,12 +406,12 @@ class IdentityProviderUsers(Protocol):
 
 
 class AccountDeleter(Protocol):
-    """Removes a signed-in person for good: their identity rows, then their
-    identity-provider user. Two steps on purpose, called in that order, so a
-    failure after the first leaves the provider user in place and a retry
-    with the same session still resolves the person. Once both steps have
-    succeeded the person is gone for good: `IdentityProviderUsers` refuses
-    their still-valid token (401), so there is no second deletion to make.
+    """Account deletion as a 30-day hold (docs/backend/saved-history.md;
+    owner decision 2026-11-14). `DELETE /api/me` only schedules it: the rows
+    and the identity-provider user stay, hidden, so the person can sign in
+    again and restore. The cleanup job later removes them for good: the
+    identity-provider user first, then every row, so a failure between the
+    two is retried from the still-present account row.
 
     `enabled` matches the account directory's: False on a deployment with no
     account store, where there is nothing to delete."""
@@ -408,18 +419,88 @@ class AccountDeleter(Protocol):
     @property
     def enabled(self) -> bool: ...
 
-    async def delete_account(self, external_id: str) -> bool:
+    async def schedule_deletion(self, external_id: str, *, now: datetime, purge_at: datetime) -> Optional[datetime]:
+        """Put the account in the hold. Returns the purge time in effect (an
+        account already in the hold keeps its first one), or None when there
+        is no such account."""
+        ...
+
+    async def restore(self, external_id: str, *, now: datetime) -> Optional[bool]:
+        """Lift the hold. True when this call lifted it, False when the
+        account was not in the hold, None when the hold has already ended
+        (`purge_at <= now`: too late) or there is no such account."""
+        ...
+
+    async def due_for_purge(self, now: datetime, *, limit: int) -> list[PendingAccountPurge]:
+        """Accounts whose hold ended, oldest first."""
+        ...
+
+    async def delete_account(self, external_id: str, *, due_before: Optional[datetime] = None) -> bool:
         """Delete the account for this identity-provider subject with every
-        workspace it owns, those workspaces' memberships and API keys, and
-        its own memberships elsewhere, in one transaction. False when there
-        was no such account (rows already deleted by an earlier, part-way
-        attempt): not an error."""
+        row it owns (workspaces, memberships, API keys, counters, billing,
+        saved runs), in one transaction. With `due_before`, only an account
+        whose hold ended by then (a restore that won the race is left
+        alone). False when nothing was deleted."""
         ...
 
     async def delete_identity(self, external_id: str) -> bool:
         """Delete the identity-provider user. False when this store has no
         provider to delete from (SQLite, in-memory) and the step was skipped;
         raises when the provider refused."""
+        ...
+
+
+class SavedRunRepository(Protocol):
+    """Paid accounts' saved runs (`saved_runs`) and each account's
+    post-cancel expiry (`accounts.saved_runs_expire_at`). Every read and
+    write is scoped by `account_id`: one account can never see or touch
+    another's rows. `enabled` is False without a database (and in
+    distributed mode without one): nothing is saved, lists are empty."""
+
+    @property
+    def enabled(self) -> bool: ...
+
+    async def save(self, run: SavedRun) -> bool:
+        """Insert once per (account, run id). False when it was already saved
+        (a retry or a duplicate completion): never a second row."""
+        ...
+
+    async def list_page(
+        self, account_id: str, *, limit: int, before: Optional[SavedRunCursor] = None
+    ) -> SavedRunPage:
+        """Newest first, light fields only (`SavedRunSummary`)."""
+        ...
+
+    async def get(self, account_id: str, run_id: str) -> Optional[SavedRun]: ...
+
+    async def delete(self, account_id: str, run_id: str) -> bool: ...
+
+    async def delete_all(self, account_id: str) -> int: ...
+
+    async def expiry(self, account_id: str) -> Optional[datetime]: ...
+
+    async def arm_expiry(self, account_id: str, expire_at: datetime, *, replace: bool = False) -> Optional[datetime]:
+        """Set the post-cancel expiry if none is set (or always, `replace`).
+        Returns the expiry in effect."""
+        ...
+
+    async def clear_expiry(self, account_id: str) -> None: ...
+
+    async def accounts_to_arm(self, now: datetime, *, limit: int) -> list[str]:
+        """Accounts with saved runs, no expiry, not in the deletion hold, and
+        no billing row granting the paid plan now (candidates; the caller
+        applies `subscription_has_ended`)."""
+        ...
+
+    async def expired_accounts(self, now: datetime, *, limit: int) -> list[str]:
+        """Accounts whose expiry has passed and that are not in the deletion
+        hold (a held account's saved runs wait for the restore or the purge)."""
+        ...
+
+    async def purge_expired(self, account_id: str, now: datetime) -> int:
+        """Remove the account's saved runs and its expiry, only if the expiry
+        is still set and has passed (a resubscribe that cleared it wins).
+        Returns how many runs were removed."""
         ...
 
 

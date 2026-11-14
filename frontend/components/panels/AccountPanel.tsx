@@ -1,9 +1,12 @@
 "use client";
 
+import { useRememberPlan } from "@/application/useLayoutHints";
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
 import { useAccount, useAccountDeletion } from "@/application/useAccount";
+import { useAccountHold, useAccountRestore } from "@/application/accountHold";
+import type { SavedHistoryMode } from "@/application/useSavedHistory";
 import { useApiKeys } from "@/application/useApiKeys";
 import {
   CODE_MAX_LENGTH,
@@ -56,7 +59,9 @@ import {
  *         deleting, failed: rejected / unavailable / unreachable / generic,
  *         not offered when the server keeps no accounts, deleted card) ·
  *         checkout return notice (confirming, paid, cancelled, unconfirmed,
- *         signed-out variant)
+ *         signed-out variant) · deletion hold (2026-11-14: held card with
+ *         the date, restoring, restore failed, window closed, restored
+ *         notice; deleted card with the restore-by date)
  *
  * Auth phases 2 and 3 (docs/frontend/auth-sign-in.md). Sign-in is optional
  * and the page says so: "Continue without an account" sits under the form.
@@ -113,6 +118,11 @@ type AccountPanelProps = {
    *  whether a Gemini key is saved. Lengths are never guessed: nothing is
    *  quoted until the read has answered. */
   limits: MediaLimitsState;
+  /** Whether this account saves its runs (useSavedHistory, 2026-11-14):
+   *  the History row under "On this device" says where runs are kept. */
+  savedHistory?: SavedHistoryMode;
+  /** The plan ended: saved runs are kept until this date. */
+  savedUntil?: string | null;
 };
 
 const RUN_GUARD =
@@ -129,6 +139,8 @@ export default function AccountPanel({
   billingFailed,
   checkoutReturn,
   limits,
+  savedHistory = "off",
+  savedUntil = null,
 }: AccountPanelProps) {
   const auth = useAuthUser();
   /* Held here, above the signed-in view: deleting signs out, which unmounts
@@ -136,7 +148,10 @@ export default function AccountPanel({
   /* "signing-out" until the stored session is cleared: going back to the
      sign-in view earlier would mount the signed-in view on the old token. */
   const [deleted, setDeleted] = useState<false | "signing-out" | "done">(false);
-  const markDeleted = useCallback((signedOut: Promise<void>) => {
+  /* The 30-day hold (2026-11-14): the day it ends, for the deleted card. */
+  const [purgeAt, setPurgeAt] = useState<string | null>(null);
+  const markDeleted = useCallback((signedOut: Promise<void>, until: string | null) => {
+    setPurgeAt(until);
     setDeleted("signing-out");
     void signedOut.then(() => setDeleted((d) => (d ? "done" : d)));
   }, []);
@@ -167,7 +182,7 @@ export default function AccountPanel({
       </div>
 
       {deleted ? (
-        <DeletedCard signingOut={deleted === "signing-out"} onBack={() => setDeleted(false)} />
+        <DeletedCard signingOut={deleted === "signing-out"} purgeAt={purgeAt} onBack={() => setDeleted(false)} />
       ) : loading ? (
         <p role="status" className="pending-note acct-gap">
           Loading…
@@ -192,6 +207,8 @@ export default function AccountPanel({
           billingFailed={billingFailed}
           limits={limits}
           onDeleted={markDeleted}
+          savedHistory={savedHistory}
+          savedUntil={savedUntil}
         />
       ) : (
         <SignedOut runInProgress={runInProgress} limits={limits} />
@@ -436,6 +453,8 @@ function SignedIn({
   billingFailed,
   limits,
   onDeleted,
+  savedHistory,
+  savedUntil,
 }: {
   userId: string;
   email: string | null;
@@ -446,10 +465,39 @@ function SignedIn({
   billingPending: boolean;
   billingFailed: boolean;
   limits: MediaLimitsState;
-  onDeleted: (signedOut: Promise<void>) => void;
+  onDeleted: (signedOut: Promise<void>, purgeAt: string | null) => void;
+  savedHistory: SavedHistoryMode;
+  savedUntil: string | null;
 }) {
   const { account, problem, loading, reload } = useAccount(userId);
+  /* The deletion hold (2026-11-14): `/api/me` says so, or any other read for
+     this person was answered 410 first (the API client hears them all). */
+  const hold = useAccountHold(userId);
+  const restore = useAccountRestore(userId);
+  const held =
+    problem?.kind === "held" ? { purgeAt: problem.purgeAt ?? hold?.purgeAt ?? null } : hold;
   const identity = <IdentityRow email={account?.email ?? email} runInProgress={runInProgress} />;
+
+  /* `/api/me` saying paid is remembered for the next visit's stand-in too
+     (HomeScreen remembers the plan and count reads), so a paid account
+     whose plan read fails still gets the Billing stand-in next time. */
+  useRememberPlan(account?.entitlement?.plan === "paid" ? "paid" : null, false);
+
+  if (held && restore.state.phase !== "restored") {
+    return (
+      <>
+        <HeldAccount
+          email={account?.email ?? email}
+          purgeAt={held.purgeAt}
+          state={restore.state}
+          runInProgress={runInProgress}
+          onRestore={() => void restore.restore()}
+        />
+        <DeviceGroup />
+        <InformationGroup />
+      </>
+    );
+  }
 
   if (problem?.kind === "unavailable") {
     return (
@@ -468,6 +516,8 @@ function SignedIn({
      card (which moved every group under it). */
   const entitledPaid = account?.entitlement?.plan === "paid";
   const paid = billing?.plan === "paid" || freeRuns?.plan === "paid" || entitledPaid;
+  /* Some read has said which plan this is (free or paid). */
+  const planNamed = billing !== null || freeRuns !== null || Boolean(account?.entitlement);
 
   return (
     <>
@@ -477,6 +527,13 @@ function SignedIn({
       <p role="status" className="sr-only">
         {loading ? "Loading your account…" : ""}
       </p>
+
+      {/* After a restore: said once, in the plan notice's voice. */}
+      {restore.state.phase === "restored" && (
+        <p role="status" className="key-card acct-plan-notice acct-restored">
+          Your account is back, on the free plan. Your saved runs are intact.
+        </p>
+      )}
 
       {problem?.kind === "rejected" && (
         <div role="alert" className="error-inline acct-gap">
@@ -516,8 +573,21 @@ function SignedIn({
           <div className="acct-ghost" aria-hidden="true" inert>
             {paid ? (
               <BillingGroup billing={billing ?? GHOST_PAID_BILLING} />
-            ) : (
+            ) : planNamed ? (
               <UpgradeGroup billing={billing ?? GHOST_FREE_BILLING} limits={limits} />
+            ) : (
+              /* No read has named the plan yet (2026-11-14): both stand-ins,
+                 and CSS shows the one the pre-paint `data-plan-paid` stamp
+                 (the last plan read here) points at, so a paid account's
+                 page does not swap the taller Upgrade card for Billing. */
+              <>
+                <div className="acct-ghost-plan" data-plan="free">
+                  <UpgradeGroup billing={GHOST_FREE_BILLING} limits={limits} />
+                </div>
+                <div className="acct-ghost-plan" data-plan="paid">
+                  <BillingGroup billing={GHOST_PAID_BILLING} />
+                </div>
+              </>
             )}
           </div>
           <div className="acct-loading-overlay" role="status">
@@ -531,7 +601,7 @@ function SignedIn({
         </div>
       ) : null}
 
-      <DeviceGroup signedIn />
+      <DeviceGroup signedIn saved={savedHistory} savedUntil={savedUntil} />
 
       {/* Drawn while `/api/me` is still loading too (the row is collapsed
           and fetches nothing until opened), so it does not arrive late and
@@ -671,8 +741,16 @@ function PlanUsageGroup({
   /* The length follows the plan, so it waits for the plan as well as for
      the limits: a paid account must not read "3 minutes" for a moment. */
   const lengthKnown = limits.settled && planKnown;
-  const onPaidTier = paid && limits.extended && limits.paidMinutes !== null;
-  const lengthNote = !lengthKnown
+  const onPaidTier =
+    paid &&
+    limits.extended &&
+    limits.paidMinutes !== null &&
+    limits.limits.maxDurationSeconds >= limits.paidMinutes * 60;
+  /* Paid, but the paid tier's length is not known here (the plan or the
+     limits read failed, so the limits fell back to the free tier): say so
+     rather than show the free length to a paid account (2026-11-14). */
+  const lengthUnavailable = lengthKnown && paid && !onPaidTier;
+  const lengthNote = !lengthKnown || lengthUnavailable
     ? null
     : onPaidTier
       ? "No Gemini key needed"
@@ -715,7 +793,13 @@ function PlanUsageGroup({
           </div>
           <div className="acct-fact">
             <dt>Video length</dt>
-            <dd>{lengthKnown ? `Up to ${durationLabel(limits.limits.maxDurationSeconds)}` : <PlaceholderLine />}</dd>
+            <dd>
+              {lengthUnavailable
+                ? "Length unavailable"
+                : lengthKnown
+                  ? `Up to ${durationLabel(limits.limits.maxDurationSeconds)}`
+                  : <PlaceholderLine />}
+            </dd>
             <dd className="acct-fact-note">{lengthNote}</dd>
           </div>
         </dl>
@@ -827,6 +911,22 @@ function UpgradeGroup({ billing, limits }: { billing: BillingDetails; limits: Me
               </td>
               <td>
                 <strong className="acct-figure">{PAID_RUNS_PER_DAY}</strong>
+              </td>
+            </tr>
+          </tbody>
+          {/* Saved history (2026-11-14): where runs are kept, per plan. */}
+          <tbody>
+            <tr>
+              <th scope="rowgroup" colSpan={2}>
+                History
+              </th>
+            </tr>
+            <tr>
+              <td>
+                <strong>Last {HISTORY_LIMIT}</strong> in this browser
+              </td>
+              <td>
+                <strong>Saved to your account</strong> on every device
               </td>
             </tr>
           </tbody>
@@ -1090,7 +1190,27 @@ function AccountTabLink({ tab, title, description }: { tab: MainTab; title: Reac
 
 /* The two link groups every state shows: plain rows, one tap to go. Signed
    in, Developer tools sits between them. */
-function DeviceGroup({ signedIn = false }: { signedIn?: boolean }) {
+function DeviceGroup({
+  signedIn = false,
+  saved = "off",
+  savedUntil = null,
+}: {
+  signedIn?: boolean;
+  saved?: SavedHistoryMode;
+  savedUntil?: string | null;
+}) {
+  /* Saved history (2026-11-14): a paid account's runs live on the account,
+     so the row says so instead of "this browser". */
+  const until = savedUntil && !Number.isNaN(new Date(savedUntil).getTime()) ? formatLongDay(savedUntil) : null;
+  const onAccount = saved === "saving" || saved === "window";
+  const historyLine =
+    saved === "saving"
+      ? "Saved to your account · On every device"
+      : saved === "window"
+        ? until
+          ? `Saved to your account until ${until}`
+          : "Saved to your account for 30 days"
+        : `Saved in this browser · Up to ${HISTORY_LIMIT} runs`;
   return (
     <section className="acct-group" aria-labelledby="acct-grp-device">
       <h2 id="acct-grp-device" className="history-group-label acct-group-label">
@@ -1099,8 +1219,8 @@ function DeviceGroup({ signedIn = false }: { signedIn?: boolean }) {
       <div className="key-card acct-card">
         <AccountTabLink
           tab="history"
-          title="Recent history"
-          description={`Saved in this browser · Up to ${HISTORY_LIMIT} runs`}
+          title={onAccount ? "History" : "Recent history"}
+          description={historyLine}
         />
         <AccountTabLink
           tab="api-key"
@@ -1112,7 +1232,11 @@ function DeviceGroup({ signedIn = false }: { signedIn?: boolean }) {
           description="Use your own Google AI access."
         />
       </div>
-      <p className="key-help acct-group-note">Not synced between devices.{signedIn ? " Both stay in this browser when you sign out." : ""}</p>
+      <p className="key-help acct-group-note">
+        {onAccount
+          ? "Your Gemini key is not synced. It stays in this browser when you sign out."
+          : `Not synced between devices.${signedIn ? " Both stay in this browser when you sign out." : ""}`}
+      </p>
     </section>
   );
 }
@@ -1366,7 +1490,7 @@ function DeleteAccountSection({
   email: string | null;
   enabled: boolean;
   runInProgress: boolean;
-  onDeleted: (signedOut: Promise<void>) => void;
+  onDeleted: (signedOut: Promise<void>, purgeAt: string | null) => void;
 }) {
   const { state, remove, reset } = useAccountDeletion(onDeleted);
   const [open, setOpen] = useState(false);
@@ -1445,7 +1569,8 @@ function DeleteAccountSection({
         Delete account
       </h3>
       <p className="key-help">
-        Removes your account from VideoLens for good. What is stored in this browser stays.
+        Your account stops working now and is kept for 30 days, in case you change your mind. After
+        that it is removed for good. What is stored in this browser stays.
       </p>
 
       <form
@@ -1457,12 +1582,17 @@ function DeleteAccountSection({
       >
         <div className="acct-delete-lists">
           <div>
-            <h4 className="acct-delete-head">Deleted, and cannot be undone</h4>
+            <h4 className="acct-delete-head">Stops now, removed after 30 days</h4>
             <ul className="acct-delete-list">
               <li>Your account and its workspace</li>
+              <li>Every run saved to your account</li>
               <li>Every API key, so anything still using one stops working</li>
-              <li>Any runs the server still holds for you (it keeps them an hour at most)</li>
+              <li>Your paid plan, if you have one: the subscription is cancelled now</li>
             </ul>
+            <p className="key-help acct-delete-note">
+              To restore it, sign in again with the same email within 30 days. It comes back on the
+              free plan, with its saved runs. Until then that email cannot start a new account.
+            </p>
           </div>
           <div>
             <h4 className="acct-delete-head">Kept, in this browser</h4>
@@ -1530,7 +1660,18 @@ function DeleteAccountSection({
   );
 }
 
-function DeletedCard({ signingOut, onBack }: { signingOut: boolean; onBack: () => void }) {
+function DeletedCard({
+  signingOut,
+  purgeAt,
+  onBack,
+}: {
+  signingOut: boolean;
+  /** The day the 30-day hold ends; null from an older server that removed
+   *  the account at once. */
+  purgeAt: string | null;
+  onBack: () => void;
+}) {
+  const until = purgeAt && !Number.isNaN(new Date(purgeAt).getTime()) ? formatLongDay(purgeAt) : null;
   const titleRef = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     titleRef.current?.focus();
@@ -1541,10 +1682,18 @@ function DeletedCard({ signingOut, onBack }: { signingOut: boolean; onBack: () =
       <h2 id="acct-gone-title" ref={titleRef} tabIndex={-1} className="acct-card-title acct-focus-title">
         Your account was deleted
       </h2>
-      <p className="key-help">
-        Your API keys no longer work and you are signed out on this device. Your History and your own
-        Gemini key are still here in this browser.
-      </p>
+      {until ? (
+        <p className="key-help">
+          It stopped working now, your API keys with it, and you are signed out on this device. Sign in
+          again with the same email before {until} to restore it. After that it is removed for good. Your
+          History and your own Gemini key are still here in this browser.
+        </p>
+      ) : (
+        <p className="key-help">
+          Your API keys no longer work and you are signed out on this device. Your History and your own
+          Gemini key are still here in this browser.
+        </p>
+      )}
       <div className="key-actions">
         <button
           type="button"
@@ -1560,6 +1709,144 @@ function DeletedCard({ signingOut, onBack }: { signingOut: boolean; onBack: () =
       <p role="status" className="key-status-slot">
         {signingOut ? "Finishing sign-out on this device…" : ""}
       </p>
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------ deletion hold */
+
+/* Signed in to an account that was deleted less than 30 days ago (410
+   `account_pending_deletion`, 2026-11-14). The one thing to decide is
+   whether to bring it back, so that is the page's one filled action; Sign
+   out is the way to leave it be (and use the app without an account, which
+   keeps working). `closed`: the 30 days have passed (410
+   `restore_window_closed`), so only Sign out is left. */
+function HeldAccount({
+  email,
+  purgeAt,
+  state,
+  runInProgress,
+  onRestore,
+}: {
+  email: string | null;
+  purgeAt: string | null;
+  state: ReturnType<typeof useAccountRestore>["state"];
+  runInProgress: boolean;
+  onRestore: () => void;
+}) {
+  const [signingOut, setSigningOut] = useState(false);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const until = purgeAt && !Number.isNaN(new Date(purgeAt).getTime()) ? formatLongDay(purgeAt) : null;
+  const restoring = state.phase === "restoring";
+  const closed = state.phase === "closed";
+
+  useEffect(() => {
+    if (closed) titleRef.current?.focus();
+  }, [closed]);
+
+  const leave = () => {
+    if (signingOut || restoring || runInProgress) return;
+    setSigningOut(true);
+    void signOut().finally(() => setSigningOut(false));
+  };
+
+  const heldText = (
+    <>
+      <p className="key-help">
+        {email ? (
+          <>
+            <strong className="acct-strong">{email}</strong> was deleted.{" "}
+          </>
+        ) : (
+          "This account was deleted. "
+        )}
+        {until
+          ? `It is kept until ${until}, then removed for good, with every run saved to it.`
+          : "It is kept for 30 days after it was deleted, then removed for good, with every run saved to it."}
+      </p>
+      <p className="key-help acct-held-more">
+        Restore it to keep using it. It comes back on the free plan, with its saved runs.
+      </p>
+    </>
+  );
+
+  const content = (
+    <>
+      <h2 id="acct-held-title" ref={titleRef} tabIndex={-1} className="acct-card-title acct-focus-title">
+        {closed ? "This account can no longer be restored" : "This account is scheduled for deletion"}
+      </h2>
+      {closed ? (
+        <p className="key-help">
+          The 30 days to restore it have passed, so it is being removed for good. Sign out to keep using
+          VideoLens without an account. Once it is gone, signing in with the same email starts a new one.
+        </p>
+      ) : (
+        heldText
+      )}
+      {state.phase === "failed" && (
+        <div role="alert" className="error-inline acct-gap-sm">
+          <p>{state.message}</p>
+        </div>
+      )}
+      {runInProgress && <p className="pending-note acct-guard">{RUN_GUARD}</p>}
+      <div className="key-actions">
+        {!closed && (
+          <button
+            type="button"
+            className="btn btn-primary btn-pill"
+            onClick={() => {
+              if (!restoring && !signingOut) onRestore();
+            }}
+            aria-disabled={restoring || signingOut || undefined}
+          >
+            {restoring ? "Restoring…" : "Restore account"}
+          </button>
+        )}
+        <button
+          type="button"
+          className={closed ? "btn btn-primary btn-pill" : "btn btn-secondary btn-pill key-remove"}
+          onClick={leave}
+          aria-disabled={signingOut || restoring || runInProgress || undefined}
+        >
+          {signingOut ? "Signing out…" : "Sign out"}
+        </button>
+        <p role="status" className="key-status-slot">
+          {restoring ? <span className="key-status">Restoring your account…</span> : null}
+        </p>
+      </div>
+    </>
+  );
+
+  return (
+    <section className="key-card acct-held" aria-labelledby="acct-held-title">
+      {closed ? (
+        /* Closed (2026-11-14): the card keeps the height it had while the
+           restore was under way. The held words (and the "Restoring" line)
+           stay laid out underneath, unseen and inert, in the same grid cell,
+           so the shorter closed text does not pull up what follows when the
+           restore answer lands. */
+        <div className="acct-held-layers">
+          <div className="acct-held-layer">{content}</div>
+          <div className="acct-held-layer acct-ghost" aria-hidden="true" inert>
+            <h2 className="acct-card-title">This account is scheduled for deletion</h2>
+            {heldText}
+            <div className="key-actions">
+              <button type="button" className="btn btn-primary btn-pill" tabIndex={-1}>
+                Restore account
+              </button>
+              <button type="button" className="btn btn-secondary btn-pill key-remove" tabIndex={-1}>
+                Sign out
+              </button>
+              {/* As it was when the answer came: the restore was under way. */}
+              <p className="key-status-slot">
+                <span className="key-status">Restoring your account…</span>
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        content
+      )}
     </section>
   );
 }

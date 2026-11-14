@@ -26,6 +26,7 @@ from ..domain.ports import (
 from .billing import ExtraRunBilling
 from .entitlements import EntitlementResolver
 from .free_run_holds import settle_free_run_holds
+from .saved_history import SavedHistory
 
 logger = logging.getLogger("videolens")
 
@@ -65,6 +66,7 @@ class ProcessRunUseCase:
         entitlements: EntitlementResolver | None = None,
         long_runs: LongRunGuard | None = None,
         extra_runs: ExtraRunBilling | None = None,
+        history: SavedHistory | None = None,
     ) -> None:
         self._runs = runs
         self._media = media
@@ -77,12 +79,22 @@ class ProcessRunUseCase:
         self._long_runs = long_runs
         # None (tests, older wiring) = nothing is ever billed per run.
         self._extra_runs = extra_runs
+        # None (tests, older wiring) = nothing is saved server-side.
+        self._history = history
 
     async def _bill_extra_run(self, run_id: str) -> None:
         """The run's result is stored: if it was a paid account's extra run,
         it is billed now, once. Never raises."""
         if self._extra_runs is not None:
             await self._extra_runs.complete(run_id)
+
+    async def _save_to_history(self, run_id: str, source_url: str | None) -> None:
+        """The run's result is stored and billed: a paid account's copy goes
+        into its saved history, once (docs/backend/saved-history.md). After
+        billing, so a save failure can never stop the charge, and never
+        raises, so it cannot fail the run either."""
+        if self._history is not None:
+            await self._history.save_completed(run_id, source_url=source_url)
 
     async def _void_extra_run(self, run_id: str) -> None:
         """However the run ended, a held extra run that did not complete is
@@ -124,6 +136,7 @@ class ProcessRunUseCase:
             if not await self._runs.set_result(run_id, result, AnalysisCompleteness.CAPTIONS_ONLY):
                 raise await self._ended_elsewhere(run_id)
             await self._bill_extra_run(run_id)
+            await self._save_to_history(run_id, source_url)
             logger.info("Run %s recovered from captions after the download failed", run_id)
             return True
         except (GeminiConfigurationError, AnalysisUnavailableError, _RunEndedElsewhere):
@@ -421,6 +434,7 @@ class ProcessRunUseCase:
                 # the failure stands and the result is dropped.
                 raise await self._ended_elsewhere(run_id)
             await self._bill_extra_run(run_id)
+            await self._save_to_history(run_id, source_url)
         except _RunEndedElsewhere as exc:
             logger.warning(
                 "Run %s ended elsewhere (%s) while this worker had it; stopped and cleaned up", run_id, exc

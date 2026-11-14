@@ -4,6 +4,7 @@ only place that is allowed to know about every layer at once - domain and
 application code never import from here."""
 
 from .application.billing import BillingPlans, ExtraRunBilling
+from .application.cleanup import AccountCleanupUseCase
 from .application.create_api_key import CreateApiKeyUseCase
 from .application.create_run import CreateRunUseCase
 from .application.delete_account import DeleteAccountUseCase
@@ -20,6 +21,8 @@ from .application.list_api_keys import ListApiKeysUseCase
 from .application.list_runs import ListRunsUseCase
 from .application.open_billing_portal import OpenBillingPortalUseCase
 from .application.process_run import ProcessRunUseCase
+from .application.restore_account import RestoreAccountUseCase
+from .application.saved_history import SavedHistory, SavedHistoryQueries
 from .application.revoke_api_key import RevokeApiKeyUseCase
 from .application.start_checkout import StartCheckoutUseCase
 from .infrastructure.ai.gemini_engine import GeminiEngine
@@ -52,6 +55,7 @@ from .infrastructure.persistence.billing_store import (
 from .infrastructure.persistence.database import Database
 from .infrastructure.persistence.identity_users import AlwaysPresentIdentityProviderUsers, SqlIdentityProviderUsers
 from .infrastructure.persistence.run_repository import RunStore
+from .infrastructure.persistence.saved_run_repository import InMemorySavedRuns, SqlSavedRuns
 from .infrastructure.releases.github_releases import GithubReleaseCatalog
 from .infrastructure.queue.job_queue import RunQueue
 from .infrastructure.quota.daily_budget import DailyBudget
@@ -103,6 +107,8 @@ class Container:
             # So do the paid plan's link to Stripe and its extra runs.
             self.billing_accounts = SqlBillingAccounts(settings, self.database)
             self.extra_run_ledger = SqlExtraRunLedger(settings, self.database)
+            # A paid account's saved runs (docs/backend/saved-history.md).
+            self.saved_runs = SqlSavedRuns(settings, self.database)
         else:
             in_process = not settings.queue_enabled
             self.identity_users = AlwaysPresentIdentityProviderUsers(settings)
@@ -116,6 +122,8 @@ class Container:
             # billing configured refuses to start without one.
             memory_billing = InMemoryBillingAccounts(settings, enabled=in_process)
             memory_ledger = InMemoryExtraRunLedger(settings)
+            memory_saved_runs = InMemorySavedRuns(settings, enabled=in_process, accounts=memory_accounts)
+            self.saved_runs = memory_saved_runs
             self.accounts = memory_accounts
             self.api_keys = memory_keys
             self.account_free_runs = memory_free_runs
@@ -128,6 +136,7 @@ class Container:
                 free_runs=memory_free_runs,
                 billing_accounts=memory_billing,
                 extra_runs=memory_ledger,
+                saved_runs=memory_saved_runs,
             )
 
         # The paid plan. Enabled only with Stripe configured AND an account
@@ -140,6 +149,16 @@ class Container:
             extra_runs_monthly_cap=settings.paid_extra_runs_monthly_cap,
         )
         self.extra_run_billing = ExtraRunBilling(plans=self.billing)
+        # Saved history: on only with a database and billing (who pays
+        # decides who is saved); off = exactly as before it existed.
+        self.saved_history = SavedHistory(
+            runs=self.run_repository,
+            saved_runs=self.saved_runs,
+            plans=self.billing,
+            grace_days=settings.paid_saved_runs_grace_days,
+            max_bytes=settings.paid_saved_run_max_bytes,
+        )
+        self.saved_history_queries = SavedHistoryQueries(history=self.saved_history)
 
         # Use cases.
         self.identify_caller_use_case = IdentifyCallerUseCase(
@@ -160,12 +179,14 @@ class Container:
             paid_max_file_size_mb=settings.paid_max_file_size_mb if settings.paid_max_file_size_mb > 0 else None,
         )
         self.get_account_use_case = GetAccountUseCase(
-            accounts=self.accounts, entitlements=self.entitlements, billing=self.billing
+            accounts=self.accounts, entitlements=self.entitlements, billing=self.billing, history=self.saved_history
         )
         self.get_billing_use_case = GetBillingUseCase(plans=self.billing, account_free_runs=self.account_free_runs)
         self.start_checkout_use_case = StartCheckoutUseCase(plans=self.billing)
         self.open_billing_portal_use_case = OpenBillingPortalUseCase(plans=self.billing)
-        self.handle_billing_webhook_use_case = HandleBillingWebhookUseCase(plans=self.billing)
+        self.handle_billing_webhook_use_case = HandleBillingWebhookUseCase(
+            plans=self.billing, history=self.saved_history
+        )
         self.create_api_key_use_case = CreateApiKeyUseCase(
             api_keys=self.api_keys,
             accounts=self.accounts,
@@ -181,6 +202,16 @@ class Container:
             runs=self.run_repository,
             # Cancels the Stripe subscription first; refuses if that fails.
             billing=self.billing,
+            # A hold, not a removal (docs/backend/saved-history.md).
+            hold_days=settings.account_deletion_hold_days,
+        )
+        self.restore_account_use_case = RestoreAccountUseCase(
+            deleter=self.account_deleter, history=self.saved_history
+        )
+        # The worker's hourly cron: held accounts past their hold, saved runs
+        # past their post-cancel window.
+        self.account_cleanup_use_case = AccountCleanupUseCase(
+            deleter=self.account_deleter, history=self.saved_history, billing=self.billing
         )
         self.process_run_use_case = ProcessRunUseCase(
             runs=self.run_repository,
@@ -192,6 +223,8 @@ class Container:
             entitlements=self.entitlements,
             long_runs=self.long_runs,
             extra_runs=self.extra_run_billing,
+            # After billing: a paid account's result is saved, once.
+            history=self.saved_history,
         )
         self.job_queue = RunQueue(
             settings, local_runner=self.process_run_use_case.execute, key_vault=self.key_vault
