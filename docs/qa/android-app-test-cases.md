@@ -799,6 +799,45 @@ No real runs spent. I made one R13 control install for item 7 and then reinstall
 
 No real runs spent. The device was restored afterwards: font 1.0, wm size reset, auto-rotate on, light theme, CDP forward removed, adb reverse 8000 kept.
 
+### 2026-11-14 · android-66 (device QA) · run 18 (accounts, free runs and billing UI, local `feat/auth-supabase` at c494698, local backend in memory mode, billing off)
+
+**Setup**
+- **Build.** `npm run android:sync`, `gradlew.bat assembleDebug`, `adb install -r videolens-ai-v2.2.0-code1-local-debug.apk`. Bundled; no `server` block.
+- **Device.** New emulator AVD `medium_phone`, API 36, WebView 133, 412×867 css.
+- **Evidence.** In `%TEMP%\qa20\`. `adb screencap` returns all white on this AVD, even on the launcher, so screenshots are CDP `Page.captureScreenshot`. Taps are real `adb input tap` (offset 63 device px, calibrated with a pointerdown logger).
+- **Session.** Signed out (no Supabase session in storage).
+
+**Results**
+- **Nav: Account entry. PASS against the doc, but not as the request was worded.** The round `.nav-account` button is `display:none` below 48rem by design (`globals.css` ~396, `auth-sign-in.md` "phone menu, More sheet and dock unchanged"). The dock is Analyze / History / More. Account is a More-sheet row (16,548, 380×56), which hit-tests to itself; a real tap opens `?view=account`.
+- **Analyze, signed out. PASS.** The free-runs strip shows "3 free runs left. Add your own key for more." with Add key, 16–396 px. The drop hint reads "MP3, MP4, or MOV. Up to 200 MB and 3 minutes.". Document and band scrollWidth are both 412, and nothing overflows.
+- **Signed in. NOT TESTED.** There was no session, and signing in was out of scope.
+- **API key panel. PASS.** The consent paragraph and "Signed in with your own key, you can analyze videos up to 10 minutes. Sign in" wrap inside 37–375 px (scrollWidth 338/338).
+- **Terms gate. PASS.** It showed unticked with no v3 key. A real tap ticked it, and `videolens-media-terms-v3=accepted` was stored; v1 and v2 were absent. Nothing was submitted, and the gate was left ticked.
+- **Terms and Privacy. PASS.** Terms has "Your own Gemini key" and "Paid plan". Privacy has "Your own Gemini key", "Signing in" and "Payments". Body text is 14/21 px, with no overflow and no wide elements at 412.
+- **Observation.** The Privacy "Contact" section still reads "Before public release, replace this section with …".
+
+No runs submitted; no sign-in, key, account or checkout actions.
+
+### 2026-11-14 · android-66 (device QA) · run 19 (four-item dock, working copy at c494698 plus uncommitted BottomTabBar/MoreSheet changes)
+
+**Setup**
+- **Build.** Same pipeline and device as run 18.
+- **Graphics.** The AVD now uses Software graphics (`hw.gpu.mode = lavapipe`), so `adb screencap` works again and screenshots are real device captures.
+- **Evidence.** In `%TEMP%\qa20\` (20–24). Probe script: `dock4.js` (item rects, icon, current, clip/overlap/small flags, gap to the bottom).
+- **Session.** Signed out; the backend reports auth ok.
+
+**Results**
+- **Dock. PASS at 412, 360 and 320.**
+  - Items: Analyze / History / Account / More, each with a 20px icon and a one-line label.
+  - Sizes: 89×52 at 412, 76×52 at 360, 66×52 at 320, with a 4px gap. The widest label, "Account", is 45px, so nothing is clipped or overlapping.
+  - Position: the dock sits 16px above the WebView bottom, which is itself above the gesture bar.
+- **Account tab. PASS.** A real tap opens `?view=account` with the signed-out "Sign in with email" panel, and Account is `aria-current`. Tapping Analyze returns to `/app` with Analyze current.
+- **More sheet on /app. PASS.** The rows are API key, Releases, Theme, Privacy, Terms; there is no Account row.
+- **/terms and /privacy. PASS.**
+  - Dock: Analyze / History / More, each 120×52.
+  - Pages: unchanged from run 18 (sections present, no overflow).
+- **Observation.** The /terms More sheet is API key, Releases, Privacy, Terms (no Theme and no Account), so Account is reached through Analyze from there.
+
 ## Changelog
 
 - 2026-11-02 · android-66 (device QA) · added section 19 (update banner, UPD-01..07) and run 9 (UPD partial on the mock: UPD-01/03 PASS, UPD-04 partial, rest PAUSED) and run 10 (real runs: terms persistence, RUN-01 retry with a YouTube link, RUN-02/02b/03/04/05/07/08, ORI-02, HIS-01, FREE-01..05, RUN-06b/06c/06d/06e, LCH-06b/06c, FREE-02b PASS; FREE-02c not exercised (YouTube 403 mid-download); stale free-runs count after a refund logged as known (R9); stage timings incl. Normalizing ~60 s for a 170 s file); added FREE-02b/02c rows to section 6
@@ -821,3 +860,5 @@ No real runs spent. The device was restored afterwards: font 1.0, wm size reset,
 - 2026-11-02 · android-66 (device QA) · run 15: refinement 13 retest on refine13-debug.apk (a69c188): header fits at 320/360 for fonts 1.0–2.0 with no clip and a 44×44 toggle, but the 22px wordmark cap FAILS (38px at 2.0; WebView text zoom multiplies px after min()); More-sheet theme control FAIL (em container queries never fire, so it stays an indented row and "System" overflows its segment from 320/1.5, 8–33 px); Dark selection PASS; footer N/A on Android (.page-end hidden in the app shell), band 706px steady; smoke at 412 PASS
 - 2026-11-02 · android-66 (device QA) · run 16: refinement 14 retest on refine14-debug.apk (7318f53): root font-size follows the system scale (16–32px, 22px probe stays 22), wordmark caps at 22px, bar 68 portrait and 56 landscape at every scale, theme control layouts match all 15 expected cells with padded labels and ≥44 targets, Dark works, live change keeps the result, no cold-launch jump at 1.5/2.0, /privacy and /terms get the scale, fallback unused, smoke PASS; pinch zoom NOT VERIFIED (Capacitor zoomEnabled defaults false); MINOR intake cards break words at 2.0 (and 320/1.5); COSMETIC More-sheet Releases/Privacy labels hit their chevrons at 320/2.0; question on the uncapped dock (landscape band 167px at 2.0)
 - 2026-11-02 · android-66 (device QA) · run 17: refinement 15 retest on refine15-debug.apk (9605e43): intake cards stack (320/360 from 1.3, 412 from 1.5) with no mid-word breaks; More-sheet labels clear their chevrons (Releases +33px at 320/2.0) with icons fixed at 40px and labels aligned; dock 64px portrait at every scale, 52px landscape with a 235px band at 2.0; header, wordmark and theme-control numbers unchanged apart from the expected 48px rise of the stacked control; live change and smoke PASS; pinch still NOT VERIFIED
+- 2026-11-14 · android-66 (device QA) · run 18: accounts/free-runs/billing UI on local feat/auth-supabase (c494698), API 36 emulator, signed out: Account reachable via the More sheet (top-bar button hidden below 48rem by design); free-runs strip, drop hint, API key wrap, terms gate v3 and the new Terms/Privacy sections PASS; signed-in items not tested (no session)
+- 2026-11-14 · android-66 (device QA) · run 19: four-item phone dock (Analyze/History/Account/More) PASS at 412/360/320 (66px items at 320, labels on one line, above the gesture bar); Account tab opens the signed-out panel and shows as current; /app More sheet has no Account row; /terms and /privacy keep the three-item dock
