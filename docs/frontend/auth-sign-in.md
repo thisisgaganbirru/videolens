@@ -155,6 +155,16 @@ session.
   so the capability can never be read and the entry could never show. The
   Routes-without-`showAccount` note in the Dock entry bullet above is
   superseded: those routes now get the 4-item dock too.
+- **Landing label (2026-11-14, follow-up).** On `/` the signed-out entry
+  reads "Get started" (bar pill and phone-menu row), because the landing is
+  for new visitors and "Sign in" reads as existing users only. It is a prop,
+  `signedOutLabel` on `AppNav` (passed through `RouteNav`), default "Sign in";
+  `/app`, Privacy, Terms and 404 keep the default. Same href
+  (`/app?view=account`) and the same outlined secondary style, not green: the
+  hero's filled green "Start analyzing" is on screen at the same time and a
+  view gets one green fill. The dock keeps "Account". The signed-out sign-in
+  card now welcomes new people: heading (and form label) "Sign in or create
+  an account", help line "New here? Verifying your first code sets it up."
 - **Signed-out lede (2026-11-14).** "Sign in for 10 free runs a month,
   videos up to N minutes with your own key, and API keys for your scripts.
   An account is optional." The 10 is `ACCOUNT_FREE_RUNS_PER_MONTH` (now
@@ -440,3 +450,4 @@ cannot be resized); check them on the bundled APK.
 - 2026-11-14 · frontend agent · Account moves into the installed-app dock as a 4th item (Analyze / History / Account / More, `CircleUserRound`, `aria-current` on `?view=account`) under the same `showAccount` gate; the More sheet's Account row is removed; top-bar round button unchanged
 - 2026-11-14 · frontend agent · signed out, the ≥48rem top-bar Account control is a labelled "Sign in" pill (secondary voice, 44px); signed in keeps the round initial; nothing drawn until the session is known (`accountState` prop); phone-menu row reads "Sign in" signed out; dock unchanged; signed-out Account lede now lists 10 free runs a month, longer videos with your own key (minutes from limits), and API keys
 - 2026-11-14 · frontend agent · Account entry (Sign in pill / initial / phone-menu row / dock item) on landing, Privacy, Terms and 404 via `RouteNav`/`RouteTabBar` + `useAccountEntry` (same gate, one shared capability read); `/offline` left out (no network)
+- 2026-11-14 · frontend agent · landing's signed-out entry reads "Get started" (`signedOutLabel` prop on AppNav/RouteNav, outlined, not green beside the hero's green CTA); other routes keep "Sign in"; sign-in card heading "Sign in or create an account", help line "New here? Verifying your first code sets it up."
