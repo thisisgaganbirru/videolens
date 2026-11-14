@@ -399,8 +399,8 @@ h3 {
      same 44px frame as the theme toggle: the person glyph signed out, the
      email's initial signed in. Current = the filled ink the text tabs use, so
      "you are here" reads the same across the row. Hidden wherever the inline
-     tabs are (the phone menu and the More sheet keep Account as a row); the
-     unlayered 48rem rule at the end of the file shows it. */
+     tabs are (the phone menu keeps Account as a row, the installed dock as an
+     item); the unlayered 48rem rule at the end of the file shows it. */
   .nav-account {
     all: unset;
     box-sizing: border-box;
