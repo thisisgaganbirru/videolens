@@ -19,6 +19,7 @@ import { formatDay, formatLongDay, formatPrice } from "@/components/format";
 import type { ApiKeySummary, BillingDetails, Capability } from "@/domain/entities";
 import type { FreeRunsBanner } from "@/application/useFreeRuns";
 import { useBillingActions, type BillingAction, type CheckoutReturn } from "@/application/useBilling";
+import { ACCOUNT_FREE_RUNS_PER_MONTH } from "@/components/FreeRunsBanner";
 
 /* Hallmark · component: account panel · genre: editorial · theme: custom
  * (owner handoff, app/tokens.css) · layout: option A, grouped list (owner's
@@ -77,6 +78,11 @@ type AccountPanelProps = {
   /** The paid tier's video length in minutes, when the server reports one;
    *  null leaves the length out of the pitch rather than guess it. */
   paidMinutes: number | null;
+  /** The video length signing in unlocks on the user's own key, in minutes
+   *  (`useMediaLimits().upgradeMinutes`); null (limits not read, or no larger
+   *  tier) leaves the length out of the lede rather than promise it. Only the
+   *  signed-out lede reads it. */
+  signInMinutes: number | null;
 };
 
 /** The paid plan's monthly allowance, as sold (owner, 2026-11-13). The live
@@ -93,6 +99,7 @@ export default function AccountPanel({
   billing,
   checkoutReturn,
   paidMinutes,
+  signInMinutes,
 }: AccountPanelProps) {
   const auth = useAuthUser();
   /* Held here, above the signed-in view: deleting signs out, which unmounts
@@ -118,7 +125,9 @@ export default function AccountPanel({
         <p className="view-lede">
           {auth.user
             ? "Your sign-in, connected tools, and data on this device."
-            : "Sign in to manage API keys for your scripts and agents. An account is optional."}
+            : signInMinutes
+              ? `Sign in for ${ACCOUNT_FREE_RUNS_PER_MONTH} free runs a month, videos up to ${signInMinutes} minutes with your own key, and API keys for your scripts. An account is optional.`
+              : `Sign in for ${ACCOUNT_FREE_RUNS_PER_MONTH} free runs a month and API keys for your scripts. An account is optional.`}
         </p>
       </header>
 

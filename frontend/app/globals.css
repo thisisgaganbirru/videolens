@@ -441,6 +441,23 @@ h3 {
   .nav-account:not([aria-current="page"]):active {
     background: var(--color-tint);
   }
+  /* Signed out (owner, 2026-11-14): a labelled pill instead of the bare
+     glyph, which did not say what it did. The secondary button voice (ink
+     hairline, transparent, 600 weight) at the bar's 44px height and the text
+     tabs' 15px size, so it reads as the row's one call to action without a
+     second green fill competing with the view's own primary. Current = the
+     same filled ink as above. Shown and hidden by the `.nav-account` rules. */
+  .nav-account--signin {
+    width: auto;
+    padding: 0 1.125rem;
+    background: transparent;
+    border-color: var(--color-ink);
+    font-family: var(--font-ui);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+  }
 
   /* ---- phone menu (web shell, below 48rem) ----
      Not a drawer over the page: it takes the content band's place, between
@@ -5033,6 +5050,9 @@ h3 {
   .nav-account:not([aria-current="page"]):hover {
     background: var(--color-tint);
     border-color: var(--color-input-border);
+  }
+  .nav-account--signin:not([aria-current="page"]):hover {
+    border-color: var(--color-ink);
   }
   .menu-item:not([aria-current="page"]):hover,
   .sheet-row:hover {
