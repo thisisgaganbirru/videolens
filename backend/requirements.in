@@ -1,4 +1,4 @@
-fastapi>=0.162.0
+fastapi>=0.162.5
 uvicorn[standard]>=0.54.0
 python-multipart>=0.0.33
 pydantic>=2.14.3
@@ -8,7 +8,7 @@ slowapi>=0.1.9
 python-dotenv>=1.2.4
 yt-dlp>=2026.10.26
 arq>=0.26.3
-boto3>=1.43.124
+boto3>=1.44.1
 PyJWT[crypto]>=2.9
 redis>=5.2
 # Identity tables (accounts, workspaces, members, API keys): SQLAlchemy async
