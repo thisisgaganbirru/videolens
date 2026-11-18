@@ -105,6 +105,21 @@ with a fallback is well under `WORKER_JOB_TIMEOUT_SECONDS` (600).
 
 **Tests**: `backend/tests/infrastructure/ai/test_source_context.py` covers the block builder — field selection, truncation, date formatting, engagement counts, line flattening, fence-forgery stripping, and that the source URL never appears. `backend/tests/infrastructure/ai/test_gemini_engine.py` covers status classification plus the retry design against a fake `genai` client (no network, injected sleep/rand): 503-then-success uploads once, 400 raises without retry, exhausted 503/429 map to the right `AnalysisUnavailableError`, backoff doubling/cap/jitter, fallback used/not used (blank, equal to primary, non-transient), transient upload retry, poll retry (transient-then-ACTIVE, non-transient raises, exhausted maps to `AnalysisUnavailableError` without re-upload), FAILED-file re-upload, settings defaults, stage callbacks, log content, and `analyze_captions` retry + fallback.
 
+## SDK version and API version
+
+`google-genai` is on 3.x (3.4.0 in the lock). The 3.0 release changed two
+defaults; this engine neutralises the one that matters:
+
+- **API version.** 3.0 moved the Gemini Developer API default from `v1beta` to
+  `v1`. `gemini_engine.py` pins `types.HttpOptions(api_version="v1beta")` on
+  both the shared client and every bring-your-own-key client, so the upgrade did
+  not change which API is called. `v1` lacks the `-latest` model aliases, some
+  preview models, the Live API and context caching. Dropping the pin is a
+  separate change that needs a real run against `GEMINI_MODEL` on dev first.
+- **HTTP client.** The SDK now uses `httpx2` (and `truststore`, the OS trust
+  store) instead of `httpx`. Nothing in `backend/app` imports `httpx` or
+  catches its exceptions, so this is internal to the SDK.
+
 ## Changelog
 
 - 2026-08-20 · main session · sharpened the summary/markdown prompt bullets so the two fields are distinct reads (short prose abstract vs complete structured notes) instead of the same content in two formats
@@ -115,3 +130,4 @@ with a fallback is well under `WORKER_JOB_TIMEOUT_SECONDS` (600).
 - 2026-10-02 · gemini-retry agent · upload once and retry only the failing call; transient-only full-jitter backoff (5 attempts, 2s base, 20s cap), optional `GEMINI_FALLBACK_MODEL` reusing the uploaded file, same helper for `analyze_captions`; outer loop now re-uploads only on FAILED/not-ACTIVE; engine retry tests added
 - 2026-10-02 · gemini-retry agent · owner-approved: default `GEMINI_RETRY_ATTEMPTS` raised 5 → 6 (sleep ceilings 2/4/8/16/20s, worst case ~50s, ~25s mean)
 - 2026-10-02 · gemini-retry agent · owner-approved: `_wait_until_active` `files.get` polls now use the same transient-only backoff (exhausted → AnalysisUnavailableError, no re-upload); 120s timeout and FAILED handling unchanged; resolved that known issue
+- 2026-11-18 · claude (session 01FVkcsidCXWo1CtwAtdwVHV) · google-genai 2.34.0 -> 3.4.0 (owner-approved, from Dependabot #137); pinned `api_version="v1beta"` on every client so the 3.0 default switch to `v1` changes nothing; httpx -> httpx2 is internal to the SDK. 1003 backend tests pass; not exercised against live Gemini before merge
