@@ -7,6 +7,12 @@ from typing import Any, Awaitable, Callable, Optional, TypeVar
 from google import genai
 from google.genai import types
 
+# google-genai 3.0 moved the Gemini Developer API default from `v1beta` to `v1`.
+# Pin `v1beta` so the 3.x upgrade changes nothing about which API this engine
+# talks to (some models, `-latest` aliases and parts of the Files API surface
+# are only served on `v1beta`). Moving to `v1` is a separate, tested change.
+_HTTP_OPTIONS = types.HttpOptions(api_version="v1beta")
+
 from ...domain.entities import CaptionTrack, SourceMetadata, VideoAnalysis
 from ...domain.errors import AnalysisUnavailableError, GeminiConfigurationError
 from ...domain.ports import StageCallback
@@ -114,7 +120,7 @@ class GeminiEngine:
         # on this instance - that cache is only for the shared server key, and
         # must never end up holding someone else's credential.
         if api_key:
-            return genai.Client(api_key=api_key)
+            return genai.Client(api_key=api_key, http_options=_HTTP_OPTIONS)
 
         if not self._settings.gemini_api_key.strip():
             raise GeminiConfigurationError(
@@ -125,7 +131,9 @@ class GeminiEngine:
                 ),
             )
         if self._client is None:
-            self._client = genai.Client(api_key=self._settings.gemini_api_key)
+            self._client = genai.Client(
+                api_key=self._settings.gemini_api_key, http_options=_HTTP_OPTIONS
+            )
         return self._client
 
     # 300 s (was 120): Gemini's file processing grows with the media, and a
