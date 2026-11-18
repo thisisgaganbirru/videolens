@@ -33,8 +33,14 @@ updates:
       # in docs/container-workflows.md): /.python-version pins the major, the
       # drift check in reusable-application-checks.yml fails any Dockerfile
       # that disagrees, and a Dependabot PR to a new major would simply go red.
+      #
+      # Minor is ignored too: Python's "major" in this policy is 3.13 vs 3.15,
+      # which semver calls a minor. With only semver-major ignored, Dependabot
+      # opened #134 (3.13-slim -> 3.15-slim), which the pin check rejected and
+      # the auto-merge workflow had already queued. Digest bumps within the
+      # pinned 3.13-slim tag are not version updates and keep coming.
       - dependency-name: python
-        update-types: ["version-update:semver-major"]
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: docker
     directory: /frontend
     target-branch: dev
