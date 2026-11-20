@@ -112,12 +112,28 @@ export class IndexedDbHistoryStore implements HistoryStore {
   }
 
   async upsert(patch: HistoryPatch): Promise<void> {
+    await this.write(patch, true);
+  }
+
+  async update(patch: HistoryPatch): Promise<boolean> {
+    return this.write(patch, false);
+  }
+
+  /* One readwrite transaction from the read to the put: IndexedDB runs
+     overlapping readwrite transactions one after another, so a removal in
+     this tab or another lands wholly before or wholly after, and an update
+     that finds no row writes nothing. */
+  private async write(patch: HistoryPatch, create: boolean): Promise<boolean> {
     const db = await this.open();
     const tx = db.transaction(STORE, "readwrite");
     const store = tx.objectStore(STORE);
     const now = new Date().toISOString();
 
     const existing = (await promisify(store.get(patch.run_id))) as HistoryRecord | undefined;
+    if (!existing && !create) {
+      await done(tx);
+      return false;
+    }
     const merged: HistoryRecord = { ...EMPTY, created_at: now, ...existing, updated_at: now, run_id: patch.run_id };
     for (const [key, value] of Object.entries(patch)) {
       if (value !== undefined) (merged as unknown as Record<string, unknown>)[key] = value;
@@ -145,6 +161,7 @@ export class IndexedDbHistoryStore implements HistoryStore {
     await done(tx);
     this.askToPersist();
     this.notify(true);
+    return true;
   }
 
   /* The two removals resolve, never reject, when the browser keeps nothing:

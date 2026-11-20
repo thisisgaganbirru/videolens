@@ -245,9 +245,16 @@ export function useEmailCodeSignIn() {
  *  not keep someone's results). Anonymous rows stay. Both halves always run:
  *  the provider's sign-out clears the stored session even offline, and the
  *  History removal is local. Never rejects. Also what "Continue signed out"
- *  and account deletion use. */
+ *  and account deletion use.
+ *
+ *  The sweep runs twice: at once, so History empties even while the
+ *  provider's sign-out call is still on the network, and again once the
+ *  session is gone, for a run filed in between (History creates an
+ *  account's row only while that account is signed in here, so nothing can
+ *  land after the second). */
 export async function signOut(): Promise<void> {
   await Promise.allSettled([authSession.signOut(), forgetAccountHistory()]);
+  await forgetAccountHistory();
 }
 
 /** Where "Sign out everywhere" is. `failed` keeps the person signed in. */

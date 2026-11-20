@@ -15,6 +15,7 @@ import type {
 import { classifyGatewayError } from "@/application/gatewayError";
 import {
   EXPIRED_MESSAGE,
+  isAccountOwned,
   isRunGone,
   OTHER_OWNER_MESSAGE,
   recordGone,
@@ -34,6 +35,7 @@ import { markSavedRunGone } from "@/application/useSavedHistory";
 import {
   activeRunStore,
   apiKeyStore,
+  authSession,
   historyStore,
   runsGateway,
   savedHistoryGateway,
@@ -168,6 +170,16 @@ function accessEnded(err: unknown): string | null {
   return null;
 }
 
+/* 2026-11-20: a 401 can be an access token that expired while the request
+   was out. One quiet retry, this long after, asks the session for a token
+   again (it refreshes an expired one) before the 401 counts as final.
+   Nothing on screen changes for it. */
+const AUTH_RETRY_MS = 1000;
+
+function isUnauthorized(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 401;
+}
+
 function lostCauseOf(err: unknown): LostCause {
   return classifyGatewayError(err, POLL_FALLBACK).kind === "server" ? "server" : "network";
 }
@@ -250,6 +262,15 @@ export function useAnalysisRun() {
      its own token: a newer saved open drops an older one without retiring
      the live run's generation, which only moves once the detail is in. */
   const savedOpenRef = useRef(0);
+  /* 2026-11-20: whether what is on screen (a result, a run in progress, an
+     opened saved run) may belong to a signed-in account rather than to this
+     device's anonymous caller. Read when the person signs out: an account's
+     run must not stay on Analyze for the next person on the device. Unknown
+     counts as the account's. */
+  const accountScreenRef = useRef(false);
+  /* The one quiet retry after a 401 (see AUTH_RETRY_MS) is spent; any good
+     response gives it back. */
+  const authRetriedRef = useRef(false);
 
   /* Every timer this hook owns, stopped in one place: unmount, reset, openRun,
      a fresh submit and a successful reconnect all need exactly this. */
@@ -319,6 +340,7 @@ export function useAnalysisRun() {
     /* Every response the screen applies is also filed into this browser's
        History — that is how a run survives the server forgetting it. */
     recordRunResponse(run);
+    authRetriedRef.current = false;
     setStatus(run.status);
     setStage(run.stage);
     const kind = mediaKindOfPlatform(run.platform);
@@ -405,6 +427,25 @@ export function useAnalysisRun() {
      schedules a reconnect; a good reconnect resumes polling), so the second is
      called through a ref rather than a dependency cycle. */
   const scheduleReconnectRef = useRef<(generation: number) => void>(() => {});
+  /* The quiet retry after a first 401 goes through a ref for the same reason. */
+  const attemptReconnectRef = useRef<(generation: number) => void>(() => {});
+
+  /** Takes a 401 as maybe an expired token, once: stops the poll and asks
+   *  again shortly, saying nothing. False when it is not a 401 (or the retry
+   *  is spent), so the caller treats the failure as it always has. */
+  const retryUnauthorized = useCallback((runId: string, err: unknown, generation: number): boolean => {
+    if (!isUnauthorized(err) || authRetriedRef.current) return false;
+    authRetriedRef.current = true;
+    runIdRef.current = runId;
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = null;
+    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+    reconnectTimerRef.current = setTimeout(() => {
+      reconnectTimerRef.current = null;
+      attemptReconnectRef.current(generation);
+    }, AUTH_RETRY_MS);
+    return true;
+  }, []);
 
   const startPolling = useCallback(
     (runId: string, generation: number) => {
@@ -427,6 +468,7 @@ export function useAnalysisRun() {
             void expireRun(runId, generation, liveUrlRef.current);
             return;
           }
+          if (retryUnauthorized(runId, err, generation)) return;
           const ended = accessEnded(err);
           if (ended) {
             endAccess(ended);
@@ -445,7 +487,7 @@ export function useAnalysisRun() {
         }
       }, POLL_INTERVAL_MS);
     },
-    [applyRun, endAccess, expireRun, fail]
+    [applyRun, endAccess, expireRun, fail, retryUnauthorized]
   );
 
   const attemptReconnect = useCallback(
@@ -470,6 +512,10 @@ export function useAnalysisRun() {
           void expireRun(runId, generation, liveUrlRef.current);
           return;
         }
+        if (retryUnauthorized(runId, err, generation)) {
+          setReconnecting(false);
+          return;
+        }
         const ended = accessEnded(err);
         if (ended) {
           endAccess(ended);
@@ -481,8 +527,12 @@ export function useAnalysisRun() {
         scheduleReconnectRef.current(generation);
       }
     },
-    [applyRun, clearReconnect, endAccess, expireRun, fail, startPolling]
+    [applyRun, clearReconnect, endAccess, expireRun, fail, retryUnauthorized, startPolling]
   );
+
+  useEffect(() => {
+    attemptReconnectRef.current = (generation: number) => void attemptReconnect(generation);
+  }, [attemptReconnect]);
 
   const scheduleReconnect = useCallback(
     (generation: number) => {
@@ -550,6 +600,9 @@ export function useAnalysisRun() {
          from. Unknown (null) means no refund line can ever be claimed. */
       freeRunsBeforeRef.current = usingOwnKey() ? null : currentFreeRuns();
       const generation = ++generationRef.current;
+      /* Whose run this is is known once the server accepts it. */
+      accountScreenRef.current = true;
+      authRetriedRef.current = false;
       uploadRef.current?.abort();
       const upload = new AbortController();
       uploadRef.current = upload;
@@ -573,6 +626,7 @@ export function useAnalysisRun() {
         recordSubmitted(run.run_id, run.status, source, run.owner);
         noteRunAccepted();
         if (generationRef.current !== generation) return;
+        accountScreenRef.current = isAccountOwned(run.owner);
         setSourceName(describeSource(source));
         setRetrySource(source);
         liveUrlRef.current = source.url || null;
@@ -618,6 +672,8 @@ export function useAnalysisRun() {
     liveUrlRef.current = null;
     generationRef.current += 1;
     freeRunsBeforeRef.current = null;
+    accountScreenRef.current = false;
+    authRetriedRef.current = false;
     setStatus("idle");
     setStage(null);
     setSourceKind("file");
@@ -632,6 +688,43 @@ export function useAnalysisRun() {
     setError(null);
     setExpired(null);
   }, [clearReconnect, stopTimers]);
+
+  /* 2026-11-20: signing out (here, by account deletion, "Continue signed
+     out", or in another tab) takes an account's run off Analyze, so the next
+     person on this device cannot read it; History drops the same rows
+     (`forgetAccountHistory`). Heard from the session itself, so every one of
+     those paths is covered. The rules:
+     - only after someone was signed in (or a session was stored) during
+       this mount, so a person who never signed in keeps their own result;
+     - only what may be an account's: an anonymous run on screen stays;
+     - a session still stored but not recovered (an outage) is not a
+       sign-out and changes nothing, and nor does a refused `/api/me` (a 503
+       while the sign-in keys are down), which never touches the session;
+     - another person signing in (in another tab) takes it off too. */
+  useEffect(() => {
+    if (!authSession.enabled) return;
+    let lastUser = authSession.user()?.id ?? null;
+    let accountSeen = authSession.hasSession();
+    const onSessionChange = () => {
+      const user = authSession.user();
+      if (user) {
+        const before = lastUser;
+        lastUser = user.id;
+        accountSeen = true;
+        if (before && before !== user.id && accountScreenRef.current) reset();
+        return;
+      }
+      if (authSession.hasSession()) {
+        accountSeen = true;
+        return;
+      }
+      lastUser = null;
+      if (!accountSeen) return;
+      accountSeen = false;
+      if (accountScreenRef.current) reset();
+    };
+    return authSession.subscribe(onSessionChange);
+  }, [reset]);
 
   /* `sourceKindHint` is the History summary's `source_kind`, when it has one,
      so a reopened run shows the right frames before its first status
@@ -663,6 +756,10 @@ export function useAnalysisRun() {
       setSourceKind(sourceKindHint === "link" ? "url" : "file");
       setStatus("processing");
       const generation = ++generationRef.current;
+      /* Whose run: from History's record once it is read, unknown until
+         then (and for an id History has no record of). */
+      accountScreenRef.current = true;
+      authRetriedRef.current = false;
       /* Whether this browser has its own record of the run. A 404 for one it
          knows means "expired"; for an id it has never seen it just means
          "not found" (refinement 3, #1). */
@@ -676,6 +773,7 @@ export function useAnalysisRun() {
         if (generationRef.current !== generation) return;
         if (record) {
           known = true;
+          accountScreenRef.current = isAccountOwned(record.owner);
           knownUrl = record.source_url ?? record.source_metadata?.source_url ?? null;
           if (record.source_kind) setSourceKind(record.source_kind === "link" ? "url" : "file");
           const recordKind = mediaKindOfPlatform(record.platform);
@@ -728,6 +826,7 @@ export function useAnalysisRun() {
           void expireRun(runId, generation, knownUrl);
           return;
         }
+        if (retryUnauthorized(runId, err, generation)) return;
         const ended = accessEnded(err);
         if (ended) {
           runIdRef.current = runId;
@@ -747,7 +846,7 @@ export function useAnalysisRun() {
         fail(err, OPEN_FALLBACK);
       }
     },
-    [applyRun, clearReconnect, endAccess, expireRun, fail, startPolling, stopTimers]
+    [applyRun, clearReconnect, endAccess, expireRun, fail, retryUnauthorized, startPolling, stopTimers]
   );
 
   /* Refinement 6 (RUN-06 web): on a load of the app, pick up the run this tab
@@ -799,6 +898,9 @@ export function useAnalysisRun() {
       /* The screen changes from here on, so the live run (if any) retires. */
       const resetScreen = () => {
         generationRef.current += 1;
+        /* A run saved to the account is the account's. */
+        accountScreenRef.current = true;
+        authRetriedRef.current = false;
         stopTimers();
         clearReconnect();
         activeRunStore.clear();

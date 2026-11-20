@@ -1338,7 +1338,7 @@ function DeviceGroup({
       <p className="key-help acct-group-note">
         {onAccount
           ? "Your Gemini key is not synced and stays in this browser when you sign out. This browser’s copies of your runs are removed then; the copies saved to your account stay."
-          : `Not synced between devices.${signedIn ? " Signing out removes your runs from this browser’s History; your Gemini key stays." : ""}`}
+          : `Not synced between devices.${signedIn ? " Signing out removes your account’s runs from this browser’s History; your Gemini key stays." : ""}`}
       </p>
     </section>
   );
@@ -1703,11 +1703,11 @@ function DeleteAccountSection({
           <div>
             <h4 className="acct-delete-head">Kept, in this browser</h4>
             <ul className="acct-delete-list">
-              <li>Your History</li>
+              <li>Runs you made signed out, in History</li>
               <li>Your own Gemini key</li>
             </ul>
             <p className="key-help acct-delete-note">
-              Deleting your account does not clear this browser’s saved History or Gemini key.
+              Deleting your account signs this browser out, which removes your account’s runs from its History. Runs made signed out and your Gemini key stay.
               You can remove them under History and Gemini key.
             </p>
           </div>
@@ -1792,12 +1792,12 @@ function DeletedCard({
         <p className="key-help">
           It stopped working now, your API keys with it, and you are signed out on this device. Sign in
           again with the same email before {until} to restore it. After that it is removed for good. Your
-          History and your own Gemini key are still here in this browser.
+          own Gemini key and the runs you made signed out are still here in this browser.
         </p>
       ) : (
         <p className="key-help">
-          Your API keys no longer work and you are signed out on this device. Your History and your own
-          Gemini key are still here in this browser.
+          Your API keys no longer work and you are signed out on this device. Your own Gemini key and the
+          runs you made signed out are still here in this browser.
         </p>
       )}
       <div className="key-actions">

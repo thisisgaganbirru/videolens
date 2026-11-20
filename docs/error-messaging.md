@@ -123,6 +123,18 @@ never reaches the run). No frontend test runner exists — see
   interrupted before it finished…" get advice to try the same source again
   (or upload the file, for the slow link), not "try a different link".
 
+### Re-review additions (2026-11-20)
+
+- Run creation while the server's sign-in status is unknown after 8 s, or
+  the token cannot be read: "Your sign-in could not be confirmed just now,
+  so the run was not sent. Check your connection and try again." The run is
+  never sent anonymously instead. A poll in the same state gets the
+  general sign-in-unconfirmed message and reconnects on its own.
+- "Remove this browser's copies" partial failure: "Some copies could not be
+  removed from this browser. The ones still here are unchanged; try again."
+- A failed "Remove from this device" is now reported (the dialog's error)
+  rather than appearing to succeed.
+
 ## Changelog
 
 - 2026-08-21 · main session · introduced UserFacingError's message/log_detail split, rewrote every leaking message, added AnalysisUnavailableError for Gemini 429/5xx, gave rate limiting a `detail`-shaped response, keyed recovery advice on the failed stage, and removed the dead `data-error-kind` attribute
@@ -133,3 +145,4 @@ never reaches the run). No frontend test runner exists — see
 - 2026-11-02 · backend agent (geo-block message) · `_download_failure`: real geo-blocks (yt-dlp wording or `GeoRestrictedError`) get the region sentence, even alongside a 403; see `backend/media-validation.md`
 - 2026-11-02 · frontend agent (refinement 9) · `recoveryAdvice` now takes the run's error: a link run whose message contains "site blocked this download" (backend `_BLOCKED_DOWNLOAD`, 796d71e) is told to try the same link later or upload the file, not to try a different link. Text match only, because no reason code reaches the client. See the Known issues entry on reason codes, which would retire it
 - 2026-11-20 · Claude (frontend agent) · credential 429 detail, 413 and upload cut-off, keys-unavailable 503, poll 401/403/410, slow-download and interrupted advice
+- 2026-11-20 · Claude (frontend agent) · create with unconfirmed sign-in gets its own message (never sent anonymous); copies-removal and remove-from-device failures surfaced

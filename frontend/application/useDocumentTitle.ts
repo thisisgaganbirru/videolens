@@ -20,15 +20,30 @@ export function useDocumentTitle(label: string | null): void {
   useEffect(() => {
     if (suffix === null) suffix = document.title.split(" · ").pop() ?? document.title;
     const wanted = label ? `${label} · ${suffix}` : suffix;
+    /* Only on the route this was set for (2026-11-20). Leaving it, Next may
+       write the next route's title before this effect's cleanup runs; a
+       change of path, or a cleanup already run, means hands off, so that
+       title is never put back to this view's. Query-only moves
+       (`?view=history`) keep the path, and stay covered. */
+    const path = window.location.pathname;
+    let active = true;
     const assert = () => {
+      if (!active || window.location.pathname !== path) return;
       if (document.title !== wanted) document.title = wanted;
     };
     assert();
-    if (typeof MutationObserver === "undefined" || !document.head) return;
+    if (typeof MutationObserver === "undefined" || !document.head) {
+      return () => {
+        active = false;
+      };
+    }
     /* The title element's text, or the element itself swapped out. Setting
        it here is a mutation too; the equality check above ends that loop. */
     const observer = new MutationObserver(assert);
     observer.observe(document.head, { childList: true, subtree: true, characterData: true });
-    return () => observer.disconnect();
+    return () => {
+      active = false;
+      observer.disconnect();
+    };
   }, [label]);
 }

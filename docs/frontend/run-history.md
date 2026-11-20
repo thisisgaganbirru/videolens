@@ -429,6 +429,47 @@ so a borrowed device kept someone's results. Now:
   `AsOwner<...>` from `RunsGateway`), not `callerIdentity.lastOwner()`,
   which another request may have moved on since.
 
+## Re-review fixes (2026-11-20): nothing outlives the sweep
+
+The sign-out sweep (`forgetAccountHistory`) removes an account's rows, but
+answers still on the network, and other tabs, used to write them back with
+`upsert`, sometimes with no owner, which no later sweep could remove. Now
+there are two kinds of History write (`application/historySync.ts`):
+
+- **Create** (`HistoryStore.upsert`): only a run's first filing, on submit
+  (`recordSubmitted`) and when an import meets a run this browser has no
+  row for. It always carries an owner. An account's row (`user:<id>`) is
+  created only while that same account is signed in on this device, read
+  right before the write (`mayCreate`). A null owner is never created.
+- **Update** (`HistoryStore.update`, new on the port): every later write
+  (`recordRunResponse` from any tab, `recordExpired`/`recordGone`, the
+  `reconcileUnfinished` refresh, the import's detail fetch). It merges into
+  a row that is still there and never creates one. The check and the write
+  share one IndexedDB readwrite transaction, so a row the sweep removed,
+  in this tab or another, stays removed.
+
+Cross-tab: `AuthSession` now listens for the `storage` event, so a sign-out
+in another tab clears this tab's session in memory too. That tab's
+`mayCreate` then refuses its own late creates, and its `useHistoryBoot`
+runs its own sweep. `signOut()` sweeps twice: at once, and again once the
+provider's sign-out has settled, for a submit filed in between.
+
+Remaining gap: the "Remove from this device" tombstones (`forgotten`) are
+per tab. Another tab still open on History can re-import a run the person
+removed here, while the server still holds it (up to an hour, or for as
+long as it is saved on Plus).
+
+`forgetRun` now clears its tombstone and rethrows when the removal fails,
+so the row keeps updating and the dialog shows the failure.
+
+On Plus, a run saved to the account is drawn as its saved card, so this
+browser's own copy had no control of its own. The saved view's foot now has
+"Remove this browser's copies" (shown only when such copies exist). It opens
+a confirm dialog ("Remove this browser's copies?", confirm "Remove from this
+device") and removes only the local copies; the saved runs stay. A partial
+failure says "Some copies could not be removed from this browser. The ones
+still here are unchanged; try again."
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported HistoryPanel to day-grouped rows with status dots; fixed duplicate React keys on non-adjacent "Undated" groups
@@ -450,3 +491,4 @@ so a borrowed device kept someone's results. Now:
 - 2026-11-14 · frontend agent · UX fix spec follow-up: the shared-link effect no longer clears `fromHistory` (lint: setter used before its declaration); the next submit clears it
 2026-11-14 · frontend agent · paid saved history: while the account saves runs (or the plan ended) History lists the account's runs with Load more, browser-only runs in a quieter second group, no filters/search/sort; free and anonymous unchanged (see saved-history.md)
 - 2026-11-20 · Claude (frontend agent) · History: account-owned rows (`owner` `user:*`) leave this device on every sign-out path; anonymous and legacy rows stay; "Remove from this device" on browser-only cards; `HistoryStore.remove`/`removeOwnedBy`; owner taken from the request (`sendAs`); stale useMediaQuery reference marked superseded
+- 2026-11-20 · Claude (frontend agent) · update-only follow-up writes (`HistoryStore.update`), creates only for the signed-in account (`mayCreate`), cross-tab sign-out heard via `storage`, double sweep on sign-out, `forgetRun` failure clears the tombstone, Plus "Remove this browser's copies"; remaining gap: per-tab tombstones

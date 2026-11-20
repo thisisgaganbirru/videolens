@@ -163,6 +163,24 @@ found." behaviour. Network errors and 5xx keep the reconnect countdown.
   (BYOK) says to try the same link or file again. Neither says "try a
   different link".
 
+## Re-review fixes (2026-11-20)
+
+- **Sign-out clears the screen.** A subscription to the session (not an
+  effect body, so no `set-state-in-effect`) calls `reset()` when the person
+  signs out by any path or another person signs in, but only if the run on
+  screen may be an account's (`accountScreenRef`: true from submit until
+  the create answers with an anonymous owner, from History's record on
+  open, true for a saved run) and only after an account was seen during
+  this mount. A stored session that could not be recovered is not a
+  sign-out.
+- **One 401 retry.** A poll or reopen refused with 401 waits about a second
+  and tries once more through the reconnect path (`retryUnauthorized`), so
+  a just-refreshed token is used; a second 401 ends the run as before. The
+  allowance resets on every successful poll and every new run.
+- **Create errors.** Only a failure of fetch itself (`FetchFailedError`)
+  becomes the file upload's cut-off message; `SignInUnconfirmedError`
+  becomes its own message (error-messaging.md).
+
 ## Changelog
 
 - 2026-08-21 · main session · made reset() clear the poll interval, and added the generation counter that drops a superseded submit/openRun response
@@ -179,3 +197,4 @@ found." behaviour. Network errors and 5xx keep the reconnect countdown.
 - 2026-11-02 · frontend agent (refinement 6) · RUN-06 web resume via sessionStorage ActiveRunStore; RUN-08 lostCause (network vs server) exposed for the lost screen
 - 2026-11-14 · frontend agent · button label "Analyze another" (UX fix spec batch a)
 - 2026-11-20 · Claude (frontend agent) · upload aborted on reset/unmount (`createRun(source, signal)`); owner returned with the create response; poll stops on 401/403/410 with its own message; saved open keeps the live run; recovery advice for slow-download and interrupted runs
+- 2026-11-20 · Claude (frontend agent) · Analyze reset on sign-out via session subscription (account-owned runs only); one 401 retry; create errors split by cause

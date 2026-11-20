@@ -2106,7 +2106,14 @@ h3 {
     font-weight: 500;
     color: var(--color-muted);
   }
-  .history-saved-foot > .history-delete-all:hover {
+  /* 2026-11-20: sits beside "Delete all saved runs", in the same quiet voice. */
+  .history-saved-foot > .history-remove-copies {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--color-muted);
+  }
+  .history-saved-foot > .history-delete-all:hover,
+  .history-saved-foot > .history-remove-copies:hover {
     color: var(--color-danger);
   }
   .history-saved-note {

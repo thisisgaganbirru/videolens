@@ -51,6 +51,11 @@ export interface HistoryStore {
   get(runId: string): Promise<HistoryRecord | null>;
   /** Merge into the stored record (or create it), then enforce the cap. */
   upsert(patch: HistoryPatch): Promise<void>;
+  /** Merge into the stored record only when it is still there; never
+   *  creates one. Resolves whether a row was updated. The check and the
+   *  write share one transaction, so a row removed meanwhile (sign-out, from
+   *  any tab) stays removed. */
+  update(patch: HistoryPatch): Promise<boolean>;
   /** Drop one stored run from this device. Resolves (a no-op) when storage
    *  is unavailable: there is nothing kept here to remove. */
   remove(runId: string): Promise<void>;

@@ -131,7 +131,33 @@ export class SupabaseAuthSession implements AuthSession {
     return this.session !== null || this.storedSession();
   }
 
+  private watchingOtherTabs = false;
+
+  /* 2026-11-20: another tab signing out removes the stored session, and this
+     tab must stop treating its in-memory copy as signed in at once, whether
+     or not supabase-js relays the change itself (it does not when the other
+     tab never loaded the library and removed the key by hand). The `storage`
+     event fires only in the *other* tabs of this origin. Only a removal is
+     acted on: a sign-in or a refreshed token in another tab is the
+     library's own business. */
+  private watchOtherTabs(): void {
+    if (this.watchingOtherTabs || typeof window === "undefined") return;
+    this.watchingOtherTabs = true;
+    try {
+      window.addEventListener("storage", (event) => {
+        /* `key` is null when the other tab cleared all of localStorage. */
+        if (event.key !== null && event.key !== this.storageKey) return;
+        if (this.storedSession() || this.session === null) return;
+        this.session = null;
+        this.notify();
+      });
+    } catch {
+      /* no window events: the library's own relay is all there is */
+    }
+  }
+
   load(): Promise<void> {
+    this.watchOtherTabs();
     if (!this.loading) {
       this.loading = import("@supabase/supabase-js")
         .then(async ({ createClient }) => {

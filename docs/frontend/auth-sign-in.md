@@ -591,6 +591,33 @@ copy now explains the hold. Everything is in `saved-history.md`.
   ready. Copy it now…") is the live region; the card used to be, so a
   screen reader read the secret aloud.
 
+## Re-review fixes (2026-11-20)
+
+- **Signed-in creates never go out anonymous.** `ApiClient.bearer()` waits
+  up to 8 s (was 4 s) for the server's auth status. Still unknown after
+  that, or the token cannot be read, it throws `SignInUnconfirmedError`
+  instead of sending the request without a bearer. A create then says
+  "Your sign-in could not be confirmed just now, so the run was not sent.
+  Check your connection and try again." Nobody signed in (no session
+  stored) gets no bearer at once, with no wait.
+- **The owner travels with the request.** `identityHeaders()` returns the
+  owner it built the headers for, and `sendAs` uses that, never the shared
+  `this.owner` read after an await.
+- **Another tab's sign-out.** `AuthSession` hears the `storage` event for
+  its key; the stored session gone while one is held in memory means signed
+  out, and listeners are notified.
+- **Analyze is cleared on sign-out** (`useAnalysisRun`, a session
+  subscription): any sign-out path, account deletion, "Continue signed out"
+  or another tab, or another person signing in. Only when the run on screen
+  may be an account's (an anonymous run stays) and only after someone was
+  signed in during this mount. The unconfirmed state (session stored, not
+  recovered) and a 503 from `/api/me` never trigger it.
+- **401 on a poll** is retried once, after about a second, so a token the
+  provider refreshed in the meantime is used before the run is ended.
+- Deletion copy: the account card and the deleted state now say the
+  account's runs leave this browser's History (deletion signs out), and that
+  runs made signed out and the Gemini key stay.
+
 ## Changelog
 
 - 2026-11-14 · Codex · emphasised runs left with reset below, shortened device descriptions, added static loading/failure feedback, separated ending actions, made Send code full width on phones, and adjusted section heading emphasis; browser verification unavailable this session
@@ -625,3 +652,4 @@ copy now explains the hold. Everything is in `saved-history.md`.
 - 2026-11-14 · orchestrator · `frontend/Dockerfile` declares the two `NEXT_PUBLIC_SUPABASE_*` values as build ARGs; without them the Railway dev build had no sign-in
 - 2026-11-14 · frontend agent · `AccountEntitlement.complimentary` typed; the Plan and usage card reads it (complimentary Plus: "Plus" plus "Complimentary. Nothing to pay."), see billing.md
 - 2026-11-20 · Claude (frontend agent) · sign-out clears account-owned History rows; `unconfirmed` session state with Retry / Continue signed out (`AuthSession.recover`); keys-unavailable 503 on /api/me shown as temporary with no sign-out; `ApiError.retryAfter`; new-key status announces the sentence, not the secret; device-group note copy
+- 2026-11-20 · Claude (frontend agent) · bearer waits 8 s then fails with `SignInUnconfirmedError` (never anonymous); owner returned by `identityHeaders`; cross-tab sign-out via `storage`; Analyze reset on sign-out; one 401 retry on polls; deletion copy corrected

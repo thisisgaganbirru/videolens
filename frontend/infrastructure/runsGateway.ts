@@ -2,7 +2,7 @@ import type { MediaSource, RunCreateResponse, RunListResponse, RunStatusResponse
 import { ApiError, NetworkError } from "@/domain/errors";
 import type { ApiKeyStore, AsOwner, RunsGateway } from "@/domain/ports";
 import type { ApiClient } from "./apiClient";
-import { retryAfterSeconds, UNREADABLE } from "./apiClient";
+import { FetchFailedError, retryAfterSeconds, SignInUnconfirmedError, UNREADABLE } from "./apiClient";
 
 /* Transport failures (no response at all) are classified in `ApiClient`,
    the one place that calls `fetch` for the caller's own requests. */
@@ -40,6 +40,12 @@ const RATE_LIMITED = "You're going a bit fast.";
    close, not the 413, so the size is the likely cause worth naming. */
 const UPLOAD_CUT_OFF =
   "The upload was cut off before the server answered. The file may be over the size limit; otherwise check your connection and try again.";
+/* A session is stored here but the request could not go out signed in, so
+   it was not sent at all (2026-11-20): sending it anonymous would file the
+   run under nobody and keep it past sign-out. Nothing retries a create on
+   its own, so the sentence asks for the press. */
+const CREATE_SIGN_IN_UNCONFIRMED =
+  "Your sign-in could not be confirmed just now, so the run was not sent. Check your connection and try again.";
 const DETAIL_MAX = 240;
 
 /** `detail` when it is a plain sentence fit to show, else null. FastAPI's
@@ -143,7 +149,10 @@ export class FetchRunsGateway implements RunsGateway {
     try {
       ({ res, owner } = await this.send("/api/runs", { method: "POST", body: formData, signal }, { withGeminiKey: true }));
     } catch (error) {
-      if (source.file && error instanceof NetworkError) throw new NetworkError(UPLOAD_CUT_OFF);
+      /* Only a failure of the fetch itself says anything about the upload.
+         The sign-in check fails before a byte is sent. */
+      if (error instanceof SignInUnconfirmedError) throw new NetworkError(CREATE_SIGN_IN_UNCONFIRMED);
+      if (source.file && error instanceof FetchFailedError) throw new NetworkError(UPLOAD_CUT_OFF);
       throw error;
     }
 

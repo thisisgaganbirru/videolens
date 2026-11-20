@@ -204,9 +204,18 @@ finishes while saving, and after a restore.
   only as the saved card, so its local copy has no Remove control of its own
   (it leaves at sign-out).
 
+## Re-review fixes (2026-11-20)
+
+- "Remove this browser's copies" in the saved view's foot removes this
+  browser's local copies of runs saved to the account, never the saved
+  runs. See run-history.md, "Re-review fixes (2026-11-20)".
+- Opening a saved run marks Analyze as showing an account's run, so a
+  sign-out clears it (run-analysis-hook.md).
+
 ## Changelog
 
 - 2026-11-14 · frontend agent · created: saved-history client (gateway, store, hold source, restore), History saved page with Load more / browser-only group / plan-ended and held notices / per-run and delete-all confirmations, opening a saved run and its 404 view, result and retention lines, Account History row / Upgrade History row / delete copy / deleted card date / held and restored states, landing and legal copy
 - 2026-11-14 · frontend agent · Load more reserves the next page at click time (20 ghost posters appended to the last group while `loadingMore`), so the control moves with the press and nothing jumps on arrival: 0.0297 -> 0.0018 at 412 (tabbar baseline). Restore-window-closed card keeps the height it had while restoring (closed text over an inert copy of the held text and "Restoring" line, one grid cell): 0.0664 -> 0.0000 at 412 web; it can show blank space under Sign out. Remaining: a short last page collapses the unused ghosts (below the fold in the mock), and a page that starts a new date group inserts its label
 - 2026-11-14 · frontend agent · checked complimentary Plus: no billing gate on saved History; verified with mocked responses (Stripe on and off) that the account's runs show as for a subscriber
 - 2026-11-20 · Claude (frontend agent) · saved open keeps the live run alive on failure (own token; generation moves only when the detail is in); Remove from this device on browser-only cards; sign-out note
+- 2026-11-20 · Claude (frontend agent) · "Remove this browser's copies" for local copies of saved runs; a saved run on Analyze is cleared on sign-out

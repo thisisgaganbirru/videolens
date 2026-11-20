@@ -21,12 +21,16 @@ import { getClientId } from "./clientId";
      bearer *instead of* the client id, so sending one to a server without a
      matching verifier would turn every caller route into a 401/503. With the
      report still in flight and a session present, a request waits for it
-     (bounded); unknown after that means anonymous.
+     (bounded).
 
-   When a session exists and the server takes tokens but no token can be had
-   right now, the request fails as a `NetworkError` instead of going out
-   anonymous: an anonymous poll of a run the person owns answers 404, which
-   History would otherwise read as "expired". The poll's reconnect retries.
+   A request with a session stored never goes out anonymous (2026-11-20).
+   When the server's report is still unknown after the wait, or the server
+   takes tokens but no token can be had right now, it fails as a
+   `SignInUnconfirmedError` instead: an anonymous create would be filed in
+   History as `anonymous` and outlive the sign-out, and an anonymous poll of
+   a run the person owns answers 404. A poll's reconnect retries; a create
+   says so and the person sends it again. Nobody signed in means no wait at
+   all: anonymous requests are never delayed by this.
 
    The Gemini key is not here: it travels only with run creation, which adds
    it itself (runsGateway). The capabilities and release gateways do not use
@@ -36,6 +40,15 @@ export const UNREACHABLE = "Can't reach the server. It may be offline, or your c
 export const UNREADABLE = "The server replied with something this app could not read.";
 const SIGN_IN_UNCONFIRMED =
   "Your sign-in could not be confirmed just now. Check your connection; the app will try again.";
+
+/** No HTTP response came back at all: `fetch` itself failed. The only
+ *  `NetworkError` that says anything about the bytes on the wire. */
+export class FetchFailedError extends NetworkError {}
+
+/** A session is stored but the request could not go out signed in (the
+ *  server's sign-in report is not known yet, or no token could be had). Thrown
+ *  before anything is sent. */
+export class SignInUnconfirmedError extends NetworkError {}
 
 /** Seconds to wait from a `Retry-After` header: delta-seconds or an HTTP
  *  date. Null when absent, unreadable or already past. Note that a browser
@@ -55,8 +68,9 @@ export function retryAfterSeconds(value: string | null, now: number = Date.now()
   return seconds > 0 ? seconds : null;
 }
 
-/** How long a signed-in request waits for the capability report. */
-const SERVER_AUTH_WAIT_MS = 4000;
+/** How long a request with a session stored waits for the capability
+ *  report before it fails (never before it goes out anonymous). */
+const SERVER_AUTH_WAIT_MS = 8000;
 
 export const ANONYMOUS_OWNER = "anonymous";
 
@@ -99,29 +113,38 @@ export class ApiClient implements CallerIdentity, AccountHoldSource {
     this.holdListeners.forEach((listener) => listener(notice));
   }
 
-  /** The bearer, or null to go out anonymous. Throws `NetworkError` when it
-   *  must not go out anonymous and cannot go out signed in. */
+  /** The bearer, or null to go out anonymous. Throws
+   *  `SignInUnconfirmedError` when it must not go out anonymous (a session is
+   *  stored) and cannot go out signed in. */
   private async bearer(): Promise<string | null> {
     if (!this.auth.enabled || !this.auth.hasSession()) return null;
     const state = await this.serverAuth.settled(SERVER_AUTH_WAIT_MS);
-    if (state !== "ok") return null;
+    /* `off`: this server does not take tokens at all, so everyone is
+       anonymous to it, signed in or not. */
+    if (state === "off") return null;
+    if (state !== "ok") throw new SignInUnconfirmedError(SIGN_IN_UNCONFIRMED);
     try {
       return await this.auth.getToken();
     } catch {
-      throw new NetworkError(SIGN_IN_UNCONFIRMED);
+      throw new SignInUnconfirmedError(SIGN_IN_UNCONFIRMED);
     }
   }
 
-  private async identityHeaders(): Promise<Record<string, string>> {
+  /** The headers and the owner they speak for, together: the owner a
+   *  response is filed under is the one this request went out as, never a
+   *  shared field another request may have moved on since. */
+  private async identityHeaders(): Promise<{ headers: Record<string, string>; owner: string | null }> {
     const headers: Record<string, string> = { "X-Client-ID": getClientId() };
     const deviceToken = this.deviceTokenStore.get();
     if (deviceToken) headers["X-Device-Token"] = deviceToken;
     const token = await this.bearer();
     const userId = token ? this.auth.user()?.id : null;
     if (token) headers["Authorization"] = `Bearer ${token}`;
-    /* Unknown (null) rather than a guess if a token came without a user. */
-    this.owner = token ? (userId ? `user:${userId}` : null) : ANONYMOUS_OWNER;
-    return headers;
+    /* Unknown (null) rather than a guess if a token came without a user.
+       History never creates a row for an unknown owner. */
+    const owner = token ? (userId ? `user:${userId}` : null) : ANONYMOUS_OWNER;
+    this.owner = owner;
+    return { headers, owner };
   }
 
   /** Transport only: resolves with whatever HTTP response came back (status
@@ -141,14 +164,15 @@ export class ApiClient implements CallerIdentity, AccountHoldSource {
     init: RequestInit = {},
     extra: Record<string, string> = {}
   ): Promise<{ res: Response; owner: string | null }> {
-    const headers = { ...(await this.identityHeaders()), ...extra };
-    const owner = this.owner;
+    const identity = await this.identityHeaders();
+    const headers = { ...identity.headers, ...extra };
+    const owner = identity.owner;
     let res: Response;
     try {
       res = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
     } catch (error) {
       if (init.signal?.aborted) throw error;
-      throw new NetworkError(UNREACHABLE);
+      throw new FetchFailedError(UNREACHABLE);
     }
     await this.noticeHold(res, owner);
     return { res, owner };
