@@ -613,6 +613,32 @@ is a decision rather than an oversight.
 
 ---
 
+## Commit hygiene
+
+Since 2026-11-20 no commit, tag or PR description in this repository carries
+AI-tool attribution. Earlier history leaked it in two ways: message trailers
+(`Claude-Session:` with a private session URL, `Co-Authored-By: Claude ...`,
+PR footers) and the author identity `Claude <noreply@anthropic.com>`, which
+cloud sessions use by default. The owner had the whole history rewritten
+(`git filter-repo`: trailers stripped, that identity mapped to `gaganbirru`),
+every branch and tag force-pushed, the PR descriptions edited, and GitHub
+Support asked to drop the old PR refs and cached commits (ticket 5034146).
+
+Four layers keep it out, from source to gate:
+
+- `.claude/settings.json` sets `attribution` (`commit: ""`, `pr: ""`,
+  `sessionUrl: false`), so Claude Code does not write the trailers or footer.
+- `.claude/hooks/session-start.sh` (cloud sessions only) points git at
+  `.githooks/` and replaces the default Claude identity with the owner's.
+- `.githooks/commit-msg` runs `scripts/commit-hygiene.sh msg`, rejecting a
+  message with the trailers, footer or session URL, and the Claude identity.
+  Local clones turn it on once with `git config core.hooksPath .githooks`.
+- `reusable-commit-hygiene.yml` runs the same script over every commit in a
+  PR and over its description, on both lanes, and feeds `required`.
+
+The patterns match real trailers and link-form footers, not prose that names
+them, so a doc or PR may still describe the rule.
+
 ## Landing order
 
 The operationally useful part of this register. When the redesign lands, work
@@ -673,3 +699,4 @@ Re-verify before fixing; do not treat the line numbers as authoritative.
 - 2026-10-02 · ci-cache agent · marked "Container base images are past end-of-life" resolved pending this branch's CI and "The one outstanding CVE" removed: `CVE-2026-15308` ignore rule deleted from `.grype.yaml` (image on CPython 3.13.16; Grype DB range `< 3.13.15`)
 - 2026-11-06 · claude (ci-hardening session) · fixed the stale `reusable-container-checks.yml` reference and recorded that the ARG-based base image layout was reversed (Dependabot-visible `FROM ... AS base` now)
 - 2026-11-08 · backend subagent (auth phase 1) · marked layering violation #1 (`dependencies.py` importing `AuthNotConfiguredError` from the adapter) fixed; two remain (`app.py` logging, `rate_limiter.py` settings)
+- 2026-11-20 · claude (session 01FVkcsj3gS4EwsMRTnzy1pr) · added "Commit hygiene": history rewritten to remove AI-tool attribution, and the four guard layers (attribution setting, session-start identity, commit-msg hook, CI check in `required`)

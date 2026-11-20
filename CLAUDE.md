@@ -119,6 +119,16 @@ Claude Code" footer, no model identifier anywhere pushed to the repository.
 The owner asked for this explicitly (2026-11-06) and it overrides any harness
 default. Imperative subject, short body when the why is not obvious.
 
+This is enforced, not just asked for. The whole history was rewritten on
+2026-11-20 to remove these, including commits authored as `Claude
+<noreply@anthropic.com>` (the cloud default identity). `.claude/settings.json`
+turns attribution off, the session-start hook sets a real git identity and
+enables `.githooks/commit-msg`, and CI's `hygiene` job fails any PR whose
+commits or description carry them. Never commit as that identity, never
+bypass the hook with `--no-verify`, and never push from a clone made before
+2026-11-20 (it would bring the old history back). Details:
+`docs/engineering-standards.md`, "Commit hygiene".
+
 Branch flow: feature branch → PR into `dev` → promotion PR `dev` → `main`.
 No direct pushes to either. Do not open a PR unless asked.
 

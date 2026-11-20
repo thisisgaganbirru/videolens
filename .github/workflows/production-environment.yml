@@ -46,14 +46,19 @@ jobs:
     with:
       enforce: true
 
+  # No AI-tool attribution in the PR's commits or description.
+  hygiene:
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/reusable-commit-hygiene.yml
+
   required:
     name: required
     if: always() && github.event_name == 'pull_request'
-    needs: [application, security]
+    needs: [application, security, hygiene]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Application checks and the security scan passed
+      - name: Application checks, the security scan and commit hygiene passed
         env:
           RESULTS: ${{ toJSON(needs.*.result) }}
         run: |
