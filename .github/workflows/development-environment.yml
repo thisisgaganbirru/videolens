@@ -117,6 +117,9 @@ jobs:
   # No AI-tool attribution in the PR's commits or description. Always runs.
   hygiene:
     uses: ./.github/workflows/reusable-commit-hygiene.yml
+    permissions:
+      contents: read
+      pull-requests: read
 
   required:
     name: required

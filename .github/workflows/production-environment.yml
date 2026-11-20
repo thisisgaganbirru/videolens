@@ -50,6 +50,9 @@ jobs:
   hygiene:
     if: github.event_name == 'pull_request'
     uses: ./.github/workflows/reusable-commit-hygiene.yml
+    permissions:
+      contents: read
+      pull-requests: read
 
   required:
     name: required

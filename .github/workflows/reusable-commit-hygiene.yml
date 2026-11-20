@@ -15,12 +15,16 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   hygiene:
     name: Commit hygiene
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -30,7 +34,12 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: sh scripts/commit-hygiene.sh range "$BASE_SHA" "$HEAD_SHA"
+      # Read live, not from the event payload: a re-run reuses the payload of
+      # the original event, so after the description is fixed it would still
+      # check the old text (editing a description does not start a new run).
       - name: Pull request description
         env:
-          PR_BODY: ${{ github.event.pull_request.body }}
-        run: printf '%s\n' "$PR_BODY" | sh scripts/commit-hygiene.sh body
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.body // ""' | sh scripts/commit-hygiene.sh body
