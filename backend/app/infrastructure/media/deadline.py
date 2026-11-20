@@ -16,9 +16,18 @@ download runs inside a `DownloadDeadline`:
 Downloads run on `DOWNLOAD_EXECUTOR`, not the default `to_thread` pool, so
 however many are stuck they can never starve the DNS checks, S3 calls and
 token checks that share that pool.
+
+One run can try several routes in turn (yt-dlp, then a plain GET, then the
+caption fallback). Each with its own full deadline added up past the job
+timeout, so the routes share one budget per run: `start_run_budget` (called
+once by `MediaService.download_url`) records when the run's downloading has
+to be over, and `run_download(..., run_budget=True)` gives each route only
+what is left of it. The budget lives in a ContextVar, so it follows the run's
+own task and never another run's.
 """
 
 import asyncio
+import contextvars
 import os
 import socket
 import threading
@@ -32,6 +41,12 @@ DOWNLOAD_THREADS = 8
 DOWNLOAD_EXECUTOR = ThreadPoolExecutor(max_workers=DOWNLOAD_THREADS, thread_name_prefix="videolens-download")
 
 _local = threading.local()
+
+# Monotonic time by which this run's link downloading has to be over; None
+# outside a run (each download then gets its own full deadline).
+_run_budget_ends_at: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "videolens_run_download_budget", default=None
+)
 
 
 class DownloadDeadlineExceeded(Exception):
@@ -118,12 +133,33 @@ def track_socket(sock: socket.socket) -> None:
         deadline.track(sock)
 
 
-async def run_download(seconds: float, fn, *args):
+def start_run_budget(seconds: float, *, clock=time.monotonic) -> None:
+    """Start the run's one download budget: every `run_budget=True` download
+    after this in the same task shares `seconds` in total."""
+    _run_budget_ends_at.set(clock() + seconds)
+
+
+def run_budget_remaining(*, clock=time.monotonic) -> float | None:
+    ends_at = _run_budget_ends_at.get()
+    return None if ends_at is None else max(0.0, ends_at - clock())
+
+
+async def run_download(seconds: float, fn, *args, run_budget: bool = False):
     """Run blocking `fn(deadline, *args)` on the download pool inside a
-    fresh deadline of `seconds`."""
+    fresh deadline of `seconds` - or, with `run_budget`, of whatever is left
+    of the run's budget when the thread starts, if that is less. Time spent
+    queued for a thread counts against the budget."""
+    # Read here: run_in_executor does not carry the context into the thread.
+    ends_at = _run_budget_ends_at.get() if run_budget else None
 
     def call():
-        with DownloadDeadline(seconds) as deadline:
+        limit = seconds
+        if ends_at is not None:
+            left = ends_at - time.monotonic()
+            if left <= 0:
+                raise DownloadDeadlineExceeded("the run's download budget was already spent")
+            limit = min(seconds, left)
+        with DownloadDeadline(limit) as deadline:
             return fn(deadline, *args)
 
     return await asyncio.get_running_loop().run_in_executor(DOWNLOAD_EXECUTOR, call)

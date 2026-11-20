@@ -219,7 +219,7 @@ async def download_url(
         raise DownloadError("The downloaded media file could not be found.")
 
     try:
-        path, info = await run_download(settings.download_deadline_seconds, fetch)
+        path, info = await run_download(settings.download_deadline_seconds, fetch, run_budget=True)
         size_bytes = os.path.getsize(path)
         if size_bytes > max_bytes:
             raise MediaValidationError(size_over_limit_message(limits, subject="That video"))

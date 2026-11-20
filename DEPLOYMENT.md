@@ -355,7 +355,8 @@ WORKER_JOB_TIMEOUT_SECONDS=600
 # of media). Set on BOTH services: the API uses it for the stale-run check
 # (+120 s) and the long-run slot expiry, the worker for the arq timeout.
 WORKER_LONG_JOB_TIMEOUT_SECONDS=1800
-# Wall-clock limit on one link download, in the worker. Under the job timeout.
+# Wall-clock limit on a run's link downloading, in the worker: yt-dlp, the
+# plain-file fallback and the caption fallback share it. Under the job timeout.
 DOWNLOAD_DEADLINE_SECONDS=300
 # Worker: on SIGTERM (a deploy) keep running in-flight jobs this long before
 # cancelling them; a cancelled job is re-queued and resumes on the next
@@ -567,7 +568,9 @@ to older code) is logged and allowed. See `docs/backend/startup-checks.md`.
 
 **Before the first deploy with that check**, let the backend role read the
 version table, or the check can only log an ERROR ("cannot protect this
-deployment") and let the process start. `docs/backend/auth.md` records that
+deployment") and let the process start. Until the grant is applied the check
+protects nothing: a schema that *is* behind is reported `unreadable`, not
+refused, and the code starts against it exactly as before the check existed. `docs/backend/auth.md` records that
 on `videolens-dev` the role was refused `alembic_version` and that Supabase
 turned RLS on for it, so a policy is needed besides the grant. As `postgres`,
 with the real role name if `DATABASE_APP_ROLE` is not the default:
@@ -581,7 +584,19 @@ CREATE POLICY videolens_api_read_version ON public.alembic_version
 (Skip the policy if `SELECT relrowsecurity FROM pg_class WHERE oid =
 'public.alembic_version'::regclass` returns false.) After deploying,
 `GET /api/readiness` reports `"schema": "ok"`; `unreadable` means the grant or
-policy is missing.
+policy is missing. That value is the result of the check the process ran at
+startup, not a live reading: it does not change until the process restarts
+(`docs/backend/startup-checks.md`).
+
+**The worker has no health check** (`railway.worker.json` sets none; the API's
+is `/api/health`). A worker whose schema check refuses (behind or missing)
+logs the refusal and exits during arq startup, before it takes a job; Railway
+restarts it up to 3 times (`ON_FAILURE`) and then leaves it crashed. Nothing
+gates that deploy, so as far as Railway's documented behaviour goes the new
+worker deployment replaces the old one even though it never runs (not checked
+here). Runs submitted meanwhile wait `queued` in Redis and expire with the run
+TTL if nobody fixes it. After a worker deploy, read its `Startup mode` line
+(or its crash log) rather than trusting the deploy's green status.
 
 Production state is not recorded here: read `SELECT version_num FROM
 alembic_version` on the production project before promoting, and apply from
@@ -647,18 +662,28 @@ that revision to head.
   survive transaction pooling, and every signed-in route failed on dev with
   "prepared statement ... does not exist" (`docs/backend/auth.md`, "Pooler").
 - **TLS.** The production `DATABASE_URL` must end in `?sslmode=require` (or
-  `ssl=require`; stricter modes need the server CA trusted, which is not set
-  up here). Without it asyncpg's default `prefer` applies: no certificate
-  check and a silent plaintext fallback. The app renames `sslmode=` to
-  asyncpg's `ssl=` and keeps the value. Local Postgres without TLS needs
-  nothing.
+  `ssl=require`). Without it asyncpg's default `prefer` applies: a silent
+  plaintext fallback. `require` encrypts but does **not** verify the server's
+  certificate, so it stops passive eavesdropping and not an active
+  man-in-the-middle. To verify, download the project's CA certificate
+  (Supabase: Database settings, SSL), ship it with the service and use
+  `?sslmode=verify-full&sslrootcert=/path/to/ca.crt` (`verify-ca` checks the
+  chain but not the host name); the app turns `sslrootcert` into an SSL
+  context trusting only that CA. Not set up on any environment today. The app
+  renames `sslmode=` to asyncpg's `ssl=` and keeps the value. Any other
+  parameter asyncpg cannot take (`options`, `application_name`,
+  `connect_timeout`, `sslcert`/`sslkey`, ...) makes the API and the worker
+  refuse to start, naming it; before 2026-11-20 it failed every query instead.
+  Local Postgres without TLS needs nothing.
 - **Pool size.** On the session pooler every open pooled connection is a real
   server connection. Each process opens up to `DATABASE_POOL_SIZE` +
   `DATABASE_MAX_OVERFLOW` (5 + 10 by default), so API + worker can hold about
-  30, plus one while Alembic runs and anything else using the project. Read
-  the pooler's session limit for the project's plan on the Supabase dashboard
-  (not recorded here, not checked) and, if 30 does not fit with room to
-  spare, lower the two settings on both services. Too small a pool makes
+  30, plus one while Alembic runs and anything else using the project. During
+  a deploy the old and new deployment of a service run side by side until the
+  old one stops, so the figure briefly doubles (about 60 when both services
+  deploy together). Read the pooler's session limit for the project's plan on
+  the Supabase dashboard (not recorded here, not checked) and, if that peak
+  does not fit with room to spare, lower the two settings on both services. Too small a pool makes
   signed-in requests wait for a connection; too large hits "max clients"
   errors under load.
 
@@ -943,4 +968,5 @@ The release is complete when:
 - 2026-11-14 · backend agent · paid saved history and the 30-day deletion hold: migration `0006_saved_history` (release checklist and migration step, before the code), `PAID_SAVED_RUNS_GRACE_DAYS`, `PAID_SAVED_RUN_MAX_BYTES`, `ACCOUNT_DELETION_HOLD_DAYS` (both services), backend and worker deployed together
 - 2026-11-20 · Claude (backend agent) · `AUTH_FAILURE_LIMIT_PER_IP` (failed credentials per IP, 429) and `DOWNLOAD_DEADLINE_SECONDS` (wall-clock link download limit) variables; requests over the body ceiling now get 413 before they are read
 - 2026-11-20 · Claude (backend agent) · release checklist through 0010 with "migrations before code" and the `alembic_version` grant for the new startup schema check; worker must share `DATABASE_URL` and `STRIPE_*` (what breaks otherwise); "Database connections" (session pooler 5432, `sslmode=require`, pool sizing); `WORKER_JOB_COMPLETION_WAIT_SECONDS`, `DATABASE_POOL_SIZE`, `DATABASE_MAX_OVERFLOW`
+- 2026-11-20 · Claude (backend agent) · re-review: one download budget per run (`DOWNLOAD_DEADLINE_SECONDS`); connection figure doubles during deploy overlap; the schema check protects nothing until the `alembic_version` grant; worker has no health check and what a schema-behind worker does; readiness `schema` is a startup snapshot; `sslmode=require` does not verify the certificate, `sslrootcert` with `verify-full` does; unsupported URL parameters refuse startup
 - 2026-11-20 · Claude (CI agent) · Android release signing: CI signs in a separate `sign` job with apksigner on an unsigned Gradle build, never passing the key to Gradle; documented what the first run with secrets does and how to verify it

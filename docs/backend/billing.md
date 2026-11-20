@@ -292,6 +292,11 @@ happen exactly once:
   deletion and the purge flush **all** of the account's due rows (paged,
   `ExtraRunBilling.flush_account`) before cancelling, so the final invoice
   carries them; a row that still cannot be reported is logged and left due.
+  `flush_account` tries each row once per call: a row Stripe took but the
+  ledger could not mark `reported` stays due and would come back on every
+  page, so `_report` counts it as not reported and the pass stops (it used
+  to loop, calling Stripe for ever, while `mark_reported` kept failing). The
+  resend on the next pass is deduplicated by the meter on the run id.
 - Rows due for more than 34 days are moved to `void` by the same cron
   (`ledger.expire_due`), with a WARNING naming the run and the account (no
   email), because Stripe refuses meter events older than 35 days. They are
@@ -392,10 +397,19 @@ subscriptions before deleting anything (`delete_account.cancel_account_subscript
 
 1. If it cannot read the billing row, it refuses.
 2. With no row, deletion proceeds as before.
-3. With billing off (the Stripe keys removed) nothing can be cancelled:
-   deletion and the purge go ahead, with a WARNING naming the account and a
-   still-live stored subscription (2026-11-20; it used to refuse, which
-   left the account undeletable). The owner cancels it in the dashboard.
+3. With billing off (the Stripe keys removed) nothing can be cancelled.
+   `DELETE /api/me` still starts the hold, with a WARNING naming the account
+   and a still-live stored subscription (the purge will wait for billing).
+   **The purge does not remove an account whose stored subscription is
+   live** (re-review 2026-11-20): removing it would delete the billing row
+   and leave Stripe charging a customer the app no longer knows. It logs a
+   WARNING ("not removed after its deletion hold ... retried every hour"),
+   skips the account and retries each hourly tick; it is removed on the
+   first tick after the worker has the `STRIPE_*` variables again, which
+   then cancels the subscription as in step 4. An ended
+   subscription, or none, does not hold the purge back. The skipped account
+   still counts in `due_for_purge`'s 25 per tick, so more than 25 such
+   accounts would hold back the rest until billing is back.
 4. Otherwise it reports all of the account's due extra runs first (paged),
    so the final invoice carries them, then cancels the stored subscription
    and every other live subscription of the customer that Stripe lists
@@ -631,3 +645,4 @@ Billing:
 - 2026-11-14 · backend agent · complimentary Plus: migration `0010_complimentary_plus` (`accounts.complimentary_plus`, set only by hand in SQL); `BillingPlans.standing` / `PlanStanding`; paid plan with or without Stripe, never billed (402 `free_runs_used` past `PAID_RUNS_PER_DAY`, no ledger, no meter); `complimentary` on `GET /api/billing` (full body even with billing off), `GET /api/me` `entitlement`, `GET /api/free-runs`; checkout/portal 409 `complimentary_plan`; a paying subscription wins
 - 2026-11-20 · Claude (backend agent) · duplicate subscriptions: Checkout expires the customer's open sessions and lives 35 min; the webhook cancels a second live subscription (the newer one unless only it pays; prorated credit, no final invoice; ERROR log); deletion and purge flush all due rows and cancel every live subscription, and go ahead with a WARNING when billing is off; the extra-run cap is checked in the hold's INSERT under a row lock; held rows of completed runs are settled by the worker and by `reconcile`; due rows older than 34 days are voided with a WARNING; no migration
 - 2026-11-20 · Claude (backend agent) · tests: two live subscriptions through the webhook route, including the 503 and the retry
+- 2026-11-20 · Claude (backend agent) · re-review: the purge with billing off holds back an account with a live stored subscription (WARNING, retried hourly) instead of removing it; `flush_account` stops after one pass when `mark_reported` keeps failing

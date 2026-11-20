@@ -7,8 +7,10 @@
    account's due extra runs are reported and every live subscription its
    Stripe customer still has is cancelled; if Stripe cannot be read or a
    cancel fails the account is skipped (logged): never remove an account
-   that still pays. With Stripe not configured nothing can be cancelled and
-   the removal goes ahead, logged (`cancel_account_subscription`).
+   that still pays. With Stripe not configured nothing can be cancelled, so
+   an account whose stored subscription is live is skipped too, with a
+   warning every tick until billing is configured; one with no live
+   subscription on file is removed (`cancel_account_subscription`).
 2. Saved runs whose post-cancel window has passed are removed, after the
    window is started for any account whose paid plan ended without a
    webhook saying so.
@@ -91,7 +93,7 @@ class AccountCleanupUseCase:
         removed = skipped = 0
         for pending in due:
             try:
-                await cancel_account_subscription(self._billing, pending.account_id)
+                await cancel_account_subscription(self._billing, pending.account_id, purge=True)
             except SubscriptionCancelFailedError:
                 logger.error("Account %s not removed: its subscription could not be cancelled", pending.account_id)
                 skipped += 1

@@ -9,7 +9,7 @@ Where it comes from, in order:
 
 1. The publisher's own poster (yt-dlp's `thumbnail`/`thumbnails`), fetched
    through the same SSRF guard as every other outbound request, with a byte
-   cap and a short timeout.
+   cap and a short wall-clock deadline on the download pool.
 2. A frame from the media file itself (~1s in, or 10% of the way through a
    shorter clip), when there is one and it has a picture.
 3. Nothing. Audio has no poster, and a failure here is cosmetic: every public
@@ -26,7 +26,8 @@ import urllib.request
 from typing import Iterable, Optional
 
 from ..config import Settings
-from .ffmpeg import _media_binary
+from .deadline import DownloadDeadline, run_download
+from .ffmpeg import INPUT_PROTOCOLS, _media_binary
 from .net import build_public_opener, validate_public_url
 from .process import run_process
 
@@ -36,6 +37,10 @@ MAX_SIDE = 320
 MAX_THUMBNAIL_BYTES = 20 * 1024
 MAX_SOURCE_IMAGE_BYTES = 3 * 1024 * 1024
 FETCH_TIMEOUT_SECONDS = 8
+# Wall-clock bound on one poster fetch, connection to last byte (socket
+# timeouts are per read). Two fetches at most per run.
+FETCH_DEADLINE_SECONDS = 10
+_READ_CHUNK_BYTES = 64 * 1024
 FFMPEG_TIMEOUT_SECONDS = 15
 
 # mjpeg's -q:v runs 2 (best) to 31 (worst). Stepped rather than bisected: the
@@ -140,6 +145,7 @@ async def probe_dimensions(settings: Settings, path: str) -> Optional[tuple[int,
             [
                 _media_binary(settings, "ffprobe"),
                 "-v", "error",
+                *INPUT_PROTOCOLS,
                 "-select_streams", "v:0",
                 "-show_entries",
                 "stream=width,height:stream_disposition=attached_pic"
@@ -170,7 +176,8 @@ async def encode_thumbnail(settings: Settings, image: bytes) -> Optional[bytes]:
         for quality in QUALITY_STEPS:
             code, stdout = await _run(
                 [
-                    ffmpeg, "-v", "error", "-i", "pipe:0",
+                    # stdin only: the fetched bytes are the publisher's.
+                    ffmpeg, "-v", "error", "-protocol_whitelist", "pipe", "-i", "pipe:0",
                     "-frames:v", "1",
                     "-vf", _scale_filter(side),
                     "-q:v", str(quality),
@@ -206,7 +213,7 @@ async def extract_frame(
         code, stdout = await _run(
             [
                 ffmpeg, "-v", "error",
-                "-ss", f"{offset:.3f}", "-i", media_path,
+                "-ss", f"{offset:.3f}", *INPUT_PROTOCOLS, "-i", media_path,
                 "-frames:v", "1", "-an",
                 "-vf", _scale_filter(MAX_SIDE),
                 "-f", "image2pipe", "-c:v", "png", "pipe:1",
@@ -217,31 +224,51 @@ async def extract_frame(
     return None
 
 
-def _fetch_image_sync(url: str, max_bytes: int, timeout: float) -> bytes:
+def _fetch_image_sync(deadline: DownloadDeadline, url: str, max_bytes: int, timeout: float) -> bytes:
     validate_public_url(url)
     opener = build_public_opener()
     request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    with opener.open(request, timeout=timeout) as response:
+    with opener.open(request, timeout=min(timeout, max(1.0, deadline.remaining))) as response:
         declared = response.headers.get("Content-Length")
         if declared and declared.isdigit() and int(declared) > max_bytes:
             raise ValueError(f"thumbnail declares {declared} bytes, over the cap")
-        # Read one byte past the cap so an over-size body is detectable even
-        # when the server omits or lies about Content-Length.
-        body = response.read(max_bytes + 1)
-    if len(body) > max_bytes:
-        raise ValueError("thumbnail body is over the cap")
-    if not body:
+        # read1 in chunks, as captions do: a trickling server comes back here
+        # to have the deadline checked, and reading one byte past the cap
+        # catches an over-size body whatever Content-Length said.
+        chunks: list[bytes] = []
+        total = 0
+        read = getattr(response, "read1", None) or response.read
+        while True:
+            deadline.check()
+            chunk = read(_READ_CHUNK_BYTES)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise ValueError("thumbnail body is over the cap")
+            chunks.append(chunk)
+        # A deadline that fired mid-read reads as a clean end of file.
+        deadline.check()
+    if not total:
         raise ValueError("thumbnail body is empty")
-    return body
+    return b"".join(chunks)
 
 
 async def fetch_image(url: str) -> Optional[bytes]:
+    # On the download pool under its own short deadline, like every other
+    # outbound fetch: on the default executor a trickling body kept a shared
+    # thread busy long after wait_for had stopped waiting for it. The
+    # deadline's socket shutdown ends even a read that is already blocked.
     try:
         return await asyncio.wait_for(
-            asyncio.to_thread(
-                _fetch_image_sync, url, MAX_SOURCE_IMAGE_BYTES, FETCH_TIMEOUT_SECONDS
+            run_download(
+                FETCH_DEADLINE_SECONDS,
+                _fetch_image_sync,
+                url,
+                MAX_SOURCE_IMAGE_BYTES,
+                FETCH_TIMEOUT_SECONDS,
             ),
-            FETCH_TIMEOUT_SECONDS + 2,
+            FETCH_DEADLINE_SECONDS + 2,
         )
     except Exception as exc:  # noqa: BLE001 - urllib errors name hosts; log only
         logger.info("Thumbnail fetch failed: %s: %s", type(exc).__name__, exc)

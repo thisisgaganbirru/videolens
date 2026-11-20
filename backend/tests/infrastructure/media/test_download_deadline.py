@@ -7,6 +7,7 @@ import io
 import os
 import shutil
 import socket
+import ssl
 import sys
 import tempfile
 import threading
@@ -26,6 +27,7 @@ from app.infrastructure.media.deadline import (
     run_download,
     track_socket,
 )
+from app.infrastructure.media.net import PinnedHTTPSConnection
 from app.infrastructure.media.process import run_process
 from app.infrastructure.media.resolvers.direct_http import DirectHttpResolver
 from app.infrastructure.media.ytdlp_net import GuardedYoutubeDL
@@ -139,7 +141,7 @@ class YtDlpDeadlineTests(unittest.IsolatedAsyncioTestCase):
             downloader.extract_info.side_effect = extract_info
             return downloader
 
-        async def deadline_with_fake_clock(seconds, fn, *args):
+        async def deadline_with_fake_clock(seconds, fn, *args, run_budget=False):
             with DownloadDeadline(seconds, clock=clock) as deadline:
                 return fn(deadline, *args)
 
@@ -167,6 +169,88 @@ class YtDlpDeadlineTests(unittest.IsolatedAsyncioTestCase):
         director.send.assert_not_called()
 
 
+def _self_signed_pair(directory: str) -> tuple[str, str]:
+    """A throwaway localhost certificate, made with `cryptography` (already
+    installed through PyJWT[crypto]; no new dependency)."""
+    import datetime
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(minutes=5))
+        .not_valid_after(now + datetime.timedelta(hours=1))
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False)
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(key, hashes.SHA256())
+    )
+    cert_path = os.path.join(directory, "cert.pem")
+    key_path = os.path.join(directory, "key.pem")
+    with open(cert_path, "wb") as handle:
+        handle.write(cert.public_bytes(serialization.Encoding.PEM))
+    with open(key_path, "wb") as handle:
+        handle.write(
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+    return cert_path, key_path
+
+
+class _LoopbackTLS:
+    """A one-connection TLS server on 127.0.0.1 that answers with headers for
+    a 1000-byte body and then (with `trickle`) sends a byte every 0.5 s."""
+
+    def __init__(self, test: unittest.TestCase, *, trickle: bool = True) -> None:
+        directory = tempfile.mkdtemp()
+        test.addCleanup(shutil.rmtree, directory, True)
+        cert_path, key_path = _self_signed_pair(directory)
+        server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        server_context.load_cert_chain(cert_path, key_path)
+        self.client_context = ssl.create_default_context(cafile=cert_path)
+        self._listener = socket.socket()
+        self._listener.bind(("127.0.0.1", 0))
+        self._listener.listen(1)
+        self._listener.settimeout(10)
+        test.addCleanup(self._listener.close)
+        self.port = self._listener.getsockname()[1]
+        self._stop = threading.Event()
+        test.addCleanup(self._stop.set)
+        threading.Thread(target=self._serve, args=(server_context, trickle), daemon=True).start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _serve(self, context: ssl.SSLContext, trickle: bool) -> None:
+        try:
+            raw, _ = self._listener.accept()
+            with context.wrap_socket(raw, server_side=True) as conn:
+                if not trickle:
+                    self._stop.wait(10)
+                    return
+                conn.recv(4096)
+                conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n")
+                for _ in range(1000):
+                    if self._stop.is_set():
+                        return
+                    conn.sendall(b"a")
+                    time.sleep(0.5)
+        except OSError:
+            return
+
+
 class DeadlineMechanicsTests(unittest.TestCase):
     def test_firing_shuts_down_tracked_sockets(self) -> None:
         left, right = socket.socketpair()
@@ -191,9 +275,124 @@ class DeadlineMechanicsTests(unittest.TestCase):
             self.assertTrue(deadline.expired)
         self.assertEqual(received, [b""])
 
+    def test_firing_ends_a_blocked_tls_read(self) -> None:
+        # wrap_socket detaches the raw socket, so tracking only that one made
+        # the shutdown a no-op for HTTPS (2026-11-20 re-review): a loopback
+        # TLS server that sends headers and then trickles the body.
+        tls = _LoopbackTLS(self)
+        conn = PinnedHTTPSConnection(
+            "localhost", tls.port, timeout=10, context=tls.client_context, pinned_address="127.0.0.1"
+        )
+        self.addCleanup(conn.close)
+        outcome = []
+
+        def read_body():
+            with DownloadDeadline(0.5):
+                conn.request("GET", "/")
+                response = conn.getresponse()
+                started = time.monotonic()
+                try:
+                    response.read()
+                    outcome.append(("returned", time.monotonic() - started))
+                except Exception as exc:  # noqa: BLE001 - any end is the point
+                    outcome.append((type(exc).__name__, time.monotonic() - started))
+
+        reader = threading.Thread(target=read_body, daemon=True)
+        reader.start()
+        reader.join(8)
+        stuck = reader.is_alive()
+        # Stop the server either way, so a regression fails instead of hanging.
+        tls.stop()
+        reader.join(5)
+        self.assertFalse(stuck, "the deadline did not end the TLS read")
+        self.assertLess(outcome[0][1], 5)
+
+    def test_the_tls_socket_is_tracked_not_the_detached_raw_one(self) -> None:
+        tls = _LoopbackTLS(self, trickle=False)
+        conn = PinnedHTTPSConnection(
+            "localhost", tls.port, timeout=10, context=tls.client_context, pinned_address="127.0.0.1"
+        )
+        self.addCleanup(conn.close)
+        with DownloadDeadline(60) as deadline:
+            conn.connect()
+            tracked = list(deadline._sockets)
+        self.assertIn(conn.sock, tracked)
+        self.assertIsInstance(conn.sock, ssl.SSLSocket)
+
     def test_no_deadline_outside_a_download(self) -> None:
         self.assertIsNone(deadline_module.current_deadline())
         track_socket(MagicMock())  # a no-op, never an error
+
+
+class RunBudgetTests(unittest.IsolatedAsyncioTestCase):
+    """One download budget per run (2026-11-20 re-review): yt-dlp 300 s +
+    direct HTTP 300 s + captions 300 s used to add up to 900 s, past the
+    600 s job timeout."""
+
+    async def test_without_a_budget_each_download_gets_its_full_deadline(self) -> None:
+        seconds = await run_download(5, lambda deadline: deadline.seconds, run_budget=True)
+        self.assertEqual(seconds, 5)
+
+    async def test_budgeted_downloads_get_only_what_is_left(self) -> None:
+        deadline_module.start_run_budget(1.0)
+        first = await run_download(300, lambda deadline: deadline.seconds, run_budget=True)
+        self.assertLessEqual(first, 1.0)
+        # A download outside the budget (the poster fetch) is not clamped.
+        self.assertEqual(await run_download(10, lambda deadline: deadline.seconds), 10)
+
+    async def test_a_spent_budget_refuses_the_next_route_at_once(self) -> None:
+        deadline_module.start_run_budget(0.0)
+        called = []
+        with self.assertRaises(DownloadDeadlineExceeded):
+            await run_download(300, lambda deadline: called.append(1), run_budget=True)
+        self.assertEqual(called, [])
+
+    async def test_the_budget_belongs_to_the_runs_own_task(self) -> None:
+        async def a_run():
+            deadline_module.start_run_budget(0.0)
+
+        await asyncio.create_task(a_run())
+        # Another run (another task) never sees it.
+        self.assertIsNone(deadline_module.run_budget_remaining())
+
+    async def test_media_service_shares_one_budget_across_routes_and_captions(self) -> None:
+        from app.infrastructure.media.service import MediaService
+
+        temp_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, temp_dir, True)
+        service = MediaService(Settings(temp_dir=temp_dir, download_deadline_seconds=300))
+        clock = FakeClock()
+        given = []
+
+        async def fake_run_download(seconds, fn, *args, run_budget=False):
+            # Each route "uses" 200 s of its deadline before failing.
+            remaining = deadline_module.run_budget_remaining(clock=clock)
+            limit = seconds if remaining is None or not run_budget else min(seconds, remaining)
+            given.append(limit)
+            clock.now += min(200, limit)
+            raise DownloadDeadlineExceeded("slow")
+
+        real_start = deadline_module.start_run_budget
+        with patch.object(ytdlp_downloader, "validate_public_url"), patch.object(
+            ytdlp_downloader, "_media_binary", return_value="/usr/bin/ffmpeg"
+        ), patch.object(ytdlp_downloader, "run_download", fake_run_download), patch(
+            "app.infrastructure.media.resolvers.direct_http.validate_public_url"
+        ), patch(
+            "app.infrastructure.media.resolvers.direct_http.run_download", fake_run_download
+        ), patch(
+            "app.infrastructure.media.captions.run_download", fake_run_download
+        ), patch(
+            "app.infrastructure.media.captions.validate_public_url"
+        ), patch(
+            "app.infrastructure.media.service.start_run_budget",
+            lambda seconds: real_start(seconds, clock=clock),
+        ):
+            with self.assertRaises(MediaValidationError):
+                await service.download_url("run-1", "https://cdn.test/clip.mp4")
+            self.assertIsNone(await service.fetch_captions("https://cdn.test/clip.mp4"))
+        # yt-dlp got 300, the plain GET what was left (100), captions nothing.
+        self.assertEqual(given, [300, 100, 0])
+        self.assertLessEqual(clock.now, 300)
 
 
 class DownloadPoolTests(unittest.IsolatedAsyncioTestCase):

@@ -74,6 +74,8 @@ async def readiness() -> dict:
     # The startup schema check's result (docs/backend/startup-checks.md):
     # "ok", "ahead", "unreadable", "unreachable", "disabled" (no database), or
     # on SQLite "behind"/"missing". Postgres behind or missing never starts.
+    # A snapshot from process start, on purpose: readiness stays a cheap
+    # check with no database query, so the value changes only on restart.
     schema = container.check_schema_use_case.last
     return {
         "status": "ready",

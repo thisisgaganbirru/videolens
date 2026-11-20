@@ -6,6 +6,7 @@ from ...domain.entitlements import MediaLimits
 from ...domain.ports import UploadedFile
 from ..config import Settings
 from . import captions, ffmpeg, thumbnails, uploads
+from .deadline import start_run_budget
 from .resolvers import DirectHttpResolver, ResolverChain, YtDlpResolver
 
 logger = logging.getLogger("videolens")
@@ -50,6 +51,10 @@ class MediaService:
         return await ffmpeg.enforce_duration_cap(self._settings, run_id, path, limits)
 
     async def download_url(self, run_id: str, url: str, limits: MediaLimits | None = None) -> SavedUpload:
+        # One DOWNLOAD_DEADLINE_SECONDS for the whole run: every route the
+        # chain tries, and the caption fallback after them, share it
+        # (deadline.py), so together they stay inside the job timeout.
+        start_run_budget(self._settings.download_deadline_seconds)
         return await self._resolvers.fetch(run_id, url, limits)
 
     async def fetch_captions(self, url: str, limits: MediaLimits | None = None) -> CaptionTrack | None:

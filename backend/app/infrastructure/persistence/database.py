@@ -7,8 +7,10 @@ a socket. The schema belongs to Alembic (`backend/migrations/`), run as a
 release step; `create_all` exists for tests only.
 """
 
+import ssl
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import unquote
 
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
@@ -61,6 +63,83 @@ def _sslmode_for_asyncpg(url: str) -> str:
     return base + "?" + "&".join(kept)
 
 
+# What asyncpg's `connect()` takes as a keyword, so what may stay in the
+# query string (SQLAlchemy passes every query parameter through as one).
+# Anything else (libpq's `options`, `application_name`, `connect_timeout`,
+# `sslcert`/`sslkey`...) made every connection fail with a TypeError at the
+# first query; it is now refused at startup instead (`database_url_error`).
+_ASYNCPG_QUERY_PARAMETERS = frozenset({
+    "ssl", "direct_tls", "passfile", "service", "servicefile", "timeout", "command_timeout",
+    "statement_cache_size", "max_cached_statement_lifetime", "max_cacheable_statement_size",
+    "target_session_attrs", "krbsrvname", "gsslib", "prepared_statement_cache_size",
+})
+# Translated here into an `ssl.SSLContext`, so it never reaches asyncpg.
+_ROOT_CERT_PARAMETER = "sslrootcert"
+_VERIFYING_MODES = ("verify-ca", "verify-full")
+
+
+def _query_pairs(url: str) -> tuple[str, list[tuple[str, str]]]:
+    base, _, query = url.partition("?")
+    pairs = [tuple(pair.split("=", 1)) if "=" in pair else (pair, "") for pair in query.split("&") if pair]
+    return base, pairs
+
+
+def database_url_error(url: str) -> str | None:
+    """Why this (normalized) asyncpg URL cannot be used, or None. Names the
+    parameters only, never a value: the URL carries the password."""
+    if not url.startswith("postgresql+asyncpg://"):
+        return None
+    _, pairs = _query_pairs(url)
+    names = [name for name, _ in pairs]
+    unknown = sorted({name for name in names if name not in _ASYNCPG_QUERY_PARAMETERS | {_ROOT_CERT_PARAMETER}})
+    if unknown:
+        return (
+            "DATABASE_URL carries parameters this app cannot pass to Postgres: "
+            + ", ".join(unknown)
+            + ". Remove them; sslmode (or ssl) and sslrootcert are supported."
+        )
+    values = dict(pairs)
+    if "ssl" in values and not values["ssl"]:
+        return "DATABASE_URL has an sslmode (or ssl) parameter with no value. Give it one, e.g. sslmode=require."
+    if _ROOT_CERT_PARAMETER in values:
+        if values.get("ssl") not in _VERIFYING_MODES:
+            return (
+                "DATABASE_URL sets sslrootcert without sslmode=verify-full (or verify-ca). "
+                "A root certificate is only used to verify the server; set the mode that does."
+            )
+        if not values[_ROOT_CERT_PARAMETER]:
+            return "DATABASE_URL has an empty sslrootcert. Give the path to the server's CA certificate."
+    return None
+
+
+def split_tls_connect_args(url: str) -> tuple[str, dict]:
+    """The URL without `sslrootcert`, and the connect arguments that carry
+    it: an `ssl.SSLContext` trusting only that CA, verifying the hostname
+    for `verify-full` and not for `verify-ca` (libpq's meaning). Without
+    `sslrootcert` the URL is returned unchanged and asyncpg applies `ssl=`
+    itself. Raises ValueError for a URL `database_url_error` refuses, or a
+    certificate file that cannot be read."""
+    error = database_url_error(url)
+    if error:
+        raise ValueError(error)
+    base, pairs = _query_pairs(url)
+    values = dict(pairs)
+    if _ROOT_CERT_PARAMETER not in values:
+        return url, {}
+    path = unquote(values[_ROOT_CERT_PARAMETER])
+    try:
+        context = ssl.create_default_context(cafile=path)
+    except (OSError, ssl.SSLError) as exc:
+        raise ValueError(
+            f"DATABASE_URL's sslrootcert could not be loaded ({type(exc).__name__}). "
+            "Check the path and that the file is a PEM CA certificate."
+        ) from exc
+    if values["ssl"] == "verify-ca":
+        context.check_hostname = False  # still CERT_REQUIRED: the chain is verified
+    kept = [f"{name}={value}" for name, value in pairs if name not in (_ROOT_CERT_PARAMETER, "ssl")]
+    return base + ("?" + "&".join(kept) if kept else ""), {"ssl": context}
+
+
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -75,7 +154,10 @@ def as_utc(value: datetime | None) -> datetime | None:
 
 class Database:
     def __init__(self, settings: Settings) -> None:
-        self._url = normalize_database_url(settings.database_url)
+        # Raises ValueError for a URL that could never connect (unsupported
+        # parameters, an unreadable sslrootcert), so the API and the worker
+        # refuse to start rather than fail on every query.
+        self._url, self._tls_args = split_tls_connect_args(normalize_database_url(settings.database_url))
         self._pool_size = max(1, settings.database_pool_size)
         self._max_overflow = max(0, settings.database_max_overflow)
         self._engine: AsyncEngine | None = None
@@ -131,6 +213,7 @@ class Database:
                     connect_args={
                         "statement_cache_size": 0,
                         "prepared_statement_name_func": lambda: f"__vl_{uuid.uuid4().hex}__",
+                        **self._tls_args,
                     },
                 )
         return self._engine

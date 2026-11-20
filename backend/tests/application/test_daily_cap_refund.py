@@ -69,6 +69,28 @@ class IntakeCapRefundTests(unittest.IsolatedAsyncioTestCase):
             await self._upload(gemini_api_key=None)
         self.assertEqual(self.spend_cap.used, 0)
 
+    async def test_intake_cancelled_before_scheduling_hands_the_unit_back(self) -> None:
+        # A cancelled intake (the API shutting down mid-upload) never made a
+        # run the worker will process, so its unit must not leak.
+        started = asyncio.Event()
+        original = self.media.save_upload
+
+        async def slow_save(*args, **kwargs):
+            started.set()
+            await asyncio.sleep(30)
+            return await original(*args, **kwargs)
+
+        self.media.save_upload = slow_save
+        task = asyncio.create_task(self._upload(gemini_api_key=None))
+        await started.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(self.spend_cap.consume_calls, 1)
+        self.assertEqual(self.spend_cap.used, 0)
+        self.assertEqual(self.spend_cap.held, {})
+        self.assertEqual(self.queue.enqueued, [])
+
     async def test_accepted_run_keeps_and_holds_its_unit(self) -> None:
         run = await self._upload(gemini_api_key=None)
         self.assertEqual(self.spend_cap.used, 1)

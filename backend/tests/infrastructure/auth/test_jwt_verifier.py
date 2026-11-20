@@ -1,3 +1,4 @@
+import threading
 import time
 import unittest
 from unittest.mock import MagicMock, patch
@@ -322,6 +323,54 @@ class JwksOutageTests(unittest.TestCase):
         forged = _header_only({"alg": "ES256", "kid": "made-up"})
         with self.assertRaises(AuthUnavailableError):
             self.verifier.decode(forged)
+
+    def _concurrent(self, count: int) -> tuple[list, int]:
+        """`count` requests at once while the first one's fetch hangs and
+        then fails. Returns each outcome and how many fetches were made."""
+        entered, release = threading.Event(), threading.Event()
+        before = self.client.get_signing_keys.call_count
+
+        def slow_failure(*_args, **_kwargs):
+            entered.set()
+            release.wait(5)
+            raise jwt.PyJWKClientConnectionError("unreachable")
+
+        self.client.get_signing_keys.side_effect = slow_failure
+        results: list = []
+
+        def request() -> None:
+            try:
+                results.append(self.verifier.decode(_token())["sub"])
+            except Exception as exc:  # noqa: BLE001 - the outcome is the point
+                results.append(type(exc).__name__)
+
+        first = threading.Thread(target=request)
+        first.start()
+        self.assertTrue(entered.wait(5))
+        others = [threading.Thread(target=request) for _ in range(count - 1)]
+        for thread in others:
+            thread.start()
+        for thread in others:
+            thread.join(1)
+        release.set()
+        for thread in [first, *others]:
+            thread.join(5)
+        return results, self.client.get_signing_keys.call_count - before
+
+    def test_concurrent_requests_during_a_failing_fetch_make_one_fetch(self) -> None:
+        # 20 at once used to make 20 fetches, 5 s each (2026-11-20 re-review).
+        self.verifier.decode(_token())
+        with self.assertLogs("videolens", "WARNING"):
+            results, fetches = self._concurrent(20)
+        self.assertEqual(fetches, 1)
+        # Everyone but the fetcher was served the last good set at once.
+        self.assertEqual(results, ["user-123"] * 20)
+
+    def test_with_no_key_set_the_others_wait_for_the_one_fetch_then_503(self) -> None:
+        with self.assertLogs("videolens", "WARNING"):
+            results, fetches = self._concurrent(10)
+        self.assertEqual(fetches, 1)
+        self.assertEqual(results, ["AuthUnavailableError"] * 10)
 
     def test_an_unknown_kid_still_forces_one_rate_limited_refresh(self) -> None:
         self.verifier.decode(_token())

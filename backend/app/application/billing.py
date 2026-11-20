@@ -207,7 +207,12 @@ class ExtraRunBilling:
         """Report every due extra run of one account (before its
         subscription is cancelled, so the final invoice carries them), page
         by page. Returns how many are still unreported (Stripe refused or
-        could not be reached). Never raises."""
+        could not be reached, or the row could not be marked). Never raises.
+
+        Each row is tried once: a run Stripe took but the ledger could not
+        mark stays due and would come back on every page, so that counts as
+        not reported and the pass stops, rather than call Stripe for ever
+        (the meter dedupes a resend on the run id; the cron retries it)."""
         if not self.enabled:
             return 0
         while True:
@@ -298,14 +303,19 @@ class ExtraRunBilling:
             )
 
     async def _report(self, charge: ExtraRunCharge) -> bool:
+        """True only when Stripe took it and the row is marked reported."""
         try:
             await self._plans.gateway.report_extra_run(charge)
         except Exception:  # noqa: BLE001 - left `due`; the cron retries it
             logger.exception("Could not report extra run %s to Stripe; it will be retried", charge.run_id)
             return False
+        logger.info("Run %s billed as an extra run (account %s)", charge.run_id, charge.account_id)
         try:
             await self._plans.ledger.mark_reported(charge.run_id)
         except Exception:  # noqa: BLE001 - a resend is deduplicated by Stripe
+            # Still `due`: whoever reads it next resends it, and the meter
+            # drops the duplicate (identifier = run id). Not "reported" here,
+            # so a loop over due rows stops instead of meeting it again.
             logger.exception("Reported extra run %s but could not record it", charge.run_id)
-        logger.info("Run %s billed as an extra run (account %s)", charge.run_id, charge.account_id)
+            return False
         return True

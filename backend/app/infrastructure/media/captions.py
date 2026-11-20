@@ -216,6 +216,8 @@ async def fetch_captions(
         )
 
     try:
-        return await run_download(settings.download_deadline_seconds, run)
+        # What is left of the run's budget after the failed routes, not a
+        # fresh 300 s on top of them.
+        return await run_download(settings.download_deadline_seconds, run, run_budget=True)
     except Exception:  # noqa: BLE001 - every miss here is expected, not exceptional
         return None

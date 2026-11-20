@@ -1,11 +1,13 @@
+import gzip
 import io
 import socket
 import unittest
+import zlib
 from unittest.mock import patch
 
 import yt_dlp.downloader.hls as yt_hls
 from yt_dlp import YoutubeDL
-from yt_dlp.networking.exceptions import RequestError
+from yt_dlp.networking.exceptions import RequestError, TransportError
 from yt_dlp.utils import DownloadError
 
 from app.domain.errors import MediaValidationError
@@ -135,6 +137,74 @@ class YtDlpRequestGuardTests(unittest.TestCase):
         for url in ("file:///etc/passwd", "ftp://cdn.test/a.mp4"):
             with _ydl() as ydl, self.assertRaises(RequestError, msg=url):
                 ydl.urlopen(url)
+
+
+@patch("app.infrastructure.media.ytdlp_net.MAX_UNSIZED_READ_BYTES", 1000)
+@patch("app.infrastructure.media.net.socket.getaddrinfo", side_effect=_resolve)
+@patch("app.infrastructure.media.net.socket.create_connection")
+class YtDlpReadCeilingTests(unittest.TestCase):
+    """A page or API response read whole (`urlh.read()`, as extractors do)
+    is bounded; media read in fixed-size chunks is not. The ceiling is
+    patched down to 1000 bytes here."""
+
+    def test_an_unsized_read_past_the_ceiling_is_refused(self, connect, _dns) -> None:
+        connect.return_value = _FakeSocket(_response("200 OK", {"Content-Length": "5000"}, b"x" * 5000))
+        with _ydl() as ydl:
+            response = ydl.urlopen("http://cdn.test/page")
+            with self.assertRaisesRegex(TransportError, "over the"):
+                response.read()
+
+    def test_a_close_delimited_body_is_bounded_too(self, connect, _dns) -> None:
+        # No Content-Length: the server decides when it ends.
+        connect.return_value = _FakeSocket(_response("200 OK", {"Connection": "close"}, b"x" * 5000))
+        with _ydl() as ydl, self.assertRaises(TransportError):
+            ydl.urlopen("http://cdn.test/page").read()
+
+    def test_an_unsized_read_within_the_ceiling_is_the_whole_body(self, connect, _dns) -> None:
+        connect.return_value = _FakeSocket(_response("200 OK", {"Content-Length": "1000"}, b"y" * 1000))
+        with _ydl() as ydl:
+            response = ydl.urlopen("http://cdn.test/page")
+            self.assertEqual(response.read(), b"y" * 1000)
+            self.assertEqual(response.read(), b"")
+
+    def test_chunked_reads_like_a_media_download_are_not_capped(self, connect, _dns) -> None:
+        connect.return_value = _FakeSocket(_response("200 OK", {"Content-Length": "5000"}, b"z" * 5000))
+        with _ydl() as ydl:
+            response = ydl.urlopen("http://cdn.test/a.mp4")
+            total = 0
+            while chunk := response.read(256):
+                total += len(chunk)
+        self.assertEqual(total, 5000)
+
+    def test_a_compressed_body_is_bounded_before_and_after_decoding(self, connect, _dns) -> None:
+        # yt-dlp's handler reads and decodes a gzip/deflate body whole inside
+        # urlopen, before any caller's read: 200 KB of zeros is ~200 bytes of gzip.
+        bomb = gzip.compress(bytes(1) * 200_000)
+        self.assertLess(len(bomb), 1000)
+        for encoding, body in (("gzip", bomb), ("deflate", zlib.compress(bytes(1) * 200_000))):
+            connect.return_value = _FakeSocket(
+                _response("200 OK", {"Content-Length": str(len(body)), "Content-Encoding": encoding}, body)
+            )
+            with _ydl() as ydl, self.assertRaises(Exception, msg=encoding) as caught:
+                ydl.urlopen("http://cdn.test/page").read()
+            self.assertIn("over the", str(caught.exception), encoding)
+
+    def test_a_compressed_body_within_the_ceiling_still_decodes(self, connect, _dns) -> None:
+        body = gzip.compress(b"hello " * 100)
+        connect.return_value = _FakeSocket(
+            _response("200 OK", {"Content-Length": str(len(body)), "Content-Encoding": "gzip"}, body)
+        )
+        with _ydl() as ydl:
+            self.assertEqual(ydl.urlopen("http://cdn.test/page").read(), b"hello " * 100)
+
+    def test_a_raw_body_over_the_ceiling_is_refused_before_decoding(self, connect, _dns) -> None:
+        body = bytes([0x1F, 0x8B]) + b"x" * 5000  # never decoded: refused on size first
+        connect.return_value = _FakeSocket(
+            _response("200 OK", {"Content-Length": str(len(body)), "Content-Encoding": "gzip"}, body)
+        )
+        with _ydl() as ydl, self.assertRaises(Exception) as caught:
+            ydl.urlopen("http://cdn.test/page")
+        self.assertIn("over the", str(caught.exception))
 
 
 class YtDlpDownloaderGuardTests(unittest.TestCase):

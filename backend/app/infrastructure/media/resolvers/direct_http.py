@@ -64,7 +64,14 @@ class DirectHttpResolver:
         await asyncio.to_thread(validate_public_url, url)
         run_dir = create_run_dir(self._settings, run_id)
         try:
-            path = await run_download(self._settings.download_deadline_seconds, self._download, url, run_dir, limits)
+            path = await run_download(
+                self._settings.download_deadline_seconds,
+                self._download,
+                url,
+                run_dir,
+                limits,
+                run_budget=True,
+            )
         except DownloadDeadlineExceeded as exc:
             _cleanup_dir(run_dir)
             raise MediaValidationError(

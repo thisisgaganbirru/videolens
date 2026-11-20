@@ -242,7 +242,9 @@ the table.
 1. Cancel every live Stripe subscription of the customer now
    (`invoice_now=true, prorate=false`, after reporting all due extra runs).
    A Stripe failure refuses the deletion (503) with nothing changed; with
-   billing off it goes ahead with a WARNING (`billing.md`).
+   billing off the hold still starts, with a WARNING, but the purge will not
+   remove the account while its stored subscription is live (`billing.md`,
+   "Deletion cancels first").
 2. Delete the person's Redis runs (unchanged, best effort).
 3. Set `accounts.deleted_at = now`, `purge_at = now + hold` (only if not
    already set). From here the account is refused everywhere (above).
@@ -365,3 +367,4 @@ on Postgres if `DATABASE_APP_ROLE` does not exist.
 - 2026-11-14 · backend agent · complimentary Plus (`accounts.complimentary_plus`, migration 0010): saved and `saving: true` with or without Stripe; never a post-cancel window (sync/arm/purge treat it as paid, the SQL arm scan skips it); window logic gated on Stripe on (`windows_enabled`); restore leaves the flag as it was
 - 2026-11-20 · Claude (backend agent) · the post-cancel window runs wherever saving does (a cleared complimentary flag starts the 30 days with Stripe off too), never for a stored live subscription with Stripe off; the purge flushes due extra runs and cancels every live subscription first, and goes ahead with a WARNING when billing is off
 - 2026-11-20 · Claude (backend agent) · tests: cross-account read/list/delete of a saved run at route level
+- 2026-11-20 · Claude (backend agent) · re-review: with billing off the purge waits for billing (retried hourly) while a live stored subscription is on file

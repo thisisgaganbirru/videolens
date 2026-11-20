@@ -84,6 +84,8 @@ class JwtVerifier:
         self._refresh_lock = threading.Lock()
         self._last_forced_refresh: float | None = None
         self._state_lock = threading.Lock()
+        # Single flight: one caller asks the endpoint at a time.
+        self._fetch_lock = threading.Lock()
         self._good_keys: list | None = None
         self._good_at: float | None = None
         self._failed_at: float | None = None
@@ -143,35 +145,61 @@ class JwtVerifier:
             raise PyJWKClientError("Unknown signing key.")
         return key.key
 
+    def _failed_recently(self, now: float) -> bool:
+        with self._state_lock:
+            return self._failed_at is not None and now - self._failed_at < _JWKS_RETRY_AFTER_FAILURE_SECONDS
+
     def _keys(self, *, refresh: bool = False) -> tuple[list, bool]:
         """The signing keys and whether they are current (the last fetch
         worked). `PyJWKClient` caches a good set for `_JWKS_LIFESPAN_SECONDS`;
         this adds the outage rules on top. Raises `AuthUnavailableError` when
-        there is no set to serve."""
+        there is no set to serve.
+
+        Single flight: while one caller is fetching, the others do not start
+        fetches of their own (20 requests during an outage were 20 fetches of
+        up to 5 s each). With a key set in hand they serve it at once; with
+        none (or for a forced refresh) they wait for that one fetch, then
+        take its outcome."""
         now = time.monotonic()
-        with self._state_lock:
-            failed_recently = (
-                self._failed_at is not None and now - self._failed_at < _JWKS_RETRY_AFTER_FAILURE_SECONDS
-            )
-        if not failed_recently:
-            try:
-                keys = self._client().get_signing_keys(refresh=True) if refresh else self._client().get_signing_keys()
-            except Exception as exc:  # noqa: BLE001 - unreachable, timed out, or not a usable key set
-                with self._state_lock:
-                    self._failed_at = now
-                logger.warning("JWKS fetch failed (%s); serving the last good key set if any", type(exc).__name__)
+        if not self._failed_recently(now):
+            with self._state_lock:
+                have_keys = self._good_keys is not None
+            if have_keys and not refresh:
+                acquired = self._fetch_lock.acquire(blocking=False)
             else:
-                with self._state_lock:
-                    self._good_keys, self._good_at, self._failed_at = list(keys), now, None
-                return list(keys), True
+                # Nothing to serve meanwhile, or the one forced refresh this
+                # window allows (a rotated key): wait for the fetch in flight.
+                acquired = self._fetch_lock.acquire(timeout=_JWKS_FETCH_TIMEOUT_SECONDS + 1)
+            if acquired:
+                try:
+                    # Re-checked under the lock: the fetch this caller waited
+                    # for may have just failed.
+                    if not self._failed_recently(time.monotonic()):
+                        return self._fetch(refresh, now)
+                except _FetchFailed:
+                    pass
+                finally:
+                    self._fetch_lock.release()
         with self._state_lock:
-            keys, good_at = self._good_keys, self._good_at
+            keys, good_at, current = self._good_keys, self._good_at, self._failed_at is None
         if keys is not None and good_at is not None and now - good_at < _JWKS_MAX_STALE_SECONDS:
-            return keys, False
+            return keys, current
         raise AuthUnavailableError(
             "Sign-in is unavailable right now. Try again in a moment.",
             retry_after_seconds=_JWKS_RETRY_AFTER_FAILURE_SECONDS,
         )
+
+    def _fetch(self, refresh: bool, now: float) -> tuple[list, bool]:
+        try:
+            keys = self._client().get_signing_keys(refresh=True) if refresh else self._client().get_signing_keys()
+        except Exception as exc:  # noqa: BLE001 - unreachable, timed out, or not a usable key set
+            with self._state_lock:
+                self._failed_at = now
+            logger.warning("JWKS fetch failed (%s); serving the last good key set if any", type(exc).__name__)
+            raise _FetchFailed() from exc
+        with self._state_lock:
+            self._good_keys, self._good_at, self._failed_at = list(keys), now, None
+        return list(keys), True
 
     def _may_force_refresh(self) -> bool:
         with self._refresh_lock:
@@ -201,6 +229,10 @@ class JwtVerifier:
         """Fetch (or reuse the cached) JWK set and return how many keys it
         holds. For the `auth` capability probe; raises when unreachable."""
         return len(self._client().get_jwk_set().keys)
+
+
+class _FetchFailed(Exception):
+    """Internal: the fetch failed and was logged; serve the stale set."""
 
 
 def _find(keys, kid: str):

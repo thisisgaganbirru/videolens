@@ -17,7 +17,7 @@ from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.infrastructure.config import Settings
-from app.infrastructure.persistence.database import normalize_database_url
+from app.infrastructure.persistence.database import normalize_database_url, split_tls_connect_args
 from app.infrastructure.persistence.schema import metadata
 
 PLACEHOLDER = "videolens-dev.sqlite3"
@@ -64,12 +64,17 @@ async def run_migrations_online() -> None:
     url = config.get_main_option("sqlalchemy.url", "")
     connect_args = {}
     if url.startswith("postgresql+asyncpg"):
+        # As `Database`: refuse parameters asyncpg cannot take, and turn
+        # `sslrootcert` into an SSL context instead of passing it through.
+        url, tls_args = split_tls_connect_args(url)
+        config.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
         # Same settings as `Database.engine`: run through the Supavisor
         # session pooler (5432), not the transaction pooler (6543), which
         # does not keep asyncpg's prepared statements between round trips.
         connect_args = {
             "statement_cache_size": 0,
             "prepared_statement_name_func": lambda: f"__vl_{uuid.uuid4().hex}__",
+            **tls_args,
         }
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),

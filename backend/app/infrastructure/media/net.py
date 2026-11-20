@@ -165,7 +165,15 @@ class PinnedHTTPSConnection(http.client.HTTPSConnection):
     def connect(self) -> None:
         _connect_pinned(self, self.pinned_address)
         server_hostname = self._tunnel_host or self.host  # noqa: SLF001 - as stdlib
-        self.sock = self._context.wrap_socket(self.sock, server_hostname=server_hostname)  # noqa: SLF001
+        # wrap_socket detaches the raw socket (its fileno becomes -1), so the
+        # deadline's shutdown of the tracked raw socket would do nothing: the
+        # TLS socket is tracked instead, before the handshake, so a server
+        # trickling the handshake or the body is cut off too.
+        self.sock = self._context.wrap_socket(  # noqa: SLF001
+            self.sock, server_hostname=server_hostname, do_handshake_on_connect=False
+        )
+        track_socket(self.sock)
+        self.sock.do_handshake()
 
 
 def _pinned_connection_class(request: urllib.request.Request, connection_class):

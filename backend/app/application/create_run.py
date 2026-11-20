@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import uuid
@@ -368,6 +369,15 @@ class CreateRunUseCase:
         except Exception:
             if spend is not None:
                 await self._refund_spend(run_id, spend)
+            raise
+        except asyncio.CancelledError:
+            # Cancelled mid-intake (the API shutting down during an upload):
+            # nothing was queued, so no worker will hand the unit back. Shielded
+            # so a second cancel cannot cut the refund short. Cancelled inside
+            # enqueue after the job was written, this under-counts by one, the
+            # same edge as an enqueue that raises after writing.
+            if spend is not None:
+                await asyncio.shield(self._refund_spend(run_id, spend))
             raise
 
     async def _refund_spend(self, run_id: str, spend: SpendClaim) -> None:

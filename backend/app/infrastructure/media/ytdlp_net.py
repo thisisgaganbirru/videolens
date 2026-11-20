@@ -29,6 +29,7 @@ still checked but the connection goes to the proxy unpinned, the same policy
 
 import functools
 import urllib.request
+import zlib
 from urllib.request import (
     DataHandler,
     HTTPCookieProcessor,
@@ -47,7 +48,7 @@ from yt_dlp.downloader.hls import HlsFD
 from yt_dlp.downloader.http import HttpFD
 from yt_dlp.downloader.ism import IsmFD
 from yt_dlp.networking._urllib import HTTPHandler, ProxyHandler, RedirectHandler, UrllibRH
-from yt_dlp.networking.exceptions import RequestError
+from yt_dlp.networking.exceptions import RequestError, TransportError
 from yt_dlp.utils import DownloadError
 
 from ...domain.errors import MediaValidationError
@@ -62,6 +63,54 @@ _NATIVE_DOWNLOADERS = frozenset({HttpFD, HlsFD, DashSegmentsFD, F4mFD, IsmFD})
 # yt-dlp's own header for "this request goes through a socks proxy"; its HTTP
 # handler pops it to build the socks connection.
 _SOCKS_HEADER = "Ytdl-socks-proxy"
+
+# Ceiling on a response read whole: extractor pages and API calls
+# (`urlh.read()`), manifests, keys, and any gzip/deflate body (yt-dlp's
+# handler decodes those whole inside `urlopen`). Real pages run to a few MB;
+# without it a fast server could stream gigabytes into worker memory inside
+# the download deadline. Media is read in fixed-size chunks by the native
+# downloaders (and asked for uncompressed), so it never meets this.
+MAX_UNSIZED_READ_BYTES = 20 * 1024 * 1024
+
+
+def _over_ceiling(what: str) -> TransportError:
+    return TransportError(f"{what} is over the {MAX_UNSIZED_READ_BYTES // (1024 * 1024)} MB read ceiling")
+
+
+def _read_whole(read, what: str) -> bytes:
+    # One byte past the ceiling: a body that fits comes back whole (a sized
+    # read only returns short at the end), one that does not is refused.
+    data = read(MAX_UNSIZED_READ_BYTES + 1)
+    if len(data) > MAX_UNSIZED_READ_BYTES:
+        raise _over_ceiling(what)
+    return data
+
+
+def _bounded_unzip(data: bytes, wbits: int) -> bytes:
+    decoder = zlib.decompressobj(wbits)
+    out = decoder.decompress(data, MAX_UNSIZED_READ_BYTES + 1)
+    if len(out) > MAX_UNSIZED_READ_BYTES:
+        raise _over_ceiling("the decoded response")
+    return out
+
+
+def _cap_unsized_reads(response):
+    """Bound `read()` / `read(-1)` on a yt-dlp response; a sized read (how
+    HttpFD and the fragment downloaders read media) passes straight through."""
+    read = response.read
+
+    def capped(amt=None):
+        if amt is not None and amt >= 0:
+            return read(amt)
+        data = _read_whole(read, "the response")
+        # Anything after a full-length read means the body was longer.
+        if data and read(1):
+            response.close()
+            raise _over_ceiling("the response")
+        return data
+
+    response.read = capped
+    return response
 
 
 class _PublicHTTPHandler(HTTPHandler):
@@ -84,6 +133,37 @@ class _PublicHTTPHandler(HTTPHandler):
         return self._open_public(
             req, PinnedHTTPSConnection, super().https_open, context=self._context
         )
+
+    # yt-dlp's handler reads a gzip/deflate body whole and decodes it whole
+    # before `urlopen` returns, so the ceiling has to apply here too: to the
+    # bytes read and to what they decode to (a few KB can inflate to GB).
+    def http_response(self, req, resp):
+        encodings = resp.headers.get("Content-encoding", "")
+        if any(part.strip() in {"gzip", "deflate", "br"} for part in encodings.split(",")):
+            read = resp.read
+
+            def read_capped(amt=None):
+                if amt is not None and amt >= 0:
+                    return read(amt)
+                return _read_whole(read, "the compressed response")
+
+            resp.read = read_capped
+        return super().http_response(req, resp)
+
+    https_response = http_response
+
+    @staticmethod
+    def gz(data):
+        return _bounded_unzip(data, zlib.MAX_WBITS | 16) if data else data
+
+    @staticmethod
+    def deflate(data):
+        if not data:
+            return data
+        try:
+            return _bounded_unzip(data, -zlib.MAX_WBITS)
+        except zlib.error:
+            return _bounded_unzip(data, zlib.MAX_WBITS)
 
 
 class _PublicRedirectHandler(RedirectHandler):
@@ -167,7 +247,7 @@ class GuardedYoutubeDL(YoutubeDL):
     def urlopen(self, req):
         if self._deadline is not None:
             self._deadline.check()
-        return super().urlopen(req)
+        return _cap_unsized_reads(super().urlopen(req))
 
     def build_request_director(self, handlers, preferences=None):
         return super().build_request_director([PublicUrllibRH], preferences)

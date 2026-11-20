@@ -105,10 +105,11 @@ class Settings(BaseSettings):
     # dashboard): a worker killed mid-wait leaves its jobs locked for the
     # whole job timeout, and the read-time stale check fails them first.
     worker_job_completion_wait_seconds: int = 0
-    # Total wall-clock time one link download (yt-dlp or a plain file, and
-    # separately the caption fallback) may take, however the server paces
-    # its bytes. Keep it well under WORKER_JOB_TIMEOUT_SECONDS: the job
-    # still has to re-encode and analyze afterwards.
+    # Total wall-clock time a run's link downloading may take, however the
+    # server paces its bytes: every route together (yt-dlp, the plain-file
+    # fallback, then the caption fallback) share this one budget. Keep it
+    # well under WORKER_JOB_TIMEOUT_SECONDS: the job still has to re-encode
+    # and analyze afterwards.
     download_deadline_seconds: int = 300
 
     temp_dir: str = "/tmp/videolens"

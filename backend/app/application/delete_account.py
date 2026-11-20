@@ -60,7 +60,9 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def cancel_account_subscription(billing: BillingPlans | None, account_id: str | None) -> None:
+async def cancel_account_subscription(
+    billing: BillingPlans | None, account_id: str | None, *, purge: bool = False
+) -> None:
     """Cancel every live Stripe subscription the account's customer has, now.
     Raises `SubscriptionCancelFailedError` when billing is on and it cannot
     tell or cannot cancel, so the caller stops before changing anything.
@@ -69,8 +71,11 @@ async def cancel_account_subscription(billing: BillingPlans | None, account_id: 
 
     The account's completed extra runs are reported first (all of them, not
     a page of everyone's), so the final invoice carries them. With Stripe
-    not configured nothing can be cancelled; that never blocks a person's
-    deletion, and a subscription still on file is logged for the owner."""
+    not configured nothing can be cancelled. That never blocks a person's
+    own deletion (the hold), logged for the owner. It does block the
+    `purge`: an account removed for good while its stored subscription is
+    live would leave Stripe charging a customer nobody can find, so the
+    cleanup skips it, warns, and tries again next tick."""
     if billing is None or account_id is None or not billing.accounts.enabled:
         return
     try:
@@ -82,9 +87,19 @@ async def cancel_account_subscription(billing: BillingPlans | None, account_id: 
         return
     if not billing.gateway.enabled:
         if account.stripe_subscription_id and subscription_is_live(account.status):
+            if purge:
+                logger.warning(
+                    "Account %s not removed after its deletion hold: subscription %s on file is live "
+                    "and billing is not configured on this process, so it cannot be cancelled. "
+                    "Set the STRIPE_* variables on the worker (or cancel it in the Stripe dashboard "
+                    "and set billing up so the webhook records it); retried every hour",
+                    account_id,
+                    account.stripe_subscription_id,
+                )
+                raise SubscriptionCancelFailedError(log_detail="billing not configured")
             logger.warning(
                 "Subscription %s on file could not be cancelled because billing is not configured "
-                "(account %s); the account is deleted anyway",
+                "(account %s); the deletion hold starts anyway and the purge will wait for billing",
                 account.stripe_subscription_id,
                 account_id,
             )

@@ -809,6 +809,38 @@ class DeletionCancelsTheSubscriptionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.billing.ledger.state("run-x"), DUE)
         self.assertEqual(self.log, ["hold:sub-1"])
 
+    async def test_a_reported_run_that_cannot_be_recorded_does_not_loop(self) -> None:
+        # Stripe takes the meter event but the row cannot be marked: it stays
+        # due and came back on every page, forever (2026-11-20 re-review).
+        mine = [f"mine-{index}" for index in range(3)]
+        for run_id in mine:
+            await self.billing.ledger.hold(run_id, account_id=self.person.account_id, customer_id=CUSTOMER, period="2026-11")
+            await self.billing.ledger.complete(run_id)
+
+        async def cannot_record(_run_id):
+            raise RuntimeError("database down")
+
+        self.billing.ledger.mark_reported = cannot_record
+        report = self.billing.gateway.report_extra_run
+        calls = []
+
+        async def counted(charge):
+            calls.append(charge.run_id)
+            if len(calls) > 20:  # a regression fails here instead of hanging
+                raise RuntimeError("looping")
+            await report(charge)
+
+        self.billing.gateway.report_extra_run = counted
+        with self.assertLogs("videolens", level="WARNING"):
+            await self._use_case().execute(self.person)
+        self.assertLessEqual(len(calls), len(mine))
+        # Each sent once at most (the meter dedupes a resend on the run id),
+        # and the deletion went ahead.
+        self.assertLessEqual(len(self.billing.gateway.reported), len(mine))
+        self.assertEqual(len(set(self.billing.gateway.reported)), len(self.billing.gateway.reported))
+        self.assertEqual(self.log, ["hold:sub-1"])
+        self.assertEqual(self.billing.gateway.cancelled, ["sub_1"])
+
     async def test_no_subscription_deletes_as_before(self) -> None:
         fresh = _Billing()
         await self._use_case(fresh).execute(self.person)

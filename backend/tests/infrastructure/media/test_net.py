@@ -176,10 +176,13 @@ class PinnedConnectionTests(unittest.TestCase):
         connection.connect()
 
         create_connection.assert_called_once_with(("93.184.216.34", 443), 3, None)
+        # The handshake is run after the TLS socket is tracked by the download
+        # deadline (test_download_deadline.py), so it is not done on wrap.
         context.wrap_socket.assert_called_once_with(
-            create_connection.return_value, server_hostname="example.com"
+            create_connection.return_value, server_hostname="example.com", do_handshake_on_connect=False
         )
         self.assertIs(connection.sock, context.wrap_socket.return_value)
+        context.wrap_socket.return_value.do_handshake.assert_called_once_with()
 
     @patch("app.infrastructure.media.net.socket.getaddrinfo")
     def test_proxied_request_is_checked_but_not_pinned(self, getaddrinfo) -> None:
