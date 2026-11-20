@@ -58,6 +58,7 @@ from .infrastructure.persistence.run_repository import RunStore
 from .infrastructure.persistence.saved_run_repository import InMemorySavedRuns, SqlSavedRuns
 from .infrastructure.releases.github_releases import GithubReleaseCatalog
 from .infrastructure.queue.job_queue import RunQueue
+from .infrastructure.quota.credential_failures import CredentialFailureCounter
 from .infrastructure.quota.daily_budget import DailyBudget
 from .infrastructure.quota.device_tokens import HmacDeviceTokens
 from .infrastructure.quota.free_run_allowance import FreeRunAllowanceStore
@@ -83,6 +84,8 @@ class Container:
         self.device_tokens = HmacDeviceTokens(settings)
         self.key_vault = ByokKeyStore(settings)
         self.jwt_verifier = JwtVerifier(settings)
+        # Failed credentials per client IP (AUTH_FAILURE_LIMIT_PER_IP).
+        self.credential_failures = CredentialFailureCounter(settings)
         self.release_catalog = GithubReleaseCatalog(settings)
         # Off (every call refused, the SDK never imported) unless the
         # required STRIPE_* settings are all set (docs/backend/billing.md).
@@ -170,6 +173,7 @@ class Container:
             api_keys=self.api_keys,
             verifier=self.jwt_verifier,
             allow_anonymous=settings.allow_anonymous,
+            failures=self.credential_failures,
         )
         # The one place media limits are chosen per caller; every enforcement
         # point (intake, worker, caption fallback) gets them from here.
@@ -229,6 +233,8 @@ class Container:
             extra_runs=self.extra_run_billing,
             # After billing: a paid account's result is saved, once.
             history=self.saved_history,
+            # A run that never reaches Gemini hands its daily cap unit back.
+            spend_cap=self.spend_cap,
         )
         self.job_queue = RunQueue(
             settings, local_runner=self.process_run_use_case.execute, key_vault=self.key_vault
@@ -290,6 +296,7 @@ class Container:
         await self.key_vault.close()
         await self.run_repository.close()
         await self.spend_cap.close()
+        await self.credential_failures.close()
         await self.free_runs.close()
         await self.long_runs.close()
         await self.account_free_runs.close()

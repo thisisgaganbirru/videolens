@@ -17,6 +17,7 @@ import urllib.request
 from ...domain.entities import CaptionTrack, SourceMetadata
 from ...domain.entitlements import MediaLimits
 from ..config import Settings
+from .deadline import DownloadDeadline, run_download
 from .limits import effective_limits
 from .net import build_public_opener, validate_public_url
 from .thumbnails import dimensions_from_info, thumbnail_urls_from_info
@@ -115,7 +116,7 @@ def parse_caption_payload(payload: str, ext: str) -> str:
     return _parse_cue_format(payload)
 
 
-def _fetch_track(url: str, user_agent: str | None) -> str:
+def _fetch_track(url: str, user_agent: str | None, deadline: DownloadDeadline | None = None) -> str:
     """GET a caption track through `net.py`'s opener (public addresses only,
     checked and pinned per request, every redirect re-checked) and return its
     text. Raises past `MAX_CAPTION_BYTES`, declared or actual."""
@@ -128,11 +129,19 @@ def _fetch_track(url: str, user_agent: str | None) -> str:
             raise ValueError(f"caption track declares {declared} bytes, over the cap")
         chunks: list[bytes] = []
         total = 0
-        while chunk := response.read(_READ_CHUNK_BYTES):
+        read = getattr(response, "read1", None) or response.read
+        while True:
+            if deadline is not None:
+                deadline.check()
+            chunk = read(_READ_CHUNK_BYTES)
+            if not chunk:
+                break
             total += len(chunk)
             if total > MAX_CAPTION_BYTES:
                 raise ValueError("caption track body is over the cap")
             chunks.append(chunk)
+        if deadline is not None:
+            deadline.check()
     return b"".join(chunks).decode("utf-8", errors="ignore")
 
 
@@ -157,7 +166,7 @@ async def fetch_captions(
     max_duration = effective_limits(settings, limits).max_duration_seconds
     await asyncio.to_thread(validate_public_url, url)
 
-    def run() -> CaptionTrack | None:
+    def run(deadline: DownloadDeadline) -> CaptionTrack | None:
         options = {
             "skip_download": True,
             "writesubtitles": True,
@@ -168,8 +177,9 @@ async def fetch_captions(
             "socket_timeout": 30,
             **_cookie_options(settings),
         }
-        with GuardedYoutubeDL(options) as downloader:
+        with GuardedYoutubeDL(options, deadline=deadline) as downloader:
             info = downloader.extract_info(url, download=False)
+            deadline.check()
 
             duration = info.get("duration")
             if duration and duration > max_duration:
@@ -188,7 +198,7 @@ async def fetch_captions(
 
             user_agent = (downloader.params.get("http_headers") or {}).get("User-Agent")
 
-        payload = _fetch_track(track["url"], user_agent)
+        payload = _fetch_track(track["url"], user_agent, deadline)
 
         text = parse_caption_payload(payload, track.get("ext", ""))
         if not text.strip():
@@ -206,6 +216,6 @@ async def fetch_captions(
         )
 
     try:
-        return await asyncio.to_thread(run)
+        return await run_download(settings.download_deadline_seconds, run)
     except Exception:  # noqa: BLE001 - every miss here is expected, not exceptional
         return None

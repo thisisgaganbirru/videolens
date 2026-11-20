@@ -305,6 +305,8 @@ READ_RATE_LIMIT_PER_MINUTE=120
 # "<client>, <edge hop>" and the edge hop varies per request, so 1 keys every
 # request differently and no per-IP limit trips. 0 = use the socket peer.
 TRUSTED_PROXY_HOPS=2
+# Failed credentials per client IP per 15 minutes before 429 (<= 0 = off).
+AUTH_FAILURE_LIMIT_PER_IP=30
 MAX_FILE_SIZE_MB=200
 MAX_DURATION_SECONDS=180
 # Signed in (JWT or account API key) AND own Gemini key on the run: the bigger
@@ -340,6 +342,8 @@ WORKER_JOB_TIMEOUT_SECONDS=600
 # of media). Set on BOTH services: the API uses it for the stale-run check
 # (+120 s) and the long-run slot expiry, the worker for the arq timeout.
 WORKER_LONG_JOB_TIMEOUT_SECONDS=1800
+# Wall-clock limit on one link download, in the worker. Under the job timeout.
+DOWNLOAD_DEADLINE_SECONDS=300
 TEMP_DIR=/tmp/videolens
 ALLOWED_ORIGINS=https://app.example.com
 REDIS_URL=<Railway Redis URL>
@@ -804,3 +808,4 @@ The release is complete when:
 - 2026-11-14 · backend agent · `FREE_RUNS_PER_ACCOUNT_DAILY` replaces `FREE_RUNS_PER_ACCOUNT_MONTHLY` (remove the old variable); migration step for `0005_account_daily_free_runs` before the daily code
 - 2026-11-14 · backend agent · `PAID_RUNS_PER_DAY` (30/UTC day) replaces `PAID_RUNS_PER_MONTH` (100/month, no longer read): rename the variable on both services if set; no migration
 - 2026-11-14 · backend agent · paid saved history and the 30-day deletion hold: migration `0006_saved_history` (release checklist and migration step, before the code), `PAID_SAVED_RUNS_GRACE_DAYS`, `PAID_SAVED_RUN_MAX_BYTES`, `ACCOUNT_DELETION_HOLD_DAYS` (both services), backend and worker deployed together
+- 2026-11-20 · Claude (backend agent) · `AUTH_FAILURE_LIMIT_PER_IP` (failed credentials per IP, 429) and `DOWNLOAD_DEADLINE_SECONDS` (wall-clock link download limit) variables; requests over the body ceiling now get 413 before they are read

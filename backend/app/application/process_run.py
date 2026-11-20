@@ -22,10 +22,11 @@ from ..domain.ports import (
     MediaProcessor,
     ObjectStore,
     RunRepository,
+    SpendCap,
 )
 from .billing import ExtraRunBilling
 from .entitlements import EntitlementResolver
-from .free_run_holds import settle_free_run_holds
+from .free_run_holds import settle_free_run_holds, settle_spend_hold
 from .saved_history import SavedHistory
 
 logger = logging.getLogger("videolens")
@@ -49,6 +50,14 @@ class _RunEndedElsewhere(Exception):
         self.refund = status is RunStatus.FAILED
 
 
+class _GeminiReached:
+    """Set the moment a run hands anything to Gemini (media or captions).
+    One per `execute`, since the use case is shared by concurrent jobs."""
+
+    def __init__(self) -> None:
+        self.value = False
+
+
 class ProcessRunUseCase:
     """Runs the full analysis pipeline for one run: fetch/validate the
     source media, normalize it, analyze it with Gemini, and persist the
@@ -67,6 +76,7 @@ class ProcessRunUseCase:
         long_runs: LongRunGuard | None = None,
         extra_runs: ExtraRunBilling | None = None,
         history: SavedHistory | None = None,
+        spend_cap: SpendCap | None = None,
     ) -> None:
         self._runs = runs
         self._media = media
@@ -81,6 +91,8 @@ class ProcessRunUseCase:
         self._extra_runs = extra_runs
         # None (tests, older wiring) = nothing is saved server-side.
         self._history = history
+        # None (tests, older wiring) = daily cap units are never handed back.
+        self._spend_cap = spend_cap
 
     async def _bill_extra_run(self, run_id: str) -> None:
         """The run's result is stored: if it was a paid account's extra run,
@@ -103,7 +115,12 @@ class ProcessRunUseCase:
             await self._extra_runs.void(run_id)
 
     async def _analyze_captions(
-        self, run_id: str, source_url: str, gemini_api_key: str | None, limits: MediaLimits | None = None
+        self,
+        run_id: str,
+        source_url: str,
+        gemini_api_key: str | None,
+        limits: MediaLimits | None = None,
+        reached: _GeminiReached | None = None,
     ) -> bool:
         """Salvage a failed download via the subtitle track.
 
@@ -128,6 +145,8 @@ class ProcessRunUseCase:
                 width=captions.width,
                 height=captions.height,
             )
+            if reached is not None:
+                reached.value = True
             result = await self._analysis.analyze_captions(captions, api_key=gemini_api_key)
             if captions.metadata is not None:
                 await self._runs.set_source_metadata(run_id, captions.metadata)
@@ -298,6 +317,9 @@ class ProcessRunUseCase:
         else:
             return False
         await self._settle_free_run(run_id, refund=refund, reason="had already been marked failed")
+        # Never refunded here: an earlier attempt of this run may have
+        # reached Gemini before its worker died, and nothing records that.
+        await settle_spend_hold(run_id, refund=False, spend_cap=self._spend_cap, reason="")
         await self._void_extra_run(run_id)
         await self._release_long_run(run_id, limits)
         self._media.cleanup_run_dir(run_id)
@@ -346,6 +368,12 @@ class ProcessRunUseCase:
         # True when a checkpoint finds the stale-run check already failed the
         # run: the person got nothing, so a free run it holds goes back.
         refund_ended_elsewhere = False
+        # The daily cap bounds Gemini spend, so its unit goes back whenever
+        # the run ends without reaching Gemini at all (any failure before
+        # analysis, not only the rejections above). Not on cancellation: a
+        # cancelled job may be run again by arq.
+        reached = _GeminiReached()
+        cancelled = False
         try:
             if source_url and not source_key:
                 await self._runs.set_stage(run_id, "downloading")
@@ -356,7 +384,7 @@ class ProcessRunUseCase:
                     # different pipeline on these platforms, so they are often
                     # still reachable when the media bytes are not - a real
                     # transcript beats "please try again".
-                    if await self._analyze_captions(run_id, source_url, gemini_api_key, limits):
+                    if await self._analyze_captions(run_id, source_url, gemini_api_key, limits, reached):
                         return
                     rejected_before_analysis = True
                     raise exc
@@ -421,6 +449,7 @@ class ProcessRunUseCase:
             # loud. Only URL runs have it; uploads pass None and the engine
             # falls back to analyzing the media alone.
             await self._ensure_not_ended(run_id)
+            reached.value = True
             result = await self._analysis.analyze_with_retry(
                 normalized_path,
                 on_stage=on_stage,
@@ -453,6 +482,7 @@ class ProcessRunUseCase:
             self._log_failure(run_id, exc)
             await self._runs.set_error(run_id, str(exc))
         except asyncio.CancelledError:
+            cancelled = True
             # arq cancels the coroutine when `job_timeout` expires, and
             # CancelledError is a BaseException - so the catch-all below never
             # sees it. Without this the run sits in PROCESSING until its TTL
@@ -470,6 +500,12 @@ class ProcessRunUseCase:
         finally:
             await self._discard_visuals(visuals)
             await self._settle_free_run(run_id, refund=rejected_before_analysis or refund_ended_elsewhere)
+            await settle_spend_hold(
+                run_id,
+                refund=not reached.value and not cancelled,
+                spend_cap=self._spend_cap,
+                reason="ended before reaching Gemini",
+            )
             await self._void_extra_run(run_id)
             await self._release_long_run(run_id, limits)
             if source_key:

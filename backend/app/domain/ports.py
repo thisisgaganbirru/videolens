@@ -9,6 +9,7 @@ from .entities import (
     Account,
     AccountFreeRunClaim,
     FreeRunPeriod,
+    SpendClaim,
     BillingAccount,
     BillingPrices,
     BillingWebhookEvent,
@@ -224,7 +225,44 @@ class LongRunGuard(Protocol):
 
 
 class SpendCap(Protocol):
-    async def try_consume(self) -> bool: ...
+    """The shared daily cap on runs spent on the shared Gemini key. Same
+    take / hold / release shape as `FreeRunAllowance`, so a run that never
+    reaches Gemini (rejected upload, unreachable link) hands its unit back."""
+
+    async def try_consume(self) -> SpendClaim | None:
+        """Atomically take one unit, or None (taking nothing) when today's
+        cap is already reached."""
+        ...
+
+    async def refund(self, claim: SpendClaim) -> None:
+        """Give a unit back to the day it was taken from, never below zero."""
+        ...
+
+    async def hold(self, run_id: str, claim: SpendClaim) -> None:
+        """Remember the unit `run_id` took, so the worker can hand it back."""
+        ...
+
+    async def release(self, run_id: str, *, refund: bool) -> bool:
+        """Forget the unit held for `run_id`, handing it back first when
+        `refund` is true. Atomic and idempotent like `FreeRunAllowance.release`.
+        True when a unit was handed back."""
+        ...
+
+    async def close(self) -> None: ...
+
+
+class CredentialFailureGuard(Protocol):
+    """Counts failed credentials (unknown API key, token that does not
+    verify) per client IP, so a flood of bogus credentials is refused
+    before each one costs a key lookup or a token check. Only failures are
+    counted."""
+
+    async def retry_after(self, client_ip: str) -> int | None:
+        """Seconds until `client_ip` may try a credential again, or None
+        when it is under the limit (or the guard is off)."""
+        ...
+
+    async def record_failure(self, client_ip: str) -> None: ...
 
     async def close(self) -> None: ...
 

@@ -109,7 +109,7 @@ class YtDlpLimitTests(unittest.IsolatedAsyncioTestCase):
             downloader.prepare_filename.return_value = path
             seen = {}
 
-            def make(options):
+            def make(options, **_kwargs):
                 seen.update(options)
                 return downloader
 
@@ -143,6 +143,7 @@ class DirectHttpLimitTests(unittest.IsolatedAsyncioTestCase):
         stream = io.BytesIO(b"x" * (2 * MB))
         response = MagicMock()
         response.read.side_effect = stream.read
+        response.read1.side_effect = stream.read
         response.headers = {}
         response.__enter__.return_value = response
         response.__exit__.return_value = False

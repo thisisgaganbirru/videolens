@@ -28,6 +28,7 @@ from typing import Iterable, Optional
 from ..config import Settings
 from .ffmpeg import _media_binary
 from .net import build_public_opener, validate_public_url
+from .process import run_process
 
 logger = logging.getLogger("videolens")
 
@@ -126,23 +127,11 @@ def parse_video_dimensions(payload: bytes) -> Optional[tuple[int, int]]:
 
 
 async def _run(command: list[str], stdin: bytes | None = None) -> tuple[int, bytes]:
-    """Run one ffmpeg/ffprobe process with a hard deadline. The process is
-    killed on timeout and on cancellation, so a cancelled run never leaves an
-    encoder running against a directory that is about to be deleted."""
-    proc = await asyncio.create_subprocess_exec(
-        *command,
-        stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        stdout, _ = await asyncio.wait_for(proc.communicate(stdin), FFMPEG_TIMEOUT_SECONDS)
-    except BaseException:
-        if proc.returncode is None:
-            proc.kill()
-            await proc.wait()
-        raise
-    return proc.returncode if proc.returncode is not None else -1, stdout
+    """Run one ffmpeg/ffprobe process with a hard deadline, killed on
+    timeout and on cancellation (`process.run_process`, shared with
+    ffmpeg.py)."""
+    code, stdout, _ = await run_process(command, timeout=FFMPEG_TIMEOUT_SECONDS, stdin=stdin)
+    return code, stdout
 
 
 async def probe_dimensions(settings: Settings, path: str) -> Optional[tuple[int, int]]:

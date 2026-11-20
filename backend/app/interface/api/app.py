@@ -12,6 +12,7 @@ from starlette.requests import Request
 from ...container import container
 from ...domain.errors import RateLimitedError
 from ...infrastructure.logging_config import configure_logging
+from .body_limit import BodySizeLimitMiddleware
 from .error_handlers import register_error_handlers, retry_after_headers
 from .rate_limiter import limiter, retry_after_seconds
 from .routes import router
@@ -73,6 +74,9 @@ app = FastAPI(title="VideoLens AI", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limited)
 app.add_middleware(SlowAPIMiddleware)
+# Inside CORS (added before it), so a 413 carries the CORS headers the
+# frontend needs to read it; outside everything that reads the body.
+app.add_middleware(BodySizeLimitMiddleware, upload_max_bytes=container.entitlements.largest_file_size_bytes)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=container.settings.allowed_origin_list,

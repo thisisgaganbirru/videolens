@@ -1,3 +1,4 @@
+import logging
 import os
 import uuid
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from ..domain.entities import (
     PlanStanding,
     Principal,
     Run,
+    SpendClaim,
 )
 from ..domain.entitlements import MediaLimits
 from ..domain.errors import (
@@ -26,7 +28,7 @@ from ..domain.errors import (
     RunSchedulingError,
     TermsNotAcceptedError,
 )
-from ..domain.policies import seconds_until_next_utc_day
+from ..domain.policies import is_well_formed_source_url, seconds_until_next_utc_day
 from ..domain.run_facts import file_platform
 from ..domain.ports import (
     AccountFreeRunAllowance,
@@ -43,6 +45,8 @@ from ..domain.ports import (
 )
 from .billing import BillingPlans
 from .entitlements import EntitlementResolver
+
+logger = logging.getLogger("videolens")
 
 FREE_RUNS_USED_MESSAGE = "You have used your free runs. Add your own Gemini key to keep going."
 ACCOUNT_FREE_RUNS_USED_MESSAGE = (
@@ -161,6 +165,9 @@ class CreateRunUseCase:
             if file is not None:
                 await file.close()
             raise InvalidSourceError("Provide exactly one source: either a media file or a public URL.")
+        if source_url is not None and not is_well_formed_source_url(source_url):
+            # Before any counter is touched: a malformed link costs nothing.
+            raise InvalidSourceError("That link doesn't look right. Paste the full http:// or https:// address.")
 
         # The paid plan (a subscription or complimentary Plus) decides the
         # counter, the media limits and the daily cap below, with or
@@ -327,14 +334,59 @@ class CreateRunUseCase:
     ) -> Run:
         # BYOK runs skip the daily budget too: it exists purely to bound our
         # own Gemini spend. So do paid runs (`exempt_daily_cap`).
-        if not gemini_api_key and not exempt_daily_cap and not await self._spend_cap.try_consume():
-            raise QuotaExceededError(
-                "VideoLens AI has reached its limit for today. Add your own Gemini key "
-                "from the menu to keep going, or try again tomorrow.",
-                # The budget is per UTC day (DailyBudget), so it frees at midnight UTC.
-                retry_after_seconds=seconds_until_next_utc_day(datetime.now(timezone.utc)),
+        spend = None
+        if not gemini_api_key and not exempt_daily_cap:
+            # Taken before the upload is saved or probed, not after: a cap
+            # checked late would let every concurrent upload past it and
+            # still cost the disk and FFmpeg work of each one once it is hit.
+            # A rejection below hands the unit straight back instead.
+            spend = await self._spend_cap.try_consume()
+            if spend is None:
+                raise QuotaExceededError(
+                    "VideoLens AI has reached its limit for today. Add your own Gemini key "
+                    "from the menu to keep going, or try again tomorrow.",
+                    # The budget is per UTC day (DailyBudget), so it frees at midnight UTC.
+                    retry_after_seconds=seconds_until_next_utc_day(datetime.now(timezone.utc)),
+                )
+        try:
+            if spend is not None:
+                # Held for the worker: a link that cannot be fetched, or media
+                # that fails before Gemini, hands it back (ProcessRunUseCase).
+                await self._spend_cap.hold(run_id, spend)
+            return await self._schedule(
+                run_id=run_id,
+                principal=principal,
+                file=file,
+                source_url=source_url,
+                gemini_api_key=gemini_api_key,
+                limits=limits,
             )
+        except Exception:
+            if spend is not None:
+                await self._refund_spend(run_id, spend)
+            raise
 
+    async def _refund_spend(self, run_id: str, spend: SpendClaim) -> None:
+        """A rejected intake (bad media, too long, unschedulable) never
+        reached Gemini, so its daily cap unit goes back. The hold is dropped
+        first so the worker can never hand the same unit back again.
+        Bookkeeping only: it must not replace the rejection's own error."""
+        try:
+            await self._spend_cap.release(run_id, refund=False)
+            await self._spend_cap.refund(spend)
+        except Exception:
+            logger.exception("Could not hand back the daily cap unit for run %s", run_id)
+
+    async def _schedule(
+        self,
+        *,
+        run_id: str,
+        principal: Principal,
+        file: UploadedFile | None,
+        source_url: str | None,
+        gemini_api_key: str | None,
+        limits: MediaLimits | None,
+    ) -> Run:
         saved = None
         source_key = None
         platform = None

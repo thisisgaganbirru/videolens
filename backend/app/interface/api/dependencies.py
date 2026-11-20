@@ -5,6 +5,7 @@ from ...container import container
 from ...domain.entities import AuthMethod, Principal
 from ...domain.errors import AuthenticationError, ForbiddenError
 from ...domain.policies import bearer_credential
+from .rate_limiter import client_ip
 
 
 async def get_principal(
@@ -23,7 +24,7 @@ async def get_principal(
     keys on exactly this principal rather than resolving it a second time.
     """
     principal = await container.identify_caller_use_case.resolve(
-        authorization=authorization, api_key=x_api_key, client_id=x_client_id
+        authorization=authorization, api_key=x_api_key, client_id=x_client_id, client_ip=client_ip(request)
     )
     request.state.principal = principal
     return principal
@@ -41,7 +42,9 @@ async def get_optional_signed_in_principal(
     it is never silently treated as anonymous."""
     if not bearer_credential(authorization) and not x_api_key.strip():
         return None
-    principal = await container.identify_caller_use_case.resolve(authorization=authorization, api_key=x_api_key)
+    principal = await container.identify_caller_use_case.resolve(
+        authorization=authorization, api_key=x_api_key, client_ip=client_ip(request)
+    )
     request.state.principal = principal
     return principal
 
@@ -76,7 +79,11 @@ async def require_person_even_if_deleted(
     instead of the 410. For `POST /api/me/restore` only: every other route
     must refuse a held account (docs/backend/saved-history.md)."""
     principal = await container.identify_caller_use_case.resolve(
-        authorization=authorization, api_key=x_api_key, client_id=x_client_id, allow_pending_deletion=True
+        authorization=authorization,
+        api_key=x_api_key,
+        client_id=x_client_id,
+        allow_pending_deletion=True,
+        client_ip=client_ip(request),
     )
     request.state.principal = principal
     if not principal.authenticated:

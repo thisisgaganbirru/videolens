@@ -53,10 +53,13 @@ worker's hourly removal of held accounts and expired saved runs).
 | `SourceResolver` | `media/resolvers/` | Ordered chain, set in `MediaService`: `YtDlpResolver` (primary, wraps `ytdlp_downloader.py`) then `DirectHttpResolver` |
 | — | `media/net.py` | `validate_public_url` and the shared fetch rules: the single SSRF guard every outbound request uses |
 | — | `media/ytdlp_net.py` | `GuardedYoutubeDL`: yt-dlp's requests on `net.py`'s pinned connections, native downloaders only |
+| — | `media/deadline.py` | `run_download`: every link download on the bounded `DOWNLOAD_EXECUTOR` under a wall-clock `DownloadDeadline` |
+| — | `media/process.py` | `run_process`: ffmpeg/ffprobe with a timeout, killed on timeout and cancellation |
 | `AnalysisEngine` | `ai/gemini_engine.py` | Upload, structured output, jittered retries, optional fallback model, caption-only analysis; `ai/source_context.py` fences publisher metadata as untrusted text |
 | `ObjectStore` | `storage/s3_object_store.py` | |
 | `JobQueue` | `queue/job_queue.py` | arq/Redis, or an in-process task it keeps a reference to |
-| `SpendCap` | `quota/daily_budget.py` | |
+| `SpendCap` | `quota/daily_budget.py` | Atomic take-if-under-cap (Lua), hold/release per run and refund onto the claim's own UTC day, never below zero |
+| `CredentialFailureGuard` | `quota/credential_failures.py` | Failed API keys/tokens per client IP, fixed 15-minute window; Redis or in-memory; consulted before any lookup |
 | `DeviceTokenSigner` | `quota/device_tokens.py` | Stateless HMAC tokens; refuses to start distributed without a secret |
 | `FreeRunAllowance` | `quota/free_run_allowance.py` | Per-device and per-IP counters, hold/release for refunds |
 | `AccountFreeRunAllowance` | `persistence/account_free_runs.py` | Signed-in free runs per account per UTC day, and the paid plan's included runs per UTC day on the same row with the paid limit (SQL upsert-if-below-limit, or in-memory), hold/release like the device one |
@@ -86,7 +89,9 @@ free-runs, runs, `/api/me`, `/api/keys`, `/api/billing*`), `api/schemas.py` (res
 global; the client IP comes from `policies.client_ip_from_forwarded` with
 `TRUSTED_PROXY_HOPS`), `api/security_headers.py` (pure-ASGI middleware,
 added last so every response, preflights and refusals included, carries the
-hardening headers), `worker/settings.py` (arq `WorkerSettings`; takes the BYOK key out of
+hardening headers), `api/body_limit.py` (pure-ASGI request body ceiling,
+413; inside CORS so the refusal carries CORS headers, outside slowapi; order
+from outside in: security headers, CORS, body limit, slowapi), `worker/settings.py` (arq `WorkerSettings`; takes the BYOK key out of
 the vault before calling the use case; cron `flush_extra_runs` every 10 minutes,
 `account_cleanup` hourly at minute 25). `routes.py` also serves `/api/history*`
 and `POST /api/me/restore`; `dependencies.py` has `require_person_even_if_deleted`,
@@ -159,3 +164,4 @@ one-line shims so the Dockerfile, compose file and Railway configs reference
 - 2026-11-14 · backend agent · the paid plan's included runs count per UTC day (`BillingPlans.PAID_RUNS_PERIOD = DAY`, `PAID_RUNS_PER_DAY`); the extra-run ledger stays monthly
 - 2026-11-14 · backend agent · saved history and the deletion hold: `SavedRunRepository` port and adapters, `saved_history`/`restore_account`/`cleanup` use cases, the hold on `AccountDeleter`, `/api/history*` and `POST /api/me/restore`, the `account_cleanup` cron; two invariants
 - 2026-11-20 · Claude (backend agent) · `media/ytdlp_net.py` (`GuardedYoutubeDL`): yt-dlp requests ride `net.py`'s pinned connections, native downloaders only, so the "every outbound fetch goes through net.py" invariant now holds for yt-dlp too
+- 2026-11-20 · Claude (backend agent) · `SpendCap` gains hold/release/refund (`SpendClaim`); `CredentialFailureGuard` port and adapter, wired into `IdentifyCallerUseCase`; `api/body_limit.py` middleware; `media/deadline.py` (download deadline, dedicated pool) and `media/process.py` (shared ffmpeg runner)

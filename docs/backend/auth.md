@@ -291,6 +291,8 @@ The deployed `DATABASE_URL` then uses `videolens_api`, not `postgres`. The Docke
 
 ## Rate limiting and quota
 
+**Failed credentials are limited per IP before any lookup** (since 2026-11-20). The rate limit above runs after `get_principal`, so a credential that 401s never reached it, and every random `vl_live_...` key cost a database read. `get_principal` (and the two other principal dependencies) pass `rate_limiter.client_ip(request)` to `IdentifyCallerUseCase.resolve`. For a request that carries an API key or a bearer token, the `CredentialFailureGuard` port (`quota/credential_failures.py`, `CredentialFailureCounter`) is asked first: once an IP has `AUTH_FAILURE_LIMIT_PER_IP` (default 30) failed credentials in the current 15-minute window, the request is 429 `{"detail": "Too many sign-in attempts that didn't work from this network. Wait a few minutes and try again."}` with `Retry-After`, with no key lookup, JWKS fetch or token check. Every `AuthenticationError` from the key or token path counts one; a success never counts and never resets the count; anonymous requests are never refused by it. A key that does not have the issued shape (`vl_live_` plus 43 URL-safe characters, `policies.is_well_formed_api_key`) is a 401 `Invalid API key.` without a lookup. Redis (fixed-window `INCR`) in distributed mode, in-memory locally; a counter error lets the request through (logged). `<= 0` turns it off. See `cost-abuse-protection.md`.
+
 `rate_limiter.quota_key` keys on `request.state.principal`. slowapi's decorator checks the limit inside the endpoint wrapper, after FastAPI has resolved the dependencies. This contradicts the plan's assumption, and was verified in the slowapi source.
 
 - A person gets `account:<account_id>`, so one bucket survives hourly token refreshes. Without an account store it falls back to the stable `user:<sub>`.
@@ -337,6 +339,8 @@ The application code has not yet run against a real Supabase project: the SQL ad
 
 ## Known issues
 
+- Once an IP crosses `AUTH_FAILURE_LIMIT_PER_IP`, a valid credential from that IP is also refused until the window ends (the check runs before the lookup, which is the point). Behind a large shared NAT one misbehaving client could lock out the others for up to 15 minutes.
+
 - `/api/free-runs` resolves a principal only when a credential is sent (`get_optional_signed_in_principal`, since 2026-11-13), so signed-in callers' reads are bucketed per account; anonymous callers still use the header fallback (IP). An invalid credential there is a 401, as on `/api/me`.
 - The JWKS cache-expiry fetch (every 10 minutes) is not throttled beyond PyJWT's own cache. If the identity provider is down, each token request still makes one fetch attempt, capped at the 5-second timeout.
 
@@ -361,3 +365,4 @@ The application code has not yet run against a real Supabase project: the SQL ad
 - 2026-11-14 · backend agent · migration `0008_value_checks`: named check constraints on `workspace_members.role` and the two free-run `period` columns (plus billing and saved-run ones); pre-apply violation query in Storage
 - 2026-11-14 · backend agent · migration `0009_default_workspace_fk`: `accounts.default_workspace_id` references `workspaces(id)` `ON DELETE SET NULL` (not deferrable); why the cycle is safe for creation, purge and restore; pre-apply orphan query
 - 2026-11-14 · backend agent · migration `0010_complimentary_plus`: `accounts.complimentary_plus BOOLEAN NOT NULL DEFAULT false` (`billing.md`, "Complimentary Plus"), read into `Account.complimentary_plus` by `SqlAccountDirectory`; set only by hand in SQL, no API writes it; the existing `accounts` RLS policy and grants cover it; apply before deploying the code; restore and purge unchanged (restore leaves the flag, purge removes the row with it)
+- 2026-11-20 · Claude (backend agent) · failed-credential limit per IP before any key lookup or JWT check (`CredentialFailureGuard` port, `AUTH_FAILURE_LIMIT_PER_IP`, 429 with `Retry-After`); malformed `vl_live_` keys refused without a lookup

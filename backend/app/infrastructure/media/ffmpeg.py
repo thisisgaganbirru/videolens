@@ -1,4 +1,3 @@
-import asyncio
 import os
 import shutil
 
@@ -6,7 +5,15 @@ from ...domain.entitlements import MediaLimits, clock, duration_over_limit_messa
 from ...domain.errors import MediaValidationError
 from ..config import Settings
 from .limits import effective_limits
+from .process import run_process
 from .uploads import cleanup_run_dir
+
+# ffprobe reads a header and a few packets: seconds even for a large file.
+# Generous, since the API runs it on every upload.
+FFPROBE_TIMEOUT_SECONDS = 30
+# The re-encode. Under WORKER_LONG_JOB_TIMEOUT_SECONDS' default (1800 s);
+# a standard job is cancelled at its own timeout first, which kills it too.
+NORMALIZE_TIMEOUT_SECONDS = 1200
 
 
 def _media_binary(settings: Settings, name: str) -> str:
@@ -48,21 +55,27 @@ def _clock(seconds: float) -> str:
 
 
 async def probe_duration_seconds(settings: Settings, path: str) -> float:
-    proc = await asyncio.create_subprocess_exec(
-        _media_binary(settings, "ffprobe"),
-        "-v", "error",
-        "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        path,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-    if proc.returncode != 0 or not stdout.strip():
+    try:
+        returncode, stdout, stderr = await run_process(
+            [
+                _media_binary(settings, "ffprobe"),
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                path,
+            ],
+            timeout=FFPROBE_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as exc:
+        raise MediaValidationError(
+            "This file couldn't be read. It may be corrupted or in a format we don't support.",
+            log_detail=f"ffprobe timed out after {FFPROBE_TIMEOUT_SECONDS}s",
+        ) from exc
+    if returncode != 0 or not stdout.strip():
         raise MediaValidationError(
             "This file couldn't be read. It may be corrupted or in a format we don't support.",
             log_detail=(
-                f"ffprobe exited {proc.returncode}: "
+                f"ffprobe exited {returncode}: "
                 + stderr.decode(errors="ignore")[-500:]
             ),
         )
@@ -91,18 +104,24 @@ async def enforce_duration_cap(
 
 
 async def _has_video_stream(settings: Settings, path: str) -> bool:
-    proc = await asyncio.create_subprocess_exec(
-        _media_binary(settings, "ffprobe"),
-        "-v", "error",
-        "-select_streams", "v:0",
-        "-show_entries", "stream=codec_type",
-        "-of", "csv=p=0",
-        path,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, _ = await proc.communicate()
-    return proc.returncode == 0 and _first_csv_field(stdout) == b"video"
+    try:
+        returncode, stdout, _ = await run_process(
+            [
+                _media_binary(settings, "ffprobe"),
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=codec_type",
+                "-of", "csv=p=0",
+                path,
+            ],
+            timeout=FFPROBE_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as exc:
+        raise MediaValidationError(
+            "This file couldn't be processed.",
+            log_detail=f"ffprobe (stream check) timed out after {FFPROBE_TIMEOUT_SECONDS}s",
+        ) from exc
+    return returncode == 0 and _first_csv_field(stdout) == b"video"
 
 
 def _first_csv_field(stdout: bytes) -> bytes:
@@ -131,17 +150,18 @@ async def normalize_media(settings: Settings, src_path: str, run_dir: str) -> st
             "-vn", "-c:a", "libmp3lame", "-b:a", "192k", normalized_path,
         ]
 
-    proc = await asyncio.create_subprocess_exec(
-        *command,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    _, stderr = await proc.communicate()
-    if proc.returncode != 0:
+    try:
+        returncode, _, stderr = await run_process(command, timeout=NORMALIZE_TIMEOUT_SECONDS)
+    except TimeoutError as exc:
+        raise MediaValidationError(
+            "This file couldn't be processed.",
+            log_detail=f"ffmpeg timed out after {NORMALIZE_TIMEOUT_SECONDS}s",
+        ) from exc
+    if returncode != 0:
         raise MediaValidationError(
             "This file couldn't be processed.",
             log_detail=(
-                f"ffmpeg exited {proc.returncode}: "
+                f"ffmpeg exited {returncode}: "
                 + stderr.decode(errors="ignore")[-2000:]
             ),
         )

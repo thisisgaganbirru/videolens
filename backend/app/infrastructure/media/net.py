@@ -31,6 +31,7 @@ import urllib.request
 from urllib.parse import urlparse
 
 from ...domain.errors import MediaValidationError
+from .deadline import track_socket
 
 MAX_URL_LENGTH = 2048
 
@@ -137,6 +138,8 @@ def _connect_pinned(conn: http.client.HTTPConnection, address: str) -> None:
     conn.sock = socket.create_connection(
         (address, conn.port), conn.timeout, conn.source_address
     )
+    # Inside a download, its wall-clock deadline can shut this socket down.
+    track_socket(conn.sock)
     try:
         conn.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     except OSError:

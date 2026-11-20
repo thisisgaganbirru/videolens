@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     # 0 = ignore the header and use the socket peer (no proxy). Without the
     # header (local, docker compose, direct) the socket peer is used anyway.
     trusted_proxy_hops: int = 2
+    # Failed credentials (unknown API key, bearer token that does not
+    # verify) one client IP may send per 15-minute window. Past it, every
+    # request from that IP carrying a credential is a 429 before any key
+    # lookup or token check. Successful requests are never counted. <= 0
+    # disables.
+    auth_failure_limit_per_ip: int = 30
     daily_run_cap: int = 200
     # Free runs per device per UTC day for callers without their own Gemini
     # key. <= 0 turns the free-run allowance off entirely (no device token
@@ -90,6 +96,11 @@ class Settings(BaseSettings):
     # 10-minute video does not fit in 600 s on a small worker. Standard runs
     # keep WORKER_JOB_TIMEOUT_SECONDS. Never below it.
     worker_long_job_timeout_seconds: int = 1800
+    # Total wall-clock time one link download (yt-dlp or a plain file, and
+    # separately the caption fallback) may take, however the server paces
+    # its bytes. Keep it well under WORKER_JOB_TIMEOUT_SECONDS: the job
+    # still has to re-encode and analyze afterwards.
+    download_deadline_seconds: int = 300
 
     temp_dir: str = "/tmp/videolens"
     allowed_origins: str = "http://localhost:3000,http://localhost:3005"

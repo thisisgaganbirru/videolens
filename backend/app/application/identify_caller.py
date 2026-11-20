@@ -28,11 +28,22 @@ from ..domain.errors import (
     AuthenticationError,
     AuthNotConfiguredError,
     ClientIdInvalidError,
+    RateLimitedError,
 )
-from ..domain.policies import SIGNED_IN_ROLE, bearer_credential, is_valid_client_id, looks_like_api_key
-from ..domain.ports import AccountDirectory, ApiKeyRepository, TokenVerifier
+from ..domain.policies import (
+    SIGNED_IN_ROLE,
+    bearer_credential,
+    is_valid_client_id,
+    is_well_formed_api_key,
+    looks_like_api_key,
+)
+from ..domain.ports import AccountDirectory, ApiKeyRepository, CredentialFailureGuard, TokenVerifier
 
 logger = logging.getLogger("videolens")
+
+TOO_MANY_FAILED_CREDENTIALS_MESSAGE = (
+    "Too many sign-in attempts that didn't work from this network. Wait a few minutes and try again."
+)
 
 
 def _bearer(authorization: str) -> str:
@@ -49,11 +60,14 @@ class IdentifyCallerUseCase:
         api_keys: ApiKeyRepository,
         verifier: TokenVerifier,
         allow_anonymous: bool,
+        failures: CredentialFailureGuard | None = None,
     ) -> None:
         self._accounts = accounts
         self._api_keys = api_keys
         self._verifier = verifier
         self._allow_anonymous = allow_anonymous
+        # None (tests, older wiring) = failed credentials are not limited.
+        self._failures = failures
 
     async def resolve(
         self,
@@ -62,16 +76,43 @@ class IdentifyCallerUseCase:
         api_key: str = "",
         client_id: str = "",
         allow_pending_deletion: bool = False,
+        client_ip: str = "",
     ) -> Principal:
         bearer = _bearer(authorization)
         secret = api_key.strip() or (bearer if looks_like_api_key(bearer) else "")
-        if secret:
-            return await self.from_api_key(secret)
-        if bearer:
-            return await self.from_token(bearer, allow_pending_deletion=allow_pending_deletion)
+        if secret or bearer:
+            # Before the key lookup or the token check: an IP that has sent
+            # too many credentials that failed costs nothing more.
+            await self._refuse_if_blocked(client_ip)
+            try:
+                if secret:
+                    return await self.from_api_key(secret)
+                return await self.from_token(bearer, allow_pending_deletion=allow_pending_deletion)
+            except AuthenticationError:
+                await self._record_failure(client_ip)
+                raise
         if not self._allow_anonymous:
             raise AuthenticationError("Sign in is required.")
         return self.from_client_id(client_id)
+
+    async def _refuse_if_blocked(self, client_ip: str) -> None:
+        if self._failures is None:
+            return
+        try:
+            retry_after = await self._failures.retry_after(client_ip)
+        except Exception:  # noqa: BLE001 - a counter outage must not lock everyone out
+            logger.warning("Could not read the failed-credential counter", exc_info=True)
+            return
+        if retry_after is not None:
+            raise RateLimitedError(TOO_MANY_FAILED_CREDENTIALS_MESSAGE, retry_after_seconds=retry_after)
+
+    async def _record_failure(self, client_ip: str) -> None:
+        if self._failures is None:
+            return
+        try:
+            await self._failures.record_failure(client_ip)
+        except Exception:  # noqa: BLE001 - never replace the 401 with a 500
+            logger.warning("Could not count a failed credential", exc_info=True)
 
     async def from_token(self, token: str, *, allow_pending_deletion: bool = False) -> Principal:
         try:
@@ -119,7 +160,12 @@ class IdentifyCallerUseCase:
         )
 
     async def from_api_key(self, secret: str) -> Principal:
-        key = await self._api_keys.authenticate(secret.strip())
+        secret = secret.strip()
+        if not is_well_formed_api_key(secret):
+            # Not the shape of any key we issue: no database read for it.
+            logger.info("API key rejected (malformed)")
+            raise AuthenticationError("Invalid API key.")
+        key = await self._api_keys.authenticate(secret)
         if key is None:
             logger.info("API key rejected (unknown or revoked)")
             raise AuthenticationError("Invalid API key.")

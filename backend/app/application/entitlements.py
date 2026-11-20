@@ -90,6 +90,14 @@ class EntitlementResolver:
         )
 
     @property
+    def largest_file_size_bytes(self) -> int:
+        """The biggest upload any caller may send (standard, signed-in own
+        key or paid): the ceiling the API's body-size guard cuts a request
+        off at, before anyone is identified. The per-caller limit is still
+        enforced where the upload is saved."""
+        return max(self.standard.max_file_size_bytes, self.signed_in_byok.max_file_size_bytes, self.paid.max_file_size_bytes)
+
+    @property
     def has_bigger_tier(self) -> bool:
         return (self._byok_duration, self._byok_size) != (self._max_duration_seconds, self._max_file_size_mb)
 

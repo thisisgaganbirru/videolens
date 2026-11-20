@@ -51,6 +51,7 @@ from yt_dlp.networking.exceptions import RequestError
 from yt_dlp.utils import DownloadError
 
 from ...domain.errors import MediaValidationError
+from .deadline import DownloadDeadline
 from .net import PinnedHTTPConnection, PinnedHTTPSConnection, validate_public_url
 
 # Downloaders whose every byte comes through `ydl.urlopen`. FFmpegFD, RtmpFD,
@@ -153,10 +154,20 @@ _hls.FFmpegFD = _RefusedFFmpegFD
 class GuardedYoutubeDL(YoutubeDL):
     """The only YoutubeDL this app constructs. See the module docstring."""
 
-    def __init__(self, params=None, *args, **kwargs) -> None:
+    def __init__(self, params=None, *args, deadline: DownloadDeadline | None = None, **kwargs) -> None:
         params = {**(params or {}), "hls_prefer_native": True}
         params.pop("external_downloader", None)
+        # Checked before every request yt-dlp makes (extractor pages, API
+        # calls, media, fragments, subtitles), so info extraction cannot run
+        # past it either; a read already blocked is ended by the deadline's
+        # socket shutdown (media/deadline.py).
+        self._deadline = deadline
         super().__init__(params, *args, **kwargs)
+
+    def urlopen(self, req):
+        if self._deadline is not None:
+            self._deadline.check()
+        return super().urlopen(req)
 
     def build_request_director(self, handlers, preferences=None):
         return super().build_request_director([PublicUrllibRH], preferences)
