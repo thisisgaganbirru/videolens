@@ -52,3 +52,7 @@ design/
 
 # Scratch channel between AI tools; not project content
 relay.md
+
+# Security assessments list open findings: local only, never committed
+*Security-Assessment*.xlsx
+*security-assessment*.xlsx

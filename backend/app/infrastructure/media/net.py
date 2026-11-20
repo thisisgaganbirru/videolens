@@ -34,25 +34,30 @@ from ...domain.errors import MediaValidationError
 
 MAX_URL_LENGTH = 2048
 
-# IPv6 ranges that carry an IPv4 address inside them. `is_global` judges the
-# IPv6 address, which for NAT64 (RFC 6052 / RFC 8215) is "global" even when the
-# embedded IPv4 is 127.0.0.1, so the embedded address has to be checked too.
-_NAT64_PREFIXES = (
+# IPv6 ranges that carry an IPv4 address in their low 32 bits. `is_global`
+# judges the IPv6 address, which for NAT64 (RFC 6052 / RFC 8215) is "global"
+# even when the embedded IPv4 is 127.0.0.1, so the embedded address has to be
+# checked too. The same holds for the IPv4-compatible form (`::a.b.c.d`,
+# deprecated by RFC 4291) and the IPv4-translated form (`::ffff:0:a.b.c.d`,
+# RFC 2765): `ipaddress` calls `::127.0.0.1` and `::ffff:0:7f00:1` global.
+_EMBEDDED_V4_PREFIXES = (
     ipaddress.ip_network("64:ff9b::/96"),
     ipaddress.ip_network("64:ff9b:1::/48"),
+    ipaddress.ip_network("::/96"),
+    ipaddress.ip_network("::ffff:0:0:0/96"),
 )
 
 
 def _embedded_ipv4(ip: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
     """The IPv4 address an IPv6 address stands for, if it is a translation
-    form (IPv4-mapped, 6to4, Teredo, NAT64)."""
+    form (IPv4-mapped, 6to4, Teredo, NAT64, IPv4-compatible or -translated)."""
     if ip.ipv4_mapped is not None:
         return ip.ipv4_mapped
     if ip.sixtofour is not None:
         return ip.sixtofour
     if ip.teredo is not None:
         return ip.teredo[1]
-    for prefix in _NAT64_PREFIXES:
+    for prefix in _EMBEDDED_V4_PREFIXES:
         if ip in prefix:
             return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
     return None

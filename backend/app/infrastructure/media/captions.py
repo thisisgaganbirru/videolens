@@ -12,22 +12,29 @@ import asyncio
 import html
 import json
 import re
-
-from yt_dlp import YoutubeDL
+import urllib.request
 
 from ...domain.entities import CaptionTrack, SourceMetadata
 from ...domain.entitlements import MediaLimits
 from ..config import Settings
 from .limits import effective_limits
-from .net import validate_public_url
+from .net import build_public_opener, validate_public_url
 from .thumbnails import dimensions_from_info, thumbnail_urls_from_info
 from .ytdlp_downloader import _cookie_options, _source_metadata_from_info
+from .ytdlp_net import GuardedYoutubeDL
 
 # Ordered by how little parsing they need. json3 is YouTube's own structured
 # format and needs no timestamp stripping at all.
 _PREFERRED_FORMATS = ("json3", "vtt", "srt", "ttml", "srv1")
 
 _PREFERRED_LANGUAGES = ("en", "en-US", "en-GB", "es", "hi")
+
+# A caption track is text: a long video's auto-captions in json3 run to a few
+# hundred KB. The cap exists because the track URL comes from the fetched page,
+# not from us, and an unbounded read is a memory sink.
+MAX_CAPTION_BYTES = 5 * 1024 * 1024
+_CAPTION_TIMEOUT_SECONDS = 30
+_READ_CHUNK_BYTES = 64 * 1024
 
 _TIMESTAMP_LINE = re.compile(r"^\d{1,2}:\d{2}:\d{2}[.,]\d{3}\s*-->")
 _CUE_TAG = re.compile(r"<[^>]+>")
@@ -108,6 +115,27 @@ def parse_caption_payload(payload: str, ext: str) -> str:
     return _parse_cue_format(payload)
 
 
+def _fetch_track(url: str, user_agent: str | None) -> str:
+    """GET a caption track through `net.py`'s opener (public addresses only,
+    checked and pinned per request, every redirect re-checked) and return its
+    text. Raises past `MAX_CAPTION_BYTES`, declared or actual."""
+    validate_public_url(url)
+    headers = {"User-Agent": user_agent} if user_agent else {}
+    request = urllib.request.Request(url, headers=headers)
+    with build_public_opener().open(request, timeout=_CAPTION_TIMEOUT_SECONDS) as response:
+        declared = response.headers.get("Content-Length")
+        if declared and declared.isdigit() and int(declared) > MAX_CAPTION_BYTES:
+            raise ValueError(f"caption track declares {declared} bytes, over the cap")
+        chunks: list[bytes] = []
+        total = 0
+        while chunk := response.read(_READ_CHUNK_BYTES):
+            total += len(chunk)
+            if total > MAX_CAPTION_BYTES:
+                raise ValueError("caption track body is over the cap")
+            chunks.append(chunk)
+    return b"".join(chunks).decode("utf-8", errors="ignore")
+
+
 def _duration(value: object) -> float | None:
     try:
         seconds = float(value)  # type: ignore[arg-type]
@@ -140,7 +168,7 @@ async def fetch_captions(
             "socket_timeout": 30,
             **_cookie_options(settings),
         }
-        with YoutubeDL(options) as downloader:
+        with GuardedYoutubeDL(options) as downloader:
             info = downloader.extract_info(url, download=False)
 
             duration = info.get("duration")
@@ -158,7 +186,9 @@ async def fetch_captions(
             if track is None:
                 return None
 
-            payload = downloader.urlopen(track["url"]).read().decode("utf-8", errors="ignore")
+            user_agent = (downloader.params.get("http_headers") or {}).get("User-Agent")
+
+        payload = _fetch_track(track["url"], user_agent)
 
         text = parse_caption_payload(payload, track.get("ext", ""))
         if not text.strip():

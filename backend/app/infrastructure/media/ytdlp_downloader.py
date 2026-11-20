@@ -2,7 +2,6 @@ import asyncio
 import os
 import re
 
-from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError, GeoRestrictedError
 
 from ...domain.entities import SavedUpload, SourceMetadata
@@ -14,6 +13,7 @@ from .limits import effective_limits
 from .net import validate_public_url
 from .thumbnails import dimensions_from_info, thumbnail_urls_from_info
 from .uploads import _cleanup_dir, create_run_dir
+from .ytdlp_net import GuardedYoutubeDL
 
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
@@ -197,7 +197,7 @@ async def download_url(
             "progress_hooks": [progress_hook],
             **cookie_options,
         }
-        with YoutubeDL(options) as downloader:
+        with GuardedYoutubeDL(options) as downloader:
             info = downloader.extract_info(url, download=True)
             requested = info.get("requested_downloads") or []
             candidates = [item.get("filepath") for item in requested if item.get("filepath")]

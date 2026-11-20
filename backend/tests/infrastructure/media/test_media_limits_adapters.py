@@ -115,7 +115,7 @@ class YtDlpLimitTests(unittest.IsolatedAsyncioTestCase):
 
             with patch.object(ytdlp_downloader, "validate_public_url"), patch.object(
                 ytdlp_downloader, "_media_binary", return_value="/usr/bin/ffmpeg"
-            ), patch.object(ytdlp_downloader, "YoutubeDL", side_effect=make):
+            ), patch.object(ytdlp_downloader, "GuardedYoutubeDL", side_effect=make):
                 saved = await ytdlp_downloader.download_url(settings, "r1", "https://x.test/v", limits)
             return saved, seen
 
@@ -161,10 +161,10 @@ class CaptionLimitTests(unittest.IsolatedAsyncioTestCase):
             "duration": duration,
             "subtitles": {"en": [{"ext": "vtt", "url": "https://x.test/en.vtt"}]},
         }
-        downloader.urlopen.return_value.read.return_value = b"WEBVTT\n\n00:00.000 --> 00:01.000\nhello there\n"
+        track = "WEBVTT\n\n00:00.000 --> 00:01.000\nhello there\n"
         with patch.object(captions, "validate_public_url"), patch.object(
-            captions, "YoutubeDL", return_value=downloader
-        ):
+            captions, "GuardedYoutubeDL", return_value=downloader
+        ), patch.object(captions, "_fetch_track", return_value=track):
             return await captions.fetch_captions(Settings(), "https://x.test/v", limits)
 
     async def test_standard_cap_without_limits(self) -> None:

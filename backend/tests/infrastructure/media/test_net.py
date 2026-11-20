@@ -1,16 +1,19 @@
 import http.client
+import ipaddress
 import socket
 import unittest
 import urllib.request
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from app.domain.errors import MediaValidationError
 from app.infrastructure.media.net import (
     MAX_URL_LENGTH,
     PinnedHTTPConnection,
+    PinnedHTTPSConnection,
     PublicHTTPHandler,
     PublicHTTPSHandler,
     ValidatingRedirectHandler,
+    _embedded_ipv4,
     _pinned_connection_class,
     build_public_opener,
     is_public_address,
@@ -85,8 +88,43 @@ class AddressClassificationTests(unittest.TestCase):
     def test_nat64_wrapping_a_public_address_is_still_public(self) -> None:
         self.assertTrue(is_public_address("64:ff9b::808:808"))
 
+    def test_ipv4_compatible_and_translated_forms_wrapping_loopback(self) -> None:
+        # `ipaddress` calls both of these global.
+        for address in ("::127.0.0.1", "::ffff:0:7f00:1", "::ffff:0:a9fe:a9fe", "::10.0.0.1"):
+            self.assertFalse(is_public_address(address), address)
+
+    def test_translated_form_wrapping_a_public_address_is_still_public(self) -> None:
+        self.assertTrue(is_public_address("::ffff:0:808:808"))
+
     def test_garbage_is_not_public(self) -> None:
         self.assertFalse(is_public_address("not-an-ip"))
+
+
+class EmbeddedIPv4Tests(unittest.TestCase):
+    """Each translation form `_embedded_ipv4` unwraps. 6to4 and Teredo are
+    already non-global to `ipaddress`, so these pin the unwrapping itself."""
+
+    def _inner(self, value: str):
+        return _embedded_ipv4(ipaddress.IPv6Address(value))
+
+    def test_ipv4_mapped(self) -> None:
+        self.assertEqual(self._inner("::ffff:10.0.0.1"), ipaddress.IPv4Address("10.0.0.1"))
+
+    def test_6to4(self) -> None:
+        self.assertEqual(self._inner("2002:7f00:1::"), ipaddress.IPv4Address("127.0.0.1"))
+
+    def test_teredo_client_address(self) -> None:
+        # Teredo stores the client address bit-inverted in the low 32 bits.
+        self.assertEqual(
+            self._inner("2001:0:4136:e378::80ff:fffe"), ipaddress.IPv4Address("127.0.0.1")
+        )
+
+    def test_nat64_compatible_and_translated(self) -> None:
+        for value in ("64:ff9b::7f00:1", "::127.0.0.1", "::ffff:0:7f00:1"):
+            self.assertEqual(self._inner(value), ipaddress.IPv4Address("127.0.0.1"), value)
+
+    def test_a_plain_ipv6_address_embeds_nothing(self) -> None:
+        self.assertIsNone(self._inner("2606:4700::1111"))
 
 
 class PinnedConnectionTests(unittest.TestCase):
@@ -125,6 +163,23 @@ class PinnedConnectionTests(unittest.TestCase):
         connection.connect()
 
         create_connection.assert_called_once_with(("93.184.216.34", 80), 3, None)
+
+    @patch("app.infrastructure.media.net.socket.create_connection")
+    def test_https_connect_dials_the_pinned_address_and_keeps_the_server_name(
+        self, create_connection
+    ) -> None:
+        context = MagicMock()
+        connection = PinnedHTTPSConnection(
+            "example.com", 443, timeout=3, context=context, pinned_address="93.184.216.34"
+        )
+
+        connection.connect()
+
+        create_connection.assert_called_once_with(("93.184.216.34", 443), 3, None)
+        context.wrap_socket.assert_called_once_with(
+            create_connection.return_value, server_hostname="example.com"
+        )
+        self.assertIs(connection.sock, context.wrap_socket.return_value)
 
     @patch("app.infrastructure.media.net.socket.getaddrinfo")
     def test_proxied_request_is_checked_but_not_pinned(self, getaddrinfo) -> None:

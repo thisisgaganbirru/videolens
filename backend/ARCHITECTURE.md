@@ -52,6 +52,7 @@ worker's hourly removal of held accounts and expired saved runs).
 | `MediaProcessor` | `media/service.py` | Composes `ffmpeg.py`, `uploads.py`, the resolver chain, `captions.py`, `thumbnails.py` |
 | `SourceResolver` | `media/resolvers/` | Ordered chain, set in `MediaService`: `YtDlpResolver` (primary, wraps `ytdlp_downloader.py`) then `DirectHttpResolver` |
 | — | `media/net.py` | `validate_public_url` and the shared fetch rules: the single SSRF guard every outbound request uses |
+| — | `media/ytdlp_net.py` | `GuardedYoutubeDL`: yt-dlp's requests on `net.py`'s pinned connections, native downloaders only |
 | `AnalysisEngine` | `ai/gemini_engine.py` | Upload, structured output, jittered retries, optional fallback model, caption-only analysis; `ai/source_context.py` fences publisher metadata as untrusted text |
 | `ObjectStore` | `storage/s3_object_store.py` | |
 | `JobQueue` | `queue/job_queue.py` | arq/Redis, or an in-process task it keeps a reference to |
@@ -157,3 +158,4 @@ one-line shims so the Dockerfile, compose file and Railway configs reference
 - 2026-11-14 · backend agent · `AccountFreeRunAllowance` takes `period` (`FreeRunPeriod` day/month); free accounts count per UTC day, the paid plan per month
 - 2026-11-14 · backend agent · the paid plan's included runs count per UTC day (`BillingPlans.PAID_RUNS_PERIOD = DAY`, `PAID_RUNS_PER_DAY`); the extra-run ledger stays monthly
 - 2026-11-14 · backend agent · saved history and the deletion hold: `SavedRunRepository` port and adapters, `saved_history`/`restore_account`/`cleanup` use cases, the hold on `AccountDeleter`, `/api/history*` and `POST /api/me/restore`, the `account_cleanup` cron; two invariants
+- 2026-11-20 · Claude (backend agent) · `media/ytdlp_net.py` (`GuardedYoutubeDL`): yt-dlp requests ride `net.py`'s pinned connections, native downloaders only, so the "every outbound fetch goes through net.py" invariant now holds for yt-dlp too
