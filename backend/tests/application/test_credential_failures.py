@@ -4,7 +4,7 @@ token check (AUTH_FAILURE_LIMIT_PER_IP); successful requests never count."""
 import unittest
 
 from app.application.identify_caller import IdentifyCallerUseCase
-from app.domain.errors import AuthenticationError, RateLimitedError
+from app.domain.errors import AuthenticationError, AuthUnavailableError, RateLimitedError
 from app.domain.policies import is_well_formed_api_key
 from app.infrastructure.config import Settings
 from app.infrastructure.persistence.account_directory import InMemoryAccountDirectory
@@ -83,6 +83,18 @@ class FailedCredentialLimitTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RateLimitedError):
             await self.use_case.resolve(authorization="Bearer eyJhbGciOi.x.y", client_ip="203.0.113.9")
         self.assertEqual(len(self.verifier.tokens), 3)
+
+    async def test_a_jwks_outage_is_not_counted(self) -> None:
+        # 503, not a bad credential: a signed-in phone retrying through an
+        # outage must not lock its IP out.
+        self.verifier.error = AuthUnavailableError("Sign-in is unavailable right now.")
+        for _ in range(10):
+            with self.assertRaises(AuthUnavailableError):
+                await self.use_case.resolve(authorization="Bearer eyJhbGciOi.x.y", client_ip="203.0.113.7")
+        self.verifier.error = None
+        self.assertTrue(
+            (await self.use_case.resolve(authorization="Bearer eyJhbGciOi.x.y", client_ip="203.0.113.7")).authenticated
+        )
 
     async def test_success_is_not_counted(self) -> None:
         account = await self.accounts.resolve_account("user-123", "a@b.test")

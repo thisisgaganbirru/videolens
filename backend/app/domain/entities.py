@@ -520,6 +520,16 @@ class ExtraRunCharge:
     completed_at: datetime
 
 
+@dataclass(frozen=True)
+class HeldExtraRun:
+    """An extra run admitted but not yet settled (ledger state `held`), as
+    the reconciliation job sees it."""
+
+    run_id: str
+    account_id: str
+    held_at: datetime
+
+
 # ------------------------------------------------------------ saved history
 #
 # Paid accounts' run results, kept on the server (docs/backend/saved-history.md;

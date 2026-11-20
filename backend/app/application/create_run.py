@@ -77,20 +77,26 @@ class _ExtraRunHold:
     """A paid account's run past its included ones, as an "allowance" with
     the same hold/release/refund shape, so intake's failure path voids it
     exactly where it would hand a free run back. Nothing is counted: the
-    ledger row is the extra run, billed only once the run completes."""
+    ledger row is the extra run, billed only once the run completes. The
+    monthly safety cap is checked by the same write that holds the row, so
+    concurrent admissions at the cap cannot all pass."""
 
-    def __init__(self, ledger: ExtraRunLedger, account: BillingAccount, period: str) -> None:
+    def __init__(self, ledger: ExtraRunLedger, account: BillingAccount, period: str, cap: int) -> None:
         self._ledger = ledger
         self._account = account
         self._period = period
+        self._cap = cap
 
     async def hold(self, run_id: str, claim: None) -> None:
-        await self._ledger.hold(
+        held = await self._ledger.hold(
             run_id,
             account_id=self._account.account_id,
             customer_id=self._account.stripe_customer_id,
             period=self._period,
+            cap=self._cap,
         )
+        if not held:
+            raise ExtraRunsCapReachedError(EXTRA_RUNS_CAP_MESSAGE, limit=self._cap)
 
     async def release(self, run_id: str, *, refund: bool) -> bool:
         return await self._ledger.void(run_id)
@@ -295,11 +301,9 @@ class CreateRunUseCase:
         )
         if claim is not None:
             return _Admission(allowance=accounts, claim=claim)
-        period = billing.extra_runs_period()
-        cap = billing.extra_runs_monthly_cap
-        if cap > 0 and await billing.extra_runs_used(paid.account_id, period) >= cap:
-            raise ExtraRunsCapReachedError(EXTRA_RUNS_CAP_MESSAGE, limit=cap)
-        return _Admission(allowance=_ExtraRunHold(billing.ledger, paid, period), claim=None)
+        # The cap itself is enforced when the row is held (`_ExtraRunHold`).
+        cap = max(0, billing.extra_runs_monthly_cap)
+        return _Admission(allowance=_ExtraRunHold(billing.ledger, paid, billing.extra_runs_period(), cap), claim=None)
 
     async def _admit_complimentary(self, account_id: str, accounts: AccountFreeRunAllowance) -> _Admission:
         """Complimentary Plus: the same daily counter and limit as the paid

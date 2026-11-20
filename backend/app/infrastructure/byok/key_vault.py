@@ -7,6 +7,15 @@ from ..config import Settings
 # left behind by a crashed worker doesn't linger.
 _KEY_TTL_SECONDS = 900
 
+# Read-and-delete in one script: Redis runs a script atomically, so two takes
+# cannot both read the key. A script, not GETDEL, because GETDEL needs Redis
+# 6.2+ and the deployed server's version is not pinned here.
+_TAKE = """
+local value = redis.call('GET', KEYS[1])
+if value then redis.call('DEL', KEYS[1]) end
+return value
+"""
+
 
 class ByokKeyStore:
     """KeyVault adapter: transient, single-use storage for a client-supplied
@@ -41,13 +50,13 @@ class ByokKeyStore:
         self._memory[run_id] = api_key
 
     async def take(self, run_id: str) -> str | None:
-        """Read-and-delete: the stored key is used at most once."""
+        """Read-and-delete: the stored key is used at most once.
+
+        One atomic script (`_TAKE`), so two workers taking the same run at
+        once (an arq retry racing a slow first attempt) cannot both get the
+        key, as a GET followed by a DELETE allowed."""
         if self._settings.queue_enabled:
-            client = self._client()
-            value = await client.get(self._key(run_id))
-            if value is not None:
-                await client.delete(self._key(run_id))
-            return value
+            return await self._client().eval(_TAKE, 1, self._key(run_id))
         return self._memory.pop(run_id, None)
 
     async def close(self) -> None:

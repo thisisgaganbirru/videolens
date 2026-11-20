@@ -12,10 +12,12 @@ Order:
 
 0. The account's Stripe subscription, cancelled now (docs/backend/billing.md):
    no proration credit, and usage not yet invoiced (completed extra runs)
-   invoiced immediately. The person comes back on the free plan if they
-   restore. If Stripe cannot be reached the deletion is refused (503
+   invoiced immediately. Every live subscription of the customer, not only
+   the stored one. The person comes back on the free plan if they restore.
+   If Stripe cannot be reached the deletion is refused (503
    `subscription_cancel_failed`) with nothing changed, rather than leave a
-   paying account nobody can sign in to manage.
+   paying account nobody can sign in to manage. With Stripe not configured
+   there is nothing to call, so deletion goes ahead (logged).
 1. Server-side runs owned by the person (`user:<sub>`) and by each of their
    workspace's API keys (`key:<id>`). Best effort: they expire within
    `RUN_TTL_SECONDS` anyway.
@@ -58,13 +60,17 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def cancel_account_subscription(
-    billing: BillingPlans | None, account_id: str | None, *, only_if_live: bool = False
-) -> None:
-    """Cancel the account's Stripe subscription now, if it holds one. Raises
-    `SubscriptionCancelFailedError` when it cannot tell or cannot cancel,
-    so the caller stops before changing anything. Shared by deletion and the
-    cleanup job's last check before removing an account for good."""
+async def cancel_account_subscription(billing: BillingPlans | None, account_id: str | None) -> None:
+    """Cancel every live Stripe subscription the account's customer has, now.
+    Raises `SubscriptionCancelFailedError` when billing is on and it cannot
+    tell or cannot cancel, so the caller stops before changing anything.
+    Shared by deletion and the cleanup job's last check before removing an
+    account for good.
+
+    The account's completed extra runs are reported first (all of them, not
+    a page of everyone's), so the final invoice carries them. With Stripe
+    not configured nothing can be cancelled; that never blocks a person's
+    deletion, and a subscription still on file is logged for the owner."""
     if billing is None or account_id is None or not billing.accounts.enabled:
         return
     try:
@@ -72,25 +78,38 @@ async def cancel_account_subscription(
     except Exception as exc:  # noqa: BLE001 - cannot tell whether it pays: stop
         logger.exception("Could not read the billing account (account %s)", account_id)
         raise SubscriptionCancelFailedError(log_detail=f"billing read: {type(exc).__name__}") from exc
-    if account is None or not account.stripe_subscription_id:
-        return
-    if only_if_live and not subscription_is_live(account.status):
+    if account is None:
         return
     if not billing.gateway.enabled:
-        if subscription_is_live(account.status):
-            # Billing was switched off with a live subscription on file.
-            logger.error("Refused: live subscription but billing is off (account %s)", account_id)
-            raise SubscriptionCancelFailedError(log_detail="live subscription on file, STRIPE_* not configured")
+        if account.stripe_subscription_id and subscription_is_live(account.status):
+            logger.warning(
+                "Subscription %s on file could not be cancelled because billing is not configured "
+                "(account %s); the account is deleted anyway",
+                account.stripe_subscription_id,
+                account_id,
+            )
         return
-    # Completed extra runs first, so the final invoice carries them.
-    await ExtraRunBilling(plans=billing).flush_due()
+    unreported = await ExtraRunBilling(plans=billing).flush_account(account_id)
+    if unreported:
+        logger.warning(
+            "%s completed extra run(s) of account %s could not be reported before its subscription was cancelled",
+            unreported,
+            account_id,
+        )
     try:
-        # Whatever the row says: a missed webhook must not leave one running.
-        await billing.gateway.cancel_subscription(account.stripe_subscription_id)
+        # Every live one Stripe knows of, plus the stored one whatever the
+        # row says: a missed webhook or a second subscription must not be
+        # left running on a deleted account.
+        live = await billing.gateway.live_subscription_ids(account.stripe_customer_id)
+        stored = [account.stripe_subscription_id] if account.stripe_subscription_id else []
+        cancelled = list(dict.fromkeys([*stored, *live]))
+        for subscription_id in cancelled:
+            await billing.gateway.cancel_subscription(subscription_id)
     except Exception as exc:  # noqa: BLE001 - refused, logged in full
         logger.exception("Could not cancel the subscription (account %s)", account_id)
         raise SubscriptionCancelFailedError(log_detail=f"stripe cancel: {type(exc).__name__}") from exc
-    logger.info("Cancelled subscription %s (account %s)", account.stripe_subscription_id, account_id)
+    for subscription_id in cancelled:
+        logger.info("Cancelled subscription %s (account %s)", subscription_id, account_id)
 
 
 class DeleteAccountUseCase:

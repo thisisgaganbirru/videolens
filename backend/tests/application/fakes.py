@@ -690,6 +690,9 @@ class FakeBillingGateway:
         self.error: Exception | None = None
         self.report_error: Exception | None = None
         self.cancel_error: Exception | None = None
+        self.list_error: Exception | None = None
+        self.expired_sessions: list[str] = []
+        self.duplicates_cancelled: list[str] = []
         self.price_list = BillingPrices(
             month=Price(amount=1200, currency="usd"),
             year=Price(amount=12000, currency="usd") if yearly else None,
@@ -738,10 +741,30 @@ class FakeBillingGateway:
         self._fail()
         return self.subscriptions[subscription_id]
 
+    async def expire_open_checkout_sessions(self, customer_id: str) -> int:
+        self._fail()
+        self.expired_sessions.append(customer_id)
+        return 0
+
+    async def live_subscription_ids(self, customer_id: str) -> list[str]:
+        self._fail()
+        if self.list_error is not None:
+            raise self.list_error
+        return [
+            sub_id
+            for sub_id, sub in self.subscriptions.items()
+            if sub.customer_id == customer_id and sub.status not in ("canceled", "incomplete_expired")
+        ]
+
     async def cancel_subscription(self, subscription_id: str) -> None:
         if self.cancel_error is not None:
             raise self.cancel_error
         self.cancelled.append(subscription_id)
+
+    async def cancel_duplicate_subscription(self, subscription_id: str) -> None:
+        if self.cancel_error is not None:
+            raise self.cancel_error
+        self.duplicates_cancelled.append(subscription_id)
 
     async def report_extra_run(self, charge) -> None:
         if self.report_error is not None:

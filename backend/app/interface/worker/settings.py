@@ -87,8 +87,12 @@ async def process_long_run(
 async def flush_extra_runs(ctx: dict) -> None:
     """Paid extra runs that completed but whose Stripe meter event did not
     go through (Stripe down, a worker killed in between) are reported here,
-    each at most once (docs/backend/billing.md). A no-op with billing off."""
+    each at most once (docs/backend/billing.md). First the held ones are
+    reconciled with their run's stored outcome (completed -> due, failed or
+    gone -> void) and due ones too old to report are voided with a warning.
+    A no-op with billing off."""
     if container.extra_run_billing.enabled:
+        await container.extra_run_billing.reconcile()
         await container.extra_run_billing.flush_due()
 
 

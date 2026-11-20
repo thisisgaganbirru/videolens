@@ -8,10 +8,10 @@ from jwt.exceptions import InvalidAlgorithmError, InvalidTokenError, PyJWKClient
 
 # Re-exported for callers that imported it from here before it moved to the
 # domain (where the API layer can catch it without importing this adapter).
-from ...domain.errors import AuthNotConfiguredError
+from ...domain.errors import AuthNotConfiguredError, AuthUnavailableError
 from ..config import Settings
 
-__all__ = ["AuthNotConfiguredError", "JwtVerifier"]
+__all__ = ["AuthNotConfiguredError", "AuthUnavailableError", "JwtVerifier"]
 
 logger = logging.getLogger("videolens")
 
@@ -27,6 +27,19 @@ _FORCED_REFRESH_INTERVAL_SECONDS = 60
 
 # Bounds a single fetch (PyJWT's default is 30s, one executor thread each).
 _JWKS_FETCH_TIMEOUT_SECONDS = 5
+
+# Stale-while-error. When a fetch fails the last good key set keeps verifying
+# tokens for up to this long after it was fetched, so a JWKS outage does not
+# sign everyone out; past it (or with no key set ever fetched) a token is
+# answered 503 `AuthUnavailableError`, not 401, because it may well be valid.
+# Bounded so a key the provider revoked during a long outage is not trusted
+# for ever.
+_JWKS_MAX_STALE_SECONDS = 6 * 60 * 60
+
+# After a failed fetch nothing is fetched again for this long: requests are
+# served from the stale set (or refused 503) without each one waiting out the
+# fetch timeout on its own executor thread.
+_JWKS_RETRY_AFTER_FAILURE_SECONDS = 30
 
 # Asymmetric only, on purpose. HS256 would mean holding the provider's shared
 # secret on this service (legacy Supabase projects sign that way: rotate them
@@ -55,6 +68,13 @@ class JwtVerifier:
     configured. `iss` is always checked, so a token from another of the
     owner's Supabase projects fails here.
 
+    A JWKS outage (`_keys`): the last good key set is served for up to
+    `_JWKS_MAX_STALE_SECONDS`, refetching at most once per
+    `_JWKS_RETRY_AFTER_FAILURE_SECONDS`; with no usable set the token is
+    refused with `AuthUnavailableError` (503), which the failed-credential
+    limiter does not count. A token that fails verification against keys in
+    hand is still a 401.
+
     Never logs a token: on rejection, the `kid` and the failure class only.
     """
 
@@ -63,6 +83,10 @@ class JwtVerifier:
         self._jwks_client: PyJWKClient | None = None
         self._refresh_lock = threading.Lock()
         self._last_forced_refresh: float | None = None
+        self._state_lock = threading.Lock()
+        self._good_keys: list | None = None
+        self._good_at: float | None = None
+        self._failed_at: float | None = None
 
     @property
     def configured(self) -> bool:
@@ -83,6 +107,8 @@ class JwtVerifier:
             raise AuthNotConfiguredError("Authentication is not configured.")
         try:
             return self.decode_with_key(token, self._signing_key(token))
+        except AuthUnavailableError:
+            raise
         except Exception as exc:
             logger.info("JWT rejected: %s (kid=%s)", type(exc).__name__, _kid(token))
             raise
@@ -94,6 +120,8 @@ class JwtVerifier:
         missing `kid` is refused without touching the network. An unknown kid
         forces one refetch (key rotation), then nothing until the window
         passes; tokens with an unknown kid in between are simply refused.
+        While the JWKS cannot be fetched an unknown kid cannot be told from a
+        rotated one, so it is `AuthUnavailableError` (503), not a 401.
         """
         header = jwt.get_unverified_header(token)
         if header.get("alg") not in _ALGORITHMS:
@@ -101,13 +129,49 @@ class JwtVerifier:
         kid = header.get("kid")
         if not kid or not isinstance(kid, str):
             raise InvalidTokenError("The token names no signing key.")
-        client = self._client()
-        key = _find(client.get_signing_keys(), kid)
-        if key is None and self._may_force_refresh():
-            key = _find(client.get_signing_keys(refresh=True), kid)
+        keys, current = self._keys()
+        key = _find(keys, kid)
+        if key is None and current and self._may_force_refresh():
+            keys, current = self._keys(refresh=True)
+            key = _find(keys, kid)
         if key is None:
+            if not current:
+                raise AuthUnavailableError(
+                    "Sign-in is unavailable right now. Try again in a moment.",
+                    retry_after_seconds=_JWKS_RETRY_AFTER_FAILURE_SECONDS,
+                )
             raise PyJWKClientError("Unknown signing key.")
         return key.key
+
+    def _keys(self, *, refresh: bool = False) -> tuple[list, bool]:
+        """The signing keys and whether they are current (the last fetch
+        worked). `PyJWKClient` caches a good set for `_JWKS_LIFESPAN_SECONDS`;
+        this adds the outage rules on top. Raises `AuthUnavailableError` when
+        there is no set to serve."""
+        now = time.monotonic()
+        with self._state_lock:
+            failed_recently = (
+                self._failed_at is not None and now - self._failed_at < _JWKS_RETRY_AFTER_FAILURE_SECONDS
+            )
+        if not failed_recently:
+            try:
+                keys = self._client().get_signing_keys(refresh=True) if refresh else self._client().get_signing_keys()
+            except Exception as exc:  # noqa: BLE001 - unreachable, timed out, or not a usable key set
+                with self._state_lock:
+                    self._failed_at = now
+                logger.warning("JWKS fetch failed (%s); serving the last good key set if any", type(exc).__name__)
+            else:
+                with self._state_lock:
+                    self._good_keys, self._good_at, self._failed_at = list(keys), now, None
+                return list(keys), True
+        with self._state_lock:
+            keys, good_at = self._good_keys, self._good_at
+        if keys is not None and good_at is not None and now - good_at < _JWKS_MAX_STALE_SECONDS:
+            return keys, False
+        raise AuthUnavailableError(
+            "Sign-in is unavailable right now. Try again in a moment.",
+            retry_after_seconds=_JWKS_RETRY_AFTER_FAILURE_SECONDS,
+        )
 
     def _may_force_refresh(self) -> bool:
         with self._refresh_lock:

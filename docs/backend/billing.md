@@ -131,6 +131,13 @@ signed-in person may call it: anonymous gets 401 and an API key gets 403.
 | 503 | `{"detail","code":"billing_disabled"}` | billing off |
 | 503 | `{"detail","code":"billing_unavailable"}` | Stripe refused or could not be reached |
 
+Before creating the session it expires every session still open for the
+customer, and the new session expires 35 minutes after creation
+(`stripe_gateway.CHECKOUT_SESSION_TTL_SECONDS`; Stripe's minimum is 30
+minutes, its default 24 hours). A tab left open on an earlier Checkout page
+can therefore not start a second subscription. If the expiry fails the
+request is 503 `billing_unavailable` and no new session is created.
+
 Checkout returns to `{BILLING_RETURN_ORIGIN}/app?view=account&billing=success`
 or `...&billing=cancel`. The page must not treat `success` as proof of
 payment. The webhook makes the account paid, so poll `GET /api/billing`
@@ -171,6 +178,28 @@ repeated one is a no-op. An event for an unknown customer, or for a
 subscription belonging to a different customer, is acknowledged and
 ignored. An old cancelled subscription never overwrites a live one. The log
 gets ids only: event, customer, subscription and account.
+
+**Two live subscriptions** (`HandleBillingWebhookUseCase._one_subscription`,
+2026-11-20). When an event brings a live subscription other than the one on
+file, the stored one is re-read from Stripe. If it is still live and belongs
+to the same customer, the customer has two, and one is cancelled at once:
+
+- The **newer** one (the one the event brought) is cancelled, unless only it
+  grants the paid plan (for example the stored one is `past_due` or
+  `incomplete` and the new one is `active`); then the stored one is.
+  So a paying account is never moved off the plan by this, and the
+  subscription the customer has been billed on longest is kept.
+- The duplicate is cancelled with `prorate=true, invoice_now=false`: its
+  unused time goes to the customer's Stripe balance and is taken off the
+  kept subscription's next invoice, and no final invoice is raised (the
+  metered extra runs are billed per customer, so a final invoice on the
+  duplicate could bill them twice).
+- It is logged at ERROR with the account, customer and both subscription
+  ids (no email). If the cancel fails the event answers 503 and Stripe
+  retries it; the event is not marked as seen.
+
+A stored subscription that has already ended is not a duplicate: the new
+one simply replaces it (a resubscribe whose `deleted` event was missed).
 
 ### Changes to existing endpoints
 
@@ -260,10 +289,32 @@ happen exactly once:
   "sent" and "marked reported" therefore cannot bill twice.
 - A failed report leaves the row due and never fails the run. The worker
   cron `flush_extra_runs` retries due rows every 10 minutes, and account
-  deletion flushes before cancelling. Rows older than 34 days stay due and
-  unbilled, because Stripe refuses meter events older than 35 days.
-- A held row older than 2 days belongs to a run that can no longer finish.
-  The next hold voids it.
+  deletion and the purge flush **all** of the account's due rows (paged,
+  `ExtraRunBilling.flush_account`) before cancelling, so the final invoice
+  carries them; a row that still cannot be reported is logged and left due.
+- Rows due for more than 34 days are moved to `void` by the same cron
+  (`ledger.expire_due`), with a WARNING naming the run and the account (no
+  email), because Stripe refuses meter events older than 35 days. They are
+  never billed.
+- The worker settles a run's row from the run's stored outcome
+  (`ProcessRunUseCase._settle_extra_run`, 2026-11-20): when the run is
+  complete (its worker was cancelled between storing the result and
+  billing, or an arq retry finds it finished) the row is completed and
+  reported; otherwise it is voided. Exactly once, by the conditional
+  UPDATEs above.
+- Reconciliation (`ExtraRunBilling.reconcile`, in `flush_extra_runs` before
+  the flush): a row still held 10 minutes after it was taken is settled
+  from the run record: complete means due (WARNING, then reported), failed
+  means void, still running is left alone. A record that is gone (the run
+  TTL is one hour) is voided after 2 hours, and any held row older than
+  2 days is voided. A hold no longer voids older rows itself.
+- The monthly cap is checked by the write that holds the row
+  (`ledger.hold(..., cap=)`, 2026-11-20): on Postgres the account's
+  `billing_accounts` row is locked (`FOR UPDATE`) and the row is inserted by
+  `INSERT ... SELECT ... WHERE (this month's held + due + reported) < cap`
+  in the same transaction, so concurrent intakes at the cap cannot all pass.
+  No migration. On SQLite (local and tests only) the database lock
+  serialises writers.
 
 A refunded run (a link run rejected before analysis) is a failed run, so
 it is voided and never billed.
@@ -336,17 +387,23 @@ bounds a single account.
 
 ### Deletion cancels first, with no refund
 
-`DELETE /api/me` cancels the Stripe subscription before deleting anything:
+`DELETE /api/me` and the purge after the 30-day hold cancel the Stripe
+subscriptions before deleting anything (`delete_account.cancel_account_subscription`):
 
 1. If it cannot read the billing row, it refuses.
-2. With no row, or no subscription, deletion proceeds as before.
-3. With billing off but a live subscription on file (the keys were
-   removed), it refuses, because that subscription cannot be cancelled.
-4. Otherwise it reports due extra runs first, so the final invoice carries
-   them, then cancels at once (`invoice_now=true, prorate=false`: no
-   credit for the unused part of the period).
-5. A cancel failure gives 503 `subscription_cancel_failed` and nothing is
-   deleted.
+2. With no row, deletion proceeds as before.
+3. With billing off (the Stripe keys removed) nothing can be cancelled:
+   deletion and the purge go ahead, with a WARNING naming the account and a
+   still-live stored subscription (2026-11-20; it used to refuse, which
+   left the account undeletable). The owner cancels it in the dashboard.
+4. Otherwise it reports all of the account's due extra runs first (paged),
+   so the final invoice carries them, then cancels the stored subscription
+   and every other live subscription of the customer that Stripe lists
+   (`live_subscription_ids`), each at once (`invoice_now=true,
+   prorate=false`: no credit for the unused part of the period).
+5. With billing on, a failure to list or cancel gives 503
+   `subscription_cancel_failed` and nothing is deleted (the purge skips the
+   account and retries next hour).
 
 The Stripe Customer record, with its email, invoices and payment method,
 stays in Stripe after deletion. The app cannot delete it, because Stripe
@@ -510,9 +567,11 @@ Billing:
 
 ## Known issues
 
-- The extra-run cap is a check followed by a hold, not one atomic step. Two
-  runs started at the same instant at the cap can both pass, overshooting
-  by the number of concurrent intakes. This is acceptable for a safety net.
+- The cap's row lock is on the account's `billing_accounts` row. An
+  account with a ledger row but no billing row cannot exist (extra runs
+  need a live subscription), so this always locks something; were it ever
+  missing, the guarded INSERT alone still bounds the overshoot to the
+  number of concurrent intakes.
 - Android: Checkout and the portal return to the web origin
   (`BILLING_RETURN_ORIGIN`), not into the installed APK. The app needs to
   open them in the system browser and refetch `GET /api/billing` on resume.
@@ -542,7 +601,11 @@ Billing:
   `limit: null`; free, past_due and billing off have none); past_due treated as free;
   billed once and only on success (including retries, failures and the
   stale sweep); deletion cancels, or refuses on a Stripe failure;
-  billing-off parity.
+  billing-off parity. Since 2026-11-20 also: earlier Checkout sessions
+  expired; the duplicate-subscription rules; deletion with billing off,
+  every live subscription cancelled, all due rows flushed; the cap under
+  concurrent intakes; reconciliation and the 34-day void; the worker
+  settling from the stored outcome (cancellation, retries).
 - `tests/infrastructure/persistence/test_billing_store.py`: the SQL
   (SQLite) and in-memory stores share one suite; deletion cascade;
   Alembic 0004 up and down; the Postgres branch with Alembic mocked.
@@ -563,3 +626,4 @@ Billing:
 - 2026-11-14 · backend agent · migration `0008_value_checks`: check constraints on `billing_extra_runs.state` and `.period` (`YYYY-MM`); none on `billing_accounts.status`/`interval`, which come from Stripe verbatim
 - 2026-11-14 · frontend agent · paid plan is named Plus in the UI
 - 2026-11-14 · backend agent · complimentary Plus: migration `0010_complimentary_plus` (`accounts.complimentary_plus`, set only by hand in SQL); `BillingPlans.standing` / `PlanStanding`; paid plan with or without Stripe, never billed (402 `free_runs_used` past `PAID_RUNS_PER_DAY`, no ledger, no meter); `complimentary` on `GET /api/billing` (full body even with billing off), `GET /api/me` `entitlement`, `GET /api/free-runs`; checkout/portal 409 `complimentary_plan`; a paying subscription wins
+- 2026-11-20 · Claude (backend agent) · duplicate subscriptions: Checkout expires the customer's open sessions and lives 35 min; the webhook cancels a second live subscription (the newer one unless only it pays; prorated credit, no final invoice; ERROR log); deletion and purge flush all due rows and cancel every live subscription, and go ahead with a WARNING when billing is off; the extra-run cap is checked in the hold's INSERT under a row lock; held rows of completed runs are settled by the worker and by `reconcile`; due rows older than 34 days are voided with a WARNING; no migration

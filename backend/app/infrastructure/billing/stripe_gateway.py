@@ -39,6 +39,13 @@ _PRICE_TTL_SECONDS = 3600.0
 # After a failed read, try again soon rather than every request.
 _PRICE_RETRY_SECONDS = 60.0
 _ENDED_STATUSES = frozenset({"canceled", "incomplete_expired"})
+# How long a Checkout Session stays payable. Stripe's default is 24 hours,
+# long enough for an abandoned tab to be paid after another checkout already
+# made a subscription; its minimum is 30 minutes, so a few spare minutes
+# keep clock skew from tripping it.
+CHECKOUT_SESSION_TTL_SECONDS = 35 * 60
+# One page of a customer's sessions or subscriptions (Stripe's maximum).
+_PAGE = 100
 
 
 def _plain(value: Any) -> Any:
@@ -77,11 +84,13 @@ class StripeBillingGateway:
         client: Any = None,
         construct_event: Callable[..., Any] | None = None,
         clock: Callable[[], float] | None = None,
+        wall_clock: Callable[[], float] | None = None,
     ) -> None:
         self._settings = settings
         self._client = client
         self._construct_event = construct_event
         self._clock = clock or time.monotonic
+        self._wall_clock = wall_clock or time.time
         self._prices: BillingPrices | None = None
         self._prices_until = 0.0
 
@@ -155,6 +164,8 @@ class StripeBillingGateway:
             "success_url": self._return_url("success"),
             "cancel_url": self._return_url("cancel"),
             "metadata": {"account_id": account_id},
+            # Short-lived, so a forgotten tab cannot be paid much later.
+            "expires_at": int(self._wall_clock()) + CHECKOUT_SESSION_TTL_SECONDS,
             "subscription_data": {
                 "metadata": {"account_id": account_id},
                 # Mixed intervals (yearly base + monthly metered) need it.
@@ -163,6 +174,53 @@ class StripeBillingGateway:
         }
         session = await self._call("create checkout session", lambda: client.v1.checkout.sessions.create(params=params))
         return session["url"]
+
+    async def _list_all(self, what: str, list_fn: Callable[[dict], Any], params: dict) -> list[dict]:
+        """Every object of a list call, page by page."""
+        found: list[dict] = []
+        cursor: str | None = None
+        while True:
+            page_params = dict(params, limit=_PAGE)
+            if cursor:
+                page_params["starting_after"] = cursor
+            page = await self._call(what, lambda: list_fn(page_params))
+            data = [_plain(item) for item in (page.get("data") or [])]
+            found.extend(data)
+            if not page.get("has_more") or not data:
+                return found
+            cursor = data[-1].get("id")
+
+    async def expire_open_checkout_sessions(self, customer_id: str) -> int:
+        client = self._stripe()
+        sessions = await self._list_all(
+            "list checkout sessions",
+            lambda params: client.v1.checkout.sessions.list(params=params),
+            {"customer": customer_id, "status": "open"},
+        )
+        expired = 0
+        for session in sessions:
+            session_id = session.get("id")
+            if not session_id or session.get("status", "open") != "open":
+                continue
+            await self._call("expire checkout session", lambda: client.v1.checkout.sessions.expire(session_id))
+            expired += 1
+        if expired:
+            logger.info("Expired %s earlier open checkout session(s) for customer %s", expired, customer_id)
+        return expired
+
+    async def live_subscription_ids(self, customer_id: str) -> list[str]:
+        client = self._stripe()
+        # `all`, then filtered here, so paused and incomplete ones are seen.
+        subscriptions = await self._list_all(
+            "list subscriptions",
+            lambda params: client.v1.subscriptions.list(params=params),
+            {"customer": customer_id, "status": "all"},
+        )
+        return [
+            str(sub["id"])
+            for sub in subscriptions
+            if sub.get("id") and str(sub.get("status") or "") not in _ENDED_STATUSES
+        ]
 
     async def create_portal_session(self, customer_id: str) -> str:
         client = self._stripe()
@@ -291,6 +349,20 @@ class StripeBillingGateway:
         )
 
     async def cancel_subscription(self, subscription_id: str) -> None:
+        # Now, not at period end; no proration credit; usage not yet
+        # invoiced (extra runs) goes on a final invoice now.
+        await self._cancel(subscription_id, {"invoice_now": True, "prorate": False})
+
+    async def cancel_duplicate_subscription(self, subscription_id: str) -> None:
+        # The customer already pays through another subscription. The
+        # unused part of this one goes back as a proration credit on the
+        # customer's balance (applied to the next invoice of the one kept),
+        # and no final invoice is made: the metered extra runs are counted
+        # on the customer's meter, so invoicing them here would bill them a
+        # second time.
+        await self._cancel(subscription_id, {"invoice_now": False, "prorate": True})
+
+    async def _cancel(self, subscription_id: str, params: dict) -> None:
         client = self._stripe()
         try:
             current = await self._call("retrieve subscription", lambda: client.v1.subscriptions.retrieve(subscription_id))
@@ -301,11 +373,9 @@ class StripeBillingGateway:
             raise
         if current.get("status") in _ENDED_STATUSES:
             return
-        # Now, not at period end; no proration credit; usage not yet
-        # invoiced (extra runs) goes on a final invoice now.
         await self._call(
             "cancel subscription",
-            lambda: client.v1.subscriptions.cancel(subscription_id, params={"invoice_now": True, "prorate": False}),
+            lambda: client.v1.subscriptions.cancel(subscription_id, params=params),
         )
 
     async def report_extra_run(self, charge: ExtraRunCharge) -> None:

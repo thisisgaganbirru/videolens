@@ -14,6 +14,7 @@ from .entities import (
     BillingPrices,
     BillingWebhookEvent,
     ExtraRunCharge,
+    HeldExtraRun,
     SubscriptionSnapshot,
     AnalysisCompleteness,
     ApiKey,
@@ -372,8 +373,9 @@ class KeyVault(Protocol):
 class TokenVerifier(Protocol):
     def decode(self, token: str) -> dict:
         """Verified claims, or raises. `AuthNotConfiguredError` (domain) when
-        no identity provider is configured; anything else means the token is
-        not acceptable. Synchronous: a JWKS cache miss is a network call, so
+        no identity provider is configured, `AuthUnavailableError` when its
+        signing keys cannot be had right now; anything else means the token
+        is not acceptable. Synchronous: a JWKS cache miss is a network call, so
         callers run it off the event loop."""
         ...
 
@@ -581,7 +583,18 @@ class BillingGateway(Protocol):
         ...
 
     async def create_checkout_session(self, *, customer_id: str, account_id: str, interval: str) -> str:
-        """The hosted Checkout URL for the plan at `interval`."""
+        """The hosted Checkout URL for the plan at `interval`. The session
+        expires after a short, fixed time (not Stripe's 24-hour default)."""
+        ...
+
+    async def expire_open_checkout_sessions(self, customer_id: str) -> int:
+        """Expire every open Checkout Session of this customer, so only the
+        one about to be created can still be paid. How many it expired."""
+        ...
+
+    async def live_subscription_ids(self, customer_id: str) -> list[str]:
+        """Every subscription of this customer that has not ended (whatever
+        the stored row says)."""
         ...
 
     async def create_portal_session(self, customer_id: str) -> str: ...
@@ -600,6 +613,13 @@ class BillingGateway(Protocol):
     async def cancel_subscription(self, subscription_id: str) -> None:
         """Cancel now, no proration credit, outstanding usage invoiced now.
         An already-cancelled subscription is not an error."""
+        ...
+
+    async def cancel_duplicate_subscription(self, subscription_id: str) -> None:
+        """Cancel now a second subscription of a customer who already pays
+        through another: unused time credited (proration), no final invoice
+        (its metered usage is the kept subscription's). An already-cancelled
+        subscription is not an error."""
         ...
 
     async def report_extra_run(self, charge: ExtraRunCharge) -> None:
@@ -645,7 +665,12 @@ class ExtraRunLedger(Protocol):
     reported; held -> void (failed, refunded, rejected). Only `due` rows are
     ever reported, and each transition happens at most once."""
 
-    async def hold(self, run_id: str, *, account_id: str, customer_id: str, period: str) -> None: ...
+    async def hold(self, run_id: str, *, account_id: str, customer_id: str, period: str, cap: int = 0) -> bool:
+        """A held row for this run. With `cap` > 0 only while the account
+        has fewer than `cap` rows not voided this period, checked and
+        written atomically (concurrent admissions at the cap cannot all
+        pass). False, nothing written, when the cap is reached."""
+        ...
 
     async def count(self, account_id: str, period: str) -> int:
         """Extra runs not voided this period (the monthly safety cap)."""
@@ -660,7 +685,19 @@ class ExtraRunLedger(Protocol):
         """held -> void. True when this call voided it."""
         ...
 
-    async def due(self, *, limit: int = 50) -> list[ExtraRunCharge]: ...
+    async def due(self, *, limit: int = 50, account_id: str | None = None) -> list[ExtraRunCharge]:
+        """Due rows still young enough for Stripe's meter, oldest first;
+        only this account's when `account_id` is given."""
+        ...
+
+    async def held(self, *, before: datetime, limit: int = 100) -> list[HeldExtraRun]:
+        """Rows still held that were admitted before `before`, oldest first."""
+        ...
+
+    async def expire_due(self, *, limit: int = 100) -> list[ExtraRunCharge]:
+        """due -> void for rows too old for Stripe's meter to accept; the
+        rows this call moved."""
+        ...
 
     async def mark_reported(self, run_id: str) -> None: ...
 

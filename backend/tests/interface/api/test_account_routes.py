@@ -21,7 +21,7 @@ from app.application.list_api_keys import ListApiKeysUseCase
 from app.application.restore_account import RestoreAccountUseCase
 from app.application.revoke_api_key import RevokeApiKeyUseCase
 from app.container import container
-from app.domain.errors import AuthNotConfiguredError
+from app.domain.errors import AuthNotConfiguredError, AuthUnavailableError
 from app.infrastructure.config import Settings
 from app.infrastructure.persistence.account_deleter import InMemoryAccountDeleter
 from app.infrastructure.persistence.account_directory import InMemoryAccountDirectory
@@ -126,6 +126,16 @@ class AccountRoutesTests(unittest.TestCase):
         self.verifier.error = AuthNotConfiguredError("Authentication is not configured.")
         response = self.client.get("/api/me", headers=TOKEN)
         self.assertEqual(response.status_code, 503)
+
+    def test_a_jwks_outage_is_503_with_retry_after(self) -> None:
+        self.verifier.error = AuthUnavailableError(
+            "Sign-in is unavailable right now. Try again in a moment.", retry_after_seconds=30
+        )
+        response = self.client.get("/api/me", headers=TOKEN)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json(), {"detail": "Sign-in is unavailable right now. Try again in a moment."})
+        self.assertEqual(response.headers["Retry-After"], "30")
+        self.assertNotIn("WWW-Authenticate", response.headers)
 
     # -- /api/keys -------------------------------------------------------
 

@@ -27,6 +27,7 @@ from ..domain.errors import (
     AccountPendingDeletionError,
     AuthenticationError,
     AuthNotConfiguredError,
+    AuthUnavailableError,
     ClientIdInvalidError,
     RateLimitedError,
 )
@@ -118,7 +119,8 @@ class IdentifyCallerUseCase:
         try:
             # Off the event loop: a JWKS cache miss is a blocking HTTP fetch.
             claims = await asyncio.to_thread(self._verifier.decode, token)
-        except AuthNotConfiguredError:
+        except (AuthNotConfiguredError, AuthUnavailableError):
+            # 503s, not a bad credential: never counted as a failure.
             raise
         except Exception as exc:  # noqa: BLE001 - every verification failure is one 401
             # The failure class only; never the token. The verifier logs the kid.

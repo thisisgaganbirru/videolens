@@ -14,7 +14,7 @@ reviewed and committed on the same branch (2026-11-09). None of it is merged yet
 | domain | `entities.py` | `AuthMethod`, `Principal` (+ `method`, `account_id`, `workspace_id`, `email`, `owner_id`), `Account`, `Workspace`, `WorkspaceRole`, `ApiKey`, `ApiKeyCreated` |
 | domain | `entitlements.py` | `Plan.FREE` only, `Entitlement`, `entitlement_for` |
 | domain | `policies.py` | `is_valid_client_id`, `looks_like_api_key` (`vl_live_`), `can_access_run`, `quota_key`, `quota_key_from_headers` (fallback) |
-| domain | `errors.py` | `AuthenticationError` 401, `ForbiddenError` 403, `ApiKeyNotFoundError` 404, `ApiKeyLimitError` 409, `ClientIdInvalidError` 400, `AccountDeletionError` 500, `AuthNotConfiguredError` / `AccountsNotConfiguredError` 503 |
+| domain | `errors.py` | `AuthenticationError` 401, `ForbiddenError` 403, `ApiKeyNotFoundError` 404, `ApiKeyLimitError` 409, `ClientIdInvalidError` 400, `AccountDeletionError` 500, `AuthNotConfiguredError` / `AccountsNotConfiguredError` 503, `AuthUnavailableError` 503 with `Retry-After` (JWKS outage) |
 | domain | `ports.py` | `TokenVerifier`, `AccountDirectory`, `ApiKeyRepository`, `AccountDeleter`, `RunRepository.delete_for_owner` |
 | application | `identify_caller.py` | `IdentifyCallerUseCase`: the whole credential precedence |
 | application | `entitlements.py`, `get_account.py` | `EntitlementResolver.for_principal`, `GetAccountUseCase` (`/api/me`) |
@@ -36,7 +36,7 @@ reviewed and committed on the same branch (2026-11-09). None of it is merged yet
 The order is fixed:
 
 1. **API key.** This means `X-Api-Key: vl_live_...`, or `Authorization: Bearer vl_live_...`. The prefix routes it, so an agent can use either header. `X-Api-Key` wins over a bearer token. The key is looked up by SHA-256. A key that is unknown or revoked, or whose workspace no longer exists, gets a 401. The result is `Principal(subject="key:<id>", method=API_KEY, workspace_id=<key's workspace>, account_id=<workspace owner>)`.
-2. **Bearer token.** Anything else after `Bearer ` is verified by `JwtVerifier`. On success the `sub` resolves an account: the first sign-in creates the account, a "Personal" workspace and an owner membership, and later sign-ins keep the email current. The result is `Principal(subject="user:<sub>", method=TOKEN, account_id, workspace_id, email)`. Any verification failure becomes a generic `401 "Invalid access token."`, and only the exception class is logged. An unconfigured verifier is the exception: it gives `503` (`AuthNotConfiguredError`, now a domain error so the interface no longer imports the adapter). A blank `Bearer ` header counts as no credential.
+2. **Bearer token.** Anything else after `Bearer ` is verified by `JwtVerifier`. On success the `sub` resolves an account: the first sign-in creates the account, a "Personal" workspace and an owner membership, and later sign-ins keep the email current. The result is `Principal(subject="user:<sub>", method=TOKEN, account_id, workspace_id, email)`. Any verification failure becomes a generic `401 "Invalid access token."`, and only the exception class is logged. An unconfigured verifier is the exception: it gives `503` (`AuthNotConfiguredError`, now a domain error so the interface no longer imports the adapter). So is a JWKS outage with no usable key set: `503 {"detail": "Sign-in is unavailable right now. Try again in a moment."}` with `Retry-After: 30` (`AuthUnavailableError`, since 2026-11-20). Neither is an `AuthenticationError`, so the failed-credential limiter never counts them. A blank `Bearer ` header counts as no credential.
 3. **Anonymous.** This needs `ALLOW_ANONYMOUS` (default true) and a valid `X-Client-ID`. It resolves to `Principal(subject="client:<id>", method=ANONYMOUS)`. A missing or malformed id gets a 400. The client id is self-reported, so it scopes which runs a browser sees. It is never a quota identity.
 
 `get_principal` leaves the principal on `request.state.principal` for the rate limiter (see below).
@@ -49,6 +49,7 @@ The order is fixed:
 - `configured` means `AUTH_JWKS_URL` and `AUTH_ISSUER` are both set. Before phase 1 the audience was also required.
 - A single `PyJWKClient(cache_keys=True, lifespan=600, timeout=5)` lives for the whole process.
 - **The header is screened before any key lookup.** A disallowed `alg` or a missing/non-string `kid` is refused without touching the network. Malformed tokens are refused the same way.
+- **A JWKS outage is stale-while-error (2026-11-20).** The last key set fetched is kept beside PyJWT's cache. When a fetch fails (unreachable, timed out, not a usable key set) tokens keep verifying against that set for up to 6 hours after it was last good (`_JWKS_MAX_STALE_SECONDS`), and nothing is fetched again for 30 seconds (`_JWKS_RETRY_AFTER_FAILURE_SECONDS`), so requests do not each wait out the 5-second timeout. With no set, or one older than 6 hours, the token is `503 AuthUnavailableError`, not 401: it may be valid, and a 401 makes the app sign the person out. A token that fails against keys in hand (expired, bad signature, wrong issuer) is still 401. An unknown `kid` while the last fetch failed is also 503, because a rotated key cannot be told from a forged one without the JWKS. The age is measured from the last successful read of PyJWT's cache, so the bound can run up to its 10-minute lifespan long. Constants, not settings. RS256/ES256 only, as before.
 - **JWKS refetches on an unknown `kid` are throttled.** The cached set is consulted first. A miss forces at most one refetch per 60 seconds per process (that is how a rotated key is picked up); between refreshes an unknown `kid` is simply a 401. This was a review finding: PyJWT's `get_signing_key_from_jwt` refetches on every miss, and since a request that 401s in `get_principal` never reaches the rate limiter, a loop of forged tokens could make the API hammer Supabase's JWKS endpoint.
 - **The `role` claim must be `authenticated`, and `is_anonymous: true` is refused** (in `IdentifyCallerUseCase.from_token_claims`, 401 "Invalid access token."). If Supabase anonymous sign-ins were ever enabled, each throwaway sign-in would otherwise get an account, API keys and its own rate bucket. A non-Supabase IdP would need to emit the same claim.
 - The `Bearer` scheme is matched case-insensitively (RFC 9110), here and in the limiter's header fallback (`policies.bearer_credential`).
@@ -128,10 +129,12 @@ The frontend keeps the person's own local data (IndexedDB History, the BYOK key)
 ### Step 0: the Stripe subscription (paid plan)
 
 Before anything else (runs, rows, identity), `DeleteAccountUseCase` cancels
-the account's Stripe subscription immediately, with no proration refund
-(`invoice_now=true, prorate=false`), after reporting any completed extra
-runs still due. If Stripe fails, or billing was switched off while a live
-subscription is on file, the request is refused with
+the account's Stripe subscriptions immediately (the stored one and every
+other live one of the customer), with no proration refund
+(`invoice_now=true, prorate=false`), after reporting all of the account's
+extra runs still due. With billing switched off nothing can be cancelled and
+deletion goes ahead with a WARNING (since 2026-11-20; `billing.md`). If
+Stripe fails, the request is refused with
 `503 {"detail": "We couldn't cancel your subscription, so your account was not deleted. Please try again.", "code": "subscription_cancel_failed"}`
 and nothing is deleted. The `billing_accounts` and `billing_extra_runs`
 rows then go with the account (explicit delete plus `ON DELETE CASCADE`).
@@ -344,7 +347,7 @@ The application code has not yet run against a real Supabase project: the SQL ad
 - Once an IP crosses `AUTH_FAILURE_LIMIT_PER_IP`, a valid credential from that IP is also refused until the window ends (the check runs before the lookup, which is the point). Behind a large shared NAT one misbehaving client could lock out the others for up to 15 minutes.
 
 - `/api/free-runs` resolves a principal only when a credential is sent (`get_optional_signed_in_principal`, since 2026-11-13), so signed-in callers' reads are bucketed per account; anonymous callers still use the header fallback (IP). An invalid credential there is a 401, as on `/api/me`.
-- The JWKS cache-expiry fetch (every 10 minutes) is not throttled beyond PyJWT's own cache. If the identity provider is down, each token request still makes one fetch attempt, capped at the 5-second timeout.
+- ~~The JWKS cache-expiry fetch is not throttled while the provider is down.~~ Resolved 2026-11-20: after a failed fetch nothing is fetched for 30 seconds and the last good set is served (see JWT rules).
 
 ## Changelog
 - 2026-11-07 · security-check · `JwtVerifier` reuses one caching `PyJWKClient`; first tests for the verifier
@@ -369,3 +372,4 @@ The application code has not yet run against a real Supabase project: the SQL ad
 - 2026-11-14 · backend agent · migration `0010_complimentary_plus`: `accounts.complimentary_plus BOOLEAN NOT NULL DEFAULT false` (`billing.md`, "Complimentary Plus"), read into `Account.complimentary_plus` by `SqlAccountDirectory`; set only by hand in SQL, no API writes it; the existing `accounts` RLS policy and grants cover it; apply before deploying the code; restore and purge unchanged (restore leaves the flag, purge removes the row with it)
 - 2026-11-20 · Claude (backend agent) · failed-credential limit per IP before any key lookup or JWT check (`CredentialFailureGuard` port, `AUTH_FAILURE_LIMIT_PER_IP`, 429 with `Retry-After`); malformed `vl_live_` keys refused without a lookup
 - 2026-11-20 · Claude (backend agent) · pooler guidance corrected to the session pooler (5432) with the reason; pool sizing (`DATABASE_POOL_SIZE`, `DATABASE_MAX_OVERFLOW`) and TLS (`sslmode` translated to asyncpg `ssl`); `videolens_api` needs SELECT on `alembic_version` for the startup schema check
+- 2026-11-20 · Claude (backend agent) · JWKS outage: stale-while-error up to 6 h, refetch at most once per 30 s after a failure, 503 `AuthUnavailableError` with `Retry-After` when no usable key set (never counted by the failed-credential limiter); invalid tokens stay 401, unknown kid still forces the throttled refresh

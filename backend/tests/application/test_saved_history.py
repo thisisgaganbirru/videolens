@@ -475,6 +475,27 @@ class HoldAndCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.cleanup.run()).accounts_removed, 1)
         self.assertEqual(self.h.billing.gateway.cancelled, ["sub_1"])
 
+    async def test_the_purge_cancels_every_live_subscription_of_the_customer(self) -> None:
+        await self.deleter.schedule_deletion(
+            "sub-1", now=self.h.clock.now, purge_at=self.h.clock.now + timedelta(days=30)
+        )
+        self.h.clock.now += timedelta(days=31)
+        customer = f"cus_{self.account_id}"
+        self.h.billing.gateway.subscriptions["sub_dup"] = _snapshot(sub="sub_dup", customer=customer)
+        self.assertEqual((await self.cleanup.run()).accounts_removed, 1)
+        self.assertEqual(sorted(self.h.billing.gateway.cancelled), ["sub_1", "sub_dup"])
+
+    async def test_with_billing_off_the_purge_goes_ahead_with_a_warning(self) -> None:
+        await self.deleter.schedule_deletion(
+            "sub-1", now=self.h.clock.now, purge_at=self.h.clock.now + timedelta(days=30)
+        )
+        self.h.clock.now += timedelta(days=31)
+        self.h.billing.gateway._enabled = False
+        with self.assertLogs("videolens", "WARNING") as logs:
+            self.assertEqual((await self.cleanup.run()).accounts_removed, 1)
+        self.assertTrue(any("billing is not configured" in line for line in logs.output))
+        self.assertEqual(self.h.billing.gateway.cancelled, [])
+
     async def test_the_cleanup_also_purges_expired_windows(self) -> None:
         await self.h.subscribe("canceled", account_id=self.account_id)
         self.assertEqual((await self.cleanup.run()).windows_started, 1)

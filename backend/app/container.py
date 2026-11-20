@@ -165,7 +165,7 @@ class Container:
             extra_runs_monthly_cap=settings.paid_extra_runs_monthly_cap,
             directory=self.accounts if self.database.enabled else None,
         )
-        self.extra_run_billing = ExtraRunBilling(plans=self.billing)
+        self.extra_run_billing = ExtraRunBilling(plans=self.billing, runs=self.run_repository)
         # Saved history: on only with a database and a paid plan to decide
         # who is saved (Stripe billing, or complimentary Plus); the
         # post-cancel window only with Stripe billing on.
@@ -282,6 +282,8 @@ class Container:
             free_runs=self.free_runs,
             account_free_runs=self.account_free_runs,
             extra_runs=self.extra_run_billing,
+            # ... and its daily cap unit, if it never reached Gemini.
+            spend_cap=self.spend_cap,
         )
         self.list_runs_use_case = ListRunsUseCase(runs=self.run_repository)
         self.get_releases_use_case = GetReleasesUseCase(catalog=self.release_catalog)

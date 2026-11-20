@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 
-from ..domain.entities import AnalysisCompleteness, MediaVisuals, RunStatus
+from ..domain.entities import AnalysisCompleteness, MediaVisuals, Run, RunStatus
 from ..domain.entitlements import MediaLimits, MediaTier
 from ..domain.errors import (  # the two messages are re-exported for callers and tests
     BYOK_KEY_EXPIRED_MESSAGE,
@@ -105,12 +105,16 @@ class ProcessRunUseCase:
         self._history = history
         # None (tests, older wiring) = daily cap units are never handed back.
         self._spend_cap = spend_cap
+        # Runs this worker already settled as billed (`_bill_extra_run`), so
+        # the closing `_settle_extra_run` does not settle them again.
+        self._billed: set[str] = set()
 
     async def _bill_extra_run(self, run_id: str) -> None:
         """The run's result is stored: if it was a paid account's extra run,
         it is billed now, once. Never raises."""
         if self._extra_runs is not None:
             await self._extra_runs.complete(run_id)
+            self._billed.add(run_id)
 
     async def _save_to_history(self, run_id: str, source_url: str | None) -> None:
         """The run's result is stored and billed: a paid account's copy goes
@@ -124,6 +128,28 @@ class ProcessRunUseCase:
         """However the run ended, a held extra run that did not complete is
         never billed. A no-op after `_bill_extra_run` (already due)."""
         if self._extra_runs is not None:
+            await self._extra_runs.void(run_id)
+
+    async def _settle_extra_run(self, run_id: str, run: Run | None = None) -> None:
+        """The last word on a held extra run, from the run's stored outcome:
+        stored as complete (a cancellation or a crash landed between storing
+        the result and `_bill_extra_run`, or this is a retry of a run that
+        finished), it is billed, once (the held -> due write is
+        conditional); anything else is voided. Never raises."""
+        if self._extra_runs is None:
+            return
+        if run_id in self._billed:
+            self._billed.discard(run_id)
+            return
+        if run is None:
+            try:
+                run = await self._runs.get(run_id)
+            except Exception:  # noqa: BLE001 - leave it held; the cron reconciles it
+                logger.exception("Could not read run %s to settle its extra run", run_id)
+                return
+        if run is not None and run.status is RunStatus.COMPLETE:
+            await self._extra_runs.complete(run_id)
+        else:
             await self._extra_runs.void(run_id)
 
     async def _analyze_captions(
@@ -332,7 +358,9 @@ class ProcessRunUseCase:
         # Never refunded here: an earlier attempt of this run may have
         # reached Gemini before its worker died, and nothing records that.
         await settle_spend_hold(run_id, refund=False, spend_cap=self._spend_cap, reason="")
-        await self._void_extra_run(run_id)
+        # A retry of a run whose result was stored before its worker went
+        # away is billed here; any other dropped run is voided.
+        await self._settle_extra_run(run_id, run)
         await self._release_long_run(run_id, limits)
         self._media.cleanup_run_dir(run_id)
         if source_key:
@@ -553,7 +581,7 @@ class ProcessRunUseCase:
                     spend_cap=self._spend_cap,
                     reason="ended before reaching Gemini",
                 )
-                await self._void_extra_run(run_id)
+                await self._settle_extra_run(run_id)
                 await self._release_long_run(run_id, limits)
                 if source_key:
                     try:
@@ -563,3 +591,4 @@ class ProcessRunUseCase:
             # Local files go either way: the retry fetches the source again,
             # usually on another machine.
             self._media.cleanup_run_dir(run_id)
+            self._billed.discard(run_id)

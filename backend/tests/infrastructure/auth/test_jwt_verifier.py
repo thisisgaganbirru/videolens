@@ -6,6 +6,7 @@ import jwt
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from app.domain.errors import AuthNotConfiguredError as DomainAuthNotConfiguredError
+from app.domain.errors import AuthUnavailableError
 from app.infrastructure.auth.jwt_verifier import AuthNotConfiguredError, JwtVerifier
 from app.infrastructure.config import Settings
 
@@ -232,6 +233,94 @@ class JwksRefreshThrottleTests(unittest.TestCase):
         with self.assertRaises(jwt.DecodeError):
             self.verifier.decode("not-a-token")
         self.client.get_signing_keys.assert_not_called()
+
+
+class JwksOutageTests(unittest.TestCase):
+    """Stale-while-error: a JWKS outage keeps known tokens working for a
+    bounded time, refetches at most once per back-off, and answers 503 (not
+    401) when there is nothing to verify against."""
+
+    def setUp(self) -> None:
+        patcher = patch("app.infrastructure.auth.jwt_verifier.PyJWKClient")
+        self.client = patcher.start().return_value
+        self.addCleanup(patcher.stop)
+        self.good = [MagicMock(key_id="kid-1", key=_KEY.public_key())]
+        self.client.get_signing_keys.return_value = self.good
+        self.now = 1_000_000.0
+        clock = patch("app.infrastructure.auth.jwt_verifier.time.monotonic", side_effect=lambda: self.now)
+        clock.start()
+        self.addCleanup(clock.stop)
+        self.verifier = JwtVerifier(_supabase())
+
+    def _down(self) -> None:
+        self.client.get_signing_keys.side_effect = jwt.PyJWKClientConnectionError("unreachable")
+
+    def test_no_key_set_ever_fetched_is_503_not_401(self) -> None:
+        self._down()
+        with self.assertRaises(AuthUnavailableError) as caught:
+            self.verifier.decode(_token())
+        self.assertGreater(caught.exception.retry_after_seconds, 0)
+
+    def test_the_last_good_set_keeps_verifying_through_an_outage(self) -> None:
+        self.assertEqual(self.verifier.decode(_token())["sub"], "user-123")
+        self._down()
+        self.now += 3600
+        with self.assertLogs("videolens", "WARNING"):
+            self.assertEqual(self.verifier.decode(_token())["sub"], "user-123")
+
+    def test_an_invalid_token_is_still_401_while_stale(self) -> None:
+        self.verifier.decode(_token())
+        self._down()
+        self.now += 60
+        with self.assertLogs("videolens", "INFO"), self.assertRaises(jwt.ExpiredSignatureError):
+            self.verifier.decode(_token(exp=int(time.time()) - 3600))
+        other = ec.generate_private_key(ec.SECP256R1())
+        with self.assertRaises(jwt.InvalidSignatureError):
+            self.verifier.decode(_token(key=other))
+
+    def test_past_the_maximum_staleness_it_is_503(self) -> None:
+        self.verifier.decode(_token())
+        self._down()
+        self.now += 6 * 3600 + 1
+        with self.assertRaises(AuthUnavailableError):
+            self.verifier.decode(_token())
+
+    def test_refetch_is_throttled_after_a_failure(self) -> None:
+        self.verifier.decode(_token())
+        self._down()
+        self.now += 1
+        calls = self.client.get_signing_keys.call_count
+        for _ in range(20):
+            self.verifier.decode(_token())
+        self.assertEqual(self.client.get_signing_keys.call_count, calls + 1)
+        self.now += 31
+        self.verifier.decode(_token())
+        self.assertEqual(self.client.get_signing_keys.call_count, calls + 2)
+        # Back up: the next attempt is current again.
+        self.client.get_signing_keys.side_effect = None
+        self.now += 31
+        self.verifier.decode(_token())
+        forged = _header_only({"alg": "ES256", "kid": "made-up"})
+        with self.assertRaises(jwt.PyJWKClientError):
+            self.verifier.decode(forged)
+
+    def test_an_unknown_kid_during_an_outage_is_503(self) -> None:
+        # The rotated key cannot be fetched, so the token may be valid.
+        self.verifier.decode(_token())
+        self._down()
+        self.now += 120
+        forged = _header_only({"alg": "ES256", "kid": "made-up"})
+        with self.assertRaises(AuthUnavailableError):
+            self.verifier.decode(forged)
+
+    def test_an_unknown_kid_still_forces_one_rate_limited_refresh(self) -> None:
+        self.verifier.decode(_token())
+        forged = _header_only({"alg": "ES256", "kid": "made-up"})
+        for _ in range(5):
+            with self.assertRaises(jwt.PyJWKClientError):
+                self.verifier.decode(forged)
+        forced = [call for call in self.client.get_signing_keys.call_args_list if call.kwargs.get("refresh")]
+        self.assertEqual(len(forced), 1)
 
 
 if __name__ == "__main__":

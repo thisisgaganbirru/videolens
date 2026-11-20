@@ -3,16 +3,20 @@
 1. Accounts whose 30-day deletion hold has ended are removed for good: the
    Supabase user first (so nobody can sign in to a half-removed account),
    then every row, saved runs included. A failure leaves the account row,
-   so the next tick retries; both steps are idempotent. An account that
-   somehow still holds a live subscription has it cancelled first, and is
-   skipped (logged) if that fails: never remove an account that still pays.
+   so the next tick retries; both steps are idempotent. Before that, the
+   account's due extra runs are reported and every live subscription its
+   Stripe customer still has is cancelled; if Stripe cannot be read or a
+   cancel fails the account is skipped (logged): never remove an account
+   that still pays. With Stripe not configured nothing can be cancelled and
+   the removal goes ahead, logged (`cancel_account_subscription`).
 2. Saved runs whose post-cancel window has passed are removed, after the
    window is started for any account whose paid plan ended without a
    webhook saying so.
 
 Bounded per tick (`limit`s), idempotent, safe to run on any number of
 workers at once (each removal is a conditional write), and a no-op without
-an account store. Step 2 is also a no-op with billing off.
+an account store. Step 2 runs wherever saved history does (Stripe billing
+or complimentary Plus; docs/backend/saved-history.md).
 """
 
 import logging
@@ -87,7 +91,7 @@ class AccountCleanupUseCase:
         removed = skipped = 0
         for pending in due:
             try:
-                await cancel_account_subscription(self._billing, pending.account_id, only_if_live=True)
+                await cancel_account_subscription(self._billing, pending.account_id)
             except SubscriptionCancelFailedError:
                 logger.error("Account %s not removed: its subscription could not be cancelled", pending.account_id)
                 skipped += 1

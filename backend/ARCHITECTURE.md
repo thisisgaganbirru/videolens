@@ -100,7 +100,7 @@ hardening headers), `api/body_limit.py` (pure-ASGI request body ceiling,
 413; inside CORS so the refusal carries CORS headers, outside slowapi; order
 from outside in: security headers, CORS, body limit, slowapi), `worker/settings.py` (arq `WorkerSettings`; JSON logging and `validate_startup` on startup,
 `container.close()` on shutdown, `job_completion_wait`; takes the BYOK key out of
-the vault before calling the use case and passes the job's timeout `deadline`; cron `flush_extra_runs` every 10 minutes,
+the vault before calling the use case and passes the job's timeout `deadline`; cron `flush_extra_runs` every 10 minutes (reconcile held rows, void due rows past 34 days, then report),
 `account_cleanup` hourly at minute 25). `routes.py` also serves `/api/history*`
 and `POST /api/me/restore`; `dependencies.py` has `require_person_even_if_deleted`,
 used by the restore only.
@@ -180,3 +180,4 @@ one-line shims so the Dockerfile, compose file and Railway configs reference
 - 2026-11-20 · Claude (backend agent) · `media/ytdlp_net.py` (`GuardedYoutubeDL`): yt-dlp requests ride `net.py`'s pinned connections, native downloaders only, so the "every outbound fetch goes through net.py" invariant now holds for yt-dlp too
 - 2026-11-20 · Claude (backend agent) · `SpendCap` gains hold/release/refund (`SpendClaim`); `CredentialFailureGuard` port and adapter, wired into `IdentifyCallerUseCase`; `api/body_limit.py` middleware; `media/deadline.py` (download deadline, dedicated pool) and `media/process.py` (shared ffmpeg runner)
 - 2026-11-20 · Claude (backend agent) · `SchemaRevisionReader` port and adapter, `CheckSchemaUseCase`, `domain/schema_revision.py`; shared `interface/startup.py` for both entry points; worker logging, shutdown and shutdown-retry invariants
+- 2026-11-20 · Claude (backend agent) · `BillingGateway` gains `expire_open_checkout_sessions`, `live_subscription_ids`, `cancel_duplicate_subscription`; `ExtraRunLedger.hold(cap=)` is the atomic cap check, plus `held`, `expire_due`, `due(account_id=)`; `HeldExtraRun` entity; `ExtraRunBilling` takes the `RunRepository` for `reconcile`; `AuthUnavailableError` (503) for a JWKS outage; `GetRunUseCase` takes the `SpendCap`
