@@ -17,7 +17,9 @@ const { version: appVersion } = JSON.parse(
    passes the service variable as a build arg) and a local build without
    .env.local are refused here, loudly. GitHub Actions sets CI=true: its
    application checks build with the fallback on purpose, and the two jobs
-   that ship a build (container publish, Android) check the URL themselves. */
+   that ship a build (container publish, Android) check the URL themselves.
+   A Docker build does not inherit CI, so the security scan's throwaway image
+   passes a `.invalid` placeholder URL (reusable-security-scan.yml). */
 function assertApiBaseUrl() {
   if ((process.env.NEXT_PUBLIC_API_BASE_URL || "").trim()) return;
   if (process.env.CI === "true") return;

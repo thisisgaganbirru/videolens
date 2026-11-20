@@ -334,7 +334,13 @@ console has a loopback host port.
   records build arguments and full build-step metadata into that attestation, so
   never pass a secret via `build-args` — use the `secrets` input instead. Today
   the only build arg is `NEXT_PUBLIC_API_BASE_URL`, which is compiled into
-  client-side JS and therefore public by construction.
+  client-side JS and therefore public by construction. The publish passes the
+  production URL; the security scan passes the placeholder
+  `https://scan-placeholder.invalid` (reserved TLD, never resolves) because
+  `frontend/next.config.mjs` refuses a production build with a blank URL
+  unless `CI=true`, and a Docker build does not inherit the runner's `CI`.
+  The scanned image is discarded, so the placeholder never ships; see
+  `railway-environments.md`, "Blank `NEXT_PUBLIC_API_BASE_URL` fails the build".
 - Third-party GitHub Actions are pinned to commit SHAs. Dependabot monitors
   Docker, Actions, npm, and Python dependency sources. Every entry sets
   `target-branch: dev`, so bumps go through the dev lane like any other change
@@ -856,3 +862,4 @@ jobs.
 - 2026-11-18 · claude (session 01FVkcsidCXWo1CtwAtdwVHV) · cleared the held Dependabot PRs: Python docker ignore now covers semver-minor too (3.13 -> 3.15 is a semver minor; #134 slipped through and auto-merge had queued it); fastapi 0.162.5, boto3 1.44.1 (#136) and google-genai 3.4.0 (#137) taken in one hand-regenerated, marker-preserving `requirements.txt`. Dependabot dropping the uv `--universal` markers is now three-for-three on pip PRs (#95, #136, #137); the CI guard catches it every time
 - 2026-11-20 · claude (session 01FVkcsj3gS4EwsMRTnzy1pr) · added `reusable-commit-hygiene.yml` (`contents: read`, `pull-requests: read` to read the description live so a re-run sees an edited one), called by both lanes as `hygiene` and fed into `required`; rules in `scripts/commit-hygiene.sh`, shared with `.githooks/commit-msg`. See engineering-standards.md, "Commit hygiene"
 - 2026-11-20 · Claude (CI agent) · Android signing split into `signing` / `android` (unsigned, no secrets, Gradle wrapper validation) / `sign` (apksigner, no checkout); nightly scan `build_failure_is_warning`; Dependabot 7-day cooldown and the open gradle entry; corrected the stale dev check-suite-waiting note against railway-environments.md
+- 2026-11-20 · Claude (CI agent) · the security scan's frontend build passes `NEXT_PUBLIC_API_BASE_URL=https://scan-placeholder.invalid`; the new blank-URL guard in `next.config.mjs` failed it (Docker builds do not see `CI=true`)

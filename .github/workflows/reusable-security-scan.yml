@@ -74,6 +74,12 @@ jobs:
         continue-on-error: ${{ !inputs.enforce && inputs.build_failure_is_warning }}
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
+          # This image is scanned and thrown away, never deployed. A blank
+          # backend URL is refused by frontend/next.config.mjs outside CI (and
+          # a Docker build does not see the runner's CI=true), so the frontend
+          # gets a placeholder on the reserved, never-resolving `.invalid`
+          # TLD (RFC 2606). Real builds (Railway, GHCR publish) pass their own.
+          build-args: ${{ matrix.service == 'frontend' && 'NEXT_PUBLIC_API_BASE_URL=https://scan-placeholder.invalid' || '' }}
           cache-from: type=gha,scope=check-${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=check-${{ matrix.service }}
           context: ./${{ matrix.service }}
