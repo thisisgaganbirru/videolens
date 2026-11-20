@@ -1,8 +1,8 @@
 "use client";
 
 import { useId, useMemo, useState } from "react";
-import { AudioLines, ChevronDown, Play, Trash2 } from "lucide-react";
-import { HISTORY_LIMIT, useRunHistory, type HistoryEntry } from "@/application/useRunHistory";
+import { AudioLines, ChevronDown, Play, Trash2, X } from "lucide-react";
+import { HISTORY_LIMIT, removeFromDevice, useRunHistory, type HistoryEntry } from "@/application/useRunHistory";
 import {
   deleteAllSavedRuns,
   deleteSavedRun,
@@ -200,6 +200,7 @@ function HistoryGrid({
     setFilter("all");
     setQuery("");
   };
+  const removal = useDeviceRemoval();
 
   return (
     <>
@@ -274,14 +275,87 @@ function HistoryGrid({
               <h2 className="history-group-label">{group.label}</h2>
               <ul className="poster-grid">
                 {group.runs.map((run) => (
-                  <Poster key={run.run_id} run={run} now={now} onOpen={() => onOpenRun(run.run_id, run.source_kind)} />
+                  <Poster
+                    key={run.run_id}
+                    run={run}
+                    now={now}
+                    onOpen={() => onOpenRun(run.run_id, run.source_kind)}
+                    onRemove={() => removal.ask(run)}
+                  />
                 ))}
               </ul>
             </section>
           ))}
         </div>
       )}
+      <RemoveFromDeviceDialog removal={removal} />
     </>
+  );
+}
+
+/* ---------- removing a run from this device ---------- */
+
+const REMOVE_FALLBACK = "That run could not be removed from this browser. Nothing changed.";
+
+/** "Remove from this device" (2026-11-20): this browser's copy of one run
+ *  goes, after a confirmation. Never the account's saved copy, which has its
+ *  own "Delete from your account" on its card; the wording keeps the two
+ *  apart. */
+function useDeviceRemoval() {
+  const [pending, setPending] = useState<HistoryEntry | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const ask = (run: HistoryEntry) => {
+    setError(null);
+    setPending(run);
+  };
+  const cancel = () => setPending(null);
+  const confirm = async () => {
+    if (!pending || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await removeFromDevice(pending.run_id);
+      setPending(null);
+    } catch {
+      setError(REMOVE_FALLBACK);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return { pending, busy, error, ask, cancel, confirm };
+}
+
+function RemoveFromDeviceDialog({
+  removal,
+  savedElsewhere = false,
+}: {
+  removal: ReturnType<typeof useDeviceRemoval>;
+  /** The account saves runs (paid): say its copies are not touched. */
+  savedElsewhere?: boolean;
+}) {
+  return (
+    <ConfirmDialog
+      open={removal.pending !== null}
+      title="Remove from this device?"
+      confirmLabel="Remove from this device"
+      busyLabel="Removing…"
+      busy={removal.busy}
+      error={removal.error}
+      onConfirm={() => void removal.confirm()}
+      onCancel={removal.cancel}
+    >
+      {removal.pending ? (
+        <p>
+          &ldquo;{posterTitle(removal.pending)}&rdquo; is removed from this browser&rsquo;s History.
+          {savedElsewhere
+            ? " Runs saved to your account are not touched."
+            : " Nothing saved anywhere else changes."}
+        </p>
+      ) : null}
+    </ConfirmDialog>
   );
 }
 
@@ -399,6 +473,7 @@ function SavedHistory({
   };
 
   const emptySaved = saved.settled && !failed && items.length === 0;
+  const removal = useDeviceRemoval();
 
   return (
     <div className="history" data-saved={saved.mode}>
@@ -542,6 +617,7 @@ function SavedHistory({
                     run={run}
                     now={now}
                     onOpen={() => onOpenRun(run.run_id, run.source_kind)}
+                    onRemove={() => removal.ask(run)}
                   />
                 ))}
               </ul>
@@ -549,6 +625,8 @@ function SavedHistory({
           ))}
         </section>
       ) : null}
+
+      <RemoveFromDeviceDialog removal={removal} savedElsewhere />
 
       <ConfirmDialog
         open={pending !== null}
@@ -623,6 +701,7 @@ function Poster({
   now,
   onOpen,
   onDelete,
+  onRemove,
   busy = false,
 }: {
   run: HistoryEntry;
@@ -630,6 +709,9 @@ function Poster({
   onOpen: () => void;
   /** Saved runs only: removes it from the account (after a confirmation). */
   onDelete?: () => void;
+  /** This browser's runs only: removes this browser's copy (after a
+   *  confirmation). A card has one or the other, never both. */
+  onRemove?: () => void;
   busy?: boolean;
 }) {
   const chip = platformLabel(run);
@@ -641,7 +723,7 @@ function Poster({
     <li
       className="poster-item"
       data-orientation={isLandscape(run) ? "landscape" : "portrait"}
-      data-deletable={onDelete ? "" : undefined}
+      data-deletable={onDelete || onRemove ? "" : undefined}
     >
       <button
         type="button"
@@ -685,6 +767,19 @@ function Poster({
         >
           <span className="poster-delete__disc" aria-hidden="true">
             <Trash2 className="poster-delete__icon" />
+          </span>
+        </button>
+      ) : onRemove ? (
+        /* A cross, not the bin: this only clears this browser's copy. */
+        <button
+          type="button"
+          className="poster-delete"
+          data-action="remove"
+          aria-label={`Remove ${posterTitle(run)} from this device`}
+          onClick={onRemove}
+        >
+          <span className="poster-delete__disc" aria-hidden="true">
+            <X className="poster-delete__icon" />
           </span>
         </button>
       ) : null}

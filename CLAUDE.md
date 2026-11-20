@@ -29,7 +29,7 @@ npm run dev                # http://localhost:3005
 npx tsc --noEmit           # CI typecheck; there is no frontend test suite
 npm run build              # CI
 npm run build:mobile       # CI; the Capacitor static export
-npm run lint               # not in CI; exits 1 on 4 known findings, see .claude/rules/frontend.md
+npm run lint               # not in CI; exits 1 on 4 known findings (3 errors + 1 warning), see .claude/rules/frontend.md
 ```
 
 Full stack: `cp backend/.env.example backend/.env && docker compose up --build`

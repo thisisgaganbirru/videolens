@@ -19,7 +19,6 @@ shells").
 - `frontend/app/layout.tsx` — `<html>`/`<body>`, the pre-paint theme script, and the `.viewport` flex column the shell sits in.
 - `frontend/app/tokens.css` — palette, type, space, shape, motion tokens.
 - `frontend/app/globals.css` — the shared class vocabulary (`.shell`, `.nav`, `.nav-tab`, `.view-scroll`, `.view-head`/`.view-title`, …).
-- `frontend/components/useMediaQuery.ts` — `useSyncExternalStore` wrapper over `matchMedia` (server snapshot `false`); for the rare case where React, not just CSS, must know the width (History's hidden sort).
 - `frontend/components/AppBackLink.tsx` + `frontend/application/backNavigation.ts` — the installed app's "‹ Back" link above the title of API key, Releases, Privacy and Terms, and the "is the previous entry in-app?" check behind it. See "App-shell Back link".
 
 ## Structure
@@ -969,6 +968,18 @@ h1, no horizontal overflow, the Account tab is in the DOM, the idle page does
 not scroll at 1280x800, and in the app shell "Analyze link" sits above the
 dock (bottom 434 vs dock top 560 at 320x640; 374 vs 835 at 412x915).
 
+## Tab title kept (review fix, 2026-11-20)
+
+`useDocumentTitle` used to set `document.title` once per label, and Next
+writes the route's metadata title back on its own schedule (a query-only
+navigation such as `?view=history`), which undid it. While mounted it now
+watches `<head>` with a `MutationObserver` (child list, subtree, character
+data) and puts the view's title back whenever it differs; the equality
+check ends the loop its own write starts. Plain DOM in an effect: the same
+in the web build and the static export, and no inline script, so nothing
+for the CSP. The disconnect on unmount drops any pending record, so another
+route's title is left alone.
+
 ## Changelog
 
 - 2026-11-14 · Codex · idle Analyze now uses one centred 38.75rem column at every width with a New analysis h1, allowance above and retention below the card; removed the idle companion panel while retaining shared landing styles and existing run/result/failed layouts
@@ -1011,3 +1022,4 @@ dock (bottom 434 vs dock top 560 at 320x640; 374 vs 835 at 412x915).
 - 2026-11-14 · frontend agent · UX fix spec batch c: per-view document titles via `useDocumentTitle`
 - 2026-11-14 · frontend agent · UX fix spec batch e: phone menu order Analyze, History, Account, Gemini key, Releases with a gap before the minor pair; signed-out menu row "Sign in for 10 runs a day" on every route
 - 2026-11-14 · frontend agent · idle Analyze column widened to 46rem (one line per intake line on desktop); Codex's single-column layout verified in the browser at 320-1440, both shells, both themes
+- 2026-11-20 · Claude (frontend agent) · `useDocumentTitle` re-asserts the view's title when something overwrites it (MutationObserver on head); removed the deleted `components/useMediaQuery.ts` from the file list

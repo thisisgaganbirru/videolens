@@ -28,10 +28,11 @@ and host → platform), `ports.ts` (the interfaces below).
 | `AccountHoldSource` | `apiClient.ts` | the shared client itself: tells listeners about every 410 `account_pending_deletion` |
 | `ServerAuthStatus`, `CallerIdentity` | `serverAuthStatus.ts`, `apiClient.ts` | the server's `auth` capability (fed by the capabilities adapter, gates the bearer); the identity requests go out as (History `owner`) |
 | `CapabilitiesGateway` | `capabilitiesGateway.ts` | `/api/capabilities`, no caller identity |
+| `LimitsGateway` | `limitsGateway.ts` | `/api/limits` (upload length and size per tier), no caller identity |
 | `FreeRunsGateway`, `DeviceTokenStore` | `freeRunsGateway.ts`, `deviceTokenStore.ts` | `/api/free-runs`; `localStorage` |
 | `BillingGateway` | `billingGateway.ts` | `/api/billing`, `/api/billing/checkout`, `/api/billing/portal` |
 | `ApiKeyStore` | `apiKeyStore.ts` | `localStorage` (BYOK) |
-| `HistoryStore` | `historyStore.ts` | IndexedDB, capped at 20, `BroadcastChannel` across tabs |
+| `HistoryStore` | `historyStore.ts` | IndexedDB, capped at 20, `BroadcastChannel` across tabs; `remove`/`removeOwnedBy` resolve when storage is unavailable |
 | `ActiveRunStore` | `activeRunStore.ts` | `sessionStorage`, so a reload resumes the run |
 | `VersionLogGateway`, `UpdateChecker`, `UpdateDismissalStore` | `versionLogGateway.ts`, `updateCheck.ts`, `updateDismissalStore.ts` | `/api/releases`; `@capacitor/app` for the installed build |
 | `SharedUrlSource` | `sharedUrlSource.ts` | Android share intent, web `share_target` |
@@ -43,7 +44,12 @@ the site's own public origin (`NEXT_PUBLIC_SITE_URL`, canonical links, sitemap,
 the preview image) and the `NEXT_PUBLIC_NOINDEX` switch; `clientId.ts`
 the persisted client id. `apiClient.ts` is the shared caller transport every
 caller-scoped gateway (runs, free runs, account) uses: `X-Client-ID` always,
-`X-Device-Token` when held, `Authorization: Bearer` when signed in.
+`X-Device-Token` when held, `Authorization: Bearer` when signed in;
+`sendAs` also returns the identity a request went out as, which History files
+a run under. `authSessionStamp.ts` names the provider's storage key and
+exports the pre-paint script that stamps `data-session` on `<html>`;
+`layoutHints.ts` keeps the small localStorage hints (runs spent, plan) and
+their pre-paint script, so reserved space matches before hydration.
 
 **`application/`** — one hook or React-free module per concern.
 `useAnalysisRun` (submit, poll, open from history, reset; the 401 retry and
@@ -54,7 +60,13 @@ caller-scoped gateway (runs, free runs, account) uses: `X-Client-ID` always,
 `/app?view=…`, switched with `pushState` so the shell is never unmounted),
 `backNavigation` + `useHardwareBack`, `useResultExport`, `useSoftKeyboard`,
 `useSystemBarsTheme`, `useFirstRun`, `useAuthSession` (`useAuthUser`,
-`useEmailCodeSignIn`), `useAccount`, `useApiKeys`, `useAccountEntry` (the Account entry for routes other than `/app`, used by `RouteNav`/`RouteTabBar`). `landingRedirect.ts`, `firstRunScripts.ts`
+`useEmailCodeSignIn`, `signOut`, which also removes account-owned History
+rows), `useAccount`, `useApiKeys`, `useAccountEntry` (the Account entry for routes other than `/app`, used by `RouteNav`/`RouteTabBar`),
+`useMediaLimits` (reads `limitsGateway`), `useLayoutHints` (writes
+`layoutHints`), `useDocumentTitle` (the view's tab title, re-asserted when
+Next overwrites it), `accountAllowance` (the owner's quoted allowances, a
+plain module so server components can import the numbers),
+`useSavedHistory` (paid saved runs) and `accountHold` (the deletion hold). `landingRedirect.ts`, `firstRunScripts.ts`
 and `nativeFontScale.ts` export pre-paint inline scripts (strings), inlined by
 `app/layout.tsx`.
 
@@ -136,8 +148,9 @@ scale into the WebView before first paint).
   `domain/ports.ts` if it talks outside, adapter in `infrastructure/`,
   registered in `container.ts`.
 - Tab → `MAIN_TABS` (`useMainTab.ts`), `TAB_LABEL` (`AppNav.tsx`), a
-  `MoreSheet` row if the installed shell should reach it, a `.tab-view`
-  section in `HomeScreen.tsx`, a component in `panels/`.
+  `MoreSheet` row if the installed shell should reach it, a
+  `<main className="view-scroll">` branch in `HomeScreen.tsx`, a component in
+  `panels/`.
 - Native capability → a port, a Capacitor adapter that is a no-op off-device,
   and the Java side under `android/app/src/main/java/ai/videolens/app/`.
 
@@ -154,4 +167,5 @@ scale into the WebView before first paint).
 - 2026-11-08 · frontend subagent (auth phase 2) · `AuthSession` + `SupabaseAuthSession`/`NullAuthSession`, `AccountGateway`, shared `ApiClient` (runs and free-runs gateways now take it), hooks `useAuthSession`/`useAccount`/`useApiKeys`, `account` tab and `AccountPanel`; see docs/frontend/auth-sign-in.md
 - 2026-11-08 · frontend subagent (auth phase 2, review fixes) · `ServerAuthStatus` + `MemoryServerAuthStatus`, `CallerIdentity` on `ApiClient`, `HistoryRecord.owner` and `recordGone`; see docs/frontend/auth-sign-in.md
 - 2026-11-13 · frontend agent · `BillingGateway` + `FetchBillingGateway`, hook `useBilling` (`useBilling`, `useBillingActions`), `takeSearchParam` in `useMainTab`; see docs/frontend/billing.md
-2026-11-14 · frontend agent · `SavedHistoryGateway` + `FetchSavedHistoryGateway`, `AccountHoldSource` (the `ApiClient` itself), `AccountGateway.restoreAccount`, hooks `useSavedHistory` and `accountHold` (`useAccountHold`, `useAccountRestore`, `useRestoredEpoch`), `ConfirmDialog`; see docs/frontend/saved-history.md
+- 2026-11-14 · frontend agent · `SavedHistoryGateway` + `FetchSavedHistoryGateway`, `AccountHoldSource` (the `ApiClient` itself), `AccountGateway.restoreAccount`, hooks `useSavedHistory` and `accountHold` (`useAccountHold`, `useAccountRestore`, `useRestoredEpoch`), `ConfirmDialog`; see docs/frontend/saved-history.md
+- 2026-11-20 · Claude (frontend agent) · `HistoryStore.remove`/`removeOwnedBy`, `AuthSession.recover`, `ApiClient.sendAs` + `AsOwner` results from `RunsGateway`, `ApiError.retryAfter`, `createRun(source, signal)`; codemap now lists `limitsGateway`/`useMediaLimits`, `layoutHints`/`useLayoutHints`, `authSessionStamp`, `useDocumentTitle`, `accountAllowance`, `useSavedHistory`/`accountHold`; "Adding something new" names `view-scroll`, not `.tab-view`

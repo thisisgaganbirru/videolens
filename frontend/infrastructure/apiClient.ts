@@ -37,6 +37,24 @@ export const UNREADABLE = "The server replied with something this app could not 
 const SIGN_IN_UNCONFIRMED =
   "Your sign-in could not be confirmed just now. Check your connection; the app will try again.";
 
+/** Seconds to wait from a `Retry-After` header: delta-seconds or an HTTP
+ *  date. Null when absent, unreadable or already past. Note that a browser
+ *  only lets the page read this header cross-origin when the API lists it in
+ *  `Access-Control-Expose-Headers`; until then this is null and the caller
+ *  keeps its general wording. */
+export function retryAfterSeconds(value: string | null, now: number = Date.now()): number | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) {
+    const seconds = Number(trimmed);
+    return seconds > 0 ? seconds : null;
+  }
+  const at = Date.parse(trimmed);
+  if (Number.isNaN(at)) return null;
+  const seconds = Math.ceil((at - now) / 1000);
+  return seconds > 0 ? seconds : null;
+}
+
 /** How long a signed-in request waits for the capability report. */
 const SERVER_AUTH_WAIT_MS = 4000;
 
@@ -109,18 +127,31 @@ export class ApiClient implements CallerIdentity, AccountHoldSource {
   /** Transport only: resolves with whatever HTTP response came back (status
    *  untouched), throws `NetworkError` when none came back at all. `extra`
    *  headers are added last (the Gemini key on run creation, a JSON
-   *  content type). */
+   *  content type). An aborted request rethrows the `AbortError` itself, so
+   *  a cancel is never mistaken for the server being down. */
   async send(path: string, init: RequestInit = {}, extra: Record<string, string> = {}): Promise<Response> {
+    return (await this.sendAs(path, init, extra)).res;
+  }
+
+  /** `send`, plus the identity this request went out as. A caller that files
+   *  the answer under an owner (History) takes it from here, not from
+   *  `lastOwner()`, which another request may have moved on since. */
+  async sendAs(
+    path: string,
+    init: RequestInit = {},
+    extra: Record<string, string> = {}
+  ): Promise<{ res: Response; owner: string | null }> {
     const headers = { ...(await this.identityHeaders()), ...extra };
     const owner = this.owner;
     let res: Response;
     try {
       res = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
-    } catch {
+    } catch (error) {
+      if (init.signal?.aborted) throw error;
       throw new NetworkError(UNREACHABLE);
     }
     await this.noticeHold(res, owner);
-    return res;
+    return { res, owner };
   }
 
   /** A 2xx whose body will not parse is still a server-side problem, so it
@@ -134,13 +165,14 @@ export class ApiClient implements CallerIdentity, AccountHoldSource {
   }
 
   /** A non-2xx as an `ApiError` carrying the backend's own `detail` (when it
-   *  is a string) and `code`, else `fallback (status)`. */
+   *  is a string), `code` and `Retry-After`, else `fallback (status)`. */
   async reject(res: Response, fallback: string): Promise<never> {
     const body = await res.json().catch(() => null);
     const detail = typeof body?.detail === "string" ? body.detail : null;
     const code = typeof body?.code === "string" ? body.code : undefined;
     const purgeAt = typeof body?.purge_at === "string" ? body.purge_at : undefined;
-    throw new ApiError(detail || `${fallback} (${res.status})`, res.status, { code, purgeAt });
+    const retryAfter = retryAfterSeconds(res.headers.get("Retry-After")) ?? undefined;
+    throw new ApiError(detail || `${fallback} (${res.status})`, res.status, { code, purgeAt, retryAfter });
   }
 
   async json<T>(path: string, init: RequestInit, fallback: string): Promise<T> {

@@ -147,6 +147,52 @@ export class IndexedDbHistoryStore implements HistoryStore {
     this.notify(true);
   }
 
+  /* The two removals resolve, never reject, when the browser keeps nothing:
+     a missing or blocked IndexedDB holds no rows, so there is nothing to
+     remove, and sign-out must not fail on it. A real transaction error still
+     rejects. */
+  private async openForRemoval(): Promise<IDBDatabase | null> {
+    try {
+      return await this.open();
+    } catch (error) {
+      if (error instanceof StorageUnavailableError) return null;
+      throw error;
+    }
+  }
+
+  async remove(runId: string): Promise<void> {
+    const db = await this.openForRemoval();
+    if (!db) return;
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).delete(runId);
+    await done(tx);
+    this.notify(true);
+  }
+
+  async removeOwnedBy(match: (owner: string) => boolean): Promise<number> {
+    const db = await this.openForRemoval();
+    if (!db) return 0;
+    const tx = db.transaction(STORE, "readwrite");
+    let removed = 0;
+    await new Promise<void>((resolve, reject) => {
+      const cursorRequest = tx.objectStore(STORE).openCursor();
+      cursorRequest.onerror = () => reject(cursorRequest.error);
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) return resolve();
+        const owner = (cursor.value as HistoryRecord).owner;
+        if (typeof owner === "string" && match(owner)) {
+          cursor.delete();
+          removed += 1;
+        }
+        cursor.continue();
+      };
+    });
+    await done(tx);
+    if (removed > 0) this.notify(true);
+    return removed;
+  }
+
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     this.ensureChannel();

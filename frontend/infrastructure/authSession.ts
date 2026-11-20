@@ -47,6 +47,8 @@ export class NullAuthSession implements AuthSession {
     return null;
   }
 
+  async recover(): Promise<void> {}
+
   async requestEmailCode(): Promise<void> {
     throw new AuthFlowError("unavailable", "sign-in is not configured");
   }
@@ -215,6 +217,23 @@ export class SupabaseAuthSession implements AuthSession {
     if (token) return token;
     if (this.hasSession()) throw unavailable("token refresh failed");
     return null;
+  }
+
+  async recover(): Promise<void> {
+    /* A provider that never loaded is loaded again (`load` resets itself on
+       failure); a loaded one is asked for the stored session again, which
+       retries the refresh that failed. */
+    try {
+      if (!this.client) {
+        await this.load();
+      } else {
+        const { data } = await this.client.auth.getSession();
+        this.session = data.session;
+      }
+    } catch {
+      /* still unreachable: the stored session stays for the next try */
+    }
+    this.notify();
   }
 
   private async ready(): Promise<SupabaseClient> {

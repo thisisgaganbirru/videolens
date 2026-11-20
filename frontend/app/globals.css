@@ -2343,12 +2343,18 @@ h3 {
   }
   /* Chromium draws the mask bullets at the field's font size; one step up
      matches the board's weight of dot. */
-  input.key-field[type="password"] {
+  input.key-field[type="password"],
+  input.key-field[data-masked] {
     font-size: 1.125rem;
   }
-  input.key-field[type="text"] {
+  input.key-field[type="text"]:not([data-masked]) {
     letter-spacing: 0;
     font-variant-numeric: tabular-nums;
+  }
+  /* 2026-11-20: where the engine can mask a text field, the key is one, so
+     no password manager offers to save it (ApiKeyPanel.tsx). */
+  input.key-field[data-masked] {
+    -webkit-text-security: disc;
   }
   .key-reveal {
     all: unset;

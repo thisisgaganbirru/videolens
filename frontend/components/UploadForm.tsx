@@ -106,19 +106,35 @@ function validateUrl(value: string): string | null {
   }
 }
 
-function readMediaDuration(file: File): Promise<number> {
-  return new Promise((resolve, reject) => {
+/* How long the length check may hold the submit. A file the browser cannot
+   decode (or a WebView that never fires either event) is not refused: the
+   backend's check is the authoritative one. */
+const DURATION_READ_MS = 5000;
+
+/** The file's length in seconds, or null when the browser cannot say: no
+ *  metadata in time, a decode error, or a duration that is not a finite
+ *  number (a stream reports Infinity; some containers NaN). Never rejects. */
+function readMediaDuration(file: File): Promise<number | null> {
+  return new Promise((resolve) => {
     const media = document.createElement(file.name.toLowerCase().endsWith(".mp3") ? "audio" : "video");
+    const url = URL.createObjectURL(file);
+    let settled = false;
+    const finish = (value: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      media.onloadedmetadata = null;
+      media.onerror = null;
+      media.removeAttribute("src");
+      media.load();
+      URL.revokeObjectURL(url);
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(null), DURATION_READ_MS);
     media.preload = "metadata";
-    media.onloadedmetadata = () => {
-      URL.revokeObjectURL(media.src);
-      resolve(media.duration);
-    };
-    media.onerror = () => {
-      URL.revokeObjectURL(media.src);
-      reject(new Error("Could not read media metadata."));
-    };
-    media.src = URL.createObjectURL(file);
+    media.onloadedmetadata = () => finish(Number.isFinite(media.duration) && media.duration > 0 ? media.duration : null);
+    media.onerror = () => finish(null);
+    media.src = url;
   });
 }
 
@@ -236,7 +252,7 @@ export default function UploadForm({
       setChecking(true);
       try {
         const duration = await readMediaDuration(file);
-        if (duration > maxDurationSeconds) {
+        if (duration !== null && duration > maxDurationSeconds) {
           showError(
             `Media is ${Math.round(duration)}s long, which exceeds the ${durationLabel(maxDurationSeconds)} limit.`,
             "file"

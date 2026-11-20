@@ -121,17 +121,24 @@ function patchFromSummary(summary: RunSummary): HistoryPatch {
 /* ---------- writes from the analysis flow ---------- */
 
 /** Filed the moment the server accepts a run. For an upload the browser
- *  already knows the kind of file; a link's platform comes from the server. */
-export function recordSubmitted(runId: string, status: HistoryRecord["status"], source: MediaSource): void {
+ *  already knows the kind of file; a link's platform comes from the server.
+ *  `owner` is who the create request went out as (`AsOwner` from the
+ *  gateway), taken from that request rather than from whatever went out
+ *  last. */
+export function recordSubmitted(
+  runId: string,
+  status: HistoryRecord["status"],
+  source: MediaSource,
+  owner: string | null
+): void {
+  if (forgotten.has(runId)) return;
   const patch: HistoryPatch = {
     run_id: runId,
     status,
     created_at: new Date().toISOString(),
     source_kind: source.file ? "file" : "link",
   };
-  /* Who the server holds it for: the identity the create request just went
-     out as. */
-  const owner = callerIdentity.lastOwner();
+  /* Who the server holds it for. */
   if (owner) patch.owner = owner;
   if (source.url) patch.source_url = source.url;
   if (source.file) {
@@ -153,7 +160,7 @@ function signature(run: RunStatusResponse): string {
 /** File one observed status response. Called for every response the analysis
  *  screen applies (poll, reconnect, reopen). */
 export function recordRunResponse(run: RunStatusResponse): void {
-  if (!run?.run_id) return;
+  if (!run?.run_id || forgotten.has(run.run_id)) return;
   const sig = signature(run);
   if (lastWritten.get(run.run_id) === sig) return;
   lastWritten.set(run.run_id, sig);
@@ -247,29 +254,30 @@ function writeFlag(): void {
 async function importOnce(): Promise<Set<string>> {
   const handled = new Set<string>();
   if (readFlag()) return handled;
-  let summaries: RunSummary[];
+  let listed: { runs: RunSummary[]; owner: string | null };
   try {
-    summaries = (await runsGateway.listRuns()).runs;
+    listed = await runsGateway.listRuns();
   } catch {
     return handled;
   }
   writeFlag();
-  await importSummaries(summaries, handled);
+  await importSummaries(listed.runs, listed.owner, handled);
   return handled;
 }
 
 /** Files each server-side run into History (skipping ones already holding a
- *  result), noting each id in `handled`. Never rejects. */
-async function importSummaries(summaries: RunSummary[], handled: Set<string>): Promise<void> {
+ *  result), noting each id in `handled`. `owner` is who the list request
+ *  went out as. Never rejects. */
+async function importSummaries(summaries: RunSummary[], owner: string | null, handled: Set<string>): Promise<void> {
   for (const summary of summaries) {
     handled.add(summary.run_id);
+    if (forgotten.has(summary.run_id)) continue;
     try {
       const existing = await historyStore.get(summary.run_id);
       if (existing?.result) continue;
       const patch = patchFromSummary(summary);
       /* Listed for the identity the list request went out as. A row this
          browser already filed keeps the owner it was filed with. */
-      const owner = callerIdentity.lastOwner();
       if (owner && !existing?.owner) patch.owner = owner;
       await historyStore.upsert(patch);
       const run = await runsGateway.getRun(summary.run_id);
@@ -294,8 +302,8 @@ export function importServerRuns(): Promise<void> {
     identityImport = (async () => {
       try {
         await bootHistory();
-        const summaries = (await runsGateway.listRuns()).runs;
-        await importSummaries(summaries, new Set());
+        const listed = await runsGateway.listRuns();
+        await importSummaries(listed.runs, listed.owner, new Set());
       } catch {
         /* offline, or the server forgot: History is unchanged */
       }
@@ -304,6 +312,70 @@ export function importServerRuns(): Promise<void> {
     });
   }
   return identityImport;
+}
+
+/* ---------- leaving this device ---------- */
+
+/* Ids removed from this device during this page load. A poll or an import
+   already in flight when the row went must not file it again, so every write
+   above checks this first. In memory only: after a reload nothing is in
+   flight. */
+const forgotten = new Set<string>();
+
+function isAccountOwner(owner: string): boolean {
+  return owner.startsWith("user:");
+}
+
+/** "Remove from this device" on one History row. Only this browser's copy
+ *  goes; a copy saved to the account (paid plan) is not touched. Rejects when
+ *  the store refused the delete, so the dialog can say so. */
+export async function forgetRun(runId: string): Promise<void> {
+  forgotten.add(runId);
+  lastWritten.delete(runId);
+  await historyStore.remove(runId);
+}
+
+let forgetting: Promise<void> | null = null;
+
+/** This device is now signed out (sign out, account deletion, "Continue
+ *  signed out", another tab signing out, or a stale signed-in row found at
+ *  load with no session stored): every row filed under a signed-in account
+ *  (`owner` `user:<id>`, any id) leaves this device. Anonymous rows
+ *  (`anonymous`) and rows written before accounts existed (no owner) stay:
+ *  they were never an account's. Any id rather than "the one who just left"
+ *  because nobody is signed in here afterwards, a stuck session may not know
+ *  its id, and it also sweeps rows an older build left behind. Waits for an
+ *  identity import still filing rows first. Idempotent, safe from several
+ *  tabs at once, never rejects. */
+export function forgetAccountHistory(): Promise<void> {
+  if (!forgetting) {
+    forgetting = (async () => {
+      try {
+        if (identityImport) await identityImport;
+      } catch {
+        /* the import never rejects; belt and braces */
+      }
+      try {
+        const records = await historyStore.list();
+        for (const record of records) {
+          if (record.owner && isAccountOwner(record.owner)) {
+            forgotten.add(record.run_id);
+            lastWritten.delete(record.run_id);
+          }
+        }
+      } catch {
+        /* storage unavailable: nothing is kept here to forget */
+      }
+      try {
+        await historyStore.removeOwnedBy(isAccountOwner);
+      } catch {
+        /* a refused delete leaves the rows; the next sign-out or load tries again */
+      }
+    })().finally(() => {
+      forgetting = null;
+    });
+  }
+  return forgetting;
 }
 
 /** A run left queued/processing when the tab closed is asked about once. If

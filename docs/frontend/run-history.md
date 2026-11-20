@@ -111,15 +111,9 @@ Source of truth: `design/shots/HistoryA.png`, `HistoryADark.png`,
   row, then the pill row, which scrolls sideways and bleeds off the right
   edge; **sort is hidden** (`HistoryWeb.png`, `HistoryMobile.png`). A visually hidden polite
   status announces "N runs shown" only once something has narrowed the list.
-- **Sort hidden ⇒ Newest.** `HistoryGrid` reads
-  `useMediaQuery("(min-width: 48rem)")` (`components/useMediaQuery.ts`, a
-  `useSyncExternalStore` wrapper — no set-state-in-effect) and orders by
-  `sortVisible ? sort : "newest"`. The CSS breakpoint that hides
-  `.history-sort` is the same 48rem, so the list can never be ordered by a
-  control the user cannot see. The desktop choice is kept in state, not reset:
-  narrow to a phone width and back, and "Oldest" returns (verified 1366 →
-  390 → 1366). The server snapshot is `false` (Newest), which is also the
-  default, so the static export hydrates without a mismatch.
+- **Sort hidden ⇒ Newest** (superseded by "Sort on every width" below):
+  sort is now drawn on every width and `HistoryGrid` orders by the `sort`
+  state directly, with no width check.
 - **Groups**: `h2.history-group-label` eyebrows TODAY / EARLIER THIS WEEK /
   EARLIER (+ UNDATED for an unparseable `created_at`, always last). "This
   week" = the previous six calendar days, the window where a bare weekday
@@ -287,8 +281,7 @@ different controls by rotation. `.history-sort` is no longer `display: none`
 below 48rem: the phone grid is `minmax(0, 1fr) auto` with areas
 `search sort / filters filters`, so the select shares the search row and no
 row is added. `HistoryGrid` dropped the `useMediaQuery` gate and orders by the
-`sort` state directly (`components/useMediaQuery.ts` is now unused; left in
-place). Measured with four seeded IndexedDB runs (today, 1, 3, 10 days ago) at
+`sort` state directly (the `useMediaQuery` hook was later deleted). Measured with four seeded IndexedDB runs (today, 1, 3, 10 days ago) at
 360x640, 390x844 light/dark, 844x390 dark, 1280x800: Newest = Alpha, Bravo,
 Charlie, Delta with groups Today / Earlier this week / Earlier; Oldest =
 reversed, groups reversed; YouTube + Oldest = Alpha only; no page or section
@@ -386,6 +379,56 @@ sort are not drawn there. Every other case (anonymous, free, an older
 backend, sign-in or billing off) is this page exactly as described above.
 The whole design is in `saved-history.md`.
 
+## Leaving this device (review fix, 2026-11-20)
+
+A run made signed in used to stay in this browser's History after sign-out,
+so a borrowed device kept someone's results. Now:
+
+- **What goes, and when.** Whenever this device ends up signed out, every
+  row whose `owner` is `user:<id>` (any id) is removed: an explicit Sign
+  out, account deletion (which signs out), "Continue signed out" on an
+  unconfirmed session, "Sign out everywhere", and a sign-out seen from
+  another tab or ended by the provider (`useHistoryBoot` sees the user go to
+  null with no session stored). Rows owned `anonymous`, and rows with no
+  owner (written before accounts existed), stay: they were never an
+  account's. "Any id" rather than "the one who just left" because nobody is
+  signed in here afterwards, a stuck session may not know its id, and it
+  also sweeps rows an older build left behind. The first settle of a load
+  with nobody signed in and no session stored runs the same sweep. A session
+  that is stored but could not be recovered (an outage) is **not** a
+  sign-out and removes nothing.
+- **Consequence worth knowing.** A free signed-in person's own runs leave
+  this device's History when they sign out (they exist nowhere else); a
+  Plus person's saved copies stay on the account. The Account page's "On
+  this device" note and the Privacy page say so.
+- **Mechanics.** `historySync.forgetAccountHistory()` waits for an identity
+  import in flight, records the ids it is about to remove in an in-memory
+  `forgotten` set (so a poll or import already in flight cannot file the row
+  again during this page load), then calls
+  `HistoryStore.removeOwnedBy(owner => owner.startsWith("user:"))`.
+  `useAuthSession.signOut()` runs the provider sign-out and this side by
+  side and awaits both (`Promise.allSettled`): the removal is local and runs
+  even when the provider's network call fails. A sign-out in another tab is
+  covered twice: that tab's removal broadcasts on `videolens-history`, and
+  this tab's own `useHistoryBoot` runs the sweep.
+- **Remove from this device.** Every browser-only History card (the plain
+  grid, and the "Only in this browser" group on the saved view) has a cross
+  button, aria "Remove {title} from this device", in the `poster-delete`
+  slot saved cards use for their bin. It opens `ConfirmDialog`: title
+  "Remove from this device?", confirm "Remove from this device", busy
+  "Removing…", body "“{title}” is removed from this browser’s
+  History. Nothing saved anywhere else changes." (on the saved view: "Runs
+  saved to your account are not touched."). A failure says "That run could
+  not be removed from this browser. Nothing changed." The saved card keeps
+  its bin and "Delete from your account"; the cross never appears on it.
+- **Port.** `HistoryStore.remove(runId)` and `removeOwnedBy(match)` resolve
+  (a no-op, 0) when IndexedDB is missing or blocked; a real transaction error
+  still rejects. Both notify and broadcast. Cap and ordering are unchanged.
+- **Owner from the request.** `recordSubmitted` and the server import now
+  take the owner the request itself went out as (`ApiClient.sendAs`,
+  `AsOwner<...>` from `RunsGateway`), not `callerIdentity.lastOwner()`,
+  which another request may have moved on since.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported HistoryPanel to day-grouped rows with status dots; fixed duplicate React keys on non-adjacent "Undated" groups
@@ -406,3 +449,4 @@ The whole design is in `saved-history.md`.
 - 2026-11-14 · frontend agent · UX fix spec batch d: lede names the limit and this browser; empty and storage states get the filled "Analyze a video"
 - 2026-11-14 · frontend agent · UX fix spec follow-up: the shared-link effect no longer clears `fromHistory` (lint: setter used before its declaration); the next submit clears it
 2026-11-14 · frontend agent · paid saved history: while the account saves runs (or the plan ended) History lists the account's runs with Load more, browser-only runs in a quieter second group, no filters/search/sort; free and anonymous unchanged (see saved-history.md)
+- 2026-11-20 · Claude (frontend agent) · History: account-owned rows (`owner` `user:*`) leave this device on every sign-out path; anonymous and legacy rows stay; "Remove from this device" on browser-only cards; `HistoryStore.remove`/`removeOwnedBy`; owner taken from the request (`sendAs`); stale useMediaQuery reference marked superseded

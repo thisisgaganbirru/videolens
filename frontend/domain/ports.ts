@@ -23,10 +23,16 @@ import type {
   RunStatusResponse,
 } from "./entities";
 
+/** A response plus the identity it was asked as (`user:<id>`, `anonymous`,
+ *  or null when a token came without a known user). Read from the request
+ *  itself, so a second request in flight cannot change whose it is. */
+export type AsOwner<T> = T & { owner: string | null };
+
 export interface RunsGateway {
-  createRun(source: MediaSource): Promise<RunCreateResponse>;
+  /** `signal` aborts the upload (cancel, or the screen going away). */
+  createRun(source: MediaSource, signal?: AbortSignal): Promise<AsOwner<RunCreateResponse>>;
   getRun(runId: string): Promise<RunStatusResponse>;
-  listRuns(): Promise<RunListResponse>;
+  listRuns(): Promise<AsOwner<RunListResponse>>;
 }
 
 /**
@@ -34,9 +40,10 @@ export interface RunsGateway {
  * one-hour hold on a run. Capped: once more than `HISTORY_LIMIT` runs are
  * stored, the oldest (by `created_at`) is dropped.
  *
- * Every method rejects with `StorageUnavailableError` when the browser offers
- * no usable storage; callers that only *write* history swallow that, because
- * History must never be the reason an analysis fails.
+ * The read and write methods reject with `StorageUnavailableError` when the
+ * browser offers no usable storage; callers that only *write* history swallow
+ * that, because History must never be the reason an analysis fails. The two
+ * removals resolve instead: an empty store has nothing to remove.
  */
 export interface HistoryStore {
   /** Every stored run, newest first. */
@@ -44,6 +51,13 @@ export interface HistoryStore {
   get(runId: string): Promise<HistoryRecord | null>;
   /** Merge into the stored record (or create it), then enforce the cap. */
   upsert(patch: HistoryPatch): Promise<void>;
+  /** Drop one stored run from this device. Resolves (a no-op) when storage
+   *  is unavailable: there is nothing kept here to remove. */
+  remove(runId: string): Promise<void>;
+  /** Drop every stored run whose `owner` passes `match`; resolves with how
+   *  many went. Rows with no owner are never matched. Resolves 0 when storage
+   *  is unavailable, like `remove`. */
+  removeOwnedBy(match: (owner: string) => boolean): Promise<number>;
   /** Called after any write, from this tab or another. Returns unsubscribe. */
   subscribe(listener: () => void): () => void;
 }
@@ -296,6 +310,11 @@ export interface AuthSession {
    *  a refresh failed on the network) it **throws**: sending that request
    *  anonymously would reach runs owned by the person as someone else. */
   getToken(): Promise<string | null>;
+  /** Tries again to restore a session that is stored on this device but
+   *  could not be recovered (the provider would not load, or its refresh
+   *  failed on the network). Notifies either way; never rejects. A no-op
+   *  where sign-in is unconfigured. */
+  recover(): Promise<void>;
   /** Emails a one-time code. Creates the account on first use. */
   requestEmailCode(email: string): Promise<void>;
   /** Exchanges the emailed code for a session. */

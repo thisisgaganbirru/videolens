@@ -491,6 +491,22 @@ at 1280, 0.039 at 1024, 0.083-0.112 at 412/320) and signed in at 412 (0.016-
 0.018: the strip's stand-in is the two-line anonymous sentence, the signed-in
 one is one line).
 
+## Review fixes (2026-11-20)
+
+- **Length check.** `readMediaDuration` resolves `number | null` and never
+  rejects: null when no metadata arrives within 5 s, on a decode error, or
+  when the duration is not a finite positive number (a stream reports
+  Infinity, some containers NaN). Null skips the client check; the backend's
+  check is the authoritative one. The element's `src` is dropped and the
+  object URL revoked on every path.
+- **Refused uploads.** A 413 shows the backend's "That upload is too large."
+  as sent. When the server refuses the body before reading it, the browser
+  usually sees the connection close instead, so a file upload that gets no
+  answer at all now says "The upload was cut off before the server
+  answered. The file may be over the size limit; otherwise check your
+  connection and try again." A malformed link's 400 detail is shown as
+  sent, as before.
+
 ## Changelog
 
 - 2026-11-14 · Codex · simplified idle Analyze to one centred column with a single New analysis h1 at every width, removed the marketing introduction/output panel and dead CSS, retained the allowance reservation above the title, and moved the exact retention sentence below the card
@@ -526,3 +542,4 @@ one is one line).
 - 2026-11-14 · frontend agent · reviewed Codex's simplified intake in the browser; card widened to 46rem so the consent, retention, hint and strip lines are one line each at 1024-1440; phone wrapping tidied (`text-wrap: pretty`, nowrap legal links, "200 MB"); stale UploadForm comment fixed
 - 2026-11-14 · frontend agent · desktop (60rem up) intake centred in the content band: `main.view-scroll:has(> .intake-layout)` is a size container and `.intake-layout` gets `margin-top: max(0px, (100cqb - 27rem) / 2)` (fixed anchor, so the out-of-runs card grows downward instead of re-centring; taller than the band starts at the top and scrolls). Allowance strip and h1 wrapped in `.intake-head`, a title-left / strip-right row on desktop; phones unchanged
 - 2026-11-14 · frontend agent · terms key bumped to `videolens-media-terms-v4` (Privacy/Terms: paid saved runs, 30-day hold), v3 added to `RETIRED_KEYS`; out-of-runs block extracted to `BlockedBlock`, with an inert `blockedHeld` stand-in (see free-runs.md "Remembered spent state")
+- 2026-11-20 · Claude (frontend agent) · `readMediaDuration` times out after 5 s and treats Infinity/NaN as unknown; upload cut-off message for a file upload with no response
