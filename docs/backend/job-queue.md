@@ -24,9 +24,10 @@ Decides how a run actually gets processed once accepted: in-process (local dev) 
 
 **Known issue**: see `run-processing.md`'s note on local mode having no persistence — this is the piece that creates that gap (an `asyncio.Task` has no durability across process restarts, unlike an arq job).
 
-**Tests**: `tests/infrastructure/queue/test_job_queue_limits.py` (which function and kwargs are enqueued, with a fake pool; the key stays out of the args) and `tests/interface/worker/test_worker_settings.py` (both functions registered, the long timeout, the limits rebuilt in the worker).
+**Tests**: `tests/infrastructure/queue/test_job_queue_limits.py` (which function and kwargs are enqueued, with a fake pool; the key stays out of the args) and `tests/interface/worker/test_worker_settings.py` (both functions registered, the long timeout, the limits rebuilt in the worker, the two crons). `tests/interface/worker/test_worker_job_entry.py` drives `process_run` itself: a cancellation before the deadline leaves the run `queued` and the retry completes it; one at the deadline fails it with `RUN_INTERRUPTED_MESSAGE`.
 
 ## Changelog
 - 2026-11-13 · backend agent · `limits` job kwarg; `process_long_run` with `WORKER_LONG_JOB_TIMEOUT_SECONDS` (1800) for signed-in BYOK runs; timeout decision, stale threshold, slot TTL and deploy order recorded
 - 2026-11-13 · backend agent · a job whose run the stale-run check already failed (or whose record is gone) now does no work in the worker and cleans up
 - 2026-11-20 · Claude (backend agent) · worker shutdown: `WORKER_JOB_COMPLETION_WAIT_SECONDS`, cancelled jobs resume on the retry; shared startup checks
+- 2026-11-20 · Claude (backend agent) · tests: shutdown versus timeout through the job function entry point

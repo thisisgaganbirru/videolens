@@ -13,7 +13,10 @@ paths:
 - Every adapter takes `Settings` in its constructor; never read the
   module-level `settings` in new code. `interface/api/rate_limiter.py` is the
   one existing exception and is recorded as debt.
-- `domain/` and `application/` import no framework or driver. Exceptions the
+- `domain/` and `application/` import no web framework, driver or SDK
+  (FastAPI, Redis, SQLAlchemy, boto3, Stripe, genai, arq). The one library
+  `domain/` uses is pydantic, in `entities.py`, deliberately: `VideoAnalysis`
+  is Gemini's response schema. Do not add another. Exceptions the
   interface layer may catch live in `domain/errors.py`. A user-facing error
   carries a phone-readable message and an operator-only `log_detail`; never
   put internals in the message.

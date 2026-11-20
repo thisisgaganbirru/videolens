@@ -86,6 +86,37 @@ class WorkerLifecycleTests(unittest.IsolatedAsyncioTestCase):
         close.assert_awaited_once_with()
 
 
+class WorkerCronTests(unittest.IsolatedAsyncioTestCase):
+    async def test_the_extra_run_flush_reconciles_first_then_reports(self) -> None:
+        order: list[str] = []
+        billing = container.extra_run_billing
+        with patch.object(type(billing), "enabled", new=True), patch.object(
+            billing, "reconcile", AsyncMock(side_effect=lambda: order.append("reconcile"))
+        ), patch.object(billing, "flush_due", AsyncMock(side_effect=lambda: order.append("flush"))):
+            await worker.flush_extra_runs({})
+        self.assertEqual(order, ["reconcile", "flush"])
+
+    async def test_the_extra_run_flush_is_a_no_op_with_billing_off(self) -> None:
+        billing = container.extra_run_billing
+        with patch.object(type(billing), "enabled", new=False), patch.object(
+            billing, "reconcile", AsyncMock()
+        ) as reconcile, patch.object(billing, "flush_due", AsyncMock()) as flush:
+            await worker.flush_extra_runs({})
+        reconcile.assert_not_awaited()
+        flush.assert_not_awaited()
+
+    async def test_account_cleanup_runs_the_use_case(self) -> None:
+        with patch.object(container.account_cleanup_use_case, "run", AsyncMock()) as run:
+            await worker.account_cleanup({})
+        run.assert_awaited_once_with()
+
+    def test_both_crons_are_registered_and_never_run_at_startup(self) -> None:
+        jobs = {job.name: job for job in worker.WorkerSettings.cron_jobs}
+        self.assertEqual(set(jobs), {"cron:flush_extra_runs", "cron:account_cleanup"})
+        self.assertTrue(all(not job.run_at_startup for job in jobs.values()))
+        self.assertEqual(jobs["cron:account_cleanup"].minute, {25})
+
+
 class WorkerSettingsTests(unittest.TestCase):
     def test_completion_wait_comes_from_settings(self) -> None:
         self.assertEqual(

@@ -111,6 +111,16 @@ class ClaimRuleTests(unittest.TestCase):
         token = _token(exp=int(time.time()) - 10, iat=int(time.time()) - 3610)
         self.assertEqual(self.verifier.decode_with_key(token, self.public)["sub"], "user-123")
 
+    def test_a_token_not_yet_valid_is_rejected(self) -> None:
+        # `nbf` a minute ahead: past the 30 s skew allowance.
+        token = _token(nbf=int(time.time()) + 60)
+        with self.assertRaises(jwt.ImmatureSignatureError):
+            self.verifier.decode_with_key(token, self.public)
+
+    def test_nbf_within_the_leeway_is_accepted(self) -> None:
+        token = _token(nbf=int(time.time()) + 10)
+        self.assertEqual(self.verifier.decode_with_key(token, self.public)["sub"], "user-123")
+
     def test_wrong_audience_is_rejected(self) -> None:
         with self.assertRaises(jwt.InvalidAudienceError):
             self.verifier.decode_with_key(_token(aud="anon"), self.public)

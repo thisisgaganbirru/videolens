@@ -74,10 +74,16 @@ wired together only in `container.py`. Three verified violations (the first fixe
   2026-11-08 (auth phase 1): the error lives in `domain/errors.py` and is
   mapped to 503 in `error_handlers.py`; `dependencies.py` only calls the
   container's `IdentifyCallerUseCase`
-- `backend/app/interface/api/app.py:13` — imports `configure_logging` from
-  `infrastructure.logging_config`
-- `backend/app/interface/api/rate_limiter.py:5` — imports `settings` from
-  `infrastructure.config`
+- `backend/app/interface/api/app.py` — `from ..infrastructure.logging_config
+  import configure_logging`
+- `backend/app/interface/api/rate_limiter.py` — `from ..infrastructure.config
+  import settings`
+
+Named by import rather than line number, which drifted twice. Re-measured
+2026-11-20 with an `ast` walk of `backend/app`: these two are still the only
+imports between `interface/` and `infrastructure/` in either direction
+(`interface/startup.py` and `interface/api/body_limit.py`, added that day,
+import neither way).
 
 The first is the substantive one. `dependencies.py` catches an exception
 **defined inside an adapter** in order to choose an HTTP status. That means
@@ -100,15 +106,16 @@ an `import-linter` contract, running in CI.
 
 ### The rate limiter is built at import time from a module-level global
 
-`backend/app/interface/api/rate_limiter.py:24`:
+`backend/app/interface/api/rate_limiter.py` (the module-level `limiter`):
 
 ```python
 limiter = Limiter(key_func=quota_key, storage_uri=settings.redis_url or "memory://", default_limits=[])
 ```
 
 `backend/ARCHITECTURE.md:48-50` claims every adapter takes `Settings` in its
-constructor rather than importing a global, and all 13 non-`__init__`
-`infrastructure/` modules genuinely do. This is the sole exception, and it
+constructor rather than importing a global, and every other
+`infrastructure/` adapter genuinely does (41 non-`__init__` modules on
+2026-11-20). This is the sole exception, and it
 imports the lowercase module-level instance.
 
 It matters more than a style nit because the rate limiter is one of only two
@@ -221,7 +228,7 @@ is a large mechanical diff.**
 
 ### No type checking on the Python side
 
-`backend/app/domain/ports.py` defines 9 structural `Protocol` interfaces,
+`backend/app/domain/ports.py` defines 26 structural `Protocol` interfaces (counted 2026-11-20),
 satisfied purely by duck-typing. Nothing anywhere verifies that `GeminiEngine`
 actually satisfies `AnalysisEngine`, or that any other adapter still matches
 its port after a signature edit.
@@ -229,7 +236,8 @@ its port after a signature edit.
 Drift is invisible until runtime — and `process_run.py` executes inside the arq
 worker, where a `TypeError` from a mismatched signature is swallowed by the
 broad handler and surfaces to the user as the generic
-`"Media analysis failed. Please try again."` at `process_run.py:74`. Nobody
+`"The analysis didn't finish. Please try again."` (the catch-all at the end of
+`ProcessRunUseCase.execute`). Nobody
 sees a stack trace unless they go looking in worker logs.
 
 This is the highest-value missing gate in the backend. Fix: `mypy --strict`
@@ -697,7 +705,7 @@ review:
 **Highest value for effort, in order:**
 
 1. **Dependency pinning** — the only item with a live production failure mode.
-2. **mypy on `domain/` + `application/`** — guards 9 Protocol interfaces
+2. **mypy on `domain/` + `application/`** — guards 26 Protocol interfaces
    currently verified by nothing.
 3. **Security scanning** — 2 files, and pre-open-source is when it is
    cheapest.
@@ -731,3 +739,4 @@ Re-verify before fixing; do not treat the line numbers as authoritative.
 - 2026-11-08 · backend subagent (auth phase 1) · marked layering violation #1 (`dependencies.py` importing `AuthNotConfiguredError` from the adapter) fixed; two remain (`app.py` logging, `rate_limiter.py` settings)
 - 2026-11-20 · claude (session 01FVkcsj3gS4EwsMRTnzy1pr) · added "Commit hygiene": history rewritten to remove AI-tool attribution, and the four guard layers (attribution setting, session-start identity, commit-msg hook, CI check in `required`)
 - 2026-11-20 · Claude (CI agent) · Commit hygiene: documented the widened rule set (AI co-author trailers, plain footer, model ids, session URLs, case-insensitive identity), title checking, base-branch script and the `edited` workflow, and why no `ccr-` pattern; landing-order list now says which tooling exists (`.gitattributes`, Dependabot) and which is not adopted (SECURITY.md, CODEOWNERS, templates, CodeQL, secret scanning)
+- 2026-11-20 · Claude (backend agent) · layering section names the two remaining cross-layer imports instead of stale line numbers and records the re-measurement (still exactly two); Protocol count 9 -> 26, infrastructure module count 13 -> 41, generic failure message updated to the current string

@@ -1,7 +1,9 @@
 # Backend architecture
 
 Clean architecture, dependencies pointing inward. Nothing in `domain/` or
-`application/` imports FastAPI, Redis, boto3, or any other driver.
+`application/` imports FastAPI, Redis, boto3, or any other driver. The one
+library `domain/` uses is pydantic, in `entities.py`, on purpose:
+`VideoAnalysis` is Gemini's response schema.
 
 ```
 domain  <-  application  <-  infrastructure
@@ -43,7 +45,10 @@ held -> due -> reported, billed once on success), `get_billing`,
 `saved_history` (`SavedHistory`: save a paid result once on success, the
 post-cancel window; `SavedHistoryQueries`: the `/api/history*` reads),
 `delete_account` (the 30-day hold), `restore_account`, `cleanup` (the
-worker's hourly removal of held accounts and expired saved runs). `check_schema`
+worker's hourly removal of held accounts and expired saved runs),
+`free_run_holds` (`settle_free_run_holds`, `settle_spend_hold`: the one place
+a run's free-run and daily-cap holds are released or refunded, shared by
+intake and the pipeline). `check_schema`
 (`CheckSchemaUseCase`: the database's `alembic_version` against
 `EXPECTED_SCHEMA_REVISION` at startup; refuses behind or missing on Postgres,
 `docs/backend/startup-checks.md`).
@@ -63,6 +68,7 @@ worker's hourly removal of held accounts and expired saved runs). `check_schema`
 | `ObjectStore` | `storage/s3_object_store.py` | |
 | `JobQueue` | `queue/job_queue.py` | arq/Redis, or an in-process task it keeps a reference to |
 | `SpendCap` | `quota/daily_budget.py` | Atomic take-if-under-cap (Lua), hold/release per run and refund onto the claim's own UTC day, never below zero |
+| `LongRunGuard` | `quota/long_run_guard.py` | One in-flight run above the standard media limits per account; slot held by run id, expires after `WORKER_LONG_JOB_TIMEOUT_SECONDS + 120`; Redis or in-process |
 | `CredentialFailureGuard` | `quota/credential_failures.py` | Failed API keys/tokens per client IP, fixed 15-minute window; Redis or in-memory; consulted before any lookup |
 | `DeviceTokenSigner` | `quota/device_tokens.py` | Stateless HMAC tokens; refuses to start distributed without a secret |
 | `FreeRunAllowance` | `quota/free_run_allowance.py` | Per-device and per-IP counters, hold/release for refunds |
@@ -92,8 +98,8 @@ log line; `docs/backend/startup-checks.md`), `api/app.py` (factory, lifespan, CO
 free-runs, runs, `/api/me`, `/api/keys`, `/api/billing*`), `api/schemas.py` (response DTOs; kept separate from
 `domain.entities.Run` so `owner_id` never leaks), `api/dependencies.py`
 (`get_principal`, `get_signed_in_principal`, `require_person`), `api/error_handlers.py` (exception → status, `Retry-After`),
-`api/rate_limiter.py` (slowapi; not behind a port, and the one import-time
-global; the client IP comes from `policies.client_ip_from_forwarded` with
+`api/rate_limiter.py` (slowapi; not behind a port, and built at import from
+the module-level `settings`, the one adapter that is; the client IP comes from `policies.client_ip_from_forwarded` with
 `TRUSTED_PROXY_HOPS`), `api/security_headers.py` (pure-ASGI middleware,
 added last so every response, preflights and refusals included, carries the
 hardening headers), `api/body_limit.py` (pure-ASGI request body ceiling,
@@ -106,7 +112,9 @@ and `POST /api/me/restore`; `dependencies.py` has `require_person_even_if_delete
 used by the restore only.
 
 **`container.py`** — composition root. Builds every adapter once, wires the
-use cases, fixes the probe order. `app/main.py` and `app/worker.py` are
+use cases, fixes the probe order. The `container` itself is a module-level
+global built at import (`Container(settings)`), which is why tests patch
+attributes on it rather than build their own. `app/main.py` and `app/worker.py` are
 one-line shims so the Dockerfile, compose file and Railway configs reference
 `app.main:app` / `app.worker.WorkerSettings`.
 
@@ -155,7 +163,9 @@ one-line shims so the Dockerfile, compose file and Railway configs reference
   checked by both processes. Distributed mode is `REDIS_URL` set, which also requires
   object storage and `DEVICE_TOKEN_SECRET`.
 - **Tests**: `tests/` mirrors `app/`; use-case tests use the fakes in
-  `tests/application/fakes.py`. All unit tests; no end-to-end run test yet.
+  `tests/application/fakes.py`. All unit tests; no end-to-end run test yet. `tests/infrastructure/persistence/test_schema_migration_drift.py`
+  compares `schema.py` with the migrated chain (SQLite) and fails on any
+  difference not on its named list.
 
 ## Adding something new
 
@@ -181,3 +191,4 @@ one-line shims so the Dockerfile, compose file and Railway configs reference
 - 2026-11-20 · Claude (backend agent) · `SpendCap` gains hold/release/refund (`SpendClaim`); `CredentialFailureGuard` port and adapter, wired into `IdentifyCallerUseCase`; `api/body_limit.py` middleware; `media/deadline.py` (download deadline, dedicated pool) and `media/process.py` (shared ffmpeg runner)
 - 2026-11-20 · Claude (backend agent) · `SchemaRevisionReader` port and adapter, `CheckSchemaUseCase`, `domain/schema_revision.py`; shared `interface/startup.py` for both entry points; worker logging, shutdown and shutdown-retry invariants
 - 2026-11-20 · Claude (backend agent) · `BillingGateway` gains `expire_open_checkout_sessions`, `live_subscription_ids`, `cancel_duplicate_subscription`; `ExtraRunLedger.hold(cap=)` is the atomic cap check, plus `held`, `expire_due`, `due(account_id=)`; `HeldExtraRun` entity; `ExtraRunBilling` takes the `RunRepository` for `reconcile`; `AuthUnavailableError` (503) for a JWKS outage; `GetRunUseCase` takes the `SpendCap`
+- 2026-11-20 · Claude (backend agent) · `LongRunGuard` row in the port table; `free_run_holds` in the application codemap; the import-time globals stated correctly (the `container` is built at import, the rate limiter is the one adapter reading the module-level `settings`); pydantic in `domain/entities.py` named as deliberate; the schema drift test under Tests

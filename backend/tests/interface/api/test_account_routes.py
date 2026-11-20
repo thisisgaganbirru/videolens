@@ -359,6 +359,86 @@ class AccountRoutesTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
 
 
+class RealVerifierRouteTests(unittest.TestCase):
+    """The real JwtVerifier behind `/api/me`, over a mocked JWKS client: a
+    token that is not yet valid, or whose header names a refused algorithm
+    or no key id, is a plain 401, and the header ones never reach the JWKS."""
+
+    ISSUER = "https://idp.example/auth/v1"
+
+    def setUp(self) -> None:
+        import jwt
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        from app.infrastructure.auth.jwt_verifier import JwtVerifier
+
+        self.jwt = jwt
+        self.key = ec.generate_private_key(ec.SECP256R1())
+        patcher = patch("app.infrastructure.auth.jwt_verifier.PyJWKClient")
+        self.jwks = patcher.start().return_value
+        self.addCleanup(patcher.stop)
+        signing = type("Key", (), {"key_id": "kid-1", "key": self.key.public_key()})()
+        self.jwks.get_signing_keys.return_value = [signing]
+        verifier = JwtVerifier(
+            Settings(
+                _env_file=None,
+                auth_jwks_url=f"{self.ISSUER}/.well-known/jwks.json",
+                auth_issuer=self.ISSUER,
+                auth_audience="authenticated",
+            )
+        )
+        use_case = IdentifyCallerUseCase(
+            accounts=InMemoryAccountDirectory(),
+            api_keys=InMemoryApiKeyRepository(),
+            verifier=verifier,
+            allow_anonymous=True,
+        )
+        patcher = patch.object(container, "identify_caller_use_case", use_case)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.client = TestClient(app)
+
+    def _claims(self, **overrides) -> dict:
+        now = int(datetime.now(timezone.utc).timestamp())
+        claims = {
+            "sub": "user-123",
+            "iss": self.ISSUER,
+            "aud": "authenticated",
+            "role": "authenticated",
+            "iat": now,
+            "exp": now + 3600,
+        }
+        claims.update(overrides)
+        return claims
+
+    def _me(self, token: str):
+        return self.client.get("/api/me", headers={"Authorization": f"Bearer {token}"})
+
+    def test_a_valid_token_is_accepted(self) -> None:
+        token = self.jwt.encode(self._claims(), self.key, algorithm="ES256", headers={"kid": "kid-1"})
+        self.assertEqual(self._me(token).status_code, 200)
+
+    def test_a_token_whose_nbf_is_in_the_future_is_401(self) -> None:
+        later = int(datetime.now(timezone.utc).timestamp()) + 600
+        token = self.jwt.encode(self._claims(nbf=later), self.key, algorithm="ES256", headers={"kid": "kid-1"})
+        response = self._me(token)
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.headers.get("www-authenticate"), "Bearer")
+
+    def test_refused_algorithms_and_a_missing_kid_are_401_before_any_key_lookup(self) -> None:
+        tokens = {
+            "HS256": self.jwt.encode(
+                self._claims(), "a-shared-secret-of-thirty-two-bytes!", algorithm="HS256", headers={"kid": "kid-1"}
+            ),
+            "none": self.jwt.encode(self._claims(), None, algorithm="none", headers={"kid": "kid-1"}),
+            "no kid": self.jwt.encode(self._claims(), self.key, algorithm="ES256"),
+        }
+        for name, token in tokens.items():
+            with self.subTest(name):
+                self.assertEqual(self._me(token).status_code, 401)
+        self.jwks.get_signing_keys.assert_not_called()
+
+
 class AccountCorsTests(unittest.TestCase):
     def test_preflight_allows_the_key_header_and_delete(self) -> None:
         response = TestClient(app).options(

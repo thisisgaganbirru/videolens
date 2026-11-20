@@ -124,7 +124,11 @@ creates per-run subdirectories as before.
 
 - `test_download_deadline.py` — the deadline tripping in the direct HTTP read loop and on a cut-off body, the fetch mapping it to the resolver's failure, the yt-dlp progress hook and `GuardedYoutubeDL.urlopen` tripping it (fake clock), the timer shutting down a socket blocked in `recv`, downloads on the dedicated pool with the thread-local cleared after; `run_process` killing the process on timeout and on cancellation, and a hung ffprobe/encode becoming a validation error.
 
-No test coverage for `ffmpeg.py` directly (it requires an actual ffmpeg binary). `test_uploads.py` covers `validate_temp_dir`; two of its cases are POSIX-only by construction (a Windows path *is* absolute on Windows, so the check cannot fire) and fail when the suite is run on Windows. CI runs on Linux.
+- `test_ffmpeg_hostile_input.py` — an upload named `.mp4` whose bytes are an HLS playlist, with `run_process` faked: every probe and encode is an argument list with the path as one element, and an ffprobe failure is a plain validation error with stderr in `log_detail` only. Two expected failures record hardening that does not exist (below).
+
+**Known issue (2026-11-20)**: ffprobe (API, intake) and ffmpeg (worker) run with no `-protocol_whitelist` and no forced input format, and `save_upload` checks only extension, size and emptiness, so ffmpeg picks the demuxer from the content. A playlist named `.mp4` is not refused before ffprobe. Locally (ffprobe 8.1.1) HLS, DASH and concat inside a `.mp4` made no outbound request; the container's ffmpeg was not checked. Defence in depth, not a demonstrated SSRF; the expected-failure tests in `test_ffmpeg_hostile_input.py` describe the fix.
+
+Otherwise no test runs `ffmpeg.py` against a real binary. `test_uploads.py` covers `validate_temp_dir`; two of its cases are POSIX-only by construction (a Windows path *is* absolute on Windows, so the check cannot fire) and fail when the suite is run on Windows. CI runs on Linux.
 
 ## Changelog
 
@@ -144,3 +148,4 @@ No test coverage for `ffmpeg.py` directly (it requires an actual ffmpeg binary).
 - 2026-11-13 · backend agent · paid media tier (`MediaTier.PAID`, `PAID_MAX_*`), `paid` in `GET /api/limits`
 - 2026-11-20 · Claude (backend agent) · review H1/L3: caption track fetched through `build_public_opener()` with a 5 MB cap; new `ytdlp_net.GuardedYoutubeDL` puts every yt-dlp request behind `net.py`'s connect-time pinned check and allows only native downloaders (ffmpeg/rtmpdump/external and the requests/websockets/curl_cffi handlers disabled); `is_public_address` unwraps IPv4-compatible and -translated IPv6
 - 2026-11-20 · Claude (backend agent) · wall-clock download deadline (`DOWNLOAD_DEADLINE_SECONDS`) checked in the direct HTTP loop, yt-dlp hook and every yt-dlp request, the caption read, with blocked sockets shut down when it fires; downloads on a dedicated 8-thread pool; ffmpeg/ffprobe (intake probe included) behind one kill-on-timeout/cancel helper (`process.run_process`)
+- 2026-11-20 · Claude (backend agent) · tests: hostile `.mp4` input with a faked subprocess; known issue recorded: no input protocol whitelist and no content check before ffprobe

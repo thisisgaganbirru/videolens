@@ -613,7 +613,10 @@ Billing:
   against a mocked `StripeClient`, and real signature verification with a
   locally signed payload.
 - `tests/interface/api/test_billing_routes.py`: the exact JSON contract,
-  status codes, billing off, `free-runs` fields, and deletion.
+  status codes, billing off, `free-runs` fields, and deletion; a second live
+  subscription through the webhook route (cancel failing is a 503 so Stripe
+  retries, the retry cancels it with `invoice_now: False, prorate: True`,
+  the stored subscription and the paid plan stay).
 - `tests/infrastructure/health/test_billing_probe.py`: the capability row
   and the settings.
 
@@ -627,3 +630,4 @@ Billing:
 - 2026-11-14 · frontend agent · paid plan is named Plus in the UI
 - 2026-11-14 · backend agent · complimentary Plus: migration `0010_complimentary_plus` (`accounts.complimentary_plus`, set only by hand in SQL); `BillingPlans.standing` / `PlanStanding`; paid plan with or without Stripe, never billed (402 `free_runs_used` past `PAID_RUNS_PER_DAY`, no ledger, no meter); `complimentary` on `GET /api/billing` (full body even with billing off), `GET /api/me` `entitlement`, `GET /api/free-runs`; checkout/portal 409 `complimentary_plan`; a paying subscription wins
 - 2026-11-20 · Claude (backend agent) · duplicate subscriptions: Checkout expires the customer's open sessions and lives 35 min; the webhook cancels a second live subscription (the newer one unless only it pays; prorated credit, no final invoice; ERROR log); deletion and purge flush all due rows and cancel every live subscription, and go ahead with a WARNING when billing is off; the extra-run cap is checked in the hold's INSERT under a row lock; held rows of completed runs are settled by the worker and by `reconcile`; due rows older than 34 days are voided with a WARNING; no migration
+- 2026-11-20 · Claude (backend agent) · tests: two live subscriptions through the webhook route, including the 503 and the retry

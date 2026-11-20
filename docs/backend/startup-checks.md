@@ -118,8 +118,18 @@ and what a cancelled run does are in `job-queue.md` and `run-processing.md`.
   both roles run the schema check; one mode line with no secrets.
 - `tests/interface/worker/test_worker_settings.py`: startup logs `videolens`
   INFO as JSON and arq once; shutdown closes the container once; each job
-  passes its own timeout as the deadline.
+  passes its own timeout as the deadline; both crons registered, the
+  extra-run flush reconciling before reporting and doing nothing with
+  billing off, the cleanup cron running its use case.
+- `tests/interface/api/test_app_lifespan.py`: the API lifespan runs
+  `validate_startup` as the API before serving, a refusal stops the app,
+  and the container closes once on shutdown.
+- `tests/infrastructure/persistence/test_schema_migration_drift.py`:
+  `schema.py` against the migrated chain on SQLite (Alembic autogenerate
+  compare, types and server defaults); four Python-side defaults and the
+  Postgres-only foreign-key rewrites (0007, 0009) are the named exceptions.
 
 ## Changelog
 
 - 2026-11-20 · Claude (backend agent) · created: one `validate_startup(role)` for the API and the worker, the `alembic_version` check (`EXPECTED_SCHEMA_REVISION`, refuse when behind or missing on Postgres, warn when ahead), the mode line, worker JSON logging and `container.close()` on shutdown
+- 2026-11-20 · Claude (backend agent) · tests: API lifespan, worker crons, model-vs-migration drift

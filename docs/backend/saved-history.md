@@ -340,7 +340,11 @@ on Postgres if `DATABASE_APP_ROLE` does not exist.
   Postgres branch.
 - `tests/interface/api/test_history_routes.py`,
   `tests/interface/api/test_account_routes.py`: the HTTP contract, 410s,
-  restore, the cleanup end to end.
+  restore, the cleanup end to end. `test_history_routes.py` also checks a
+  second paid account cannot read, list or delete the first one's saved
+  run (404, its own list only, bulk delete removes only its own).
+- `tests/interface/api/test_held_account_gate.py`: the 410 on `/api/history*`
+  with the other route families.
 
 ## Known issues and open questions
 
@@ -360,3 +364,4 @@ on Postgres if `DATABASE_APP_ROLE` does not exist.
 - 2026-11-14 · backend agent · migration `0008_value_checks`: `ck_saved_runs_completeness` (`full` | `captions_only`)
 - 2026-11-14 · backend agent · complimentary Plus (`accounts.complimentary_plus`, migration 0010): saved and `saving: true` with or without Stripe; never a post-cancel window (sync/arm/purge treat it as paid, the SQL arm scan skips it); window logic gated on Stripe on (`windows_enabled`); restore leaves the flag as it was
 - 2026-11-20 · Claude (backend agent) · the post-cancel window runs wherever saving does (a cleared complimentary flag starts the 30 days with Stripe off too), never for a stored live subscription with Stripe off; the purge flushes due extra runs and cancels every live subscription first, and goes ahead with a WARNING when billing is off
+- 2026-11-20 · Claude (backend agent) · tests: cross-account read/list/delete of a saved run at route level
