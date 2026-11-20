@@ -1,0 +1,45 @@
+name: Reusable commit hygiene
+
+# Fails a pull request whose commits or description carry AI-tool attribution:
+# session URLs, Claude-Session / Co-Authored-By: Claude trailers, the
+# "Generated with Claude Code" footer, or the cloud default identity
+# Claude <noreply@anthropic.com>. All of it was scrubbed from the history on
+# 2026-11-20 (docs/engineering-standards.md, "Commit hygiene"). The rules live
+# in scripts/commit-hygiene.sh, shared with the local commit-msg hook.
+#
+# Called from both lanes and fed into their `required` job. It runs on every
+# pull request, needs no path filter and finishes in seconds.
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  hygiene:
+    name: Commit hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Commits in this pull request
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: sh scripts/commit-hygiene.sh range "$BASE_SHA" "$HEAD_SHA"
+      # Read live, not from the event payload: a re-run reuses the payload of
+      # the original event, so after the description is fixed it would still
+      # check the old text (editing a description does not start a new run).
+      - name: Pull request description
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.body // ""' | sh scripts/commit-hygiene.sh body

@@ -36,6 +36,8 @@ Also:
 - Advisory scans (dev PRs, nightly) must finish green; Railway's Wait for CI
   skips a deploy while any workflow on the commit is red.
 - Branch protection requires only the `required` job, which always reports.
+- Both lanes call `reusable-commit-hygiene.yml` as `hygiene` and feed it into
+  `required`. Keep it there; the rules live in `scripts/commit-hygiene.sh`.
 - Images are deliberately unsigned (keyless Cosign writes to the public
   Rekor log). SBOM and provenance stay in-registry. Never pass a secret via
   `build-args`; `provenance: mode=max` records them. Use `secrets`.

@@ -31,9 +31,9 @@ promotion PR, push to `main`), built its images three times, and published a
 
 | Event | Runs | Does not run, and why |
 |---|---|---|
-| PR into `dev` | `changes`, then only the touched parts: backend and/or frontend checks, Android if `frontend/` changed (the APK is kept as a 14-day artifact, built against the dev backend with the `.dev` application id; `dev_artifact` input), advisory scan of the touched images, `lint-workflows` (actionlint) if `.github/` changed; `required` aggregates | — |
+| PR into `dev` | `changes`, then only the touched parts: backend and/or frontend checks, Android if `frontend/` changed (the APK is kept as a 14-day artifact, built against the dev backend with the `.dev` application id; `dev_artifact` input), advisory scan of the touched images, `lint-workflows` (actionlint) if `.github/` changed, `hygiene` (no AI-tool attribution in the PR's commits or description) always; `required` aggregates | — |
 | Push to `dev` | nothing | The PR just tested this exact tree (requires "up to date before merging"). Railway deploys. |
-| PR into `main` (promotion, Dependabot) | full application checks, **enforced** scan of both images; `required` aggregates | Android: `dev`'s PRs built this tree, and the push builds it again with the production URL. |
+| PR into `main` (promotion, Dependabot) | full application checks, **enforced** scan of both images, `hygiene`; `required` aggregates | Android: `dev`'s PRs built this tree, and the push builds it again with the production URL. |
 | Push to `main` | `publish` (build once, scan, promote), `android` (APK with the production URL), `release` | Application checks: the promotion PR tested this tree. |
 | Nightly 06:17 UTC | advisory scan of `main`, tracking issue | — |
 
@@ -809,3 +809,4 @@ jobs.
 - 2026-11-07 · claude (session 01FVkcsidCXWo1CtwAtdwVHV) · added the Dependabot overseer: a daily scheduled task wakes a standing Claude session that merges green, up-to-date Dependabot PRs into `dev`, updates behind ones one at a time, and holds the rest with a diagnosis
 - 2026-11-07 · claude (session 01FVkcsidCXWo1CtwAtdwVHV) · added `dependabot-auto-merge.yml` (GitHub auto-merge for non-major Dependabot PRs into `dev`, fetch-metadata v3.1.0 pinned by SHA); the overseer now updates behind branches and reviews majors. Second `contents: write` job, by owner decision
 - 2026-11-18 · claude (session 01FVkcsidCXWo1CtwAtdwVHV) · cleared the held Dependabot PRs: Python docker ignore now covers semver-minor too (3.13 -> 3.15 is a semver minor; #134 slipped through and auto-merge had queued it); fastapi 0.162.5, boto3 1.44.1 (#136) and google-genai 3.4.0 (#137) taken in one hand-regenerated, marker-preserving `requirements.txt`. Dependabot dropping the uv `--universal` markers is now three-for-three on pip PRs (#95, #136, #137); the CI guard catches it every time
+- 2026-11-20 · claude (session 01FVkcsj3gS4EwsMRTnzy1pr) · added `reusable-commit-hygiene.yml` (`contents: read`, `pull-requests: read` to read the description live so a re-run sees an edited one), called by both lanes as `hygiene` and fed into `required`; rules in `scripts/commit-hygiene.sh`, shared with `.githooks/commit-msg`. See engineering-standards.md, "Commit hygiene"
