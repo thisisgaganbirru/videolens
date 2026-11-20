@@ -119,6 +119,18 @@ class AuthNotConfiguredError(RuntimeError):
     this one type."""
 
 
+class AuthUnavailableError(Exception):
+    """A bearer token arrived but the identity provider's signing keys cannot
+    be had right now (the JWKS endpoint is down and no recent key set is
+    cached), so the token can be neither accepted nor refused (503, with
+    `Retry-After`). Not an `AuthenticationError`: the failed-credential
+    limiter must not count it, and a client must not sign out over it."""
+
+    def __init__(self, message: str, *, retry_after_seconds: int | None = None) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
+
+
 class AccountsNotConfiguredError(AuthNotConfiguredError):
     """A signed-in caller asked for something that needs the account
     directory (API keys), on a deployment that has none (503)."""
@@ -319,3 +331,9 @@ class SavedRunNotFoundError(Exception):
 
 class InvalidCursorError(Exception):
     """A saved-history page cursor that does not decode (400)."""
+
+
+class SchemaOutOfDateError(RuntimeError):
+    """Startup refusal: the database's schema is older than the code (or
+    was never migrated). Operator-facing only; the process does not start,
+    so no person ever sees it."""

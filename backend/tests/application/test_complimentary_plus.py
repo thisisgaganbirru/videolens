@@ -29,7 +29,7 @@ from app.infrastructure.persistence.api_key_repository import InMemoryApiKeyRepo
 from app.infrastructure.persistence.saved_run_repository import InMemorySavedRuns
 
 from .fakes import FakeDeviceTokens, FakeFreeRunAllowance, FakeRunRepository
-from .test_billing import ACCOUNT, HELD, SETTINGS, URL, _Billing, _person, _Pipeline
+from .test_billing import ACCOUNT, CUSTOMER, HELD, SETTINGS, URL, _Billing, _person, _Pipeline, _snapshot
 
 NOW = datetime(2026, 11, 14, 12, tzinfo=timezone.utc)
 
@@ -206,24 +206,55 @@ class SavedHistoryTests(unittest.IsolatedAsyncioTestCase):
         status = await history.status(ACCOUNT)
         self.assertEqual((status.saving, status.expires_at), (True, None))
 
-    async def test_a_free_account_is_never_saved_and_shows_no_window(self) -> None:
+    async def test_a_free_account_is_never_saved(self) -> None:
         billing = _billing(stripe=False, complimentary=False)
         pipeline, saved, history = _saving_pipeline(billing)
         await pipeline.run()
         self.assertEqual(await saved.count(ACCOUNT), 0)
-        # Stripe off: no window is shown or armed, as before.
-        await saved.arm_expiry(ACCOUNT, NOW + timedelta(days=3))
-        status = await history.status(ACCOUNT)
-        self.assertEqual((status.saving, status.expires_at), (False, None))
+        self.assertEqual((await history.status(ACCOUNT)).saving, False)
 
-    async def test_stripe_off_never_arms_or_purges_anyone(self) -> None:
+    async def test_stripe_off_a_cleared_flag_starts_the_window_then_removes_the_runs(self) -> None:
+        clock = _Clock()
+        billing = _billing(stripe=False, clock=clock)
+        pipeline, saved, history = _saving_pipeline(billing)
+        history._clock = clock
+        await pipeline.run()
+        billing.plans._directory.ids.clear()  # the owner cleared the flag
+        self.assertEqual(await history.arm_lapsed(), 1)
+        status = await history.status(ACCOUNT)
+        self.assertEqual((status.saving, status.expires_at), (False, clock.now + timedelta(days=30)))
+        clock.now += timedelta(days=29)
+        self.assertEqual(await history.purge_expired(), 0)
+        clock.now += timedelta(days=2)
+        self.assertEqual(await history.purge_expired(), 1)
+        self.assertEqual(await saved.count(ACCOUNT), 0)
+
+    async def test_stripe_off_a_reset_flag_inside_the_window_keeps_the_runs(self) -> None:
+        clock = _Clock()
+        billing = _billing(stripe=False, clock=clock)
+        pipeline, saved, history = _saving_pipeline(billing)
+        history._clock = clock
+        await pipeline.run()
+        billing.plans._directory.ids.clear()
+        await history.arm_lapsed()
+        billing.plans._directory.ids.add(ACCOUNT)
+        clock.now += timedelta(days=31)
+        self.assertEqual(await history.purge_expired(), 0)
+        self.assertEqual(await saved.count(ACCOUNT), 1)
+        self.assertIsNone(await saved.expiry(ACCOUNT))
+
+    async def test_stripe_off_never_arms_or_purges_a_stored_live_subscription(self) -> None:
+        # Rows left from when Stripe was on: with it off nothing can say the
+        # subscription ended, so switching it off removes nothing.
         billing = _billing(stripe=False, complimentary=False)
         pipeline, saved, history = _saving_pipeline(billing)
-        # Rows left from when Stripe was on: switching it off removes nothing.
+        await billing.accounts.link_customer(ACCOUNT, CUSTOMER)
+        await billing.accounts.apply_subscription(ACCOUNT, _snapshot("active"))
         billing.plans._directory.ids.add(ACCOUNT)
         await pipeline.run()
         billing.plans._directory.ids.clear()
         self.assertEqual(await history.arm_lapsed(), 0)
+        await saved.arm_expiry(ACCOUNT, NOW - timedelta(days=1))
         self.assertEqual(await history.purge_expired(), 0)
         self.assertEqual(await saved.count(ACCOUNT), 1)
 

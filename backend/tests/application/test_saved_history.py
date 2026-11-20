@@ -475,6 +475,70 @@ class HoldAndCleanupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.cleanup.run()).accounts_removed, 1)
         self.assertEqual(self.h.billing.gateway.cancelled, ["sub_1"])
 
+    async def test_the_purge_cancels_every_live_subscription_of_the_customer(self) -> None:
+        await self.deleter.schedule_deletion(
+            "sub-1", now=self.h.clock.now, purge_at=self.h.clock.now + timedelta(days=30)
+        )
+        self.h.clock.now += timedelta(days=31)
+        customer = f"cus_{self.account_id}"
+        self.h.billing.gateway.subscriptions["sub_dup"] = _snapshot(sub="sub_dup", customer=customer)
+        self.assertEqual((await self.cleanup.run()).accounts_removed, 1)
+        self.assertEqual(sorted(self.h.billing.gateway.cancelled), ["sub_1", "sub_dup"])
+
+    async def test_with_billing_off_a_live_subscription_holds_the_purge_back(self) -> None:
+        # The worker's STRIPE_* drifted blank while the database still says
+        # the account pays: removing it would leave Stripe charging a
+        # customer nobody can find (2026-11-20 re-review). Skipped with a
+        # warning, again every tick, until billing is back.
+        await self.deleter.schedule_deletion(
+            "sub-1", now=self.h.clock.now, purge_at=self.h.clock.now + timedelta(days=30)
+        )
+        self.h.clock.now += timedelta(days=31)
+        self.h.billing.gateway._enabled = False
+        for _tick in range(2):
+            with self.assertLogs("videolens", "WARNING") as logs:
+                report = await self.cleanup.run()
+            self.assertEqual((report.accounts_removed, report.accounts_skipped), (0, 1))
+            self.assertTrue(any("billing is not configured" in line for line in logs.output))
+            self.assertTrue(any("retried every hour" in line for line in logs.output))
+        self.assertEqual(await self.h.saved.count(self.account_id), 1)
+        self.assertEqual(self.h.billing.gateway.cancelled, [])
+
+        # Billing configured again: cancelled, then removed.
+        self.h.billing.gateway._enabled = True
+        self.assertEqual((await self.cleanup.run()).accounts_removed, 1)
+        self.assertEqual(self.h.billing.gateway.cancelled, ["sub_1"])
+
+    async def test_with_billing_off_an_ended_subscription_does_not_hold_the_purge(self) -> None:
+        await self._hold()  # the subscription on file is canceled
+        self.h.clock.now += timedelta(days=31)
+        self.h.billing.gateway._enabled = False
+        self.assertEqual((await self.cleanup.run()).accounts_removed, 1)
+
+    async def test_deletion_with_billing_off_then_the_purge_end_to_end(self) -> None:
+        # The person's own DELETE /api/me still starts the hold with billing
+        # off (they must always be able to leave); the purge after it waits
+        # for billing rather than strand a paying customer.
+        from app.application.delete_account import DeleteAccountUseCase
+
+        self.h.billing.gateway._enabled = False
+        delete = DeleteAccountUseCase(
+            accounts=self.directory,
+            deleter=self.deleter,
+            api_keys=self.keys,
+            runs=FakeRunRepository(),
+            billing=self.h.billing.plans,
+            clock=self.h.clock,
+        )
+        with self.assertLogs("videolens", "WARNING"):
+            await delete.execute(self.person)
+        self.h.clock.now += timedelta(days=31)
+        with self.assertLogs("videolens", "WARNING"):
+            self.assertEqual((await self.cleanup.run()).accounts_skipped, 1)
+        self.h.billing.gateway._enabled = True
+        self.assertEqual((await self.cleanup.run()).accounts_removed, 1)
+        self.assertEqual(self.h.billing.gateway.cancelled, ["sub_1"])
+
     async def test_the_cleanup_also_purges_expired_windows(self) -> None:
         await self.h.subscribe("canceled", account_id=self.account_id)
         self.assertEqual((await self.cleanup.run()).windows_started, 1)

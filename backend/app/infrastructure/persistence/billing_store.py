@@ -12,16 +12,23 @@ Exactly-once extra-run billing rests on two conditional writes:
 moves it `held -> void` only when it is still held, so of a worker
 finishing a run and the stale-run check failing it, exactly one wins and a
 run that did not complete can never become due.
+
+The monthly cap is checked and the row inserted in one statement
+(`INSERT ... SELECT ... WHERE count < cap`), behind a lock on the account's
+billing row on Postgres, so concurrent admissions at the cap cannot all
+pass. Held rows are settled by the worker, or by the reconciliation job
+(`ExtraRunBilling.reconcile`) from the run's stored outcome; due rows too old
+for Stripe's meter are voided there with a warning, never left unseen.
 """
 
 from datetime import datetime, timedelta
 from typing import Callable, Optional
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import DateTime, String, delete, func, literal, select, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from ...domain.entities import BillingAccount, ExtraRunCharge, SubscriptionSnapshot
+from ...domain.entities import BillingAccount, ExtraRunCharge, HeldExtraRun, SubscriptionSnapshot
 from ...domain.policies import subscription_is_live
 from ..config import Settings
 from .database import Database, as_utc, utcnow
@@ -31,12 +38,10 @@ Clock = Callable[[], datetime]
 
 # Stripe retries a webhook for up to three days; a month of ids is plenty.
 _EVENT_MAX_AGE = timedelta(days=30)
-# A held row older than this belongs to a run that can no longer finish
-# (the long job timeout is 30 minutes); it is voided, never billed.
-_HOLD_MAX_AGE = timedelta(days=2)
-# Stripe accepts meter events up to 35 days old; anything older stays due
-# (and unbilled) rather than be refused forever on every retry.
-_REPORT_MAX_AGE = timedelta(days=34)
+# Stripe accepts meter events up to 35 days old. A due row older than this
+# cannot be reported any more: `expire_due` voids it (logged by the caller)
+# instead of leaving it due, and unbilled, for ever.
+REPORT_MAX_AGE = timedelta(days=34)
 
 HELD, DUE, REPORTED, VOID = "held", "due", "reported", "void"
 
@@ -52,6 +57,15 @@ def _account_from_row(row) -> BillingAccount:
         current_period_end=as_utc(row.current_period_end),
         cancel_at_period_end=bool(row.cancel_at_period_end),
         updated_at=as_utc(row.updated_at),
+    )
+
+
+def _charge_from_row(row) -> ExtraRunCharge:
+    return ExtraRunCharge(
+        run_id=row.run_id,
+        account_id=row.account_id,
+        stripe_customer_id=row.stripe_customer_id,
+        completed_at=as_utc(row.completed_at),
     )
 
 
@@ -156,23 +170,45 @@ class SqlExtraRunLedger:
         self._db = database
         self._clock = clock or utcnow
 
-    async def hold(self, run_id: str, *, account_id: str, customer_id: str, period: str) -> None:
+    async def hold(self, run_id: str, *, account_id: str, customer_id: str, period: str, cap: int = 0) -> bool:
         now = self._clock()
         table = billing_extra_runs
+        values = {
+            "run_id": run_id,
+            "account_id": account_id,
+            "stripe_customer_id": customer_id,
+            "period": period,
+            "state": HELD,
+            "created_at": now,
+        }
         async with self._db.connect() as conn:
+            if cap <= 0:
+                await conn.execute(table.insert().values(**values))
+                return True
+            # One admission at a time per account: Postgres waits here on
+            # the billing row until a concurrent admission commits (and the
+            # INSERT below then counts its row). SQLite has no FOR UPDATE,
+            # but runs that single statement under its write lock.
             await conn.execute(
-                update(table).where(table.c.state == HELD, table.c.created_at < now - _HOLD_MAX_AGE).values(state=VOID)
+                select(billing_accounts.c.account_id).where(billing_accounts.c.account_id == account_id).with_for_update()
             )
-            await conn.execute(
-                table.insert().values(
-                    run_id=run_id,
-                    account_id=account_id,
-                    stripe_customer_id=customer_id,
-                    period=period,
-                    state=HELD,
-                    created_at=now,
-                )
+            used = (
+                select(func.count())
+                .select_from(table)
+                .where(table.c.account_id == account_id, table.c.period == period, table.c.state != VOID)
+                .scalar_subquery()
             )
+            row = select(
+                literal(run_id, String),
+                literal(account_id, String),
+                literal(customer_id, String),
+                literal(period, String),
+                literal(HELD, String),
+                literal(now, DateTime(timezone=True)),
+            ).where(used < cap)
+            # RETURNING, not rowcount: the row itself says it was written.
+            inserted = await conn.execute(table.insert().from_select(list(values), row).returning(table.c.run_id))
+            return inserted.first() is not None
 
     async def count(self, account_id: str, period: str) -> int:
         table = billing_extra_runs
@@ -194,12 +230,7 @@ class SqlExtraRunLedger:
             if moved.rowcount != 1:
                 return None
             row = (await conn.execute(select(table).where(table.c.run_id == run_id))).first()
-        return ExtraRunCharge(
-            run_id=row.run_id,
-            account_id=row.account_id,
-            stripe_customer_id=row.stripe_customer_id,
-            completed_at=as_utc(row.completed_at),
-        )
+        return _charge_from_row(row)
 
     async def void(self, run_id: str) -> bool:
         table = billing_extra_runs
@@ -207,27 +238,44 @@ class SqlExtraRunLedger:
             moved = await conn.execute(update(table).where(table.c.run_id == run_id, table.c.state == HELD).values(state=VOID))
         return moved.rowcount == 1
 
-    async def due(self, *, limit: int = 50) -> list[ExtraRunCharge]:
+    async def due(self, *, limit: int = 50, account_id: str | None = None) -> list[ExtraRunCharge]:
         table = billing_extra_runs
-        oldest = self._clock() - _REPORT_MAX_AGE
+        oldest = self._clock() - REPORT_MAX_AGE
+        conditions = [table.c.state == DUE, table.c.completed_at >= oldest]
+        if account_id is not None:
+            conditions.append(table.c.account_id == account_id)
+        async with self._db.connect() as conn:
+            rows = (await conn.execute(select(table).where(*conditions).order_by(table.c.completed_at).limit(limit))).all()
+        return [_charge_from_row(row) for row in rows]
+
+    async def held(self, *, before: datetime, limit: int = 100) -> list[HeldExtraRun]:
+        table = billing_extra_runs
         async with self._db.connect() as conn:
             rows = (
                 await conn.execute(
-                    select(table)
-                    .where(table.c.state == DUE, table.c.completed_at >= oldest)
-                    .order_by(table.c.completed_at)
+                    select(table.c.run_id, table.c.account_id, table.c.created_at)
+                    .where(table.c.state == HELD, table.c.created_at < before)
+                    .order_by(table.c.created_at)
                     .limit(limit)
                 )
             ).all()
-        return [
-            ExtraRunCharge(
-                run_id=row.run_id,
-                account_id=row.account_id,
-                stripe_customer_id=row.stripe_customer_id,
-                completed_at=as_utc(row.completed_at),
-            )
-            for row in rows
-        ]
+        return [HeldExtraRun(run_id=row.run_id, account_id=row.account_id, held_at=as_utc(row.created_at)) for row in rows]
+
+    async def expire_due(self, *, limit: int = 100) -> list[ExtraRunCharge]:
+        table = billing_extra_runs
+        oldest = self._clock() - REPORT_MAX_AGE
+        async with self._db.connect() as conn:
+            rows = (
+                await conn.execute(select(table).where(table.c.state == DUE, table.c.completed_at < oldest).limit(limit))
+            ).all()
+            expired = []
+            for row in rows:
+                moved = await conn.execute(
+                    update(table).where(table.c.run_id == row.run_id, table.c.state == DUE).values(state=VOID)
+                )
+                if moved.rowcount == 1:
+                    expired.append(_charge_from_row(row))
+        return expired
 
     async def mark_reported(self, run_id: str) -> None:
         table = billing_extra_runs
@@ -298,14 +346,21 @@ class InMemoryExtraRunLedger:
     def __init__(self, settings: Settings, *, clock: Clock | None = None) -> None:
         self._settings = settings
         self._clock = clock or utcnow
-        # run_id -> [account_id, customer_id, period, state, completed_at]
+        # run_id -> [account_id, customer_id, period, state, completed_at, created_at]
         self._rows: dict[str, list] = {}
 
-    async def hold(self, run_id: str, *, account_id: str, customer_id: str, period: str) -> None:
-        self._rows[run_id] = [account_id, customer_id, period, HELD, None]
+    async def hold(self, run_id: str, *, account_id: str, customer_id: str, period: str, cap: int = 0) -> bool:
+        # No await between the count and the write: atomic on one event loop.
+        if cap > 0 and self._used(account_id, period) >= cap:
+            return False
+        self._rows[run_id] = [account_id, customer_id, period, HELD, None, self._clock()]
+        return True
+
+    def _used(self, account_id: str, period: str) -> int:
+        return sum(1 for row in self._rows.values() if row[0] == account_id and row[2] == period and row[3] != VOID)
 
     async def count(self, account_id: str, period: str) -> int:
-        return sum(1 for row in self._rows.values() if row[0] == account_id and row[2] == period and row[3] != VOID)
+        return self._used(account_id, period)
 
     async def complete(self, run_id: str) -> Optional[ExtraRunCharge]:
         row = self._rows.get(run_id)
@@ -321,12 +376,30 @@ class InMemoryExtraRunLedger:
         row[3] = VOID
         return True
 
-    async def due(self, *, limit: int = 50) -> list[ExtraRunCharge]:
+    async def due(self, *, limit: int = 50, account_id: str | None = None) -> list[ExtraRunCharge]:
+        oldest = self._clock() - REPORT_MAX_AGE
         return [
             ExtraRunCharge(run_id=run_id, account_id=row[0], stripe_customer_id=row[1], completed_at=row[4])
             for run_id, row in self._rows.items()
-            if row[3] == DUE
+            if row[3] == DUE and row[4] >= oldest and (account_id is None or row[0] == account_id)
         ][:limit]
+
+    async def held(self, *, before: datetime, limit: int = 100) -> list[HeldExtraRun]:
+        rows = sorted((row[5], run_id, row[0]) for run_id, row in self._rows.items() if row[3] == HELD and row[5] < before)
+        return [HeldExtraRun(run_id=run_id, account_id=account_id, held_at=at) for at, run_id, account_id in rows[:limit]]
+
+    async def expire_due(self, *, limit: int = 100) -> list[ExtraRunCharge]:
+        oldest = self._clock() - REPORT_MAX_AGE
+        expired = []
+        for run_id, row in self._rows.items():
+            if len(expired) >= limit:
+                break
+            if row[3] == DUE and row[4] < oldest:
+                row[3] = VOID
+                expired.append(
+                    ExtraRunCharge(run_id=run_id, account_id=row[0], stripe_customer_id=row[1], completed_at=row[4])
+                )
+        return expired
 
     async def mark_reported(self, run_id: str) -> None:
         row = self._rows.get(run_id)

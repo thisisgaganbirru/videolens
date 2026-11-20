@@ -31,28 +31,34 @@ import urllib.request
 from urllib.parse import urlparse
 
 from ...domain.errors import MediaValidationError
+from .deadline import track_socket
 
 MAX_URL_LENGTH = 2048
 
-# IPv6 ranges that carry an IPv4 address inside them. `is_global` judges the
-# IPv6 address, which for NAT64 (RFC 6052 / RFC 8215) is "global" even when the
-# embedded IPv4 is 127.0.0.1, so the embedded address has to be checked too.
-_NAT64_PREFIXES = (
+# IPv6 ranges that carry an IPv4 address in their low 32 bits. `is_global`
+# judges the IPv6 address, which for NAT64 (RFC 6052 / RFC 8215) is "global"
+# even when the embedded IPv4 is 127.0.0.1, so the embedded address has to be
+# checked too. The same holds for the IPv4-compatible form (`::a.b.c.d`,
+# deprecated by RFC 4291) and the IPv4-translated form (`::ffff:0:a.b.c.d`,
+# RFC 2765): `ipaddress` calls `::127.0.0.1` and `::ffff:0:7f00:1` global.
+_EMBEDDED_V4_PREFIXES = (
     ipaddress.ip_network("64:ff9b::/96"),
     ipaddress.ip_network("64:ff9b:1::/48"),
+    ipaddress.ip_network("::/96"),
+    ipaddress.ip_network("::ffff:0:0:0/96"),
 )
 
 
 def _embedded_ipv4(ip: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
     """The IPv4 address an IPv6 address stands for, if it is a translation
-    form (IPv4-mapped, 6to4, Teredo, NAT64)."""
+    form (IPv4-mapped, 6to4, Teredo, NAT64, IPv4-compatible or -translated)."""
     if ip.ipv4_mapped is not None:
         return ip.ipv4_mapped
     if ip.sixtofour is not None:
         return ip.sixtofour
     if ip.teredo is not None:
         return ip.teredo[1]
-    for prefix in _NAT64_PREFIXES:
+    for prefix in _EMBEDDED_V4_PREFIXES:
         if ip in prefix:
             return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
     return None
@@ -132,6 +138,8 @@ def _connect_pinned(conn: http.client.HTTPConnection, address: str) -> None:
     conn.sock = socket.create_connection(
         (address, conn.port), conn.timeout, conn.source_address
     )
+    # Inside a download, its wall-clock deadline can shut this socket down.
+    track_socket(conn.sock)
     try:
         conn.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     except OSError:
@@ -157,7 +165,15 @@ class PinnedHTTPSConnection(http.client.HTTPSConnection):
     def connect(self) -> None:
         _connect_pinned(self, self.pinned_address)
         server_hostname = self._tunnel_host or self.host  # noqa: SLF001 - as stdlib
-        self.sock = self._context.wrap_socket(self.sock, server_hostname=server_hostname)  # noqa: SLF001
+        # wrap_socket detaches the raw socket (its fileno becomes -1), so the
+        # deadline's shutdown of the tracked raw socket would do nothing: the
+        # TLS socket is tracked instead, before the handshake, so a server
+        # trickling the handshake or the body is cut off too.
+        self.sock = self._context.wrap_socket(  # noqa: SLF001
+            self.sock, server_hostname=server_hostname, do_handshake_on_connect=False
+        )
+        track_socket(self.sock)
+        self.sock.do_handshake()
 
 
 def _pinned_connection_class(request: urllib.request.Request, connection_class):

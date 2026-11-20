@@ -509,6 +509,14 @@ last 20 runs in this browser. Not synced." HomeScreen decides with
 that is gone (404) shows the expired view with `expiredReason="saved"`. See
 `saved-history.md`.
 
+## Selectable result text (review fix, 2026-11-20)
+
+The body is `select-none` (app chrome). The four panels (notes, summary,
+transcript, on-screen text) now carry `select-text`, so their text can be
+selected and copied by hand, as the legal pages' article can. The
+transcript's toolbar (search, timestamps switch) stays `select-none`; tabs,
+buttons and the rest of the card are unchanged.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported ResultsView + SourceCard; de-boxed the source card, wired .disclosure and role=tabpanel, rebuilt SourceCard.preview with six states
@@ -532,3 +540,4 @@ that is gone (404) shows the expired view with `expiredReason="saved"`. See
 - 2026-11-07 · security-check · `source_url`/`uploader_url` (yt-dlp strings) go through `components/safeUrl.ts` `safeHttpUrl` before becoming an `href` or an export link: only http(s) is linked, anything else is plain text. Android `res/xml/file_paths.xml` narrowed to `cache-path exports/` (the only folder `documentExporter.ts` shares); the template's whole-cache and external-storage mappings are gone. Needs one device pass of Save notes (`docs/qa/android-app-test-cases.md`).
 - 2026-11-14 · frontend agent · UX fix spec batch c: result title is the page h1; "History keeps your last 20 runs…" line under the card; "Back to History" before "Analyze another" for a run opened from History
 2026-11-14 · frontend agent · the line under the card says "Saved to your account. Open it from History on any device where you sign in." for a run this account saved; the expired view gains `expiredReason: "saved"` (Unavailable, "This run is no longer saved") for a saved run that answers 404 (see saved-history.md)
+- 2026-11-20 · Claude (frontend agent) · the four result panels are `select-text`; the transcript toolbar stays `select-none`

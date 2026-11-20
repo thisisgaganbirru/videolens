@@ -29,7 +29,7 @@ npm run dev                # http://localhost:3005
 npx tsc --noEmit           # CI typecheck; there is no frontend test suite
 npm run build              # CI
 npm run build:mobile       # CI; the Capacitor static export
-npm run lint               # not in CI; exits 1 on 4 known findings, see .claude/rules/frontend.md
+npm run lint               # not in CI; exits 1 on 4 known findings (3 errors + 1 warning), see .claude/rules/frontend.md
 ```
 
 Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
@@ -58,6 +58,9 @@ Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
   `billing_extra_runs`), the three billing tables (`billing_accounts`,
   `billing_events`, `billing_extra_runs`) and `saved_runs`, in
   `infrastructure/persistence/`, owned by Alembic in `backend/migrations/`.
+  On Postgres the API and the worker refuse to start against a schema
+  behind `EXPECTED_SCHEMA_REVISION`; a new migration bumps it
+  (`docs/backend/startup-checks.md`).
 - Sign-in is optional and anonymous use is first-class. The `AUTH_*` settings
   verify Supabase-issued JWTs by JWKS only (RS256/ES256; never add HS256 or a
   Supabase SDK to the backend); with them and `DATABASE_URL` blank the API
@@ -78,7 +81,9 @@ Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
   deployment's own proxy wrote (`TRUSTED_PROXY_HOPS`, counted from the
   right; 2 on Railway, whose edge writes `<client>, <edge hop>` with a
   varying hop), never the client-supplied first entry. The API refuses to start
-  in distributed mode with `ALLOWED_ORIGINS=*`.
+  in distributed mode with `ALLOWED_ORIGINS=*`. In front of all four: failed
+  API keys and tokens per IP (429, 15-minute window, checked before any
+  lookup) and a request-body ceiling (413).
 - The production APK is release-signed with a key held only in CI secrets
   when the four `ANDROID_*` signing secrets exist, and falls back to the
   debug build signed with the checked-in `debug.keystore` (with a CI
@@ -92,12 +97,15 @@ Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
 - A BYOK key must never be an arq job argument (arq logs them). It travels
   through the single-use Redis vault in `infrastructure/byok/key_vault.py`.
 - Every outbound fetch for a URL run goes through `media/net.py`, the one
-  SSRF guard. A new resolver or fetch path must use it, not copy it.
+  SSRF guard; yt-dlp too, through `media/ytdlp_net.py`'s pinned
+  connections. A new resolver or fetch path must use it, not copy it.
 - `interface/` and `infrastructure/` must not import each other; only
   `container.py` wires them. Two known violations are listed in
   `docs/engineering-standards.md`; do not add more.
 - Railway builds from source. The GHCR images CI publishes are an archive
-  and nothing deploys them. Deploys are gated by Railway's Wait for CI, which
+  and nothing deploys them. A worker deploy (SIGTERM) cancels running jobs;
+  their runs go back to `queued` and resume on arq's retry, while a job
+  timeout fails the run (`docs/backend/job-queue.md`). Deploys are gated by Railway's Wait for CI, which
   skips a deploy while any workflow on the commit is red, so advisory jobs
   must finish green.
 
@@ -124,7 +132,7 @@ This is enforced, not just asked for. The whole history was rewritten on
 <noreply@anthropic.com>` (the cloud default identity). `.claude/settings.json`
 turns attribution off, the session-start hook sets a real git identity and
 enables `.githooks/commit-msg`, and CI's `hygiene` job fails any PR whose
-commits or description carry them. Never commit as that identity, never
+commits, title or description carry them. Never commit as that identity, never
 bypass the hook with `--no-verify`, and never push from a clone made before
 2026-11-20 (it would bring the old history back). Details:
 `docs/engineering-standards.md`, "Commit hygiene".

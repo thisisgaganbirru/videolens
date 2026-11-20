@@ -209,7 +209,20 @@ environment variables, not one process:
 The worker service must set the *same* `GEMINI_API_KEY`, `REDIS_URL`,
 `S3_*`, `DEVICE_TOKEN_SECRET`, and media-processing variables as the backend
 service — it's the process that actually downloads, normalizes, and analyzes
-the video.
+the video. It must also share **`DATABASE_URL`** and every **`STRIPE_*`**
+variable with the API whenever the API has them. A worker without them still
+starts and processes runs, but silently: extra runs are never billed (their
+held ledger rows are voided after two days), paid results are never saved to
+history, signed-in free-run holds are never settled, and the hourly purge
+removes nobody, which breaks the 30-day deletion promise. Since 2026-11-20 the
+worker refuses the same misconfigurations as the API (billing without a
+database, SQLite when distributed, a schema older than the code), and both
+services log one `Startup mode {...}` line (role, mode, database dialect,
+schema state, billing, auth, object storage; switches only, no values):
+compare the two lines after any variable change
+(`docs/backend/startup-checks.md`). A worker with `DATABASE_URL` blank while
+the API has it is not refused (nothing in the worker can see the API's
+variables); the two lines are how to spot it.
 
 Railway supports separate root directories for isolated monorepo services and
 uses a service Dockerfile when present:
@@ -305,6 +318,8 @@ READ_RATE_LIMIT_PER_MINUTE=120
 # "<client>, <edge hop>" and the edge hop varies per request, so 1 keys every
 # request differently and no per-IP limit trips. 0 = use the socket peer.
 TRUSTED_PROXY_HOPS=2
+# Failed credentials per client IP per 15 minutes before 429 (<= 0 = off).
+AUTH_FAILURE_LIMIT_PER_IP=30
 MAX_FILE_SIZE_MB=200
 MAX_DURATION_SECONDS=180
 # Signed in (JWT or account API key) AND own Gemini key on the run: the bigger
@@ -340,6 +355,19 @@ WORKER_JOB_TIMEOUT_SECONDS=600
 # of media). Set on BOTH services: the API uses it for the stale-run check
 # (+120 s) and the long-run slot expiry, the worker for the arq timeout.
 WORKER_LONG_JOB_TIMEOUT_SECONDS=1800
+# Wall-clock limit on a run's link downloading, in the worker: yt-dlp, the
+# plain-file fallback and the caption fallback share it. Under the job timeout.
+DOWNLOAD_DEADLINE_SECONDS=300
+# Worker: on SIGTERM (a deploy) keep running in-flight jobs this long before
+# cancelling them; a cancelled job is re-queued and resumes on the next
+# worker. 0 (default) = cancel at once. Keep it several seconds UNDER the
+# worker service's stop grace period on Railway (its draining time; check the
+# service settings, not assumed here). A worker killed mid-wait leaves its
+# jobs locked for the job timeout and the stale-run check fails them first.
+WORKER_JOB_COMPLETION_WAIT_SECONDS=0
+# Postgres pool per process (see "Database connections" below). Same on both.
+DATABASE_POOL_SIZE=5
+DATABASE_MAX_OVERFLOW=10
 TEMP_DIR=/tmp/videolens
 ALLOWED_ORIGINS=https://app.example.com
 REDIS_URL=<Railway Redis URL>
@@ -520,10 +548,59 @@ received (same as the 200 MB check always did).
 
 Only for an environment with `DATABASE_URL` set (accounts on). Alembic is
 not run at startup and the Dockerfile does not copy `migrations/`, so run it
-from a checkout, **as `postgres`** (the project owner), before deploying
-code that needs the new revision. Full detail, including the offline
-`--sql` path through the SQL editor or connector: `docs/backend/auth.md`,
-"Migrations".
+from a checkout, **as `postgres`** (the project owner). Full detail, including
+the offline `--sql` path through the SQL editor or connector:
+`docs/backend/auth.md`, "Migrations".
+
+**Order: migrations first, then the code.** Apply every pending revision to
+the target database *before* the promotion merge deploys the new code. The
+code reads the newest schema from its first request: `0010_complimentary_plus`
+adds `accounts.complimentary_plus`, and every `select(accounts)` names it, so
+code at 0010 against a database at 0009 or older fails every signed-in
+request ("column does not exist") while anonymous use and `/api/health` look
+fine. The revisions are additive, so applying them early under the old code
+is safe. Since 2026-11-20 the API and the worker check this themselves: on
+Postgres each refuses to start when `alembic_version` is older than the code's
+expected revision (`EXPECTED_SCHEMA_REVISION` in
+`backend/app/domain/schema_revision.py`, today `0010_complimentary_plus`) or
+missing, naming both revisions; a revision the code does not know (a rollback
+to older code) is logged and allowed. See `docs/backend/startup-checks.md`.
+
+**Before the first deploy with that check**, let the backend role read the
+version table, or the check can only log an ERROR ("cannot protect this
+deployment") and let the process start. Until the grant is applied the check
+protects nothing: a schema that *is* behind is reported `unreadable`, not
+refused, and the code starts against it exactly as before the check existed. `docs/backend/auth.md` records that
+on `videolens-dev` the role was refused `alembic_version` and that Supabase
+turned RLS on for it, so a policy is needed besides the grant. As `postgres`,
+with the real role name if `DATABASE_APP_ROLE` is not the default:
+
+```sql
+GRANT SELECT ON public.alembic_version TO videolens_api;
+CREATE POLICY videolens_api_read_version ON public.alembic_version
+  FOR SELECT TO videolens_api USING (true);
+```
+
+(Skip the policy if `SELECT relrowsecurity FROM pg_class WHERE oid =
+'public.alembic_version'::regclass` returns false.) After deploying,
+`GET /api/readiness` reports `"schema": "ok"`; `unreadable` means the grant or
+policy is missing. That value is the result of the check the process ran at
+startup, not a live reading: it does not change until the process restarts
+(`docs/backend/startup-checks.md`).
+
+**The worker has no health check** (`railway.worker.json` sets none; the API's
+is `/api/health`). A worker whose schema check refuses (behind or missing)
+logs the refusal and exits during arq startup, before it takes a job; Railway
+restarts it up to 3 times (`ON_FAILURE`) and then leaves it crashed. Nothing
+gates that deploy, so as far as Railway's documented behaviour goes the new
+worker deployment replaces the old one even though it never runs (not checked
+here). Runs submitted meanwhile wait `queued` in Redis and expire with the run
+TTL if nobody fixes it. After a worker deploy, read its `Startup mode` line
+(or its crash log) rather than trusting the deploy's green status.
+
+Production state is not recorded here: read `SELECT version_num FROM
+alembic_version` on the production project before promoting, and apply from
+that revision to head.
 
 - [ ] `0001_identity`: the `videolens_api` role exists first; then the four
       identity tables, RLS, policies and grants.
@@ -557,7 +634,58 @@ code that needs the new revision. Full detail, including the offline
       **before** the code, or every signed-in request fails (column does
       not exist). Offline SQL:
       `alembic upgrade 0005_account_daily_free_runs:0006_saved_history --sql`.
-- [ ] `GET /api/capabilities` shows `database: ok` (and `auth: ok`).
+- [ ] `0007_identity_cascades` (Postgres only: the four identity foreign keys
+      re-added `ON DELETE CASCADE` under their existing names). Check the
+      constraint names first with the query in the migration's docstring.
+      Offline SQL: `alembic upgrade 0006_saved_history:0007_identity_cascades --sql`.
+- [ ] `0008_value_checks` (named check constraints on the fixed-value text
+      columns; fails if an existing row breaks one, so check the rows against
+      the lists in the migration's docstring first). Offline SQL:
+      `alembic upgrade 0007_identity_cascades:0008_value_checks --sql`.
+- [ ] `0009_default_workspace_fk` (Postgres only: `accounts.default_workspace_id`
+      references `workspaces(id)` `ON DELETE SET NULL`). The pre-check query
+      in `docs/backend/auth.md` must return 0 first. Offline SQL:
+      `alembic upgrade 0008_value_checks:0009_default_workspace_fk --sql`.
+- [ ] `0010_complimentary_plus` (`accounts.complimentary_plus BOOLEAN NOT NULL
+      DEFAULT false`, catalog-only on Postgres 11+) **before** the code, or
+      every signed-in request fails. This is the head the code expects.
+      Offline SQL: `alembic upgrade 0009_default_workspace_fk:0010_complimentary_plus --sql`.
+- [ ] `alembic_version` readable by the backend role (SQL above).
+- [ ] `GET /api/capabilities` shows `database: ok` (and `auth: ok`), and
+      `GET /api/readiness` shows `"schema": "ok"` on the API. The worker's
+      `Startup mode` log line shows `"schema": "ok"` too.
+
+### Database connections
+
+- **Pooler.** On Supabase use the Supavisor **session** pooler (port 5432),
+  not the transaction pooler (6543): asyncpg's prepared statements do not
+  survive transaction pooling, and every signed-in route failed on dev with
+  "prepared statement ... does not exist" (`docs/backend/auth.md`, "Pooler").
+- **TLS.** The production `DATABASE_URL` must end in `?sslmode=require` (or
+  `ssl=require`). Without it asyncpg's default `prefer` applies: a silent
+  plaintext fallback. `require` encrypts but does **not** verify the server's
+  certificate, so it stops passive eavesdropping and not an active
+  man-in-the-middle. To verify, download the project's CA certificate
+  (Supabase: Database settings, SSL), ship it with the service and use
+  `?sslmode=verify-full&sslrootcert=/path/to/ca.crt` (`verify-ca` checks the
+  chain but not the host name); the app turns `sslrootcert` into an SSL
+  context trusting only that CA. Not set up on any environment today. The app
+  renames `sslmode=` to asyncpg's `ssl=` and keeps the value. Any other
+  parameter asyncpg cannot take (`options`, `application_name`,
+  `connect_timeout`, `sslcert`/`sslkey`, ...) makes the API and the worker
+  refuse to start, naming it; before 2026-11-20 it failed every query instead.
+  Local Postgres without TLS needs nothing.
+- **Pool size.** On the session pooler every open pooled connection is a real
+  server connection. Each process opens up to `DATABASE_POOL_SIZE` +
+  `DATABASE_MAX_OVERFLOW` (5 + 10 by default), so API + worker can hold about
+  30, plus one while Alembic runs and anything else using the project. During
+  a deploy the old and new deployment of a service run side by side until the
+  old one stops, so the figure briefly doubles (about 60 when both services
+  deploy together). Read the pooler's session limit for the project's plan on
+  the Supabase dashboard (not recorded here, not checked) and, if that peak
+  does not fit with room to spare, lower the two settings on both services. Too small a pool makes
+  signed-in requests wait for a connection; too large hits "max clients"
+  errors under load.
 
 ## Phase 3: Installable PWA
 
@@ -704,9 +832,43 @@ gh secret set ANDROID_KEY_PASSWORD
 `frontend/android/app/build.gradle` reads `ANDROID_KEYSTORE_PATH`,
 `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`
 from the environment and configures release signing only when all four are
-present; the workflow decodes the secret to `$RUNNER_TEMP/release.keystore`
-and sets them for the Gradle step. Locally, export the same four variables
-and run:
+present. **CI never sets them for Gradle** (since 2026-11-20): the Gradle
+build runs `npm ci` and builds Capacitor from `node_modules`, so the key is
+kept off that runner. `reusable-android-checks.yml` instead runs three jobs:
+
+1. `signing` (no checkout) checks the four secrets for emptiness and that
+   the keystore decodes, and picks `release`.
+2. `android` builds `assembleRelease` with no signing variables, i.e. an
+   **unsigned** release APK, and uploads it with `version.json` as the
+   artifact `videolens-ai-v<version>-code<code>-<sha>-release-unsigned`
+   (kept one day).
+3. `sign` (no checkout, no npm, no Gradle) installs build-tools 36.0.0,
+   decodes the keystore to `$RUNNER_TEMP`, runs `zipalign -P 16 -f 4`, then
+   `apksigner sign` (passwords via `env:`), `apksigner verify
+   --print-certs`, fails if the certificate is `CN=Android Debug`, and
+   uploads `videolens-ai-v<version>-code<code>-<sha>-release` (the name the
+   `release` job downloads) with the APK renamed to that name plus `.apk`.
+
+This path has never run; it cannot until the secrets exist. **On the first
+`main` push with all four secrets set**, check the run before announcing the
+release:
+
+- The `android / Android signing mode` job logs no debug-signing warning.
+- `android / Android release signing` is green, and its step summary shows
+  `Signer #1 certificate DN` and `SHA-256 digest`. Compare the digest with
+  the key you created:
+  `keytool -list -v -keystore videolens-release.jks -alias videolens`
+  (the `SHA256:` line, same value without colons).
+- The release has one `...-release.apk` and `version.json`. Locally,
+  `apksigner verify --print-certs <apk>` on the downloaded asset prints the
+  same digest.
+- If `sign` fails (for example a wrong alias or password), the `release`
+  job does not run and no release is published; the commit's workflow is
+  red, so Railway's Wait for CI skips that production deploy too (a new
+  commit is needed, see `docs/railway-environments.md`). Fix the secret and
+  push again.
+
+Locally, export the same four variables and run:
 
 ```powershell
 cd frontend
@@ -804,3 +966,7 @@ The release is complete when:
 - 2026-11-14 · backend agent · `FREE_RUNS_PER_ACCOUNT_DAILY` replaces `FREE_RUNS_PER_ACCOUNT_MONTHLY` (remove the old variable); migration step for `0005_account_daily_free_runs` before the daily code
 - 2026-11-14 · backend agent · `PAID_RUNS_PER_DAY` (30/UTC day) replaces `PAID_RUNS_PER_MONTH` (100/month, no longer read): rename the variable on both services if set; no migration
 - 2026-11-14 · backend agent · paid saved history and the 30-day deletion hold: migration `0006_saved_history` (release checklist and migration step, before the code), `PAID_SAVED_RUNS_GRACE_DAYS`, `PAID_SAVED_RUN_MAX_BYTES`, `ACCOUNT_DELETION_HOLD_DAYS` (both services), backend and worker deployed together
+- 2026-11-20 · Claude (backend agent) · `AUTH_FAILURE_LIMIT_PER_IP` (failed credentials per IP, 429) and `DOWNLOAD_DEADLINE_SECONDS` (wall-clock link download limit) variables; requests over the body ceiling now get 413 before they are read
+- 2026-11-20 · Claude (backend agent) · release checklist through 0010 with "migrations before code" and the `alembic_version` grant for the new startup schema check; worker must share `DATABASE_URL` and `STRIPE_*` (what breaks otherwise); "Database connections" (session pooler 5432, `sslmode=require`, pool sizing); `WORKER_JOB_COMPLETION_WAIT_SECONDS`, `DATABASE_POOL_SIZE`, `DATABASE_MAX_OVERFLOW`
+- 2026-11-20 · Claude (backend agent) · re-review: one download budget per run (`DOWNLOAD_DEADLINE_SECONDS`); connection figure doubles during deploy overlap; the schema check protects nothing until the `alembic_version` grant; worker has no health check and what a schema-behind worker does; readiness `schema` is a startup snapshot; `sslmode=require` does not verify the certificate, `sslrootcert` with `verify-full` does; unsupported URL parameters refuse startup
+- 2026-11-20 · Claude (CI agent) · Android release signing: CI signs in a separate `sign` job with apksigner on an unsigned Gradle build, never passing the key to Gradle; documented what the first run with secrets does and how to verify it

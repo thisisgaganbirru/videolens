@@ -14,8 +14,11 @@ deletable. The one exception is **complimentary Plus** (`accounts.complimentary_
 `billing.md`, since 2026-11-14): such an account is on the paid plan with
 or without Stripe, so its runs are saved and `saving` is true even with
 Stripe off. The post-cancel window (arming, purging, the restore re-arm,
-`expires_at`) still needs Stripe on, so switching Stripe off never starts
-removing anyone's runs.
+`expires_at`) runs wherever saving does (since 2026-11-20), so a
+complimentary account whose flag is cleared gets its 30 days with or
+without Stripe. With Stripe off an account whose stored subscription is
+still live is never armed or purged, so switching Stripe off never starts
+removing a subscriber's runs.
 
 ## Files
 
@@ -221,18 +224,27 @@ the table.
   skips it (the SQL scan filters `complimentary_plus = false` and the
   application re-checks), `purge_expired` clears an expiry armed before the
   flag was set instead of purging. Clearing the flag by hand later makes the
-  account an ordinary lapsed one: with Stripe on, the backstop arms a fresh
-  30-day window on its next tick.
-- The window logic runs only with Stripe billing on (`SavedHistory.windows_enabled`);
-  with it off nothing is armed or removed and `expires_at` is null.
+  account an ordinary lapsed one: the backstop arms a fresh 30-day window
+  on its next tick, with Stripe on or off (2026-11-20; it used to need
+  Stripe on, so with Stripe off the runs were kept for ever). Setting the
+  flag again inside the window clears it.
+- The window logic runs wherever saving does (`SavedHistory.windows_enabled`
+  is `enabled`: a database, and Stripe on or an account store to read the
+  flag from). With Stripe off, an account whose stored subscription is
+  still live (`subscription_is_live`) is skipped by `arm_lapsed`,
+  `purge_expired` and the restore re-arm, because nothing can say that it
+  ended.
 
 ### The deletion hold: `ACCOUNT_DELETION_HOLD_DAYS` = 30
 
 `DELETE /api/me`, in order:
 
-1. Cancel any Stripe subscription now (unchanged, `invoice_now=true,
-   prorate=false`, after reporting due extra runs). A failure refuses the
-   deletion (503) with nothing changed.
+1. Cancel every live Stripe subscription of the customer now
+   (`invoice_now=true, prorate=false`, after reporting all due extra runs).
+   A Stripe failure refuses the deletion (503) with nothing changed; with
+   billing off the hold still starts, with a WARNING, but the purge will not
+   remove the account while its stored subscription is live (`billing.md`,
+   "Deletion cancels first").
 2. Delete the person's Redis runs (unchanged, best effort).
 3. Set `accounts.deleted_at = now`, `purge_at = now + hold` (only if not
    already set). From here the account is refused everywhere (above).
@@ -248,9 +260,12 @@ its saved runs are kept with no window, and saving resumes.
 
 After `purge_at`, the hourly cleanup, per account (25 per tick):
 
-1. If a subscription is somehow live again, cancel it; if that fails, skip
-   the account (logged) and retry next tick. Never remove an account that
-   pays.
+1. Report the account's due extra runs, then cancel the stored
+   subscription and every other live one of its Stripe customer
+   (`billing.md`, "Deletion cancels first"); if Stripe cannot be read or a
+   cancel fails, skip the account (logged) and retry next tick. Never
+   remove an account that pays. With Stripe not configured the account is
+   removed anyway, with a WARNING.
 2. Delete the Supabase user (`videolens_private.delete_auth_user`, migration
    0002; no SDK, no service-role key). First, so nobody can sign in to a
    half-removed account.
@@ -327,7 +342,11 @@ on Postgres if `DATABASE_APP_ROLE` does not exist.
   Postgres branch.
 - `tests/interface/api/test_history_routes.py`,
   `tests/interface/api/test_account_routes.py`: the HTTP contract, 410s,
-  restore, the cleanup end to end.
+  restore, the cleanup end to end. `test_history_routes.py` also checks a
+  second paid account cannot read, list or delete the first one's saved
+  run (404, its own list only, bulk delete removes only its own).
+- `tests/interface/api/test_held_account_gate.py`: the 410 on `/api/history*`
+  with the other route families.
 
 ## Known issues and open questions
 
@@ -346,3 +365,6 @@ on Postgres if `DATABASE_APP_ROLE` does not exist.
 - 2026-11-14 · backend agent · created: paid saved history (migration 0006, saving on success, `/api/history*`, `saved_history` on `/api/me`), the post-cancel window, the 30-day deletion hold with `POST /api/me/restore`, and the hourly cleanup cron
 - 2026-11-14 · backend agent · migration `0008_value_checks`: `ck_saved_runs_completeness` (`full` | `captions_only`)
 - 2026-11-14 · backend agent · complimentary Plus (`accounts.complimentary_plus`, migration 0010): saved and `saving: true` with or without Stripe; never a post-cancel window (sync/arm/purge treat it as paid, the SQL arm scan skips it); window logic gated on Stripe on (`windows_enabled`); restore leaves the flag as it was
+- 2026-11-20 · Claude (backend agent) · the post-cancel window runs wherever saving does (a cleared complimentary flag starts the 30 days with Stripe off too), never for a stored live subscription with Stripe off; the purge flushes due extra runs and cancels every live subscription first, and goes ahead with a WARNING when billing is off
+- 2026-11-20 · Claude (backend agent) · tests: cross-account read/list/delete of a saved run at route level
+- 2026-11-20 · Claude (backend agent) · re-review: with billing off the purge waits for billing (retried hourly) while a live stored subscription is on file

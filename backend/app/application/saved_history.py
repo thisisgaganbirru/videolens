@@ -28,8 +28,11 @@ Saving is off (nothing saved, every list empty, `saving: false`) without a
 database, or with billing off and no account store to read complimentary
 Plus from, which is exactly the behaviour before this existed. The
 post-cancel window (arming, purging, the restore re-arm, the expiry shown)
-needs Stripe billing on, as before: with it off nothing is armed or
-removed, so switching Stripe off never starts deleting anyone's runs.
+applies whenever saving can (`windows_enabled`), so an account whose
+complimentary flag was cleared gets its 30 days and then its runs go, with
+or without Stripe. With Stripe off, an account whose stored subscription
+is still live is never armed or purged: nothing can say it ended, so
+switching Stripe off never starts deleting a subscriber's runs.
 """
 
 import base64
@@ -40,6 +43,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from ..domain.entities import (
+    BillingAccount,
     Principal,
     Run,
     RunStatus,
@@ -50,7 +54,7 @@ from ..domain.entities import (
     SavedRunSource,
 )
 from ..domain.errors import InvalidCursorError, SavedRunNotFoundError
-from ..domain.policies import subscription_grants_paid, subscription_has_ended
+from ..domain.policies import subscription_grants_paid, subscription_has_ended, subscription_is_live
 from ..domain.ports import RunRepository, SavedRunRepository
 from ..domain.run_facts import describe_run, summary_snippet
 from .billing import BillingPlans
@@ -127,9 +131,24 @@ class SavedHistory:
 
     @property
     def windows_enabled(self) -> bool:
-        """The post-cancel window applies: a database and Stripe billing on
-        (a subscription can end). Off = nothing is armed or removed."""
-        return self.saved_runs.enabled and self._plans is not None and self._plans.enabled
+        """The post-cancel window applies: wherever saving can happen (a
+        database, and Stripe billing or complimentary Plus), since either
+        plan can end. Off = nothing is armed or removed."""
+        return self.enabled
+
+    def _unknowable(self, account: BillingAccount | None) -> bool:
+        """Stripe is off and the stored subscription is still live: whether
+        it ended cannot be known without Stripe, so the account is neither
+        armed nor purged (its runs are kept, as before this window existed
+        for Stripe-off deployments)."""
+        assert self._plans is not None
+        return not self._plans.enabled and account is not None and subscription_is_live(account.status)
+
+    async def _billing_row(self, account_id: str) -> BillingAccount | None:
+        assert self._plans is not None
+        if not self._plans.accounts.enabled:
+            return None
+        return await self._plans.accounts.get(account_id)
 
     def now(self) -> datetime:
         return self._clock()
@@ -264,6 +283,8 @@ class SavedHistory:
             if (await self._plans.standing(account_id)).paid:
                 await self.saved_runs.clear_expiry(account_id)
                 return
+            if self._unknowable(await self._billing_row(account_id)):
+                return
             if await self.saved_runs.expiry(account_id) is None:
                 page = await self.saved_runs.list_page(account_id, limit=1)
                 if not page.items:
@@ -284,7 +305,9 @@ class SavedHistory:
         for account_id in await self.saved_runs.accounts_to_arm(now, limit=limit):
             if await self._plans.is_complimentary(account_id):
                 continue
-            account = await self._plans.accounts.get(account_id)
+            account = await self._billing_row(account_id)
+            if self._unknowable(account):
+                continue
             status = account.status if account else None
             period_end = account.current_period_end if account else None
             if not subscription_has_ended(status, period_end, now):
@@ -308,6 +331,8 @@ class SavedHistory:
         for account_id in await self.saved_runs.expired_accounts(now, limit=limit):
             if (await self._plans.standing(account_id)).paid:
                 await self.saved_runs.clear_expiry(account_id)
+                continue
+            if self._unknowable(await self._billing_row(account_id)):
                 continue
             count = await self.saved_runs.purge_expired(account_id, now)
             removed += count

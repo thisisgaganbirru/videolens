@@ -18,9 +18,23 @@ venv/
 # local identity database (DATABASE_URL=sqlite+aiosqlite:///...)
 *.sqlite3
 
-# env
+# env: every local variant (.env, .env.local, .env.production, .env.dev, ...);
+# only the .env.example templates are tracked
 .env
+.env.*
 *.env.local
+!.env.example
+
+# local credentials kept beside the code
+DATABASE_URL.txt
+*.pw
+
+# The MCP server is parked on the unmerged branch feature/mcp-server on
+# purpose (CLAUDE.md); a local copy left over from that branch stays out of
+# this one. If this file is ever merged into feature/mcp-server, its tracked
+# files stay tracked (ignoring never untracks), but a new file under mcp/
+# there would need `git add -f` or a `!mcp/` line on that branch.
+mcp/
 
 # misc
 .DS_Store
@@ -52,3 +66,7 @@ design/
 
 # Scratch channel between AI tools; not project content
 relay.md
+
+# Security assessments list open findings: local only, never committed
+*Security-Assessment*.xlsx
+*security-assessment*.xlsx

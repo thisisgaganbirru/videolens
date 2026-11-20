@@ -28,8 +28,13 @@ permissions:
   contents: read
 
 concurrency:
-  # A PR's runs cancel each other; runs on main never cancel, so a merge is
-  # always published and released in full.
+  # A PR's runs cancel each other. Runs on main never cancel a run that is
+  # already in progress, so a started merge run is published and released in
+  # full. They are still one concurrency group, though: GitHub keeps at most
+  # one run pending per group, so when a third main run queues behind a
+  # running one, the run that was pending is cancelled. That merge then gets
+  # no image, APK or release of its own; the newer merge's run ships its
+  # changes too.
   group: ${{ github.event_name == 'pull_request' && format('production-pr-{0}', github.event.pull_request.number) || 'production-environment' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -85,7 +90,10 @@ jobs:
       environment: production
       channel: latest
       revision: ${{ github.sha }}
-    secrets: inherit
+    # No secrets: the publish job's only credential is its own github.token,
+    # and environment secrets of `production` reach it through its
+    # `environment:` regardless. `secrets: inherit` used to hand it every
+    # repository secret, the ANDROID_* signing key included.
 
   android:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

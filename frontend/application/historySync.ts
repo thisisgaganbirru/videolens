@@ -6,7 +6,8 @@ import type {
   RunSummary,
 } from "@/domain/entities";
 import { ApiError } from "@/domain/errors";
-import { callerIdentity, historyStore, runsGateway } from "@/infrastructure/container";
+import { authSession, callerIdentity, historyStore, runsGateway } from "@/infrastructure/container";
+import { ANONYMOUS_OWNER } from "@/infrastructure/apiClient";
 
 /* Everything that writes History, in one place, free of React.
 
@@ -18,7 +19,19 @@ import { callerIdentity, historyStore, runsGateway } from "@/infrastructure/cont
 
    Every write here swallows its own failure. History is a convenience; a
    private window with no IndexedDB, or a quota error, must never be the
-   reason an analysis does not show. */
+   reason an analysis does not show.
+
+   Two kinds of write (2026-11-20), so a signed-out device stays clear of an
+   account's runs whichever tab or late answer is still busy:
+   - **create** (`upsert`): only the run's first filing, on submit and on an
+     import. It needs an owner, and an account's run is created only while
+     that same account is signed in on this device, checked right before the
+     write (`mayCreate`).
+   - **update** (`HistoryStore.update`): everything after that (every poll,
+     expiry, the reconcile at load, an import's detail). It merges into a row
+     that is still there and never creates one, in the same transaction as
+     its check, so a row the sign-out sweep removed, in this tab or another,
+     is never written back. */
 
 /** Said on a run that was still in progress when this browser last saw it and
  *  that the server no longer has. Truthful: we do not know whether it would
@@ -38,6 +51,25 @@ const IMPORT_FLAG = "videolens-history-imported";
 const SNIPPET_MAX = 160;
 
 function ignore(): void {}
+
+/** Whether a run filed under `owner` belonged to an account rather than to
+ *  this device's anonymous caller. Unknown (null) counts as an account's:
+ *  privacy errs that way. */
+export function isAccountOwned(owner: string | null | undefined): boolean {
+  return owner !== ANONYMOUS_OWNER;
+}
+
+/** Whether a row may be created for `owner` right now. Anonymous: yes. An
+ *  account (`user:<id>`): only while that account is the one signed in on
+ *  this device, read at write time, so a create that lands after a sign-out
+ *  (here or in another tab, which the session hears) is dropped instead of
+ *  outliving the sweep. Unknown (null): never, as nothing could sweep it. */
+function mayCreate(owner: string | null): owner is string {
+  if (owner === ANONYMOUS_OWNER) return true;
+  if (!owner || !isAccountOwner(owner)) return false;
+  const signedIn = authSession.hasSession() ? authSession.user()?.id : null;
+  return !!signedIn && owner === `user:${signedIn}`;
+}
 
 /* ---------- mapping ---------- */
 
@@ -121,18 +153,25 @@ function patchFromSummary(summary: RunSummary): HistoryPatch {
 /* ---------- writes from the analysis flow ---------- */
 
 /** Filed the moment the server accepts a run. For an upload the browser
- *  already knows the kind of file; a link's platform comes from the server. */
-export function recordSubmitted(runId: string, status: HistoryRecord["status"], source: MediaSource): void {
+ *  already knows the kind of file; a link's platform comes from the server.
+ *  `owner` is who the create request went out as (`AsOwner` from the
+ *  gateway), taken from that request rather than from whatever went out
+ *  last. */
+export function recordSubmitted(
+  runId: string,
+  status: HistoryRecord["status"],
+  source: MediaSource,
+  owner: string | null
+): void {
+  if (forgotten.has(runId) || !mayCreate(owner)) return;
   const patch: HistoryPatch = {
     run_id: runId,
     status,
     created_at: new Date().toISOString(),
     source_kind: source.file ? "file" : "link",
   };
-  /* Who the server holds it for: the identity the create request just went
-     out as. */
-  const owner = callerIdentity.lastOwner();
-  if (owner) patch.owner = owner;
+  /* Who the server holds it for. Always set: `mayCreate` refuses a null. */
+  patch.owner = owner;
   if (source.url) patch.source_url = source.url;
   if (source.file) {
     patch.file_name = source.file.name;
@@ -153,11 +192,19 @@ function signature(run: RunStatusResponse): string {
 /** File one observed status response. Called for every response the analysis
  *  screen applies (poll, reconnect, reopen). */
 export function recordRunResponse(run: RunStatusResponse): void {
-  if (!run?.run_id) return;
+  if (!run?.run_id || forgotten.has(run.run_id)) return;
   const sig = signature(run);
   if (lastWritten.get(run.run_id) === sig) return;
   lastWritten.set(run.run_id, sig);
-  historyStore.upsert(patchFromRun(run)).catch(() => lastWritten.delete(run.run_id));
+  /* An update only: the row was created on submit (or import). Gone since
+     (a sign-out sweep, "Remove from this device", from any tab) means it
+     stays gone. */
+  historyStore
+    .update(patchFromRun(run))
+    .then((updated) => {
+      if (!updated) lastWritten.delete(run.run_id);
+    })
+    .catch(() => lastWritten.delete(run.run_id));
 }
 
 /** True when a gateway call failed because the server no longer has the run
@@ -176,7 +223,9 @@ export function isRunGone(err: unknown): boolean {
 export async function recordExpired(runId: string): Promise<string | null> {
   lastWritten.delete(runId);
   try {
-    await historyStore.upsert({ run_id: runId, status: "failed", error: EXPIRED_MESSAGE });
+    /* An update: a run with no row here (removed, or never filed) gets
+       none, and the link comes from whatever row is still there. */
+    await historyStore.update({ run_id: runId, status: "failed", error: EXPIRED_MESSAGE });
     const record = await historyStore.get(runId);
     return record?.source_url ?? record?.source_metadata?.source_url ?? null;
   } catch {
@@ -247,33 +296,43 @@ function writeFlag(): void {
 async function importOnce(): Promise<Set<string>> {
   const handled = new Set<string>();
   if (readFlag()) return handled;
-  let summaries: RunSummary[];
+  let listed: { runs: RunSummary[]; owner: string | null };
   try {
-    summaries = (await runsGateway.listRuns()).runs;
+    listed = await runsGateway.listRuns();
   } catch {
     return handled;
   }
   writeFlag();
-  await importSummaries(summaries, handled);
+  await importSummaries(listed.runs, listed.owner, handled);
   return handled;
 }
 
 /** Files each server-side run into History (skipping ones already holding a
- *  result), noting each id in `handled`. Never rejects. */
-async function importSummaries(summaries: RunSummary[], handled: Set<string>): Promise<void> {
+ *  result), noting each id in `handled`. `owner` is who the list request
+ *  went out as. Never rejects. */
+async function importSummaries(summaries: RunSummary[], owner: string | null, handled: Set<string>): Promise<void> {
   for (const summary of summaries) {
     handled.add(summary.run_id);
+    if (forgotten.has(summary.run_id)) continue;
     try {
       const existing = await historyStore.get(summary.run_id);
       if (existing?.result) continue;
       const patch = patchFromSummary(summary);
-      /* Listed for the identity the list request went out as. A row this
-         browser already filed keeps the owner it was filed with. */
-      const owner = callerIdentity.lastOwner();
-      if (owner && !existing?.owner) patch.owner = owner;
-      await historyStore.upsert(patch);
+      if (existing) {
+        /* A row this browser already filed keeps the owner it was filed
+           with; one that was legacy (no owner) takes the list's. */
+        if (owner && !existing.owner && mayCreate(owner)) patch.owner = owner;
+        if (!(await historyStore.update(patch))) continue;
+      } else {
+        /* A new row: filed for the identity the list request went out as,
+           and only while that identity is still the one here. */
+        if (!mayCreate(owner)) continue;
+        patch.owner = owner;
+        await historyStore.upsert(patch);
+      }
       const run = await runsGateway.getRun(summary.run_id);
-      await historyStore.upsert(patchFromRun(run));
+      /* An update: a sign-out during the fetch has swept the row. */
+      await historyStore.update(patchFromRun(run));
     } catch {
       /* silent: whatever made it in, made it in */
     }
@@ -294,8 +353,8 @@ export function importServerRuns(): Promise<void> {
     identityImport = (async () => {
       try {
         await bootHistory();
-        const summaries = (await runsGateway.listRuns()).runs;
-        await importSummaries(summaries, new Set());
+        const listed = await runsGateway.listRuns();
+        await importSummaries(listed.runs, listed.owner, new Set());
       } catch {
         /* offline, or the server forgot: History is unchanged */
       }
@@ -304,6 +363,77 @@ export function importServerRuns(): Promise<void> {
     });
   }
   return identityImport;
+}
+
+/* ---------- leaving this device ---------- */
+
+/* Ids removed from this device during this page load. A poll or an import
+   already in flight when the row went must not file it again, so every write
+   above checks this first. In memory only: after a reload nothing is in
+   flight. */
+const forgotten = new Set<string>();
+
+function isAccountOwner(owner: string): boolean {
+  return owner.startsWith("user:");
+}
+
+/** "Remove from this device" on one History row. Only this browser's copy
+ *  goes; a copy saved to the account (paid plan) is not touched. Rejects when
+ *  the store refused the delete, so the dialog can say so. */
+export async function forgetRun(runId: string): Promise<void> {
+  forgotten.add(runId);
+  lastWritten.delete(runId);
+  try {
+    await historyStore.remove(runId);
+  } catch (error) {
+    /* The row is still there, so it must keep updating like any other; the
+       caller says the removal failed. */
+    forgotten.delete(runId);
+    throw error;
+  }
+}
+
+let forgetting: Promise<void> | null = null;
+
+/** This device is now signed out (sign out, account deletion, "Continue
+ *  signed out", another tab signing out, or a stale signed-in row found at
+ *  load with no session stored): every row filed under a signed-in account
+ *  (`owner` `user:<id>`, any id) leaves this device. Anonymous rows
+ *  (`anonymous`) and rows written before accounts existed (no owner) stay:
+ *  they were never an account's. Any id rather than "the one who just left"
+ *  because nobody is signed in here afterwards, a stuck session may not know
+ *  its id, and it also sweeps rows an older build left behind. Waits for an
+ *  identity import still filing rows first. Idempotent, safe from several
+ *  tabs at once, never rejects. */
+export function forgetAccountHistory(): Promise<void> {
+  if (!forgetting) {
+    forgetting = (async () => {
+      try {
+        if (identityImport) await identityImport;
+      } catch {
+        /* the import never rejects; belt and braces */
+      }
+      try {
+        const records = await historyStore.list();
+        for (const record of records) {
+          if (record.owner && isAccountOwner(record.owner)) {
+            forgotten.add(record.run_id);
+            lastWritten.delete(record.run_id);
+          }
+        }
+      } catch {
+        /* storage unavailable: nothing is kept here to forget */
+      }
+      try {
+        await historyStore.removeOwnedBy(isAccountOwner);
+      } catch {
+        /* a refused delete leaves the rows; the next sign-out or load tries again */
+      }
+    })().finally(() => {
+      forgetting = null;
+    });
+  }
+  return forgetting;
 }
 
 /** A run left queued/processing when the tab closed is asked about once. If
@@ -317,7 +447,8 @@ async function reconcileUnfinished(skip: Set<string>): Promise<void> {
   for (const record of unfinished) {
     try {
       const run = await runsGateway.getRun(record.run_id);
-      await historyStore.upsert(patchFromRun(run));
+      /* An update: swept while the answer was on its way means gone. */
+      await historyStore.update(patchFromRun(run));
     } catch (err) {
       if (isRunGone(err)) await recordGone(record.run_id);
     }

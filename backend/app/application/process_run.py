@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 
-from ..domain.entities import AnalysisCompleteness, MediaVisuals, RunStatus
+from ..domain.entities import AnalysisCompleteness, MediaVisuals, Run, RunStatus
 from ..domain.entitlements import MediaLimits, MediaTier
 from ..domain.errors import (  # the two messages are re-exported for callers and tests
     BYOK_KEY_EXPIRED_MESSAGE,
@@ -22,10 +22,11 @@ from ..domain.ports import (
     MediaProcessor,
     ObjectStore,
     RunRepository,
+    SpendCap,
 )
 from .billing import ExtraRunBilling
 from .entitlements import EntitlementResolver
-from .free_run_holds import settle_free_run_holds
+from .free_run_holds import settle_free_run_holds, settle_spend_hold
 from .saved_history import SavedHistory
 
 logger = logging.getLogger("videolens")
@@ -49,6 +50,26 @@ class _RunEndedElsewhere(Exception):
         self.refund = status is RunStatus.FAILED
 
 
+# A cancellation this close to the job's deadline is taken as its timeout.
+_TIMEOUT_MARGIN_SECONDS = 1.0
+
+
+def _is_shutdown(deadline: float | None) -> bool:
+    """Whether a cancellation came before the job's own timeout could fire,
+    so from a worker shutdown that arq will retry."""
+    if deadline is None:
+        return False
+    return asyncio.get_running_loop().time() < deadline - _TIMEOUT_MARGIN_SECONDS
+
+
+class _GeminiReached:
+    """Set the moment a run hands anything to Gemini (media or captions).
+    One per `execute`, since the use case is shared by concurrent jobs."""
+
+    def __init__(self) -> None:
+        self.value = False
+
+
 class ProcessRunUseCase:
     """Runs the full analysis pipeline for one run: fetch/validate the
     source media, normalize it, analyze it with Gemini, and persist the
@@ -67,6 +88,7 @@ class ProcessRunUseCase:
         long_runs: LongRunGuard | None = None,
         extra_runs: ExtraRunBilling | None = None,
         history: SavedHistory | None = None,
+        spend_cap: SpendCap | None = None,
     ) -> None:
         self._runs = runs
         self._media = media
@@ -81,12 +103,18 @@ class ProcessRunUseCase:
         self._extra_runs = extra_runs
         # None (tests, older wiring) = nothing is saved server-side.
         self._history = history
+        # None (tests, older wiring) = daily cap units are never handed back.
+        self._spend_cap = spend_cap
+        # Runs this worker already settled as billed (`_bill_extra_run`), so
+        # the closing `_settle_extra_run` does not settle them again.
+        self._billed: set[str] = set()
 
     async def _bill_extra_run(self, run_id: str) -> None:
         """The run's result is stored: if it was a paid account's extra run,
         it is billed now, once. Never raises."""
         if self._extra_runs is not None:
             await self._extra_runs.complete(run_id)
+            self._billed.add(run_id)
 
     async def _save_to_history(self, run_id: str, source_url: str | None) -> None:
         """The run's result is stored and billed: a paid account's copy goes
@@ -102,8 +130,35 @@ class ProcessRunUseCase:
         if self._extra_runs is not None:
             await self._extra_runs.void(run_id)
 
+    async def _settle_extra_run(self, run_id: str, run: Run | None = None) -> None:
+        """The last word on a held extra run, from the run's stored outcome:
+        stored as complete (a cancellation or a crash landed between storing
+        the result and `_bill_extra_run`, or this is a retry of a run that
+        finished), it is billed, once (the held -> due write is
+        conditional); anything else is voided. Never raises."""
+        if self._extra_runs is None:
+            return
+        if run_id in self._billed:
+            self._billed.discard(run_id)
+            return
+        if run is None:
+            try:
+                run = await self._runs.get(run_id)
+            except Exception:  # noqa: BLE001 - leave it held; the cron reconciles it
+                logger.exception("Could not read run %s to settle its extra run", run_id)
+                return
+        if run is not None and run.status is RunStatus.COMPLETE:
+            await self._extra_runs.complete(run_id)
+        else:
+            await self._extra_runs.void(run_id)
+
     async def _analyze_captions(
-        self, run_id: str, source_url: str, gemini_api_key: str | None, limits: MediaLimits | None = None
+        self,
+        run_id: str,
+        source_url: str,
+        gemini_api_key: str | None,
+        limits: MediaLimits | None = None,
+        reached: _GeminiReached | None = None,
     ) -> bool:
         """Salvage a failed download via the subtitle track.
 
@@ -128,6 +183,8 @@ class ProcessRunUseCase:
                 width=captions.width,
                 height=captions.height,
             )
+            if reached is not None:
+                reached.value = True
             result = await self._analysis.analyze_captions(captions, api_key=gemini_api_key)
             if captions.metadata is not None:
                 await self._runs.set_source_metadata(run_id, captions.metadata)
@@ -298,7 +355,12 @@ class ProcessRunUseCase:
         else:
             return False
         await self._settle_free_run(run_id, refund=refund, reason="had already been marked failed")
-        await self._void_extra_run(run_id)
+        # Never refunded here: an earlier attempt of this run may have
+        # reached Gemini before its worker died, and nothing records that.
+        await settle_spend_hold(run_id, refund=False, spend_cap=self._spend_cap, reason="")
+        # A retry of a run whose result was stored before its worker went
+        # away is billed here; any other dropped run is voided.
+        await self._settle_extra_run(run_id, run)
         await self._release_long_run(run_id, limits)
         self._media.cleanup_run_dir(run_id)
         if source_key:
@@ -324,9 +386,14 @@ class ProcessRunUseCase:
         source_key: str | None = None,
         gemini_api_key: str | None = None,
         limits: MediaLimits | None = None,
+        deadline: float | None = None,
     ) -> None:
         # `limits` are the ones the API admitted the run under (None: a job
         # enqueued before they travelled with it, so the standard ones).
+        # `deadline`: the event-loop time at which the worker's job timeout
+        # cancels this job. A cancellation before it is a worker shutdown,
+        # which arq retries; None (the in-process runner, which nothing
+        # retries) treats every cancellation as final.
         # The first checkpoint, before any download: a run that already
         # ended, has no record, or lost its own key does no work at all.
         if await self._drop_before_start(run_id, gemini_api_key, limits, source_key):
@@ -346,6 +413,15 @@ class ProcessRunUseCase:
         # True when a checkpoint finds the stale-run check already failed the
         # run: the person got nothing, so a free run it holds goes back.
         refund_ended_elsewhere = False
+        # The daily cap bounds Gemini spend, so its unit goes back whenever
+        # the run ends without reaching Gemini at all (any failure before
+        # analysis, not only the rejections above). Not on cancellation: a
+        # cancelled job may be run again by arq.
+        reached = _GeminiReached()
+        cancelled = False
+        # A worker shutdown cancelled the job and arq will run it again: the
+        # run, its holds and its uploaded source are left for that retry.
+        resumable = False
         try:
             if source_url and not source_key:
                 await self._runs.set_stage(run_id, "downloading")
@@ -356,7 +432,7 @@ class ProcessRunUseCase:
                     # different pipeline on these platforms, so they are often
                     # still reachable when the media bytes are not - a real
                     # transcript beats "please try again".
-                    if await self._analyze_captions(run_id, source_url, gemini_api_key, limits):
+                    if await self._analyze_captions(run_id, source_url, gemini_api_key, limits, reached):
                         return
                     rejected_before_analysis = True
                     raise exc
@@ -421,6 +497,7 @@ class ProcessRunUseCase:
             # loud. Only URL runs have it; uploads pass None and the engine
             # falls back to analyzing the media alone.
             await self._ensure_not_ended(run_id)
+            reached.value = True
             result = await self._analysis.analyze_with_retry(
                 normalized_path,
                 on_stage=on_stage,
@@ -453,28 +530,65 @@ class ProcessRunUseCase:
             self._log_failure(run_id, exc)
             await self._runs.set_error(run_id, str(exc))
         except asyncio.CancelledError:
-            # arq cancels the coroutine when `job_timeout` expires, and
-            # CancelledError is a BaseException - so the catch-all below never
-            # sees it. Without this the run sits in PROCESSING until its TTL
-            # expires, days later, with nothing to explain it. Best-effort:
-            # the write may not land if the loop is already tearing down,
-            # which is what the read-time staleness check backstops.
-            try:
-                await self._runs.set_error(run_id, RUN_INTERRUPTED_MESSAGE)
-            except BaseException:  # noqa: BLE001 - never mask the cancellation
-                pass
+            # Two causes look the same from in here. arq's `job_timeout`
+            # (raised as TimeoutError outside this coroutine, and never
+            # retried), and a worker shutdown (SIGTERM on deploy), after which
+            # arq re-queues the job ("cancelled, will be run again"). Only the
+            # deadline tells them apart. CancelledError is a BaseException, so
+            # the catch-all below never sees either. Every write here is
+            # best-effort: the loop may already be tearing down, which is what
+            # the read-time staleness check backstops.
+            if _is_shutdown(deadline) and not gemini_api_key:
+                # Left for the retry: queued again (which also re-arms the
+                # stale-run clock), holds kept, source kept. An own-key run
+                # cannot be retried, since its key was single-use and is
+                # gone, so it fails below instead of ever reaching the shared
+                # key.
+                resumable = True
+                logger.warning("Run %s was interrupted by a worker shutdown; left for arq to retry", run_id)
+                try:
+                    await self._runs.set_status(run_id, RunStatus.QUEUED)
+                except BaseException:  # noqa: BLE001 - never mask the cancellation
+                    pass
+            else:
+                cancelled = True
+                # Without this the run sits in PROCESSING until its TTL
+                # expires, days later, with nothing to explain it.
+                try:
+                    await self._runs.set_error(run_id, RUN_INTERRUPTED_MESSAGE)
+                except BaseException:  # noqa: BLE001 - never mask the cancellation
+                    pass
             raise
         except Exception:
             logger.exception("Run %s failed", run_id)
             await self._runs.set_error(run_id, "The analysis didn't finish. Please try again.")
         finally:
             await self._discard_visuals(visuals)
-            await self._settle_free_run(run_id, refund=rejected_before_analysis or refund_ended_elsewhere)
-            await self._void_extra_run(run_id)
-            await self._release_long_run(run_id, limits)
-            if source_key:
-                try:
-                    await self._storage.delete_source(source_key)
-                except Exception:
-                    logger.exception("Could not delete source object for run %s", run_id)
+            if resumable:
+                # The retry settles the free run, the extra run and the
+                # long-run slot, and deletes the source, exactly once, as any
+                # run does; nothing here may do it first. The one exception
+                # is a daily cap unit this attempt already spent on Gemini:
+                # kept for good now, so the retry finds no hold and can never
+                # refund it.
+                if reached.value:
+                    await settle_spend_hold(run_id, refund=False, spend_cap=self._spend_cap, reason="")
+            else:
+                await self._settle_free_run(run_id, refund=rejected_before_analysis or refund_ended_elsewhere)
+                await settle_spend_hold(
+                    run_id,
+                    refund=not reached.value and not cancelled,
+                    spend_cap=self._spend_cap,
+                    reason="ended before reaching Gemini",
+                )
+                await self._settle_extra_run(run_id)
+                await self._release_long_run(run_id, limits)
+                if source_key:
+                    try:
+                        await self._storage.delete_source(source_key)
+                    except Exception:
+                        logger.exception("Could not delete source object for run %s", run_id)
+            # Local files go either way: the retry fetches the source again,
+            # usually on another machine.
             self._media.cleanup_run_dir(run_id)
+            self._billed.discard(run_id)

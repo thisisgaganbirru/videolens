@@ -4,6 +4,7 @@ billing on completion only, and account deletion cancelling the
 subscription. Stripe is the FakeBillingGateway; the account link and the
 ledger are the real in-memory adapters, so their rules are exercised too."""
 
+import asyncio
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -142,6 +143,19 @@ class CheckoutTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.billing.gateway.customers, [CUSTOMER])
         self.assertEqual([c["interval"] for c in self.billing.gateway.checkouts], ["month", "year"])
         self.assertEqual((await self.billing.accounts.get(ACCOUNT)).stripe_customer_id, CUSTOMER)
+
+    async def test_earlier_open_sessions_are_expired_before_a_new_one(self) -> None:
+        await self.use_case.execute(_person(), "month")
+        await self.use_case.execute(_person(), "month")
+        self.assertEqual(self.billing.gateway.expired_sessions, [CUSTOMER, CUSTOMER])
+        self.assertEqual(len(self.billing.gateway.checkouts), 2)
+
+    async def test_no_new_session_when_the_old_ones_cannot_be_expired(self) -> None:
+        await self.use_case.execute(_person(), "month")
+        self.billing.gateway.error = BillingProviderError(log_detail="down")
+        with self.assertRaises(BillingProviderError):
+            await self.use_case.execute(_person(), "month")
+        self.assertEqual(len(self.billing.gateway.checkouts), 1)
 
     async def test_a_live_subscription_is_409(self) -> None:
         for status in ("active", "past_due", "trialing", "unpaid"):
@@ -310,6 +324,64 @@ class WebhookTests(unittest.IsolatedAsyncioTestCase):
         self._event("sig", "evt_1", "checkout.session.completed")
         self.assertEqual(await self.use_case.execute(b"{}", "sig"), "handled")
         self.assertIsNotNone(await self.billing.plans.paid_account(ACCOUNT))
+
+    async def _subscribed(self, status: str = "active", sub: str = "sub_1") -> None:
+        self.billing.gateway.subscriptions[sub] = _snapshot(status, sub=sub)
+        self._event(f"sig-{sub}", f"evt-{sub}", "customer.subscription.created", sub=sub)
+        await self.use_case.execute(b"{}", f"sig-{sub}")
+
+    async def test_a_second_live_subscription_is_cancelled_and_the_first_kept(self) -> None:
+        await self._subscribed()
+        self.billing.gateway.subscriptions["sub_2"] = _snapshot(sub="sub_2")
+        self._event("sig2", "evt_2", "checkout.session.completed", sub="sub_2")
+        with self.assertLogs("videolens", level="ERROR") as logs:
+            await self.use_case.execute(b"{}", "sig2")
+        self.assertEqual(self.billing.gateway.duplicates_cancelled, ["sub_2"])
+        self.assertEqual(self.billing.gateway.cancelled, [])
+        row = await self.billing.accounts.get(ACCOUNT)
+        self.assertEqual((row.stripe_subscription_id, row.status), ("sub_1", "active"))
+        self.assertTrue(any("two live subscriptions" in line for line in logs.output))
+
+    async def test_an_incomplete_second_subscription_never_makes_the_account_free(self) -> None:
+        await self._subscribed()
+        self.billing.gateway.subscriptions["sub_2"] = _snapshot("incomplete", sub="sub_2")
+        self._event("sig2", "evt_2", "customer.subscription.created", sub="sub_2")
+        with self.assertLogs("videolens", level="ERROR"):
+            await self.use_case.execute(b"{}", "sig2")
+        self.assertIsNotNone(await self.billing.plans.paid_account(ACCOUNT))
+        self.assertEqual(self.billing.gateway.duplicates_cancelled, ["sub_2"])
+        self.assertEqual((await self.billing.accounts.get(ACCOUNT)).stripe_subscription_id, "sub_1")
+
+    async def test_the_paid_one_is_kept_when_the_stored_one_does_not_pay(self) -> None:
+        await self._subscribed("incomplete")
+        self.billing.gateway.subscriptions["sub_2"] = _snapshot(sub="sub_2")
+        self._event("sig2", "evt_2", "customer.subscription.created", sub="sub_2")
+        with self.assertLogs("videolens", level="ERROR"):
+            await self.use_case.execute(b"{}", "sig2")
+        self.assertEqual(self.billing.gateway.duplicates_cancelled, ["sub_1"])
+        row = await self.billing.accounts.get(ACCOUNT)
+        self.assertEqual((row.stripe_subscription_id, row.status), ("sub_2", "active"))
+
+    async def test_a_resubscribe_after_a_missed_deleted_event_is_not_a_duplicate(self) -> None:
+        await self._subscribed()
+        # Stripe ended sub_1, but its "deleted" event never arrived.
+        self.billing.gateway.subscriptions["sub_1"] = _snapshot("canceled")
+        self.billing.gateway.subscriptions["sub_2"] = _snapshot(sub="sub_2")
+        self._event("sig2", "evt_2", "customer.subscription.created", sub="sub_2")
+        await self.use_case.execute(b"{}", "sig2")
+        self.assertEqual(self.billing.gateway.duplicates_cancelled, [])
+        self.assertEqual((await self.billing.accounts.get(ACCOUNT)).stripe_subscription_id, "sub_2")
+
+    async def test_a_failed_duplicate_cancel_is_retried_by_stripe(self) -> None:
+        await self._subscribed()
+        self.billing.gateway.subscriptions["sub_2"] = _snapshot(sub="sub_2")
+        self._event("sig2", "evt_2", "customer.subscription.created", sub="sub_2")
+        self.billing.gateway.cancel_error = BillingProviderError(log_detail="down")
+        with self.assertLogs("videolens", level="ERROR"), self.assertRaises(BillingProviderError):
+            await self.use_case.execute(b"{}", "sig2")
+        # Not marked: Stripe sends it again.
+        self.assertFalse(await self.billing.accounts.event_seen("evt_2"))
+        self.assertEqual((await self.billing.accounts.get(ACCOUNT)).stripe_subscription_id, "sub_1")
 
     async def test_an_event_is_handled_once(self) -> None:
         self.billing.gateway.subscriptions["sub_1"] = _snapshot()
@@ -684,13 +756,90 @@ class DeletionCancelsTheSubscriptionTests(unittest.IsolatedAsyncioTestCase):
             await self._use_case().execute(self.person)
         self.assertEqual(self.log, [])
 
-    async def test_refuses_when_billing_was_switched_off_with_a_live_subscription(self) -> None:
+    async def test_billing_switched_off_with_a_live_subscription_still_deletes(self) -> None:
+        # Nothing can be cancelled without Stripe; a person must still be
+        # able to delete their account. Logged for the owner.
         off = _Billing(enabled=False)
         await off.accounts.link_customer(self.person.account_id, CUSTOMER)
         await off.accounts.apply_subscription(self.person.account_id, _snapshot())
-        with self.assertRaises(SubscriptionCancelFailedError):
+        with self.assertLogs("videolens", level="WARNING") as logs:
             await self._use_case(off).execute(self.person)
+        self.assertEqual(self.log, ["hold:sub-1"])
+        self.assertEqual(off.gateway.cancelled, [])
+        self.assertTrue(any("billing is not configured" in line for line in logs.output))
+        self.assertFalse(any("a@b.test" in line for line in logs.output))
+
+    async def test_every_live_subscription_of_the_customer_is_cancelled(self) -> None:
+        # A second one the row does not know of (an old Checkout tab paid),
+        # and an ended one that needs no call.
+        self.billing.gateway.subscriptions["sub_1"] = _snapshot()
+        self.billing.gateway.subscriptions["sub_2"] = _snapshot("incomplete", sub="sub_2")
+        self.billing.gateway.subscriptions["sub_old"] = _snapshot("canceled", sub="sub_old")
+        await self._use_case().execute(self.person)
+        self.assertEqual(self.billing.gateway.cancelled, ["sub_1", "sub_2"])
+        self.assertEqual(self.log, ["hold:sub-1"])
+
+    async def test_refuses_when_the_subscriptions_cannot_be_listed(self) -> None:
+        self.billing.gateway.list_error = BillingProviderError(log_detail="down")
+        with self.assertRaises(SubscriptionCancelFailedError):
+            await self._use_case().execute(self.person)
         self.assertEqual(self.log, [])
+        self.assertEqual(self.billing.gateway.cancelled, [])
+
+    async def test_all_of_the_accounts_due_runs_are_reported_first_not_a_page_of_everyones(self) -> None:
+        # 60 of another account's due rows, older, would have filled the
+        # old global page of 50.
+        for index in range(60):
+            await self.billing.ledger.hold(f"other-{index}", account_id="acct-x", customer_id="cus_x", period="2026-11")
+            await self.billing.ledger.complete(f"other-{index}")
+        mine = [f"mine-{index}" for index in range(55)]
+        for run_id in mine:
+            await self.billing.ledger.hold(run_id, account_id=self.person.account_id, customer_id=CUSTOMER, period="2026-11")
+            await self.billing.ledger.complete(run_id)
+        await self._use_case().execute(self.person)
+        self.assertEqual(sorted(self.billing.gateway.reported), sorted(mine))
+        self.assertEqual(self.billing.gateway.cancelled, ["sub_1"])
+
+    async def test_an_unreportable_run_does_not_loop_and_deletion_goes_ahead(self) -> None:
+        await self.billing.ledger.hold("run-x", account_id=self.person.account_id, customer_id=CUSTOMER, period="2026-11")
+        await self.billing.ledger.complete("run-x")
+        self.billing.gateway.report_error = BillingProviderError(log_detail="refused")
+        with self.assertLogs("videolens", level="WARNING"):
+            await self._use_case().execute(self.person)
+        self.assertEqual(self.billing.ledger.state("run-x"), DUE)
+        self.assertEqual(self.log, ["hold:sub-1"])
+
+    async def test_a_reported_run_that_cannot_be_recorded_does_not_loop(self) -> None:
+        # Stripe takes the meter event but the row cannot be marked: it stays
+        # due and came back on every page, forever (2026-11-20 re-review).
+        mine = [f"mine-{index}" for index in range(3)]
+        for run_id in mine:
+            await self.billing.ledger.hold(run_id, account_id=self.person.account_id, customer_id=CUSTOMER, period="2026-11")
+            await self.billing.ledger.complete(run_id)
+
+        async def cannot_record(_run_id):
+            raise RuntimeError("database down")
+
+        self.billing.ledger.mark_reported = cannot_record
+        report = self.billing.gateway.report_extra_run
+        calls = []
+
+        async def counted(charge):
+            calls.append(charge.run_id)
+            if len(calls) > 20:  # a regression fails here instead of hanging
+                raise RuntimeError("looping")
+            await report(charge)
+
+        self.billing.gateway.report_extra_run = counted
+        with self.assertLogs("videolens", level="WARNING"):
+            await self._use_case().execute(self.person)
+        self.assertLessEqual(len(calls), len(mine))
+        # Each sent once at most (the meter dedupes a resend on the run id),
+        # and the deletion went ahead.
+        self.assertLessEqual(len(self.billing.gateway.reported), len(mine))
+        self.assertEqual(len(set(self.billing.gateway.reported)), len(self.billing.gateway.reported))
+        self.assertEqual(self.log, ["hold:sub-1"])
+        self.assertEqual(self.billing.gateway.cancelled, ["sub_1"])
 
     async def test_no_subscription_deletes_as_before(self) -> None:
         fresh = _Billing()
@@ -714,6 +863,175 @@ class BillingOffParityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(billing.gateway.reported, [])
         self.assertEqual(set(pipeline.account_runs.consume_limits), {None})
         self.assertIsNone(await billing.plans.paid_account(ACCOUNT))
+
+
+class ExtraRunCapRaceTests(unittest.IsolatedAsyncioTestCase):
+    """The monthly cap is checked by the write that holds the row, so
+    concurrent admissions at the cap cannot all pass (and all be billed)."""
+
+    async def test_concurrent_admissions_at_the_cap_admit_exactly_up_to_it(self) -> None:
+        billing = _Billing(included=0, cap=3)
+        await billing.subscribe()
+        pipeline = _Pipeline(billing)
+        results = await asyncio.gather(*(pipeline.intake() for _ in range(8)), return_exceptions=True)
+        admitted = [result for result in results if isinstance(result, str)]
+        refused = [result for result in results if isinstance(result, ExtraRunsCapReachedError)]
+        self.assertEqual((len(admitted), len(refused)), (3, 5))
+        self.assertEqual(await billing.ledger.count(ACCOUNT, billing.plans.extra_runs_period()), 3)
+        # A refused intake leaves no row and no queued job.
+        self.assertEqual(len(pipeline.queue.enqueued_limits), 3)
+
+    async def test_a_voided_run_frees_its_place_under_the_cap(self) -> None:
+        billing = _Billing(included=0, cap=1)
+        await billing.subscribe()
+        pipeline = _Pipeline(billing)
+        first = await pipeline.intake()
+        with self.assertRaises(ExtraRunsCapReachedError):
+            await pipeline.intake()
+        await billing.ledger.void(first)
+        self.assertEqual(billing.ledger.state(await pipeline.intake()), HELD)
+
+
+class _Clock:
+    def __init__(self, now: datetime) -> None:
+        self.now = now
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
+class ExtraRunReconcileTests(unittest.IsolatedAsyncioTestCase):
+    """A held row whose run completed becomes due exactly once, wherever it
+    is settled; a failed run is never billed; too-old due rows are voided
+    with a warning."""
+
+    async def asyncSetUp(self) -> None:
+        self.clock = _Clock(datetime(2026, 11, 20, 12, tzinfo=timezone.utc))
+        self.gateway = FakeBillingGateway()
+        self.accounts = InMemoryBillingAccounts(SETTINGS, clock=self.clock)
+        self.ledger = InMemoryExtraRunLedger(SETTINGS, clock=self.clock)
+        self.plans = BillingPlans(
+            gateway=self.gateway,
+            accounts=self.accounts,
+            ledger=self.ledger,
+            paid_runs_per_day=0,
+            extra_runs_monthly_cap=0,
+            clock=self.clock,
+        )
+        self.runs = FakeRunRepository()
+        self.extra_runs = ExtraRunBilling(plans=self.plans, runs=self.runs)
+
+    async def _held(self, run_id: str, status: RunStatus | None) -> None:
+        await self.ledger.hold(run_id, account_id=ACCOUNT, customer_id=CUSTOMER, period="2026-11")
+        if status is not None:
+            run = await self.runs.create(run_id, "user:sub-1")
+            run.status = status
+
+    async def test_a_completed_run_still_held_becomes_due_and_is_reported_once(self) -> None:
+        await self._held("done", RunStatus.COMPLETE)
+        self.clock.now += timedelta(minutes=11)
+        with self.assertLogs("videolens", level="WARNING"):
+            self.assertEqual(await self.extra_runs.reconcile(), 1)
+        self.assertEqual(self.gateway.reported, ["done"])
+        self.assertEqual(self.ledger.state("done"), REPORTED)
+        # A second tick, or a late worker completing it, bills nothing more.
+        self.assertEqual(await self.extra_runs.reconcile(), 0)
+        await self.extra_runs.complete("done")
+        self.assertEqual(self.gateway.reported, ["done"])
+
+    async def test_failed_and_gone_runs_are_voided_never_billed(self) -> None:
+        await self._held("failed", RunStatus.FAILED)
+        await self._held("gone", None)
+        self.clock.now += timedelta(minutes=11)
+        await self.extra_runs.reconcile()
+        self.assertEqual(self.ledger.state("failed"), VOID)
+        # The record may still be on its way (intake holds first): kept.
+        self.assertEqual(self.ledger.state("gone"), HELD)
+        self.clock.now += timedelta(hours=2)
+        await self.extra_runs.reconcile()
+        self.assertEqual(self.ledger.state("gone"), VOID)
+        self.assertEqual(self.gateway.reported, [])
+
+    async def test_runs_in_flight_and_young_holds_are_left_to_the_worker(self) -> None:
+        await self._held("young", RunStatus.COMPLETE)
+        await self._held("busy", RunStatus.PROCESSING)
+        self.clock.now += timedelta(minutes=5)
+        await self.extra_runs.reconcile()
+        self.assertEqual(self.ledger.state("young"), HELD)
+        self.clock.now += timedelta(minutes=30)
+        await self.extra_runs.reconcile()
+        self.assertEqual(self.ledger.state("busy"), HELD)
+        self.assertEqual(self.ledger.state("young"), REPORTED)
+
+    async def test_due_rows_too_old_for_the_meter_are_voided_with_a_warning(self) -> None:
+        await self._held("old", RunStatus.COMPLETE)
+        await self.ledger.complete("old")
+        self.gateway.report_error = BillingProviderError(log_detail="down")
+        await self.extra_runs.flush_due()
+        self.gateway.report_error = None
+        self.clock.now += timedelta(days=35)
+        with self.assertLogs("videolens", level="WARNING") as logs:
+            await self.extra_runs.reconcile()
+        self.assertEqual(self.ledger.state("old"), VOID)
+        self.assertTrue(any("old" in line and ACCOUNT in line and "too old" in line for line in logs.output))
+        self.assertEqual(await self.extra_runs.flush_due(), 0)
+        self.assertEqual(self.gateway.reported, [])
+
+    async def test_off_is_a_no_op(self) -> None:
+        off = ExtraRunBilling(plans=_Billing(enabled=False).plans, runs=self.runs)
+        self.assertEqual(await off.reconcile(), 0)
+
+
+class WorkerSettlesTheExtraRunFromTheStoredOutcomeTests(unittest.IsolatedAsyncioTestCase):
+    """At the source: a cancellation after the result was stored, or a
+    retry of a run that already finished, bills it once; never a failure."""
+
+    async def asyncSetUp(self) -> None:
+        self.billing = _Billing(included=0)
+        await self.billing.subscribe()
+        self.pipeline = _Pipeline(self.billing)
+
+    async def test_cancelled_between_storing_the_result_and_billing_is_still_billed_once(self) -> None:
+        run_id = await self.pipeline.intake()
+        real_complete = self.billing.extra_runs.complete
+        calls = []
+
+        async def cancelled_complete(rid: str) -> None:
+            calls.append(rid)
+            if len(calls) == 1:
+                raise asyncio.CancelledError()
+            await real_complete(rid)
+
+        self.billing.extra_runs.complete = cancelled_complete
+        with self.assertRaises(asyncio.CancelledError):
+            await self.pipeline.process.execute(run_id, source_url=URL)
+        self.assertEqual(self.pipeline.runs.runs[run_id].status, RunStatus.COMPLETE)
+        self.assertEqual(self.billing.gateway.reported, [run_id])
+        self.assertEqual(self.billing.ledger.state(run_id), REPORTED)
+
+    async def test_a_retry_of_a_finished_run_bills_it_instead_of_voiding_it(self) -> None:
+        run_id = await self.pipeline.intake()
+        # The worker stored the result and died before billing it.
+        await self.pipeline.runs.set_result(run_id, ANALYSIS)
+        await self.pipeline.process.execute(run_id, source_url=URL)
+        self.assertEqual(self.billing.ledger.state(run_id), REPORTED)
+        await self.pipeline.process.execute(run_id, source_url=URL)
+        self.assertEqual(self.billing.gateway.reported, [run_id])
+
+    async def test_a_failed_run_is_never_billed(self) -> None:
+        self.pipeline.analysis.error = RuntimeError("gemini down")
+        run_id = await self.pipeline.intake()
+        await self.pipeline.process.execute(run_id, source_url=URL)
+        self.assertEqual(self.billing.ledger.state(run_id), VOID)
+        self.assertEqual(self.billing.gateway.reported, [])
+        # A later reconciliation does not bill it either.
+        self.assertEqual(await ExtraRunBilling(plans=self.billing.plans, runs=self.pipeline.runs).reconcile(), 0)
+        self.assertEqual(self.billing.gateway.reported, [])
+
+    async def test_a_normal_completion_bills_once(self) -> None:
+        run_id = await self.pipeline.run()
+        self.assertEqual(self.billing.gateway.reported, [run_id])
+        self.assertEqual(self.billing.ledger.state(run_id), REPORTED)
 
 
 if __name__ == "__main__":

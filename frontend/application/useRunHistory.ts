@@ -4,8 +4,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { HistoryRecord, RunPlatform, RunSummary } from "@/domain/entities";
 import { knownPlatformName, linkHost, platformFromUrl } from "@/domain/platforms";
 import { StorageUnavailableError } from "@/domain/errors";
-import { EXPIRED_MESSAGE, bootHistory, importServerRuns } from "@/application/historySync";
-import { historyStore } from "@/infrastructure/container";
+import {
+  EXPIRED_MESSAGE,
+  bootHistory,
+  forgetAccountHistory,
+  forgetRun,
+  importServerRuns,
+} from "@/application/historySync";
+import { authSession, historyStore } from "@/infrastructure/container";
 
 /* History is read from this browser (IndexedDB, via `HistoryStore`), not from
    `GET /api/runs` — the server forgets a run about an hour after it is made,
@@ -84,9 +90,16 @@ function toEntry(record: HistoryRecord, thumbnailUrl: string | null): HistoryEnt
  *  server's run owner changed too, so History asks the server again as the
  *  new caller (`importServerRuns`). The first settle is not a change: the
  *  boot import already went out with whatever session was restored, because
- *  every request waits for the provider before it is sent. Signing out
- *  re-imports nothing; History stays as it is. The list itself re-reads on
- *  its own, through the store's subscription. */
+ *  every request waits for the provider before it is sent.
+ *
+ *  Signing out (2026-11-20) removes every account-owned row from this
+ *  device (`forgetAccountHistory`), whichever tab or path signed out: an
+ *  explicit sign-out already did it, and this covers another tab, a session
+ *  the provider ended, and "Sign out everywhere" from elsewhere. Only when
+ *  no session is stored any more: a session that is stored but could not be
+ *  recovered (an outage) is not a sign-out. The first settle with nobody
+ *  signed in and nothing stored sweeps rows an earlier sign-out left behind.
+ *  The list itself re-reads on its own, through the store's subscription. */
 export function useHistoryBoot(auth: { ready: boolean; userId: string | null }): void {
   useEffect(() => {
     void bootHistory();
@@ -96,14 +109,23 @@ export function useHistoryBoot(auth: { ready: boolean; userId: string | null }):
   const { ready, userId } = auth;
   useEffect(() => {
     if (!ready) return;
+    const signedOut = !userId && authSession.enabled && !authSession.hasSession();
     if (lastUser.current === undefined) {
       lastUser.current = userId;
+      if (signedOut) void forgetAccountHistory();
       return;
     }
     if (lastUser.current === userId) return;
     lastUser.current = userId;
     if (userId) void importServerRuns();
+    else if (signedOut) void forgetAccountHistory();
   }, [ready, userId]);
+}
+
+/** "Remove from this device" for one History row. Rejects when the browser
+ *  refused the delete. */
+export function removeFromDevice(runId: string): Promise<void> {
+  return forgetRun(runId);
 }
 
 export function useRunHistory() {

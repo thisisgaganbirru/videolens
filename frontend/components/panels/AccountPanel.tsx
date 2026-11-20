@@ -10,6 +10,7 @@ import type { SavedHistoryMode } from "@/application/useSavedHistory";
 import { useApiKeys } from "@/application/useApiKeys";
 import {
   CODE_MAX_LENGTH,
+  recoverSession,
   signOut,
   useAuthUser,
   useEmailCodeSignIn,
@@ -199,6 +200,8 @@ export default function AccountPanel({
               tab hidden. */}
           {auth.ready && auth.user && <IdentityRow email={auth.user.email} runInProgress={runInProgress} />}
         </>
+      ) : auth.unconfirmed ? (
+        <SessionUnconfirmed runInProgress={runInProgress} />
       ) : auth.user ? (
         <SignedIn
           userId={auth.user.id}
@@ -246,6 +249,54 @@ function Unavailable() {
         Everything else works without an account: analyze, History, and your own Gemini key under API
         key.
       </p>
+    </section>
+  );
+}
+
+/* A session is stored here that the provider could not recover just now
+   (2026-11-20): it would not load, or its refresh failed on the network.
+   Neither signed in nor signed out, so neither view is drawn. Retry asks the
+   provider again; "Continue signed out" clears the stored session and the
+   History rows filed under an account, like any sign-out, and the app goes
+   on anonymous. */
+function SessionUnconfirmed({ runInProgress }: { runInProgress: boolean }) {
+  const [busy, setBusy] = useState<null | "retrying" | "leaving">(null);
+
+  const retry = () => {
+    if (busy) return;
+    setBusy("retrying");
+    void recoverSession().finally(() => setBusy(null));
+  };
+  const leave = () => {
+    if (busy || runInProgress) return;
+    setBusy("leaving");
+    void signOut().finally(() => setBusy(null));
+  };
+
+  return (
+    <section className="key-card" aria-labelledby="acct-unconfirmed-title">
+      <h2 id="acct-unconfirmed-title" className="acct-card-title">
+        We can’t confirm your sign-in right now
+      </h2>
+      <p className="key-help">
+        This device still holds your sign-in, but the sign-in service could not be reached to confirm
+        it. Check your connection and try again, or continue signed out. Continuing signed out removes
+        the runs from your account from this device&apos;s History.
+      </p>
+      <div className="key-actions">
+        <button type="button" className="btn btn-primary btn-pill" onClick={retry} aria-disabled={busy !== null || undefined}>
+          {busy === "retrying" ? "Trying again…" : "Retry"}
+        </button>
+        <button
+          type="button"
+          className="btn btn-secondary btn-pill"
+          onClick={leave}
+          aria-disabled={busy !== null || runInProgress || undefined}
+        >
+          {busy === "leaving" ? "Signing out…" : "Continue signed out"}
+        </button>
+      </div>
+      {runInProgress && <p className="pending-note acct-guard">{RUN_GUARD}</p>}
     </section>
   );
 }
@@ -553,6 +604,22 @@ function SignedIn({
       {problem?.kind === "rejected" && (
         <div role="alert" className="error-inline acct-gap">
           <p>This server did not accept your sign-in. Sign out, then sign in again.</p>
+        </div>
+      )}
+
+      {/* The server could not reach the sign-in keys (503 with Retry-After):
+          temporary, and no reason to sign out, so nothing here offers it. */}
+      {problem?.kind === "unconfirmed" && (
+        <div role="status" className="key-card acct-gap">
+          <p className="key-help">
+            We can’t confirm your sign-in right now. The sign-in service is briefly unavailable; you are
+            still signed in. Try again in a moment.
+          </p>
+          <div className="key-actions">
+            <button type="button" className="btn btn-secondary btn-pill" onClick={reload}>
+              Try again
+            </button>
+          </div>
         </div>
       )}
 
@@ -1270,8 +1337,8 @@ function DeviceGroup({
       </div>
       <p className="key-help acct-group-note">
         {onAccount
-          ? "Your Gemini key is not synced. It stays in this browser when you sign out."
-          : `Not synced between devices.${signedIn ? " Both stay in this browser when you sign out." : ""}`}
+          ? "Your Gemini key is not synced and stays in this browser when you sign out. This browser’s copies of your runs are removed then; the copies saved to your account stay."
+          : `Not synced between devices.${signedIn ? " Signing out removes your account’s runs from this browser’s History; your Gemini key stays." : ""}`}
       </p>
     </section>
   );
@@ -1438,8 +1505,11 @@ function SecretReveal({ secret, name, onDismiss }: { secret: string; name: strin
   };
 
   return (
-    <div className="acct-secret" role="status">
-      <p className="acct-secret-lede">
+    /* Only the sentence is announced (2026-11-20). The whole card used to be
+       the live region, so a screen reader read the secret aloud the moment
+       it appeared; the value is there to read or copy on purpose. */
+    <div className="acct-secret">
+      <p className="acct-secret-lede" role="status">
         <strong className="acct-strong">{name}</strong> is ready. Copy it now: this is the only time it is
         shown. The server keeps only a fingerprint of it.
       </p>
@@ -1633,11 +1703,11 @@ function DeleteAccountSection({
           <div>
             <h4 className="acct-delete-head">Kept, in this browser</h4>
             <ul className="acct-delete-list">
-              <li>Your History</li>
+              <li>Runs you made signed out, in History</li>
               <li>Your own Gemini key</li>
             </ul>
             <p className="key-help acct-delete-note">
-              Deleting your account does not clear this browser’s saved History or Gemini key.
+              Deleting your account signs this browser out, which removes your account’s runs from its History. Runs made signed out and your Gemini key stay.
               You can remove them under History and Gemini key.
             </p>
           </div>
@@ -1722,12 +1792,12 @@ function DeletedCard({
         <p className="key-help">
           It stopped working now, your API keys with it, and you are signed out on this device. Sign in
           again with the same email before {until} to restore it. After that it is removed for good. Your
-          History and your own Gemini key are still here in this browser.
+          own Gemini key and the runs you made signed out are still here in this browser.
         </p>
       ) : (
         <p className="key-help">
-          Your API keys no longer work and you are signed out on this device. Your History and your own
-          Gemini key are still here in this browser.
+          Your API keys no longer work and you are signed out on this device. Your own Gemini key and the
+          runs you made signed out are still here in this browser.
         </p>
       )}
       <div className="key-actions">

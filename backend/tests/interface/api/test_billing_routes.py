@@ -139,10 +139,10 @@ class BillingRoutesTests(unittest.TestCase):
         self.client.get("/api/billing", headers=TOKEN)  # first sight creates the account
         return next(iter(self.directory._accounts.values())).account_id
 
-    def _subscription(self, status: str = "active") -> dict:
+    def _subscription(self, status: str = "active", subscription_id: str = "sub_1") -> dict:
         end = int((datetime.now(timezone.utc) + timedelta(days=20)).timestamp())
         return {
-            "id": "sub_1",
+            "id": subscription_id,
             "customer": "cus_1",
             "status": status,
             "cancel_at_period_end": False,
@@ -150,13 +150,19 @@ class BillingRoutesTests(unittest.TestCase):
             "items": {"data": [{"price": {"id": "price_month", "recurring": {"interval": "month"}}, "current_period_end": end}]},
         }
 
-    def _webhook(self, event_id: str, kind: str = "customer.subscription.updated", signature: str | None = None):
+    def _webhook(
+        self,
+        event_id: str,
+        kind: str = "customer.subscription.updated",
+        signature: str | None = None,
+        subscription_id: str = "sub_1",
+    ):
         payload = json.dumps(
             {
                 "id": event_id,
                 "object": "event",
                 "type": kind,
-                "data": {"object": {"object": "subscription", "id": "sub_1", "customer": "cus_1"}},
+                "data": {"object": {"object": "subscription", "id": subscription_id, "customer": "cus_1"}},
             }
         ).encode()
         return self.client.post(
@@ -270,6 +276,31 @@ class EnabledBillingRoutesTests(BillingRoutesTests):
         self.assertEqual(self._webhook("evt_1").json(), {"received": True})
         self.assertEqual(self._webhook("evt_1").json(), {"received": True})
         self.assertEqual(self.stripe.v1.subscriptions.retrieve.call_count, 1)
+
+    def test_a_second_live_subscription_is_cancelled_through_the_webhook(self) -> None:
+        # An old Checkout tab paid after another checkout already subscribed:
+        # Stripe now has two live subscriptions for one customer.
+        self.client.post("/api/billing/checkout", headers=TOKEN, json={"interval": "month"})
+        subscriptions = {"sub_1": self._subscription(), "sub_2": self._subscription(subscription_id="sub_2")}
+        self.stripe.v1.subscriptions.retrieve.side_effect = lambda subscription_id: subscriptions[subscription_id]
+        self.assertEqual(self._webhook("evt_1", "customer.subscription.created").status_code, 200)
+
+        # The duplicate's cancel fails once: a 5xx, so Stripe sends it again.
+        self.stripe.v1.subscriptions.cancel.side_effect = stripe.APIConnectionError("down")
+        with self.assertLogs("videolens", level="ERROR"):
+            failed = self._webhook("evt_2", "customer.subscription.created", subscription_id="sub_2")
+        self.assertEqual(failed.status_code, 503)
+
+        self.stripe.v1.subscriptions.cancel.side_effect = None
+        with self.assertLogs("videolens", level="ERROR") as logs:
+            retried = self._webhook("evt_2", "customer.subscription.created", subscription_id="sub_2")
+        self.assertEqual(retried.json(), {"received": True})
+        self.assertTrue(any("two live subscriptions" in line for line in logs.output))
+        # Credited, not invoiced: the extra-run meter is the customer's.
+        self.stripe.v1.subscriptions.cancel.assert_called_with("sub_2", params={"invoice_now": False, "prorate": True})
+        row = asyncio.run(self.billing_accounts.get(self._account_id()))
+        self.assertEqual((row.stripe_subscription_id, row.status), ("sub_1", "active"))
+        self.assertEqual(self.client.get("/api/billing", headers=TOKEN).json()["plan"], "paid")
 
     def test_free_runs_gains_plan_and_overage(self) -> None:
         body = self.client.get("/api/free-runs", headers=TOKEN).json()

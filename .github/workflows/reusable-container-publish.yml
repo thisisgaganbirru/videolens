@@ -81,7 +81,9 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          # The job's own token (packages: write above). github.token, not
+          # secrets.GITHUB_TOKEN, so the caller passes no secrets at all.
+          password: ${{ github.token }}
       # provenance and sbom below are BuildKit --attest shorthands. They attach
       # in-toto attestation manifests to the image index in GHCR itself; they are
       # not Sigstore-signed and emit nothing to any public log. Keyless Cosign

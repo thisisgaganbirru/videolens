@@ -174,7 +174,7 @@ class SourceMetadataExtractionTests(unittest.IsolatedAsyncioTestCase):
             ), patch(
                 "app.infrastructure.media.ytdlp_downloader._media_binary", return_value="/usr/bin/ffmpeg"
             ), patch(
-                "app.infrastructure.media.ytdlp_downloader.YoutubeDL", return_value=downloader
+                "app.infrastructure.media.ytdlp_downloader.GuardedYoutubeDL", return_value=downloader
             ):
                 saved = await download_url(settings, "run-1", "https://www.instagram.com/reel/abc/")
 
@@ -205,7 +205,7 @@ class SourceMetadataExtractionTests(unittest.IsolatedAsyncioTestCase):
             ), patch(
                 "app.infrastructure.media.ytdlp_downloader._media_binary", return_value="/usr/bin/ffmpeg"
             ), patch(
-                "app.infrastructure.media.ytdlp_downloader.YoutubeDL", return_value=downloader
+                "app.infrastructure.media.ytdlp_downloader.GuardedYoutubeDL", return_value=downloader
             ):
                 saved = await download_url(settings, "run-2", "https://example.com/clip")
 
@@ -235,7 +235,7 @@ class FormatCapTests(unittest.IsolatedAsyncioTestCase):
             "app.infrastructure.media.ytdlp_downloader._media_binary",
             return_value=os.path.join("opt", "ffmpeg", "bin", "ffmpeg"),
         ), patch(
-            "app.infrastructure.media.ytdlp_downloader.YoutubeDL", return_value=downloader
+            "app.infrastructure.media.ytdlp_downloader.GuardedYoutubeDL", return_value=downloader
         ) as youtube_dl:
             await download_url(settings, "run-fmt", "https://www.youtube.com/watch?v=x")
         return youtube_dl.call_args.args[0]

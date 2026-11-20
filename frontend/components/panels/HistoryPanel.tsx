@@ -1,8 +1,8 @@
 "use client";
 
 import { useId, useMemo, useState } from "react";
-import { AudioLines, ChevronDown, Play, Trash2 } from "lucide-react";
-import { HISTORY_LIMIT, useRunHistory, type HistoryEntry } from "@/application/useRunHistory";
+import { AudioLines, ChevronDown, Play, Trash2, X } from "lucide-react";
+import { HISTORY_LIMIT, removeFromDevice, useRunHistory, type HistoryEntry } from "@/application/useRunHistory";
 import {
   deleteAllSavedRuns,
   deleteSavedRun,
@@ -200,6 +200,7 @@ function HistoryGrid({
     setFilter("all");
     setQuery("");
   };
+  const removal = useDeviceRemoval();
 
   return (
     <>
@@ -274,14 +275,117 @@ function HistoryGrid({
               <h2 className="history-group-label">{group.label}</h2>
               <ul className="poster-grid">
                 {group.runs.map((run) => (
-                  <Poster key={run.run_id} run={run} now={now} onOpen={() => onOpenRun(run.run_id, run.source_kind)} />
+                  <Poster
+                    key={run.run_id}
+                    run={run}
+                    now={now}
+                    onOpen={() => onOpenRun(run.run_id, run.source_kind)}
+                    onRemove={() => removal.ask(run)}
+                  />
                 ))}
               </ul>
             </section>
           ))}
         </div>
       )}
+      <RemoveFromDeviceDialog removal={removal} />
     </>
+  );
+}
+
+/* ---------- removing a run from this device ---------- */
+
+const REMOVE_FALLBACK = "That run could not be removed from this browser. Nothing changed.";
+
+/** "Remove from this device" (2026-11-20): this browser's copy of one run
+ *  goes, after a confirmation. Never the account's saved copy, which has its
+ *  own "Delete from your account" on its card; the wording keeps the two
+ *  apart. */
+function useDeviceRemoval() {
+  const [pending, setPending] = useState<HistoryEntry | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const ask = (run: HistoryEntry) => {
+    setError(null);
+    setPending(run);
+  };
+  const cancel = () => setPending(null);
+  const confirm = async () => {
+    if (!pending || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await removeFromDevice(pending.run_id);
+      setPending(null);
+    } catch {
+      setError(REMOVE_FALLBACK);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return { pending, busy, error, ask, cancel, confirm };
+}
+
+const REMOVE_COPIES_FALLBACK =
+  "Some copies could not be removed from this browser. The ones still here are unchanged; try again.";
+
+/** "Remove this browser's copies" (2026-11-20): on Plus, a run saved to the
+ *  account is drawn as its saved card, so this browser's own copy of it has
+ *  no card (and no cross) of its own. This removes those copies, never the
+ *  saved runs. */
+function useLocalCopiesRemoval() {
+  const [pending, setPending] = useState<string[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const ask = (runIds: string[]) => {
+    setError(null);
+    setPending(runIds);
+  };
+  const cancel = () => setPending(null);
+  const confirm = async () => {
+    if (!pending || busy) return;
+    setBusy(true);
+    setError(null);
+    const outcomes = await Promise.allSettled(pending.map((runId) => removeFromDevice(runId)));
+    setBusy(false);
+    if (outcomes.some((outcome) => outcome.status === "rejected")) setError(REMOVE_COPIES_FALLBACK);
+    else setPending(null);
+  };
+
+  return { pending, busy, error, ask, cancel, confirm };
+}
+
+function RemoveFromDeviceDialog({
+  removal,
+  savedElsewhere = false,
+}: {
+  removal: ReturnType<typeof useDeviceRemoval>;
+  /** The account saves runs (paid): say its copies are not touched. */
+  savedElsewhere?: boolean;
+}) {
+  return (
+    <ConfirmDialog
+      open={removal.pending !== null}
+      title="Remove from this device?"
+      confirmLabel="Remove from this device"
+      busyLabel="Removing…"
+      busy={removal.busy}
+      error={removal.error}
+      onConfirm={() => void removal.confirm()}
+      onCancel={removal.cancel}
+    >
+      {removal.pending ? (
+        <p>
+          &ldquo;{posterTitle(removal.pending)}&rdquo; is removed from this browser&rsquo;s History.
+          {savedElsewhere
+            ? " Runs saved to your account are not touched."
+            : " Nothing saved anywhere else changes."}
+        </p>
+      ) : null}
+    </ConfirmDialog>
   );
 }
 
@@ -363,6 +467,15 @@ function SavedHistory({
     () => buildHistory(localOnly, { filter: "all", query: "", sort: "newest", now }),
     [localOnly, now]
   );
+  /* 2026-11-20: runs this browser also keeps a copy of, though they are
+     saved to the account (their cards are the saved ones, with the bin for
+     the account's copy). Their local copies are removed together, by name,
+     so the two removals are never confused. */
+  const localCopies = useMemo(
+    () => (failed || !local.runs ? [] : local.runs.filter((run) => byId.has(run.run_id)).map((run) => run.run_id)),
+    [local.runs, failed, byId]
+  );
+  const copies = useLocalCopiesRemoval();
 
   const open = async (summary: SavedRunSummary) => {
     if (!onOpenSaved || opening) return;
@@ -399,6 +512,7 @@ function SavedHistory({
   };
 
   const emptySaved = saved.settled && !failed && items.length === 0;
+  const removal = useDeviceRemoval();
 
   return (
     <div className="history" data-saved={saved.mode}>
@@ -513,6 +627,11 @@ function SavedHistory({
             <button type="button" className="acct-link history-delete-all" onClick={() => ask({ kind: "all" })}>
               Delete all saved runs
             </button>
+            {localCopies.length > 0 ? (
+              <button type="button" className="acct-link history-remove-copies" onClick={() => copies.ask(localCopies)}>
+                Remove this browser&rsquo;s copies
+              </button>
+            ) : null}
           </div>
           <p className="sr-only" role="status" aria-live="polite">
             {saved.loadMoreFailed ? "More runs could not be loaded." : ""}
@@ -542,6 +661,7 @@ function SavedHistory({
                     run={run}
                     now={now}
                     onOpen={() => onOpenRun(run.run_id, run.source_kind)}
+                    onRemove={() => removal.ask(run)}
                   />
                 ))}
               </ul>
@@ -549,6 +669,27 @@ function SavedHistory({
           ))}
         </section>
       ) : null}
+
+      <RemoveFromDeviceDialog removal={removal} savedElsewhere />
+
+      <ConfirmDialog
+        open={copies.pending !== null}
+        title="Remove this browser’s copies?"
+        confirmLabel="Remove from this device"
+        busyLabel="Removing…"
+        busy={copies.busy}
+        error={copies.error}
+        onConfirm={() => void copies.confirm()}
+        onCancel={copies.cancel}
+      >
+        {copies.pending ? (
+          <p>
+            This browser keeps its own copy of{" "}
+            {copies.pending.length === 1 ? "1 run" : `${copies.pending.length} runs`} saved to your account. The
+            copies are removed from this browser. The runs stay saved to your account, on every device.
+          </p>
+        ) : null}
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={pending !== null}
@@ -623,6 +764,7 @@ function Poster({
   now,
   onOpen,
   onDelete,
+  onRemove,
   busy = false,
 }: {
   run: HistoryEntry;
@@ -630,6 +772,9 @@ function Poster({
   onOpen: () => void;
   /** Saved runs only: removes it from the account (after a confirmation). */
   onDelete?: () => void;
+  /** This browser's runs only: removes this browser's copy (after a
+   *  confirmation). A card has one or the other, never both. */
+  onRemove?: () => void;
   busy?: boolean;
 }) {
   const chip = platformLabel(run);
@@ -641,7 +786,7 @@ function Poster({
     <li
       className="poster-item"
       data-orientation={isLandscape(run) ? "landscape" : "portrait"}
-      data-deletable={onDelete ? "" : undefined}
+      data-deletable={onDelete || onRemove ? "" : undefined}
     >
       <button
         type="button"
@@ -685,6 +830,19 @@ function Poster({
         >
           <span className="poster-delete__disc" aria-hidden="true">
             <Trash2 className="poster-delete__icon" />
+          </span>
+        </button>
+      ) : onRemove ? (
+        /* A cross, not the bin: this only clears this browser's copy. */
+        <button
+          type="button"
+          className="poster-delete"
+          data-action="remove"
+          aria-label={`Remove ${posterTitle(run)} from this device`}
+          onClick={onRemove}
+        >
+          <span className="poster-delete__disc" aria-hidden="true">
+            <X className="poster-delete__icon" />
           </span>
         </button>
       ) : null}

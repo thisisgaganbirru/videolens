@@ -10,8 +10,9 @@ are logged, never an email, an address or a card.
 
 import logging
 
-from ..domain.entities import BillingWebhookEvent
+from ..domain.entities import BillingAccount, BillingWebhookEvent, SubscriptionSnapshot
 from ..domain.errors import BillingNotConfiguredError
+from ..domain.policies import subscription_grants_paid, subscription_is_live
 from .billing import BillingPlans
 from .saved_history import SavedHistory
 
@@ -80,6 +81,7 @@ class HandleBillingWebhookUseCase:
                 snapshot.subscription_id,
             )
             return "ignored"
+        snapshot = await self._one_subscription(account, snapshot)
         applied = await accounts.apply_subscription(account.account_id, snapshot)
         if self._history is not None:
             # From the stored row, applied or not; never raises.
@@ -87,3 +89,42 @@ class HandleBillingWebhookUseCase:
         if applied:
             logger.info("Account %s subscription %s is %s", account.account_id, snapshot.subscription_id, snapshot.status)
         return "handled" if applied else "ignored"
+
+    async def _one_subscription(self, account: BillingAccount, snapshot: SubscriptionSnapshot) -> SubscriptionSnapshot:
+        """One customer, one live subscription. A second one (an old Checkout
+        tab paid after another checkout already subscribed) would bill the
+        plan twice and every extra run twice (the meter is the customer's),
+        so it is cancelled here, on whichever of its events arrives first.
+
+        Kept: the stored one, unless only the new one grants the plan (the
+        stored one is incomplete, past_due or unpaid and the new one is
+        paid), so a second subscription stuck in `incomplete` can never
+        make a paying account read as free. The other is cancelled now with
+        its unused time credited to the customer and no final invoice
+        (`cancel_duplicate_subscription`). Returns the snapshot to store. A
+        Stripe failure raises: the event answers 500 and Stripe sends it
+        again."""
+        stored_id = account.stripe_subscription_id
+        if not stored_id or stored_id == snapshot.subscription_id or not subscription_is_live(snapshot.status):
+            return snapshot
+        gateway = self._plans.gateway
+        # Fresh, not the stored status: a missed "deleted" event must not
+        # make an ordinary resubscribe look like a duplicate.
+        stored = await gateway.get_subscription(stored_id)
+        if not subscription_is_live(stored.status) or stored.customer_id != account.stripe_customer_id:
+            return snapshot
+        now = self._plans.now()
+        new_pays = subscription_grants_paid(snapshot.status, snapshot.current_period_end, now)
+        stored_pays = subscription_grants_paid(stored.status, stored.current_period_end, now)
+        keep, drop = (snapshot, stored) if new_pays and not stored_pays else (stored, snapshot)
+        logger.error(
+            "Account %s has two live subscriptions (customer %s): keeping %s (%s), cancelling %s (%s) with its unused time credited",
+            account.account_id,
+            account.stripe_customer_id,
+            keep.subscription_id,
+            keep.status,
+            drop.subscription_id,
+            drop.status,
+        )
+        await gateway.cancel_duplicate_subscription(drop.subscription_id)
+        return keep

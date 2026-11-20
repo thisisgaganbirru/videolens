@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from google.genai import errors as genai_errors
 from google.genai import types
@@ -71,7 +72,15 @@ class _FakeClient:
     def __init__(self, generate_outcomes, upload_outcomes=None, states=None) -> None:
         self.files = _FakeFiles(upload_outcomes, states)
         self.models = _FakeModels(generate_outcomes)
-        self.aio = SimpleNamespace(files=self.files, models=self.models)
+        self.closed: list[str] = []
+
+        async def aclose() -> None:
+            self.closed.append("async")
+
+        self.aio = SimpleNamespace(files=self.files, models=self.models, aclose=aclose)
+
+    def close(self) -> None:
+        self.closed.append("sync")
 
 
 def _engine(client: _FakeClient, rand: float = 1.0, **settings) -> tuple[GeminiEngine, list[float]]:
@@ -404,6 +413,50 @@ class AnalyzeCaptionsRetryTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(AnalysisUnavailableError):
             await engine.analyze_captions(self._CAPTIONS)
+
+
+class OwnKeyClientLifetimeTests(unittest.IsolatedAsyncioTestCase):
+    """A per-BYOK client is closed when its run is done; the shared
+    server-key client is cached and left open."""
+
+    _CAPTIONS = CaptionTrack(text="hello world", language="en", automatic=True)
+
+    async def test_an_own_key_client_is_closed_after_the_run_whatever_happens(self) -> None:
+        cases = {
+            "success": lambda engine: engine.analyze_with_retry("clip.mp4", api_key="own-key"),
+            "upload fails": lambda engine: engine.analyze_with_retry("clip.mp4", api_key="own-key"),
+            "captions": lambda engine: engine.analyze_captions(self._CAPTIONS, api_key="own-key"),
+        }
+        for name, call in cases.items():
+            with self.subTest(name):
+                own = _FakeClient(
+                    [_RESULT], upload_outcomes=[ValueError("bad file")] if name == "upload fails" else None
+                )
+                engine, _ = _engine(_FakeClient([_RESULT]))
+                with patch("app.infrastructure.ai.gemini_engine.genai.Client", return_value=own):
+                    try:
+                        await call(engine)
+                    except ValueError:
+                        pass
+                self.assertEqual(own.closed, ["async", "sync"])
+
+    async def test_the_shared_client_stays_open(self) -> None:
+        shared = _FakeClient([_RESULT, _RESULT])
+        engine, _ = _engine(shared)
+        await engine.analyze_with_retry("clip.mp4", api_key=None)
+        await engine.analyze_captions(self._CAPTIONS)
+        self.assertEqual(shared.closed, [])
+
+    async def test_a_close_failure_never_fails_the_run(self) -> None:
+        own = _FakeClient([_RESULT])
+
+        def broken() -> None:
+            raise RuntimeError("already closed")
+
+        own.close = broken
+        engine, _ = _engine(_FakeClient([]))
+        with patch("app.infrastructure.ai.gemini_engine.genai.Client", return_value=own):
+            self.assertIs(await engine.analyze_captions(self._CAPTIONS, api_key="own-key"), _RESULT)
 
 
 if __name__ == "__main__":

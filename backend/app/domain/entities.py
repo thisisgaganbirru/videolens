@@ -382,6 +382,17 @@ class FreeRunClaim:
 
 
 @dataclass(frozen=True)
+class SpendClaim:
+    """One unit taken from the shared daily cap (`DAILY_RUN_CAP`), held so
+    it can be handed back if the run never reaches Gemini. `day` pins the
+    refund to the UTC day it was taken from. `counted` is False when the cap
+    is off: nothing was taken, so there is nothing to give back."""
+
+    day: str
+    counted: bool = True
+
+
+@dataclass(frozen=True)
 class AccountFreeRunClaim:
     """One run taken from an account's counter. `period` is the counter's
     key: "YYYY-MM-DD" (UTC day: the free plan, and the paid plan's included
@@ -507,6 +518,16 @@ class ExtraRunCharge:
     account_id: str
     stripe_customer_id: str
     completed_at: datetime
+
+
+@dataclass(frozen=True)
+class HeldExtraRun:
+    """An extra run admitted but not yet settled (ledger state `held`), as
+    the reconciliation job sees it."""
+
+    run_id: str
+    account_id: str
+    held_at: datetime
 
 
 # ------------------------------------------------------------ saved history

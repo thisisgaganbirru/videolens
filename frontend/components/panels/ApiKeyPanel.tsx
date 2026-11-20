@@ -1,6 +1,14 @@
 "use client";
 
-import { useId, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from "react";
+import {
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type FormEvent,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import { Check, Eye, EyeOff } from "lucide-react";
 import { useGeminiApiKey } from "@/application/useGeminiApiKey";
 import { isNoticeable } from "@/application/useCapabilities";
@@ -34,6 +42,23 @@ import type { Capability } from "@/domain/entities";
 
 const AI_STUDIO_URL = "https://aistudio.google.com/apikey";
 
+/* 2026-11-20: a `type="password"` field makes browsers and password managers
+   offer to save the key as a site password. Where the engine can mask a text
+   field (`-webkit-text-security`: Chromium, WebKit, the Android WebView) the
+   hidden key is a masked text field instead, which none of them treat as a
+   password. Elsewhere it stays a password field, still masked, with the
+   managers' own opt-out attributes. Read after hydration (false on the
+   server), so the prerendered field is the password field. */
+const noSubscribe = () => () => {};
+const canMaskText = () => {
+  try {
+    return typeof CSS !== "undefined" && CSS.supports("-webkit-text-security", "disc");
+  } catch {
+    return false;
+  }
+};
+const serverCannotMask = () => false;
+
 function openAccount(event: MouseEvent<HTMLAnchorElement>) {
   if (!isPlainLeftClick(event)) return;
   event.preventDefault();
@@ -59,6 +84,7 @@ export default function ApiKeyPanel({
   signInStandInMinutes?: number;
 }) {
   const { value, stored, saved, update, save, clear } = useGeminiApiKey();
+  const maskAsText = useSyncExternalStore(noSubscribe, canMaskText, serverCannotMask);
   const [revealed, setRevealed] = useState(false);
   const [emptyError, setEmptyError] = useState(false);
   const fieldRef = useRef<HTMLInputElement>(null);
@@ -135,7 +161,8 @@ export default function ApiKeyPanel({
           <input
             ref={fieldRef}
             id={fieldId}
-            type={revealed ? "text" : "password"}
+            type={revealed || maskAsText ? "text" : "password"}
+            data-masked={!revealed && maskAsText ? "" : undefined}
             value={value}
             onChange={(event) => {
               setEmptyError(false);
@@ -146,6 +173,11 @@ export default function ApiKeyPanel({
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
+            /* 1Password, LastPass, Bitwarden, Dashlane: not a login field. */
+            data-1p-ignore=""
+            data-lpignore="true"
+            data-bwignore=""
+            data-form-type="other"
             className="field key-field"
             aria-describedby={emptyError ? `${errorId} ${helpId}` : helpId}
             aria-invalid={emptyError || undefined}

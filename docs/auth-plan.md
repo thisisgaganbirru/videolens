@@ -253,8 +253,12 @@ subscription work decides is what signing in buys there. Until then,
 | Supabase session | Browser `localStorage` via `supabase-js` | A static export has no server to hold it |
 
 Connection: `asyncpg` through SQLAlchemy async, as the branch has it, over
-`DATABASE_URL` pointing at the Supavisor transaction pooler (port 6543), since
-Railway services sleep and wake and must not pin direct connections. A
+`DATABASE_URL` pointing at the Supavisor **session** pooler (port 5432), since
+Railway services sleep and wake and must not pin direct connections. (This
+plan first said the transaction pooler, port 6543; the first real run on it,
+2026-11-14, failed every signed-in route with "prepared statement ... does
+not exist", because asyncpg's prepared statements do not survive transaction
+pooling. See `docs/backend/auth.md`, "Pooler".) A
 dedicated `videolens_api` role with grants on the four tables plus `DELETE`
 on `auth.users`; the `postgres` superuser URL is never placed on Railway.
 Row level security on with no policies on the four tables, so nothing but
@@ -522,6 +526,8 @@ inherit) was created and migration `0001_identity` applied through the
 Supabase connector using the offline Alembic render; `alembic_version` is at
 `0001_identity`, the four tables have RLS on with the `videolens_api_all`
 policy, and the role was verified to log in through the transaction pooler
+(a login works there; queries later did not, so the app now uses the session
+pooler on 5432 of the same host)
 (`aws-0-us-east-2.pooler.supabase.com:6543`, user
 `videolens_api.pjekwwiaocywdbwqgtgl`) and to be refused `auth.users`, as
 expected (see `docs/backend/auth.md`, migrations). **Dashboard settings,
@@ -662,3 +668,4 @@ Alembic release step), `CLAUDE.md` (Product direction, the lint count, the
 - 2026-11-14 · backend agent · status line: the paid plan includes 30 runs a UTC day (`PAID_RUNS_PER_DAY`), not 100 a month
 - 2026-11-14 · backend agent · paid saved history (`saved_runs`, migration 0006) and the 30-day account deletion hold with restore are built; see `docs/backend/saved-history.md`
 - 2026-11-14 · frontend agent · paid plan is named Plus in the UI
+- 2026-11-20 · Claude (backend agent) · pooler corrected to the Supavisor session pooler (5432); the 6543 login note kept as history with why

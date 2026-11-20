@@ -79,6 +79,60 @@ class StripeGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params["success_url"], "https://videolens.test/app?view=account&billing=success")
         self.assertEqual(params["cancel_url"], "https://videolens.test/app?view=account&billing=cancel")
 
+    async def test_checkout_session_expires_soon_but_not_below_stripes_minimum(self) -> None:
+        gateway = StripeBillingGateway(_settings(), client=self.client, wall_clock=lambda: 1_800_000_000.5)
+        self.client.v1.checkout.sessions.create.return_value = {"url": "u"}
+        await gateway.create_checkout_session(customer_id="cus_1", account_id="acct-1", interval="month")
+        params = self.client.v1.checkout.sessions.create.call_args.kwargs["params"]
+        lifetime = params["expires_at"] - 1_800_000_000
+        self.assertGreater(lifetime, 30 * 60)  # Stripe refuses under 30 minutes
+        self.assertLessEqual(lifetime, 60 * 60)
+
+    async def test_open_sessions_of_the_customer_are_expired_page_by_page(self) -> None:
+        pages = [
+            {"data": [{"id": "cs_1", "status": "open"}, {"id": "cs_2", "status": "open"}], "has_more": True},
+            {"data": [{"id": "cs_3", "status": "open"}], "has_more": False},
+        ]
+        self.client.v1.checkout.sessions.list.side_effect = lambda params: pages.pop(0)
+        self.assertEqual(await self.gateway.expire_open_checkout_sessions("cus_1"), 3)
+        calls = self.client.v1.checkout.sessions.list.call_args_list
+        self.assertEqual(calls[0].kwargs["params"], {"customer": "cus_1", "status": "open", "limit": 100})
+        self.assertEqual(calls[1].kwargs["params"]["starting_after"], "cs_2")
+        expired = [call.args[0] for call in self.client.v1.checkout.sessions.expire.call_args_list]
+        self.assertEqual(expired, ["cs_1", "cs_2", "cs_3"])
+
+    async def test_an_expire_failure_is_a_provider_error(self) -> None:
+        self.client.v1.checkout.sessions.list.return_value = {"data": [{"id": "cs_1", "status": "open"}], "has_more": False}
+        self.client.v1.checkout.sessions.expire.side_effect = stripe.APIConnectionError("no route")
+        with self.assertRaises(BillingProviderError):
+            await self.gateway.expire_open_checkout_sessions("cus_1")
+
+    async def test_live_subscriptions_leave_out_ended_ones(self) -> None:
+        self.client.v1.subscriptions.list.return_value = {
+            "data": [
+                {"id": "sub_a", "status": "active"},
+                {"id": "sub_b", "status": "incomplete"},
+                {"id": "sub_c", "status": "canceled"},
+                {"id": "sub_d", "status": "incomplete_expired"},
+                {"id": "sub_e", "status": "paused"},
+            ],
+            "has_more": False,
+        }
+        self.assertEqual(await self.gateway.live_subscription_ids("cus_1"), ["sub_a", "sub_b", "sub_e"])
+        params = self.client.v1.subscriptions.list.call_args.kwargs["params"]
+        self.assertEqual(params, {"customer": "cus_1", "status": "all", "limit": 100})
+
+    async def test_a_duplicate_is_cancelled_with_credit_and_no_final_invoice(self) -> None:
+        self.client.v1.subscriptions.retrieve.return_value = {"id": "sub_2", "status": "active"}
+        await self.gateway.cancel_duplicate_subscription("sub_2")
+        self.client.v1.subscriptions.cancel.assert_called_once_with(
+            "sub_2", params={"invoice_now": False, "prorate": True}
+        )
+        self.client.v1.subscriptions.cancel.reset_mock()
+        self.client.v1.subscriptions.retrieve.return_value = {"id": "sub_2", "status": "canceled"}
+        await self.gateway.cancel_duplicate_subscription("sub_2")
+        self.client.v1.subscriptions.cancel.assert_not_called()
+
     async def test_a_yearly_metered_price_replaces_the_monthly_one_on_yearly_plans(self) -> None:
         gateway = StripeBillingGateway(_settings(stripe_price_extra_run_yearly="price_extra_y"), client=self.client)
         self.client.v1.checkout.sessions.create.return_value = {"url": "u"}

@@ -1,8 +1,8 @@
 import type { MediaSource, RunCreateResponse, RunListResponse, RunStatusResponse } from "@/domain/entities";
-import { ApiError } from "@/domain/errors";
-import type { ApiKeyStore, RunsGateway } from "@/domain/ports";
+import { ApiError, NetworkError } from "@/domain/errors";
+import type { ApiKeyStore, AsOwner, RunsGateway } from "@/domain/ports";
 import type { ApiClient } from "./apiClient";
-import { UNREADABLE } from "./apiClient";
+import { FetchFailedError, retryAfterSeconds, SignInUnconfirmedError, UNREADABLE } from "./apiClient";
 
 /* Transport failures (no response at all) are classified in `ApiClient`,
    the one place that calls `fetch` for the caller's own requests. */
@@ -35,6 +35,17 @@ function errorExtras(body: unknown): { code?: string; limit?: number; used?: num
 const CREATE_SERVER_TROUBLE = "The server had a problem starting this run. Try again in a moment.";
 const CREATE_UNREADABLE_REFUSAL = "The server could not accept this run. Check the link or file and try again.";
 const RATE_LIMITED = "You're going a bit fast.";
+/* An upload that got no answer at all. The server may refuse an oversize
+   body (413) before it has read it, and a browser then sees the connection
+   close, not the 413, so the size is the likely cause worth naming. */
+const UPLOAD_CUT_OFF =
+  "The upload was cut off before the server answered. The file may be over the size limit; otherwise check your connection and try again.";
+/* A session is stored here but the request could not go out signed in, so
+   it was not sent at all (2026-11-20): sending it anonymous would file the
+   run under nobody and keep it past sign-out. Nothing retries a create on
+   its own, so the sentence asks for the press. */
+const CREATE_SIGN_IN_UNCONFIRMED =
+  "Your sign-in could not be confirmed just now, so the run was not sent. Check your connection and try again.";
 const DETAIL_MAX = 240;
 
 /** `detail` when it is a plain sentence fit to show, else null. FastAPI's
@@ -47,24 +58,6 @@ function userFacingDetail(body: unknown): string | null {
   if (!text || text.length > DETAIL_MAX || /[\r\n]/.test(text)) return null;
   if (/^[[{<]/.test(text) || /traceback|exception|error:/i.test(text)) return null;
   return text;
-}
-
-/** Seconds to wait from a `Retry-After` header: delta-seconds or an HTTP
- *  date. Null when absent, unreadable or already past. Note that a browser
- *  only lets the page read this header cross-origin when the API lists it in
- *  `Access-Control-Expose-Headers`; until then this is null and the caller
- *  keeps its general wording. */
-function retryAfterSeconds(value: string | null, now: number = Date.now()): number | null {
-  if (!value) return null;
-  const trimmed = value.trim();
-  if (/^\d+$/.test(trimmed)) {
-    const seconds = Number(trimmed);
-    return seconds > 0 ? seconds : null;
-  }
-  const at = Date.parse(trimmed);
-  if (Number.isNaN(at)) return null;
-  const seconds = Math.ceil((at - now) / 1000);
-  return seconds > 0 ? seconds : null;
 }
 
 /** "Try again in about a minute." / "… about 5 minutes." Never "0 minutes". */
@@ -96,6 +89,11 @@ function createRunFailureMessage(status: number, body: unknown, retryAfter: stri
       ? `You’ve reached this month’s limit of ${extras.limit} extra runs. Your included runs still reset every day.`
       : "You’ve reached this month’s limit of extra runs. Your included runs still reset every day.";
   }
+  /* 2026-11-20: the 429 for too many failed credentials from one network has
+     no code and its own sentence (wait a few minutes). Only the per-IP rate
+     limit's sentence opens with RATE_LIMITED, so any other detail is shown as
+     sent rather than turned into "going a bit fast". */
+  if (status === 429 && detail && !detail.startsWith(RATE_LIMITED)) return detail;
   if (status === 429) {
     const wait = retryAfterSeconds(retryAfter);
     if (wait !== null) return `${RATE_LIMITED} ${tryAgainIn(wait)}`;
@@ -126,7 +124,7 @@ export class FetchRunsGateway implements RunsGateway {
       const geminiApiKey = this.apiKeyStore.get();
       if (geminiApiKey) extra["X-Gemini-Api-Key"] = geminiApiKey;
     }
-    return this.client.send(path, init, extra);
+    return this.client.sendAs(path, init, extra);
   }
 
   /** A 2xx whose body will not parse is still a server-side problem — we
@@ -140,13 +138,23 @@ export class FetchRunsGateway implements RunsGateway {
     }
   }
 
-  async createRun(source: MediaSource): Promise<RunCreateResponse> {
+  async createRun(source: MediaSource, signal?: AbortSignal): Promise<AsOwner<RunCreateResponse>> {
     const formData = new FormData();
     if (source.file) formData.append("file", source.file);
     if (source.url) formData.append("url", source.url);
     formData.append("accept_terms", "true");
 
-    const res = await this.send("/api/runs", { method: "POST", body: formData }, { withGeminiKey: true });
+    let res: Response;
+    let owner: string | null;
+    try {
+      ({ res, owner } = await this.send("/api/runs", { method: "POST", body: formData, signal }, { withGeminiKey: true }));
+    } catch (error) {
+      /* Only a failure of the fetch itself says anything about the upload.
+         The sign-in check fails before a byte is sent. */
+      if (error instanceof SignInUnconfirmedError) throw new NetworkError(CREATE_SIGN_IN_UNCONFIRMED);
+      if (source.file && error instanceof FetchFailedError) throw new NetworkError(UPLOAD_CUT_OFF);
+      throw error;
+    }
 
     if (!res.ok) {
       const body = await res.json().catch(() => null);
@@ -157,24 +165,28 @@ export class FetchRunsGateway implements RunsGateway {
       );
     }
 
-    return this.parse<RunCreateResponse>(res);
+    return { ...(await this.parse<RunCreateResponse>(res)), owner };
   }
 
   async getRun(runId: string): Promise<RunStatusResponse> {
-    const res = await this.send(`/api/runs/${runId}`);
+    const { res } = await this.send(`/api/runs/${runId}`);
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      throw new ApiError(body?.detail || `Could not fetch run status (${res.status})`, res.status);
+      /* The code rides along so a poll can tell the deletion hold's 410
+         (`account_pending_deletion`) from any other refusal. */
+      throw new ApiError(body?.detail || `Could not fetch run status (${res.status})`, res.status, {
+        code: errorExtras(body).code,
+      });
     }
     return this.parse<RunStatusResponse>(res);
   }
 
-  async listRuns(): Promise<RunListResponse> {
-    const res = await this.send("/api/runs");
+  async listRuns(): Promise<AsOwner<RunListResponse>> {
+    const { res, owner } = await this.send("/api/runs");
     if (!res.ok) {
       const body = await res.json().catch(() => null);
       throw new ApiError(body?.detail || `Could not fetch run history (${res.status})`, res.status);
     }
-    return this.parse<RunListResponse>(res);
+    return { ...(await this.parse<RunListResponse>(res)), owner };
   }
 }

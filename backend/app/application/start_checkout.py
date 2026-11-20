@@ -43,6 +43,11 @@ class StartCheckoutUseCase:
             customer_id = await self._plans.gateway.create_customer(principal.account_id, principal.email)
             # A racing checkout may have linked one first; the stored one wins.
             account = await self._plans.accounts.link_customer(principal.account_id, customer_id)
+        # Only the newest session can be paid: an abandoned one, paid later
+        # from an old tab, would start a second subscription (the webhook
+        # cancels one that slips through anyway). A failure here fails the
+        # checkout (502) rather than leave an older session payable.
+        await self._plans.gateway.expire_open_checkout_sessions(account.stripe_customer_id)
         return await self._plans.gateway.create_checkout_session(
             customer_id=account.stripe_customer_id, account_id=principal.account_id, interval=interval
         )

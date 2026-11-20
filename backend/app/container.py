@@ -4,6 +4,7 @@ only place that is allowed to know about every layer at once - domain and
 application code never import from here."""
 
 from .application.billing import BillingPlans, ExtraRunBilling
+from .application.check_schema import CheckSchemaUseCase
 from .application.cleanup import AccountCleanupUseCase
 from .application.create_api_key import CreateApiKeyUseCase
 from .application.create_run import CreateRunUseCase
@@ -30,6 +31,7 @@ from .infrastructure.auth.jwt_verifier import JwtVerifier
 from .infrastructure.billing.stripe_gateway import StripeBillingGateway
 from .infrastructure.byok.key_vault import ByokKeyStore
 from .infrastructure.config import Settings, settings
+from .infrastructure.logging_config import configure_worker_logging as _configure_worker_logging
 from .infrastructure.health.probes import (
     AnalysisEngineProbe,
     AuthProbe,
@@ -56,8 +58,10 @@ from .infrastructure.persistence.database import Database
 from .infrastructure.persistence.identity_users import AlwaysPresentIdentityProviderUsers, SqlIdentityProviderUsers
 from .infrastructure.persistence.run_repository import RunStore
 from .infrastructure.persistence.saved_run_repository import InMemorySavedRuns, SqlSavedRuns
+from .infrastructure.persistence.schema_revision import SqlSchemaRevisionReader
 from .infrastructure.releases.github_releases import GithubReleaseCatalog
 from .infrastructure.queue.job_queue import RunQueue
+from .infrastructure.quota.credential_failures import CredentialFailureCounter
 from .infrastructure.quota.daily_budget import DailyBudget
 from .infrastructure.quota.device_tokens import HmacDeviceTokens
 from .infrastructure.quota.free_run_allowance import FreeRunAllowanceStore
@@ -83,6 +87,8 @@ class Container:
         self.device_tokens = HmacDeviceTokens(settings)
         self.key_vault = ByokKeyStore(settings)
         self.jwt_verifier = JwtVerifier(settings)
+        # Failed credentials per client IP (AUTH_FAILURE_LIMIT_PER_IP).
+        self.credential_failures = CredentialFailureCounter(settings)
         self.release_catalog = GithubReleaseCatalog(settings)
         # Off (every call refused, the SDK never imported) unless the
         # required STRIPE_* settings are all set (docs/backend/billing.md).
@@ -139,6 +145,14 @@ class Container:
                 saved_runs=memory_saved_runs,
             )
 
+        # Startup refuses a Postgres schema older than the code; SQLite (local
+        # only, possibly built without Alembic) is warned about, and no
+        # database is nothing to check (docs/backend/startup-checks.md).
+        self.check_schema_use_case = CheckSchemaUseCase(
+            reader=SqlSchemaRevisionReader(self.database) if self.database.enabled else None,
+            enforce=self.database.dialect != "sqlite",
+        )
+
         # The paid plan. Stripe billing is on only with Stripe configured AND
         # an account store. Complimentary Plus (`accounts.complimentary_plus`,
         # set by hand in SQL) is read from the database only, so without
@@ -151,7 +165,7 @@ class Container:
             extra_runs_monthly_cap=settings.paid_extra_runs_monthly_cap,
             directory=self.accounts if self.database.enabled else None,
         )
-        self.extra_run_billing = ExtraRunBilling(plans=self.billing)
+        self.extra_run_billing = ExtraRunBilling(plans=self.billing, runs=self.run_repository)
         # Saved history: on only with a database and a paid plan to decide
         # who is saved (Stripe billing, or complimentary Plus); the
         # post-cancel window only with Stripe billing on.
@@ -170,6 +184,7 @@ class Container:
             api_keys=self.api_keys,
             verifier=self.jwt_verifier,
             allow_anonymous=settings.allow_anonymous,
+            failures=self.credential_failures,
         )
         # The one place media limits are chosen per caller; every enforcement
         # point (intake, worker, caption fallback) gets them from here.
@@ -229,6 +244,8 @@ class Container:
             extra_runs=self.extra_run_billing,
             # After billing: a paid account's result is saved, once.
             history=self.saved_history,
+            # A run that never reaches Gemini hands its daily cap unit back.
+            spend_cap=self.spend_cap,
         )
         self.job_queue = RunQueue(
             settings, local_runner=self.process_run_use_case.execute, key_vault=self.key_vault
@@ -265,6 +282,8 @@ class Container:
             free_runs=self.free_runs,
             account_free_runs=self.account_free_runs,
             extra_runs=self.extra_run_billing,
+            # ... and its daily cap unit, if it never reached Gemini.
+            spend_cap=self.spend_cap,
         )
         self.list_runs_use_case = ListRunsUseCase(runs=self.run_repository)
         self.get_releases_use_case = GetReleasesUseCase(catalog=self.release_catalog)
@@ -285,11 +304,18 @@ class Container:
             mode="distributed" if settings.queue_enabled else "local",
         )
 
+    @staticmethod
+    def configure_worker_logging() -> None:
+        """The worker's JSON logging, reached through the container so
+        `interface/worker` imports nothing from `infrastructure/`."""
+        _configure_worker_logging()
+
     async def close(self) -> None:
         await self.job_queue.close()
         await self.key_vault.close()
         await self.run_repository.close()
         await self.spend_cap.close()
+        await self.credential_failures.close()
         await self.free_runs.close()
         await self.long_runs.close()
         await self.account_free_runs.close()
