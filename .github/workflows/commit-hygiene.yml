@@ -8,12 +8,17 @@ name: Commit hygiene
 # tests. So this small workflow covers edits (and every other PR event, so
 # its check is always present on the head commit and can be made required).
 #
-# Branch protection on dev and main should require this workflow's
-# `hygiene / Commit hygiene` check in addition to `required`; until it does, a
-# red run here is visible on the PR but does not block the merge.
+# Its check is named `pr-hygiene / Commit hygiene` (job id below / the
+# reusable's job name). The lanes' copy keeps the name `hygiene / Commit
+# hygiene` and feeds their `required` job. Branch protection on dev and main
+# should require `pr-hygiene / Commit hygiene` in addition to `required`;
+# until it does, a red run here is visible on the PR but does not block the
+# merge. Renaming the job id renames the check and would leave a required
+# check pending forever: change branch protection in the same breath.
 #
 # Plain `pull_request`, never `pull_request_target`: it runs with the PR's
-# read-only token, and the rules come from the base branch (see the reusable).
+# read-only token, and the rules come from the base branch (see the reusable;
+# that covers the script, not this file).
 
 on:
   pull_request:
@@ -28,7 +33,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  hygiene:
+  # No `name:` on purpose: the job id is the check-name prefix either way.
+  pr-hygiene:
     uses: ./.github/workflows/reusable-commit-hygiene.yml
     permissions:
       contents: read

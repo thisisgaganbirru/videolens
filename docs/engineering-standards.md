@@ -644,26 +644,69 @@ Four layers keep it out, from source to gate:
   `git config core.hooksPath .githooks`.
 - `reusable-commit-hygiene.yml` runs the script over every commit in a PR,
   its title (the squash subject) and its description, on both lanes, and
-  feeds `required`. It runs the **base branch's** copy of the script, so a PR
-  cannot weaken the check that judges it; a rule change applies to PRs after
-  it merges. `commit-hygiene.yml` calls it again on every PR event including
-  `edited`, so a title or description changed after a green run is
-  re-checked. That check blocks a merge only once branch protection on `dev`
-  and `main` requires `hygiene / Commit hygiene` from the "Commit hygiene"
-  workflow (an owner setting; not verifiable from the repository).
+  feeds `required`; that copy reports as `hygiene / Commit hygiene`.
+  `commit-hygiene.yml` calls it again on every PR event including `edited`,
+  so a title or description changed after a green run is re-checked; that
+  copy reports as **`pr-hygiene / Commit hygiene`**. Mark exactly
+  `pr-hygiene / Commit hygiene` required in branch protection on `dev` and
+  `main`, next to `required` (an owner setting, not verifiable from the
+  repository; on 2026-11-20 only `required` was required on PR #147). Until
+  then a red run there is visible but does not block. Before 2026-11-20 both
+  copies reported the same name, `hygiene / Commit hygiene`; that name now
+  belongs to the lanes' copy only. The separate workflow covers every event
+  the lanes do (`opened`, `synchronize`, `reopened`, plus `edited`), so the
+  lanes' copy is redundant for blocking; it stays because `required` needs
+  it, and removing it is a separate change.
+- The title and description are fetched with `gh api` into a variable first:
+  a failed call or an empty title fails the job instead of checking empty
+  text (an empty description is fine).
+- CI runs the **base branch's** copy of the script, so a PR cannot weaken the
+  rules that judge it; a rule change applies to PRs after it merges. That
+  covers the script only. On `pull_request` the workflow files
+  (`commit-hygiene.yml`, the lanes, `reusable-commit-hygiene.yml`) run from
+  the PR's merge ref, so a PR that edits them can change or drop the check,
+  including the step that loads the base copy. Changes under `.github/`
+  therefore need the owner's review. A `CODEOWNERS` entry for `.github/`
+  with "Require review from Code Owners" would enforce that; it is
+  recommended and not adopted.
 
-What the script rejects (case-insensitive; since 2026-11-20):
+What the script rejects (case-insensitive; since 2026-11-20, tightened the
+same day after a re-review):
 
-- a `Co-Authored-By:` trailer naming an AI tool (Claude, Anthropic, Copilot,
-  ChatGPT, OpenAI, Codex, Cursor, Gemini, Devin, Aider) with any address, or
-  any co-author address at `anthropic.com` / `openai.com`
+- a co-author trailer (`Co-authored-by:`, also `Co Authored By`,
+  `Coauthored-by`) for an AI tool, matched on whole words and the tools'
+  known names and bot addresses: the word Anthropic, Copilot, ChatGPT, OpenAI
+  or Codex anywhere in the trailer; the name `Claude` alone or with model
+  words (`Claude Code`, `Claude Opus 5.5`); `Cursor Agent`, `Gemini`,
+  `Gemini Code Assist`, `Devin AI`, `aider`, a `(aider)` suffix; addresses at
+  `anthropic.com` / `openai.com` (any subdomain), `aider.chat`,
+  `cursoragent@`, and the `devin-ai-integration`, `gemini-code-assist`,
+  `copilot-swe-agent` bots. People named Haider, Devin Smith, Gemini Patel or
+  Claude Monet pass.
 - a `Claude-Session:` trailer and any `claude.ai/code/session...` URL
 - the footer `Generated with/by Claude (Code)` when it starts a line (after
-  any emoji, bullet or markup), and the link form `Generated with
-  [Claude Code](` anywhere
-- Claude model identifiers: `claude-opus-…`, `claude-sonnet-…`,
+  any emoji or bullet, not after a quote mark), and the link form
+  `Generated with [Claude Code](` anywhere
+- Claude model identifiers anywhere: `claude-opus-…`, `claude-sonnet-…`,
   `claude-haiku-…`, `claude-fable-…`, `claude-instant-…`, `claude-<digit>…`
-- author or committer `noreply@anthropic.com`, in any letter case
+  (`_` counts as `-`), and display names such as `Claude Opus 5.5` or
+  `Claude 3.5 Sonnet`. Text inside `<details>` blocks is exempt from this one
+  rule only: Dependabot puts upstream release notes and commit lists there,
+  which can name a model and which nobody here wrote. Trailers and footers
+  inside `<details>` are still rejected.
+- an author or committer at any `anthropic.com` address (any local part or
+  subdomain, any letter case), or named `Claude`, `Claude Code` or a Claude
+  model name
+
+Before matching, the text is normalised: zero-width and bidi characters are
+dropped, Unicode hyphens, spaces and curly quotes fold to ASCII, a few
+Cyrillic letters that look Latin (а, е, о, с, р, х, у, і and capitals) fold to
+Latin, whitespace runs squeeze to one space, leading `>`, `*`, `-`, `+` and
+`<!--` markers are stripped, and a footer split after "Generated with" is
+rejoined. Still open, by choice: other homoglyphs (Greek, fullwidth Latin,
+mathematical letters), a line that opens with a quote mark (treated as
+quoting the rule), a footer reworded beyond the known forms, and a trailer
+split across lines.
 
 It reads message text only, never file contents. Trailers and footers are
 matched where they stand, so prose that names the rule, "Update CLAUDE.md",
@@ -672,8 +715,10 @@ pattern for cloud-session branch names (`ccr-…`) in merge subjects was
 considered and not added: GitHub writes "Merge pull request #N from
 owner/branch" itself, such subjects are already in history, and a promotion
 range would then fail on commits nobody can change. The script uses the C
-locale (Git for Windows' grep otherwise misses the emoji form) and strips CR,
-so it works on CRLF input; `.gitattributes` keeps it and the hooks LF.
+locale (Git for Windows' grep otherwise misses the emoji form) and matches the
+folded characters as UTF-8 byte sequences, and strips CR, so it works on CRLF
+input; `.gitattributes` keeps it, the hooks and `frontend/android/gradlew`
+LF.
 
 ## Landing order
 
@@ -690,8 +735,9 @@ redesign touches no backend file, so none of these conflict with it:
 - `SECURITY.md` / `CODEOWNERS` / PR + issue templates (none exist yet)
 - CodeQL and gitleaks or another secret scanner (not adopted; CI does no
   secret scanning today). Dependabot exists (`.github/dependabot.yml`).
-- `.gitattributes`: landed 2026-11-20, deliberately minimal (`*.sh` and
-  `.githooks/*` are LF; nothing else is normalised)
+- `.gitattributes`: landed 2026-11-20, deliberately minimal (`*.sh`,
+  `.githooks/*` and `frontend/android/gradlew` are LF; nothing else is
+  normalised)
 - mypy scoped to `domain/` + `application/`
 - frontend tests (additive — touches no existing file)
 
@@ -740,3 +786,4 @@ Re-verify before fixing; do not treat the line numbers as authoritative.
 - 2026-11-20 · claude (session 01FVkcsj3gS4EwsMRTnzy1pr) · added "Commit hygiene": history rewritten to remove AI-tool attribution, and the four guard layers (attribution setting, session-start identity, commit-msg hook, CI check in `required`)
 - 2026-11-20 · Claude (CI agent) · Commit hygiene: documented the widened rule set (AI co-author trailers, plain footer, model ids, session URLs, case-insensitive identity), title checking, base-branch script and the `edited` workflow, and why no `ccr-` pattern; landing-order list now says which tooling exists (`.gitattributes`, Dependabot) and which is not adopted (SECURITY.md, CODEOWNERS, templates, CodeQL, secret scanning)
 - 2026-11-20 · Claude (backend agent) · layering section names the two remaining cross-layer imports instead of stale line numbers and records the re-measurement (still exactly two); Protocol count 9 -> 26, infrastructure module count 13 -> 41, generic failure message updated to the current string
+- 2026-11-20 · Claude (CI agent) · Commit hygiene after the re-review: distinct check names (require `pr-hygiene / Commit hygiene`), title/description fetch fails closed, base-branch protection scoped to the script (workflow files need owner review; CODEOWNERS recommended), co-author patterns on whole words and known tool identities, any `anthropic.com` identity, normalisation against cheap evasions, `<details>` exempt from the model-id rule, `gradlew` LF

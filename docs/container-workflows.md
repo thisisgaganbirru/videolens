@@ -12,7 +12,7 @@ is never reused as a hosted deployment manifest.
 | Local workspace | `scripts/workspace.ps1` and `docker-compose.yml` | Hardened frontend, API, worker, Redis, and MinIO on loopback/private networks | Nothing external |
 | Dev | `.github/workflows/development-environment.yml`, PRs into `dev` only | Only what the PR touches: backend and/or frontend checks, the Android build when `frontend/` changed, and an **advisory** security scan | Nothing. Railway deploys `dev` from the push |
 | Production | `.github/workflows/production-environment.yml`, PRs into `main` and pushes to `main` | PR: full application checks and an **enforced** security scan. Push: build once, scan that image (enforced), promote; Android build | amd64/arm64 images tagged `sha-<commit>` then `latest` in GHCR, plus the APK (release-signed, or debug-signed until the key exists) as a GitHub Release |
-| Security | `.github/workflows/security-nightly-scan.yml`, nightly on `main` | Advisory scan of both images | A tracking issue while findings exist, closed after a clean run |
+| Security | `.github/workflows/security-nightly-scan.yml`, nightly on `main` | Advisory scan of both images | A tracking issue while findings exist, closed after a clean run; a second one while an image could not be scanned, closed after a complete run |
 
 Workflow filenames use lowercase kebab-case. Call-only building blocks follow
 `reusable-<responsibility>.yml`; event-driven entry points follow
@@ -32,6 +32,7 @@ promotion PR, push to `main`), built its images three times, and published a
 | Event | Runs | Does not run, and why |
 |---|---|---|
 | PR into `dev` | `changes`, then only the touched parts: backend and/or frontend checks, Android if `frontend/` changed (the APK is kept as a 14-day artifact, built against the dev backend with the `.dev` application id; `dev_artifact` input), advisory scan of the touched images, `lint-workflows` (actionlint) if `.github/` changed, `hygiene` (no AI-tool attribution in the PR's commits or description) always; `required` aggregates | — |
+| Any PR event into `dev` or `main`, including `edited` | `commit-hygiene.yml`: the same hygiene job, reported as `pr-hygiene / Commit hygiene` (the lanes' copy is `hygiene / Commit hygiene`) | The lanes cannot listen for `edited` (see engineering-standards.md, "Commit hygiene"). |
 | Push to `dev` | nothing | The PR just tested this exact tree (requires "up to date before merging"). Railway deploys. |
 | PR into `main` (promotion, Dependabot) | full application checks, **enforced** scan of both images, `hygiene`; `required` aggregates | Android: `dev`'s PRs built this tree, and the push builds it again with the production URL. |
 | Push to `main` | `publish` (build once, scan, promote), `android` (APK with the production URL), `release` | Application checks: the promotion PR tested this tree. |
@@ -46,7 +47,10 @@ scans the pushed image with the same hard gate. `dev` and the nightly run pass
 nightly run also passes `build_failure_is_warning: true`: a failed Dockerfile
 check or image build (a base-image pull, a package mirror) is a warning and a
 green job, the scan is skipped, and a `<service>.incomplete` marker tells the
-nightly `issue` job not to treat the run as clean. The dev lane leaves that
+nightly `issue` job not to treat the run as clean. So that a build that keeps
+failing is not just a nightly warning, the `issue` job also opens (or comments
+on) a "the nightly scan of main could not run" issue for every incomplete or
+failed scan and closes it after the next complete one. The dev lane leaves that
 off, because its scan build is the only pre-merge proof that a Dockerfile
 still builds.
 
@@ -863,3 +867,4 @@ jobs.
 - 2026-11-20 · claude (session 01FVkcsj3gS4EwsMRTnzy1pr) · added `reusable-commit-hygiene.yml` (`contents: read`, `pull-requests: read` to read the description live so a re-run sees an edited one), called by both lanes as `hygiene` and fed into `required`; rules in `scripts/commit-hygiene.sh`, shared with `.githooks/commit-msg`. See engineering-standards.md, "Commit hygiene"
 - 2026-11-20 · Claude (CI agent) · Android signing split into `signing` / `android` (unsigned, no secrets, Gradle wrapper validation) / `sign` (apksigner, no checkout); nightly scan `build_failure_is_warning`; Dependabot 7-day cooldown and the open gradle entry; corrected the stale dev check-suite-waiting note against railway-environments.md
 - 2026-11-20 · Claude (CI agent) · the security scan's frontend build passes `NEXT_PUBLIC_API_BASE_URL=https://scan-placeholder.invalid`; the new blank-URL guard in `next.config.mjs` failed it (Docker builds do not see `CI=true`)
+- 2026-11-20 · Claude (CI agent) · hygiene check names made distinct (`pr-hygiene / Commit hygiene` from `commit-hygiene.yml`, `hygiene / Commit hygiene` in the lanes); the nightly `issue` job tracks scans that could not run in their own issue

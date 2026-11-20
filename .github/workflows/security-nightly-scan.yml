@@ -45,6 +45,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
       TITLE: "Security scan: fixable high/critical vulnerabilities on main"
+      INCOMPLETE_TITLE: "Security scan: the nightly scan of main could not run"
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -61,6 +62,21 @@ jobs:
           SCAN_RESULT: ${{ needs.scan.result }}
         run: |
           existing="$(gh issue list --state open --search "in:title \"${TITLE}\"" --json number --jq '.[0].number // empty')"
+          incomplete="$(gh issue list --state open --search "in:title \"${INCOMPLETE_TITLE}\"" --json number --jq '.[0].number // empty')"
+          # A scan that keeps failing to build would otherwise only ever be a
+          # warning. Track it in its own issue (opened once, commented on each
+          # failed night, closed by the next complete scan); never fail.
+          if compgen -G "findings/*.incomplete" >/dev/null || [ "$SCAN_RESULT" != "success" ]; then
+            # shellcheck disable=SC2016 # the backticks are Markdown in the issue body, not command substitution
+            note="$(printf 'The nightly scan of `main` did not scan every image (scan job: %s). An image build or the scanner failed, so new vulnerabilities may be going unnoticed. Details: %s\n\nThis issue is updated by `security-nightly-scan.yml` and closed automatically after a complete scan.' "$SCAN_RESULT" "$RUN_URL")"
+            if [ -n "$incomplete" ]; then
+              gh issue comment "$incomplete" --body "$note" || echo "::warning::Could not comment on issue #${incomplete}."
+            else
+              gh issue create --title "$INCOMPLETE_TITLE" --body "$note" || echo "::warning::Could not open the scan-could-not-run issue."
+            fi
+          elif [ -n "$incomplete" ]; then
+            gh issue close "$incomplete" --comment "Complete nightly scan: ${RUN_URL}" || true
+          fi
           if compgen -G "findings/*.txt" >/dev/null; then
             services="$(for f in findings/*.txt; do basename "$f" .txt; done | paste -sd, -)"
             # shellcheck disable=SC2016 # the backticks are Markdown in the issue body, not command substitution

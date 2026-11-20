@@ -39,13 +39,16 @@ Also:
 - Advisory scans (dev PRs, nightly) must finish green; Railway's Wait for CI
   skips a deploy while any workflow on the commit is red.
 - Branch protection requires the `required` job, which always reports, and
-  (recommended 2026-11-20, owner setting) `hygiene / Commit hygiene` from
-  `commit-hygiene.yml`, which also runs on every PR event.
-- Both lanes call `reusable-commit-hygiene.yml` as `hygiene` and feed it into
-  `required`, and `commit-hygiene.yml` re-runs it on `edited`. Keep it
-  there; the rules live in `scripts/commit-hygiene.sh`, and CI runs the base
-  branch's copy. Never add `edited` to a lane: that run would replace
-  `required` with one that skipped the build.
+  (recommended 2026-11-20, owner setting) `pr-hygiene / Commit hygiene` from
+  `commit-hygiene.yml`, which runs on every PR event including `edited`.
+  Renaming that job id renames the check; update branch protection with it.
+- Both lanes call `reusable-commit-hygiene.yml` as `hygiene` (check
+  `hygiene / Commit hygiene`) and feed it into `required`. Keep it there;
+  the rules live in `scripts/commit-hygiene.sh`, and CI runs the base
+  branch's copy of the script (not of the workflow files: a PR edits those
+  for its own run, so `.github/` changes need the owner's review). Never add
+  `edited` to a lane: that run would replace `required` with one that
+  skipped the build. The title/description fetch must fail closed.
 - Images are deliberately unsigned (keyless Cosign writes to the public
   Rekor log). SBOM and provenance stay in-registry. Never pass a secret via
   `build-args`; `provenance: mode=max` records them. Use `secrets`.

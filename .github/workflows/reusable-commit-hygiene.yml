@@ -2,15 +2,20 @@ name: Reusable commit hygiene
 
 # Fails a pull request whose commits, title or description carry AI-tool
 # attribution: AI co-author trailers, Claude-Session trailers and session
-# URLs, the "Generated with Claude Code" footer, model identifiers, or the
-# cloud default identity Claude <noreply@anthropic.com>. All of it was
+# URLs, the "Generated with Claude Code" footer, model identifiers, or an
+# author/committer at anthropic.com (the cloud default identity is Claude
+# <noreply@anthropic.com>). All of it was
 # scrubbed from the history on 2026-11-20 (docs/engineering-standards.md,
 # "Commit hygiene"). The rules live in scripts/commit-hygiene.sh, shared with
 # the local commit-msg hook.
 #
 # The script that runs is the BASE branch's copy, not the pull request's, so
-# a pull request cannot weaken the check that judges it. A change to the
-# rules therefore takes effect on the pull requests opened after it merges.
+# a pull request cannot weaken the rules that judge it. A change to the rules
+# therefore takes effect on the pull requests opened after it merges. That
+# protection covers the script only: on `pull_request` this workflow file
+# (and its callers) run from the PR's merge ref, so a PR that edits them can
+# change or drop the step above. Changes under .github/ need the owner's
+# review (docs/engineering-standards.md, "Commit hygiene").
 #
 # Called from both lanes (fed into their `required` job) and from
 # commit-hygiene.yml, which re-runs it when a title or description is edited.
@@ -67,15 +72,32 @@ jobs:
       # fixed it would still check the old one. commit-hygiene.yml re-runs
       # this job on `edited`. The title becomes the squash commit's subject
       # and is part of every merge commit's message.
+      #
+      # Fail closed: the text is fetched into a variable first, so a failed
+      # `gh api` call stops the step (set -e) instead of piping empty input
+      # into the check, which would pass. A title is never empty on GitHub,
+      # so an empty one is an error too; an empty description is legitimate.
       - name: Pull request title
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.title // ""' | sh "$HYGIENE_SCRIPT" body "pull request title"
+        run: |
+          set -euo pipefail
+          title="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.title // ""')"
+          if [ -z "$title" ]; then
+            echo "::error::Could not read the title of pull request #${PR_NUMBER}."
+            exit 1
+          fi
+          printf '%s\n' "$title" | sh "$HYGIENE_SCRIPT" body "pull request title"
       - name: Pull request description
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.body // ""' | sh "$HYGIENE_SCRIPT" body "pull request description"
+        run: |
+          set -euo pipefail
+          body="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.body // ""')"
+          printf '%s\n' "$body" | sh "$HYGIENE_SCRIPT" body "pull request description"

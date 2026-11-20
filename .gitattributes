@@ -3,3 +3,5 @@
 # core.autocrlf=true. Nothing else is normalised on purpose: no `* text=auto`.
 *.sh text eol=lf
 .githooks/* text eol=lf
+# The Gradle wrapper is a /bin/sh script without the .sh suffix.
+frontend/android/gradlew text eol=lf
