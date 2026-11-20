@@ -36,6 +36,7 @@ from .entities import (
     Workspace,
 )
 from .entitlements import MediaLimits
+from .schema_revision import SchemaReading
 
 StageCallback = Callable[[str], Awaitable[None]]
 
@@ -662,3 +663,12 @@ class ExtraRunLedger(Protocol):
     async def due(self, *, limit: int = 50) -> list[ExtraRunCharge]: ...
 
     async def mark_reported(self, run_id: str) -> None: ...
+
+
+class SchemaRevisionReader(Protocol):
+    """Reads the revision Alembic recorded in the database
+    (`alembic_version`), without comparing it with anything. Only consulted
+    when a database is configured. Never raises: a failed query is a
+    reading with `reachable=False`."""
+
+    async def read(self) -> SchemaReading: ...

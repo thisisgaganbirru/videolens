@@ -28,12 +28,37 @@ def normalize_database_url(url: str) -> str:
     if not url:
         return ""
     if url.startswith("postgres://"):
-        return "postgresql+asyncpg://" + url[len("postgres://"):]
-    if url.startswith("postgresql://"):
-        return "postgresql+asyncpg://" + url[len("postgresql://"):]
-    if url.startswith("sqlite://") and "+aiosqlite" not in url:
+        url = "postgresql+asyncpg://" + url[len("postgres://"):]
+    elif url.startswith("postgresql://"):
+        url = "postgresql+asyncpg://" + url[len("postgresql://"):]
+    elif url.startswith("sqlite://") and "+aiosqlite" not in url:
         return "sqlite+aiosqlite://" + url[len("sqlite://"):]
+    if url.startswith("postgresql+asyncpg://"):
+        return _sslmode_for_asyncpg(url)
     return url
+
+
+def _sslmode_for_asyncpg(url: str) -> str:
+    """libpq spells the TLS requirement `sslmode=require`; asyncpg's
+    `connect()` takes it as `ssl=require` and refuses an unknown `sslmode`
+    keyword, which is what SQLAlchemy would pass it from the query string.
+    Rename the one parameter, keep its value and every other parameter as
+    written. An explicit `ssl=` wins over `sslmode=`."""
+    base, sep, query = url.partition("?")
+    if not sep or not query:
+        return url
+    pairs = [pair.split("=", 1) if "=" in pair else [pair, ""] for pair in query.split("&") if pair]
+    names = {name for name, _ in pairs}
+    if "sslmode" not in names:
+        return url
+    kept = []
+    for name, value in pairs:
+        if name == "sslmode":
+            if "ssl" in names:
+                continue
+            name = "ssl"
+        kept.append(f"{name}={value}")
+    return base + "?" + "&".join(kept)
 
 
 def utcnow() -> datetime:
@@ -51,6 +76,8 @@ def as_utc(value: datetime | None) -> datetime | None:
 class Database:
     def __init__(self, settings: Settings) -> None:
         self._url = normalize_database_url(settings.database_url)
+        self._pool_size = max(1, settings.database_pool_size)
+        self._max_overflow = max(0, settings.database_max_overflow)
         self._engine: AsyncEngine | None = None
 
     @property
@@ -79,14 +106,27 @@ class Database:
                     hide_parameters=True,
                 )
             else:
-                # Supabase's Supavisor transaction pooler (port 6543) hands
-                # each transaction to whichever server connection is free, so
-                # asyncpg's per-connection prepared-statement cache would name
-                # statements that do not exist on the next one. Disable the
-                # cache and give every statement a unique name.
+                # Supabase: use the Supavisor *session* pooler (port 5432),
+                # not the transaction pooler (6543). asyncpg prepares every
+                # statement on its connection and executes it in a later
+                # round trip; the transaction pooler may hand those round
+                # trips to different server connections, and on dev every
+                # signed-in route failed with "prepared statement ... does
+                # not exist" even with the cache off and unique names
+                # (docs/backend/auth.md, "Pooler"). The cache stays off and
+                # the names unique so a pooler that does reuse connections
+                # can never collide.
+                #
+                # On the session pooler each pooled connection holds one real
+                # server connection for as long as it is open, so the pool
+                # bounds what this process takes from the pooler's session
+                # limit: DATABASE_POOL_SIZE + DATABASE_MAX_OVERFLOW (5 + 10,
+                # SQLAlchemy's defaults), per process, API and worker alike.
                 self._engine = create_async_engine(
                     self._url,
                     pool_pre_ping=True,
+                    pool_size=self._pool_size,
+                    max_overflow=self._max_overflow,
                     hide_parameters=True,
                     connect_args={
                         "statement_cache_size": 0,

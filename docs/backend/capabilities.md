@@ -62,7 +62,7 @@ read (checkout cannot be offered; runs are unaffected). Like `auth`, a
 
 Unchanged and still separate:
 - `GET /api/health` — flat `{"status": "ok"}`, the Railway `healthcheckPath`. Must stay trivially cheap.
-- `GET /api/readiness` — one yes/no for the platform, 503 when run storage is down.
+- `GET /api/readiness` — one yes/no for the platform, 503 when run storage is down. Since 2026-11-20 it also carries `schema`, the startup schema check's result (`ok`, `ahead`, `unreadable`, `unreachable`, `disabled`, or on SQLite `behind`/`missing`; `docs/backend/startup-checks.md`). A Postgres schema behind the code never gets this far: the API refuses to start.
 - `GET /api/capabilities` — the per-dependency detail, for people and clients rather than for a load balancer.
 
 **Known gaps**: ~~the frontend does not consume this yet (no capability strip)~~ — the frontend now does; see `docs/frontend/capability-reporting.md`. The MCP server still does not expose it as a tool (and `mcp/` lives on the unmerged `feature/mcp-server` branch). `analysis_engine` cannot be genuinely probed without spending quota.
@@ -79,3 +79,4 @@ Unchanged and still separate:
 - 2026-11-08 · backend subagent (auth phase 1) · added the `auth` capability (`AuthProbe`, seventh probe, appended last): disabled when sign-in is unconfigured, ok/degraded from a real JWKS fetch
 - 2026-11-09 · backend subagent (auth phase 3) · added the `database` capability (`DatabaseProbe`, eighth probe, after `auth`): disabled without `DATABASE_URL`, ok on `SELECT 1`, degraded on failure
 - 2026-11-13 · backend agent · `billing` row (`BillingProbe`): disabled / ok (prices read, cached) / degraded
+- 2026-11-20 · Claude (backend agent) · `/api/readiness` reports the startup schema check (`schema`)

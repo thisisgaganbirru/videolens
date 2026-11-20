@@ -4,6 +4,7 @@ only place that is allowed to know about every layer at once - domain and
 application code never import from here."""
 
 from .application.billing import BillingPlans, ExtraRunBilling
+from .application.check_schema import CheckSchemaUseCase
 from .application.cleanup import AccountCleanupUseCase
 from .application.create_api_key import CreateApiKeyUseCase
 from .application.create_run import CreateRunUseCase
@@ -30,6 +31,7 @@ from .infrastructure.auth.jwt_verifier import JwtVerifier
 from .infrastructure.billing.stripe_gateway import StripeBillingGateway
 from .infrastructure.byok.key_vault import ByokKeyStore
 from .infrastructure.config import Settings, settings
+from .infrastructure.logging_config import configure_worker_logging as _configure_worker_logging
 from .infrastructure.health.probes import (
     AnalysisEngineProbe,
     AuthProbe,
@@ -56,6 +58,7 @@ from .infrastructure.persistence.database import Database
 from .infrastructure.persistence.identity_users import AlwaysPresentIdentityProviderUsers, SqlIdentityProviderUsers
 from .infrastructure.persistence.run_repository import RunStore
 from .infrastructure.persistence.saved_run_repository import InMemorySavedRuns, SqlSavedRuns
+from .infrastructure.persistence.schema_revision import SqlSchemaRevisionReader
 from .infrastructure.releases.github_releases import GithubReleaseCatalog
 from .infrastructure.queue.job_queue import RunQueue
 from .infrastructure.quota.credential_failures import CredentialFailureCounter
@@ -141,6 +144,14 @@ class Container:
                 extra_runs=memory_ledger,
                 saved_runs=memory_saved_runs,
             )
+
+        # Startup refuses a Postgres schema older than the code; SQLite (local
+        # only, possibly built without Alembic) is warned about, and no
+        # database is nothing to check (docs/backend/startup-checks.md).
+        self.check_schema_use_case = CheckSchemaUseCase(
+            reader=SqlSchemaRevisionReader(self.database) if self.database.enabled else None,
+            enforce=self.database.dialect != "sqlite",
+        )
 
         # The paid plan. Stripe billing is on only with Stripe configured AND
         # an account store. Complimentary Plus (`accounts.complimentary_plus`,
@@ -290,6 +301,12 @@ class Container:
             ],
             mode="distributed" if settings.queue_enabled else "local",
         )
+
+    @staticmethod
+    def configure_worker_logging() -> None:
+        """The worker's JSON logging, reached through the container so
+        `interface/worker` imports nothing from `infrastructure/`."""
+        _configure_worker_logging()
 
     async def close(self) -> None:
         await self.job_queue.close()

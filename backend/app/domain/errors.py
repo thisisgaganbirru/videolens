@@ -319,3 +319,9 @@ class SavedRunNotFoundError(Exception):
 
 class InvalidCursorError(Exception):
     """A saved-history page cursor that does not decode (400)."""
+
+
+class SchemaOutOfDateError(RuntimeError):
+    """Startup refusal: the database's schema is older than the code (or
+    was never migrated). Operator-facing only; the process does not start,
+    so no person ever sees it."""

@@ -64,8 +64,9 @@ async def run_migrations_online() -> None:
     url = config.get_main_option("sqlalchemy.url", "")
     connect_args = {}
     if url.startswith("postgresql+asyncpg"):
-        # Same reason as `Database.engine`: the Supavisor transaction pooler
-        # does not keep asyncpg's prepared statements between transactions.
+        # Same settings as `Database.engine`: run through the Supavisor
+        # session pooler (5432), not the transaction pooler (6543), which
+        # does not keep asyncpg's prepared statements between round trips.
         connect_args = {
             "statement_cache_size": 0,
             "prepared_statement_name_func": lambda: f"__vl_{uuid.uuid4().hex}__",

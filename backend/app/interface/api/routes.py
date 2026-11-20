@@ -71,11 +71,16 @@ async def readiness() -> dict:
         redis_ready = await container.run_repository.ping()
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Run storage is unavailable.") from exc
+    # The startup schema check's result (docs/backend/startup-checks.md):
+    # "ok", "ahead", "unreadable", "unreachable", "disabled" (no database), or
+    # on SQLite "behind"/"missing". Postgres behind or missing never starts.
+    schema = container.check_schema_use_case.last
     return {
         "status": "ready",
         "mode": "distributed" if container.settings.queue_enabled else "local",
         "redis": redis_ready,
         "object_storage": container.object_store.enabled,
+        "schema": schema.state.value if schema is not None else "unchecked",
     }
 
 

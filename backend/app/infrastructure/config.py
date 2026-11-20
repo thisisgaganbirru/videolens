@@ -96,6 +96,15 @@ class Settings(BaseSettings):
     # 10-minute video does not fit in 600 s on a small worker. Standard runs
     # keep WORKER_JOB_TIMEOUT_SECONDS. Never below it.
     worker_long_job_timeout_seconds: int = 1800
+    # Seconds a worker given SIGTERM (a deploy) keeps running its in-flight
+    # jobs before cancelling them; it takes no new ones meanwhile (arq's
+    # `job_completion_wait`). 0 = cancel at once. A cancelled job is re-queued
+    # and its run resumes on the next worker, so this only saves the work
+    # already done. Must stay a few seconds UNDER the platform's stop grace
+    # period (Railway: the service's draining time; check it on the
+    # dashboard): a worker killed mid-wait leaves its jobs locked for the
+    # whole job timeout, and the read-time stale check fails them first.
+    worker_job_completion_wait_seconds: int = 0
     # Total wall-clock time one link download (yt-dlp or a plain file, and
     # separately the caption fallback) may take, however the server paces
     # its bytes. Keep it well under WORKER_JOB_TIMEOUT_SECONDS: the job
@@ -133,6 +142,14 @@ class Settings(BaseSettings):
     # are rewritten for asyncpg; sqlite+aiosqlite:/// works for local use.
     # The schema is Alembic's (`alembic upgrade head`), run as a release step.
     database_url: str = ""
+    # Postgres connection pool per process (API and worker each have one).
+    # On the Supabase session pooler every open connection holds a real
+    # server connection, so (pool size + overflow) x processes must stay
+    # under the pooler's session limit for the project's plan, which is
+    # read from the dashboard (DEPLOYMENT.md, "Database connections").
+    # SQLAlchemy's own defaults; SQLite ignores both.
+    database_pool_size: int = 5
+    database_max_overflow: int = 10
     # Live API keys a workspace may hold at once.
     api_keys_per_workspace: int = 10
 
@@ -223,6 +240,20 @@ class Settings(BaseSettings):
                 "Any website could call this API from a browser. Set ALLOWED_ORIGINS to the "
                 "real frontend origin(s)."
             )
+        return None
+
+    def startup_error(self, role: str) -> str | None:
+        """The first configuration rule this process breaks, or None. One
+        list for both entry points (`interface/startup.py`), so the API and
+        the worker cannot drift: `role` is "api" or "worker", and only the
+        CORS rule is the API's alone (the worker answers no browser)."""
+        checks = [self.distributed_database_error, self.distributed_billing_error]
+        if role == "api":
+            checks.insert(0, self.distributed_origin_error)
+        for check in checks:
+            error = check()
+            if error:
+                return error
         return None
 
     def distributed_database_error(self) -> str | None:
