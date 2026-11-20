@@ -1,0 +1,5 @@
+# Only the shell scripts and git hooks are pinned to LF, so they run under
+# WSL, a strict /bin/sh and the CI runner even from a Windows checkout with
+# core.autocrlf=true. Nothing else is normalised on purpose: no `* text=auto`.
+*.sh text eol=lf
+.githooks/* text eol=lf

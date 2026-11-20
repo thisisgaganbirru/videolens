@@ -807,9 +807,43 @@ gh secret set ANDROID_KEY_PASSWORD
 `frontend/android/app/build.gradle` reads `ANDROID_KEYSTORE_PATH`,
 `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`
 from the environment and configures release signing only when all four are
-present; the workflow decodes the secret to `$RUNNER_TEMP/release.keystore`
-and sets them for the Gradle step. Locally, export the same four variables
-and run:
+present. **CI never sets them for Gradle** (since 2026-11-20): the Gradle
+build runs `npm ci` and builds Capacitor from `node_modules`, so the key is
+kept off that runner. `reusable-android-checks.yml` instead runs three jobs:
+
+1. `signing` (no checkout) checks the four secrets for emptiness and that
+   the keystore decodes, and picks `release`.
+2. `android` builds `assembleRelease` with no signing variables, i.e. an
+   **unsigned** release APK, and uploads it with `version.json` as the
+   artifact `videolens-ai-v<version>-code<code>-<sha>-release-unsigned`
+   (kept one day).
+3. `sign` (no checkout, no npm, no Gradle) installs build-tools 36.0.0,
+   decodes the keystore to `$RUNNER_TEMP`, runs `zipalign -P 16 -f 4`, then
+   `apksigner sign` (passwords via `env:`), `apksigner verify
+   --print-certs`, fails if the certificate is `CN=Android Debug`, and
+   uploads `videolens-ai-v<version>-code<code>-<sha>-release` (the name the
+   `release` job downloads) with the APK renamed to that name plus `.apk`.
+
+This path has never run; it cannot until the secrets exist. **On the first
+`main` push with all four secrets set**, check the run before announcing the
+release:
+
+- The `android / Android signing mode` job logs no debug-signing warning.
+- `android / Android release signing` is green, and its step summary shows
+  `Signer #1 certificate DN` and `SHA-256 digest`. Compare the digest with
+  the key you created:
+  `keytool -list -v -keystore videolens-release.jks -alias videolens`
+  (the `SHA256:` line, same value without colons).
+- The release has one `...-release.apk` and `version.json`. Locally,
+  `apksigner verify --print-certs <apk>` on the downloaded asset prints the
+  same digest.
+- If `sign` fails (for example a wrong alias or password), the `release`
+  job does not run and no release is published; the commit's workflow is
+  red, so Railway's Wait for CI skips that production deploy too (a new
+  commit is needed, see `docs/railway-environments.md`). Fix the secret and
+  push again.
+
+Locally, export the same four variables and run:
 
 ```powershell
 cd frontend
@@ -909,3 +943,4 @@ The release is complete when:
 - 2026-11-14 · backend agent · paid saved history and the 30-day deletion hold: migration `0006_saved_history` (release checklist and migration step, before the code), `PAID_SAVED_RUNS_GRACE_DAYS`, `PAID_SAVED_RUN_MAX_BYTES`, `ACCOUNT_DELETION_HOLD_DAYS` (both services), backend and worker deployed together
 - 2026-11-20 · Claude (backend agent) · `AUTH_FAILURE_LIMIT_PER_IP` (failed credentials per IP, 429) and `DOWNLOAD_DEADLINE_SECONDS` (wall-clock link download limit) variables; requests over the body ceiling now get 413 before they are read
 - 2026-11-20 · Claude (backend agent) · release checklist through 0010 with "migrations before code" and the `alembic_version` grant for the new startup schema check; worker must share `DATABASE_URL` and `STRIPE_*` (what breaks otherwise); "Database connections" (session pooler 5432, `sslmode=require`, pool sizing); `WORKER_JOB_COMPLETION_WAIT_SECONDS`, `DATABASE_POOL_SIZE`, `DATABASE_MAX_OVERFLOW`
+- 2026-11-20 · Claude (CI agent) · Android release signing: CI signs in a separate `sign` job with apksigner on an unsigned Gradle build, never passing the key to Gradle; documented what the first run with secrets does and how to verify it

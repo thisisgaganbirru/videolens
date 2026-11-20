@@ -1,0 +1,35 @@
+name: Commit hygiene
+
+# Re-runs the commit hygiene check when a pull request's title or description
+# is edited. The lanes (development-environment.yml, production-environment.yml)
+# run the same check on opened/synchronize/reopened and feed it into their
+# `required` job, but they cannot listen for `edited`: a lane run on an edit
+# would replace that `required` check with one that skipped the build and
+# tests. So this small workflow covers edits (and every other PR event, so
+# its check is always present on the head commit and can be made required).
+#
+# Branch protection on dev and main should require this workflow's
+# `hygiene / Commit hygiene` check in addition to `required`; until it does, a
+# red run here is visible on the PR but does not block the merge.
+#
+# Plain `pull_request`, never `pull_request_target`: it runs with the PR's
+# read-only token, and the rules come from the base branch (see the reusable).
+
+on:
+  pull_request:
+    branches: [dev, main]
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: commit-hygiene-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  hygiene:
+    uses: ./.github/workflows/reusable-commit-hygiene.yml
+    permissions:
+      contents: read
+      pull-requests: read

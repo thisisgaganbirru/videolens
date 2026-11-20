@@ -6,7 +6,9 @@ name: Security nightly scan
 # It must never fail on findings. A scheduled run attaches to main's head
 # commit, and Railway's Wait for CI skips any deploy - including the redeploy a
 # variable change triggers - while a workflow on that commit is red. So the
-# scan runs in advisory mode and the issue job cannot fail the run.
+# scan runs in advisory mode, a failed image build (base pull, mirror outage)
+# is a warning rather than a red job (build_failure_is_warning), and the issue
+# job cannot fail the run.
 
 on:
   schedule:
@@ -26,6 +28,7 @@ jobs:
     uses: ./.github/workflows/reusable-security-scan.yml
     with:
       enforce: false
+      build_failure_is_warning: true
 
   issue:
     name: Report findings
@@ -67,6 +70,11 @@ jobs:
             else
               gh issue create --title "$TITLE" --body "$body"
             fi
+          elif compgen -G "findings/*.incomplete" >/dev/null; then
+            # An image did not build, so it was not scanned (the scan job
+            # stays green for that, see reusable-security-scan.yml). No
+            # findings proves nothing; leave the issue as it is.
+            echo "::warning::At least one image was not scanned; not treating this run as clean."
           elif [ "$SCAN_RESULT" != "success" ]; then
             # The scan itself broke (a build failure, not a finding), so the
             # absence of findings proves nothing. Leave the issue as it is.

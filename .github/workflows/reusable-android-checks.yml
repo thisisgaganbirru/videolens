@@ -8,6 +8,23 @@ name: Reusable Android checks
 #   production-environment.yml  -> push to main, upload_apk true, then a
 #     separate release job in that workflow consumes the artifact.
 # This workflow never creates a tag or a release; it is capped at contents: read.
+#
+# Three jobs, so that release signing material never shares a runner with
+# dependency code (npm packages, Gradle plugins, Capacitor from node_modules):
+#   signing -> decides the signing variant from which ANDROID_* secrets exist.
+#              No checkout, no dependencies. Checks the keystore decodes and
+#              writes nothing to disk.
+#   android -> checkout, Gradle wrapper validation, npm ci, Capacitor sync,
+#              Gradle build and unit tests. Never sees a secret. For the
+#              release variant it builds an UNSIGNED release APK and uploads
+#              it as `<artifact>-unsigned`.
+#   sign    -> release variant only. No checkout, no npm, no Gradle: downloads
+#              the unsigned APK, zipaligns it, signs it with the Android SDK's
+#              apksigner, verifies the signature and uploads it under the
+#              artifact name the caller's release job downloads.
+# The debug paths (dev lane, plain gate, and the production fallback while the
+# release key does not exist) build and upload in `android` exactly as before;
+# `sign` is skipped there.
 
 on:
   workflow_call:
@@ -72,7 +89,11 @@ on:
         description: Short commit SHA the APK was built from
         value: ${{ jobs.android.outputs.version_sha }}
       artifact_name:
-        description: Name of the uploaded APK artifact, empty unless upload_apk is true
+        description: >-
+          Name of the uploaded APK artifact, empty unless upload_apk is true.
+          For the release variant it is the artifact the sign job uploads
+          (the signed APK); a caller job that `needs:` this workflow only
+          starts after the sign job has finished.
         value: ${{ jobs.android.outputs.artifact_name }}
       version_code:
         description: Android versionCode this APK was built with
@@ -85,8 +106,67 @@ permissions:
   contents: read
 
 jobs:
+  signing:
+    name: Android signing mode
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      # release, debug, or empty (upload_apk false: the step is skipped).
+      variant: ${{ steps.signing.outputs.variant }}
+    steps:
+      # TEMPORARY: remove the debug fallback once the release key exists
+      # (DEPLOYMENT.md, "Android release signing"); production then has one
+      # path, release-signed only, failing without the secrets.
+      # Picks how the production APK is signed. Release signing with a key that
+      # lives only in CI secrets is the goal: the checked-in debug keystore
+      # (password "android") lets anyone with the repository build an APK that
+      # installs as an update over the real one, and the debug build ships
+      # debuggable. The owner deferred creating that key (2026-11-07), so:
+      #   all four secrets set -> variant=release: `android` runs an unsigned
+      #                           assembleRelease, `sign` signs it
+      #   none set             -> variant=debug, assembleDebug with the
+      #                           checked-in keystore and no -PdevBuild, i.e.
+      #                           what production shipped before 2026-11-07;
+      #                           warns in the log and the step summary
+      #   some set             -> fail: that is a misconfiguration
+      # Values are only tested for emptiness here, never printed.
+      - name: Prepare release signing
+        id: signing
+        if: inputs.upload_apk
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          present=()
+          missing=()
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -n "${!name}" ]; then present+=("ANDROID_${name}"); else missing+=("ANDROID_${name}"); fi
+          done
+          if [ "${#present[@]}" -eq 0 ]; then
+            msg="Production APK is debug-signed: release keystore not configured (DEPLOYMENT.md → Android release signing)"
+            echo "::warning::${msg}"
+            echo "- :warning: ${msg}" >> "$GITHUB_STEP_SUMMARY"
+            echo "variant=debug" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Release signing is partly configured. Set: ${present[*]}. Missing: ${missing[*]}. Set all four or none; see DEPLOYMENT.md, 'Android release signing'." >&2
+            exit 1
+          fi
+          # Decoded only to count its bytes. The keystore file is written in
+          # the sign job, which has no dependency code on its runner.
+          if ! bytes="$(printf '%s' "$KEYSTORE_BASE64" | base64 -d | wc -c)" || [ "$bytes" -eq 0 ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 did not decode to a keystore." >&2
+            exit 1
+          fi
+          echo "variant=release" >> "$GITHUB_OUTPUT"
+
   android:
     name: Android
+    needs: signing
     runs-on: ubuntu-latest
     # Generous: green runs take well under 10 minutes. The cap exists so a hung
     # Gradle daemon costs 25 minutes, not GitHub's default 360.
@@ -127,56 +207,15 @@ jobs:
               exit 1
             }
           fi
-      # TEMPORARY: remove the debug fallback once the release key exists
-      # (DEPLOYMENT.md, "Android release signing"); production then has one
-      # path, release-signed only, failing without the secrets.
-      # Picks how the production APK is signed. Release signing with a key that
-      # lives only in CI secrets is the goal: the checked-in debug keystore
-      # (password "android") lets anyone with the repository build an APK that
-      # installs as an update over the real one, and the debug build ships
-      # debuggable. The owner deferred creating that key (2026-11-07), so:
-      #   all four secrets set -> variant=release, assembleRelease, signed
-      #   none set             -> variant=debug, assembleDebug with the
-      #                           checked-in keystore and no -PdevBuild, i.e.
-      #                           what production shipped before 2026-11-07;
-      #                           warns in the log and the step summary
-      #   some set             -> fail: that is a misconfiguration
-      # Values are only tested for emptiness here, never printed.
-      - name: Prepare release signing
-        id: signing
-        if: inputs.upload_apk
-        shell: bash
-        working-directory: .
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          present=()
-          missing=()
-          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
-            if [ -n "${!name}" ]; then present+=("ANDROID_${name}"); else missing+=("ANDROID_${name}"); fi
-          done
-          if [ "${#present[@]}" -eq 0 ]; then
-            msg="Production APK is debug-signed: release keystore not configured (DEPLOYMENT.md → Android release signing)"
-            echo "::warning::${msg}"
-            echo "- :warning: ${msg}" >> "$GITHUB_STEP_SUMMARY"
-            echo "variant=debug" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ "${#missing[@]}" -gt 0 ]; then
-            echo "::error::Release signing is partly configured. Set: ${present[*]}. Missing: ${missing[*]}. Set all four or none; see DEPLOYMENT.md, 'Android release signing'." >&2
-            exit 1
-          fi
-          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "${RUNNER_TEMP}/release.keystore"
-          test -s "${RUNNER_TEMP}/release.keystore" || { echo "::error::ANDROID_KEYSTORE_BASE64 did not decode to a keystore." >&2; exit 1; }
-          echo "variant=release" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # versionCode is the commit count below, which is 1 at the default
           # fetch-depth of 1 - every build would claim to be version 1.
           fetch-depth: 0
+      # Before anything runs the wrapper: fails unless gradle-wrapper.jar
+      # matches a checksum Gradle published for a real release.
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
       - uses: ./.github/actions/setup-frontend
       - uses: ./.github/actions/setup-android
       # `android:sync` runs `build:mobile`, and Next inlines NEXT_PUBLIC_* at
@@ -193,7 +232,7 @@ jobs:
           # debug-signed production fallback, the dev artifact and the plain
           # gate (the signing step is skipped there, so its output is empty).
           # Drives the Gradle task, the output directory and the artifact name.
-          VARIANT: ${{ steps.signing.outputs.variant || 'debug' }}
+          VARIANT: ${{ needs.signing.outputs.variant || 'debug' }}
         run: |
           name="$(node -p "require('./package.json').version")"
           sha="$(git rev-parse --short HEAD)"
@@ -208,19 +247,16 @@ jobs:
           } >> "$GITHUB_OUTPUT"
       # Values reach Gradle through the environment, never interpolated into
       # the command line, so a version string with shell metacharacters cannot
-      # run anything. The signing variables are empty unless the signing step
-      # chose the release variant; build.gradle configures release signing
-      # only when all four are present, and the debug build never reads them.
+      # run anything. No signing variable is ever set here: build.gradle
+      # configures release signing only when all four ANDROID_* variables are
+      # present, so assembleRelease produces an unsigned APK, which the sign
+      # job signs. The debug build uses the checked-in keystore as before.
       - env:
           APP_VERSION_NAME: ${{ steps.version.outputs.name }}
           APP_VERSION_CODE: ${{ steps.version.outputs.code }}
           BUILD_REF: ${{ steps.version.outputs.sha }}
           VARIANT: ${{ steps.version.outputs.variant }}
           DEV_BUILD: ${{ inputs.dev_artifact }}
-          ANDROID_KEYSTORE_PATH: ${{ steps.version.outputs.variant == 'release' && format('{0}/release.keystore', runner.temp) || '' }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ steps.version.outputs.variant == 'release' && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
-          ANDROID_KEY_ALIAS: ${{ steps.version.outputs.variant == 'release' && secrets.ANDROID_KEY_ALIAS || '' }}
-          ANDROID_KEY_PASSWORD: ${{ steps.version.outputs.variant == 'release' && secrets.ANDROID_KEY_PASSWORD || '' }}
         run: |
           case "$VARIANT" in
             release) assemble=assembleRelease ;;
@@ -254,16 +290,19 @@ jobs:
               releaseUrl: process.env.RELEASE_URL,
             }, null, 2) + "\n");
           '
+      # debug: the final, debug-signed artifact the release job downloads.
+      # release: the unsigned APK for the sign job, as `<artifact>-unsigned`,
+      # kept one day; the sign job uploads the signed APK as `<artifact>`.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: inputs.upload_apk
         with:
-          name: ${{ steps.version.outputs.artifact }}
-          # release/ or debug/, whichever variant the signing step chose.
+          name: ${{ steps.version.outputs.variant == 'release' && format('{0}-unsigned', steps.version.outputs.artifact) || steps.version.outputs.artifact }}
+          # release/ or debug/, whichever variant the signing job chose.
           path: |
             frontend/android/app/build/outputs/apk/${{ steps.version.outputs.variant }}/*.apk
             frontend/android/app/build/outputs/apk/${{ steps.version.outputs.variant }}/version.json
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ steps.version.outputs.variant == 'release' && 1 || 30 }}
       # The dev/testing APK. Short retention, no manifest, never a release:
       # it exists so a PR's change can be installed on a phone beside the
       # production app, nothing more.
@@ -274,3 +313,95 @@ jobs:
           path: frontend/android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
+
+  # Release variant only (all four ANDROID_* secrets set, upload_apk true).
+  # Besides the emptiness check in `signing`, the only job that receives the
+  # signing secrets. It checks nothing out and runs no npm or Gradle: its tools
+  # are the JDK and the Android SDK build-tools, pinned as in setup-android.
+  # Untested until the release key exists; DEPLOYMENT.md, "Android release
+  # signing", says what the first run does and how to check it.
+  sign:
+    name: Android release signing
+    needs: [signing, android]
+    if: needs.signing.outputs.variant == 'release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+      - name: Install Android build-tools
+        shell: bash
+        run: sdkmanager "build-tools;36.0.0"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.android.outputs.artifact_name }}-unsigned
+          path: unsigned
+      - name: Align, sign and verify
+        shell: bash
+        env:
+          ARTIFACT: ${{ needs.android.outputs.artifact_name }}
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          bt="${sdk}/build-tools/36.0.0"
+          if [ ! -x "${bt}/zipalign" ] || [ ! -x "${bt}/apksigner" ]; then
+            echo "::error::zipalign/apksigner not found under '${bt}'." >&2
+            exit 1
+          fi
+          shopt -s nullglob
+          apks=(unsigned/*.apk)
+          if [ "${#apks[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one unsigned APK, found ${#apks[@]}." >&2
+            exit 1
+          fi
+          test -f unsigned/version.json || { echo "::error::version.json is missing from the unsigned artifact." >&2; exit 1; }
+          ks="${RUNNER_TEMP}/release.keystore"
+          trap 'rm -f "$ks"' EXIT
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$ks"
+          test -s "$ks" || { echo "::error::ANDROID_KEYSTORE_BASE64 did not decode to a keystore." >&2; exit 1; }
+          mkdir -p signed
+          aligned="${RUNNER_TEMP}/aligned.apk"
+          out="signed/${ARTIFACT}.apk"
+          # zipalign before apksigner: a v2+ signature covers the whole file,
+          # so any change after signing breaks it. -P 16 page-aligns stored
+          # native libraries for 16 KB page devices.
+          "${bt}/zipalign" -P 16 -f 4 "${apks[0]}" "$aligned"
+          "${bt}/zipalign" -c -P 16 4 "$aligned"
+          # apksigner reads both passwords from the environment (env:NAME);
+          # they never appear on a command line.
+          "${bt}/apksigner" sign \
+            --ks "$ks" \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass env:KEYSTORE_PASSWORD \
+            --key-pass env:KEY_PASSWORD \
+            --out "$out" \
+            "$aligned"
+          # Prints the signer certificate (public data): its DN and SHA-256
+          # digest are what DEPLOYMENT.md says to compare with the release key.
+          "${bt}/apksigner" verify --verbose --print-certs "$out" | tee "${RUNNER_TEMP}/verify.txt"
+          if grep -q 'CN=Android Debug' "${RUNNER_TEMP}/verify.txt"; then
+            echo "::error::The APK carries an Android debug certificate, not the release key." >&2
+            exit 1
+          fi
+          cp unsigned/version.json signed/version.json
+          {
+            echo "### Release-signed APK"
+            echo
+            echo '```'
+            grep -E 'Signer #1 certificate (DN|SHA-256 digest)' "${RUNNER_TEMP}/verify.txt" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ needs.android.outputs.artifact_name }}
+          path: |
+            signed/*.apk
+            signed/version.json
+          if-no-files-found: error
+          retention-days: 30

@@ -631,13 +631,41 @@ Four layers keep it out, from source to gate:
 - `.claude/hooks/session-start.sh` (cloud sessions only) points git at
   `.githooks/` and replaces the default Claude identity with the owner's.
 - `.githooks/commit-msg` runs `scripts/commit-hygiene.sh msg`, rejecting a
-  message with the trailers, footer or session URL, and the Claude identity.
-  Local clones turn it on once with `git config core.hooksPath .githooks`.
-- `reusable-commit-hygiene.yml` runs the same script over every commit in a
-  PR and over its description, on both lanes, and feeds `required`.
+  message that carries attribution (list below) or is made with the Claude
+  identity. Local clones turn it on once with
+  `git config core.hooksPath .githooks`.
+- `reusable-commit-hygiene.yml` runs the script over every commit in a PR,
+  its title (the squash subject) and its description, on both lanes, and
+  feeds `required`. It runs the **base branch's** copy of the script, so a PR
+  cannot weaken the check that judges it; a rule change applies to PRs after
+  it merges. `commit-hygiene.yml` calls it again on every PR event including
+  `edited`, so a title or description changed after a green run is
+  re-checked. That check blocks a merge only once branch protection on `dev`
+  and `main` requires `hygiene / Commit hygiene` from the "Commit hygiene"
+  workflow (an owner setting; not verifiable from the repository).
 
-The patterns match real trailers and link-form footers, not prose that names
-them, so a doc or PR may still describe the rule.
+What the script rejects (case-insensitive; since 2026-11-20):
+
+- a `Co-Authored-By:` trailer naming an AI tool (Claude, Anthropic, Copilot,
+  ChatGPT, OpenAI, Codex, Cursor, Gemini, Devin, Aider) with any address, or
+  any co-author address at `anthropic.com` / `openai.com`
+- a `Claude-Session:` trailer and any `claude.ai/code/session...` URL
+- the footer `Generated with/by Claude (Code)` when it starts a line (after
+  any emoji, bullet or markup), and the link form `Generated with
+  [Claude Code](` anywhere
+- Claude model identifiers: `claude-opus-…`, `claude-sonnet-…`,
+  `claude-haiku-…`, `claude-fable-…`, `claude-instant-…`, `claude-<digit>…`
+- author or committer `noreply@anthropic.com`, in any letter case
+
+It reads message text only, never file contents. Trailers and footers are
+matched where they stand, so prose that names the rule, "Update CLAUDE.md",
+paths under `.claude/` or skill names such as `claude-md` still pass. A
+pattern for cloud-session branch names (`ccr-…`) in merge subjects was
+considered and not added: GitHub writes "Merge pull request #N from
+owner/branch" itself, such subjects are already in history, and a promotion
+range would then fail on commits nobody can change. The script uses the C
+locale (Git for Windows' grep otherwise misses the emoji form) and strips CR,
+so it works on CRLF input; `.gitattributes` keeps it and the hooks LF.
 
 ## Landing order
 
@@ -651,9 +679,11 @@ redesign touches no backend file, so none of these conflict with it:
 - dependency pinning
 - the three layering fixes
 - the `build_limiter` factory
-- `.gitattributes`
-- `SECURITY.md` / `CODEOWNERS` / PR + issue templates
-- CodeQL + Dependabot + gitleaks
+- `SECURITY.md` / `CODEOWNERS` / PR + issue templates (none exist yet)
+- CodeQL and gitleaks or another secret scanner (not adopted; CI does no
+  secret scanning today). Dependabot exists (`.github/dependabot.yml`).
+- `.gitattributes`: landed 2026-11-20, deliberately minimal (`*.sh` and
+  `.githooks/*` are LF; nothing else is normalised)
 - mypy scoped to `domain/` + `application/`
 - frontend tests (additive — touches no existing file)
 
@@ -700,3 +730,4 @@ Re-verify before fixing; do not treat the line numbers as authoritative.
 - 2026-11-06 · claude (ci-hardening session) · fixed the stale `reusable-container-checks.yml` reference and recorded that the ARG-based base image layout was reversed (Dependabot-visible `FROM ... AS base` now)
 - 2026-11-08 · backend subagent (auth phase 1) · marked layering violation #1 (`dependencies.py` importing `AuthNotConfiguredError` from the adapter) fixed; two remain (`app.py` logging, `rate_limiter.py` settings)
 - 2026-11-20 · claude (session 01FVkcsj3gS4EwsMRTnzy1pr) · added "Commit hygiene": history rewritten to remove AI-tool attribution, and the four guard layers (attribution setting, session-start identity, commit-msg hook, CI check in `required`)
+- 2026-11-20 · Claude (CI agent) · Commit hygiene: documented the widened rule set (AI co-author trailers, plain footer, model ids, session URLs, case-insensitive identity), title checking, base-branch script and the `edited` workflow, and why no `ccr-` pattern; landing-order list now says which tooling exists (`.gitattributes`, Dependabot) and which is not adopted (SECURITY.md, CODEOWNERS, templates, CodeQL, secret scanning)
