@@ -1,7 +1,9 @@
 # Backend architecture
 
 Clean architecture, dependencies pointing inward. Nothing in `domain/` or
-`application/` imports FastAPI, Redis, boto3, or any other driver.
+`application/` imports FastAPI, Redis, boto3, or any other driver. The one
+library `domain/` uses is pydantic, in `entities.py`, on purpose:
+`VideoAnalysis` is Gemini's response schema.
 
 ```
 domain  <-  application  <-  infrastructure
@@ -23,7 +25,8 @@ constructor, which is what makes it testable with an explicit `Settings(...)`.
 user message plus operator-only `log_detail`), `policies.py` (quota key per principal, `can_access_run`, `looks_like_api_key`,
 client IP from the proxy-written `X-Forwarded-For` entry, client-id
 validity, run staleness), `run_facts.py` (the media facts a history
-card shows, derived from a stored run), `ports.py` (the `Protocol`s below).
+card shows, derived from a stored run), `schema_revision.py` (the Alembic chain the code knows,
+`EXPECTED_SCHEMA_REVISION`, and `compare_schema`), `ports.py` (the `Protocol`s below).
 
 **`application/`** — one use case per operation, orchestrating ports.
 `create_run` (validate, admit via BYOK, an account free run (signed in) or a device free run, spend the daily budget,
@@ -42,7 +45,13 @@ held -> due -> reported, billed once on success), `get_billing`,
 `saved_history` (`SavedHistory`: save a paid result once on success, the
 post-cancel window; `SavedHistoryQueries`: the `/api/history*` reads),
 `delete_account` (the 30-day hold), `restore_account`, `cleanup` (the
-worker's hourly removal of held accounts and expired saved runs).
+worker's hourly removal of held accounts and expired saved runs),
+`free_run_holds` (`settle_free_run_holds`, `settle_spend_hold`: the one place
+a run's free-run and daily-cap holds are released or refunded, shared by
+intake and the pipeline). `check_schema`
+(`CheckSchemaUseCase`: the database's `alembic_version` against
+`EXPECTED_SCHEMA_REVISION` at startup; refuses behind or missing on Postgres,
+`docs/backend/startup-checks.md`).
 
 **`infrastructure/`** — one adapter per port.
 
@@ -52,10 +61,15 @@ worker's hourly removal of held accounts and expired saved runs).
 | `MediaProcessor` | `media/service.py` | Composes `ffmpeg.py`, `uploads.py`, the resolver chain, `captions.py`, `thumbnails.py` |
 | `SourceResolver` | `media/resolvers/` | Ordered chain, set in `MediaService`: `YtDlpResolver` (primary, wraps `ytdlp_downloader.py`) then `DirectHttpResolver` |
 | — | `media/net.py` | `validate_public_url` and the shared fetch rules: the single SSRF guard every outbound request uses |
+| — | `media/ytdlp_net.py` | `GuardedYoutubeDL`: yt-dlp's requests on `net.py`'s pinned connections, native downloaders only |
+| — | `media/deadline.py` | `run_download`: every link download on the bounded `DOWNLOAD_EXECUTOR` under a wall-clock `DownloadDeadline` |
+| — | `media/process.py` | `run_process`: ffmpeg/ffprobe with a timeout, killed on timeout and cancellation |
 | `AnalysisEngine` | `ai/gemini_engine.py` | Upload, structured output, jittered retries, optional fallback model, caption-only analysis; `ai/source_context.py` fences publisher metadata as untrusted text |
 | `ObjectStore` | `storage/s3_object_store.py` | |
 | `JobQueue` | `queue/job_queue.py` | arq/Redis, or an in-process task it keeps a reference to |
-| `SpendCap` | `quota/daily_budget.py` | |
+| `SpendCap` | `quota/daily_budget.py` | Atomic take-if-under-cap (Lua), hold/release per run and refund onto the claim's own UTC day, never below zero |
+| `LongRunGuard` | `quota/long_run_guard.py` | One in-flight run above the standard media limits per account; slot held by run id, expires after `WORKER_LONG_JOB_TIMEOUT_SECONDS + 120`; Redis or in-process |
+| `CredentialFailureGuard` | `quota/credential_failures.py` | Failed API keys/tokens per client IP, fixed 15-minute window; Redis or in-memory; consulted before any lookup |
 | `DeviceTokenSigner` | `quota/device_tokens.py` | Stateless HMAC tokens; refuses to start distributed without a secret |
 | `FreeRunAllowance` | `quota/free_run_allowance.py` | Per-device and per-IP counters, hold/release for refunds |
 | `AccountFreeRunAllowance` | `persistence/account_free_runs.py` | Signed-in free runs per account per UTC day, and the paid plan's included runs per UTC day on the same row with the paid limit (SQL upsert-if-below-limit, or in-memory), hold/release like the device one |
@@ -66,7 +80,8 @@ worker's hourly removal of held accounts and expired saved runs).
 | `IdentityProviderUsers` | `persistence/identity_users.py` | Whether Supabase still has a user (`auth_user_exists`); asked on first sight of a subject and before key issue, so a token that outlived its deleted user cannot re-create rows. SQLite and in-memory: always yes |
 | `AccountDeleter` | `persistence/account_deleter.py` | The deletion hold (`schedule_deletion`, `restore`, `due_for_purge`) and the final removal: the Supabase user via the `SECURITY DEFINER` function from `0002_auth_user_deleter` (skipped on SQLite and in memory), then the rows in one transaction, re-checked against `purge_at` |
 | `SavedRunRepository` | `persistence/saved_run_repository.py` | A paid account's saved results (migration `0006_saved_history`): insert-once on `(account_id, run_id)`, keyset pages, the post-cancel expiry on `accounts`; SQL or in-memory |
-| — | `persistence/database.py`, `schema.py` | One async engine; schema owned by Alembic (`backend/migrations/`, a release step) |
+| — | `persistence/database.py`, `schema.py` | One async engine (pool `DATABASE_POOL_SIZE` + `DATABASE_MAX_OVERFLOW`; `sslmode=` passed to asyncpg as `ssl=`); schema owned by Alembic (`backend/migrations/`, a release step) |
+| `SchemaRevisionReader` | `persistence/schema_revision.py` | Reads `alembic_version` (catalog first: table present, SELECT privilege); never raises |
 | `BillingGateway` | `billing/stripe_gateway.py` | Stripe-hosted Checkout and Portal, Price reads (cached), webhook signature check, subscription re-fetch, cancel, meter events (identifier = run id); stripe-python `StripeClient` in a thread; off unless `STRIPE_*` is set |
 | `BillingAccounts`, `ExtraRunLedger` | `persistence/billing_store.py` | SQL (migration `0004_billing`) or in-memory (local only); conditional `held -> due` / `held -> void` writes make billing exactly-once |
 | `CapabilityProbe` | `health/probes.py` | One per dependency (`auth` the seventh, `database` the eighth, `billing` the ninth); `probed=False` where a check would cost money |
@@ -76,23 +91,30 @@ Plus `config.py` (`Settings`; `NATIVE_APP_ORIGINS` is the Capacitor WebView
 origin allowed in code) and `logging_config.py`.
 
 **`interface/`** — the only layer that knows FastAPI and arq.
-`api/app.py` (factory, lifespan checks, CORS, rate-limit middleware),
+`startup.py` (`validate_startup(container, role)`: the one startup validation
+the API lifespan and the worker's `on_startup` both run, plus the `Startup mode`
+log line; `docs/backend/startup-checks.md`), `api/app.py` (factory, lifespan, CORS, rate-limit middleware),
 `api/routes.py` (thin handlers: health, readiness, capabilities, releases,
 free-runs, runs, `/api/me`, `/api/keys`, `/api/billing*`), `api/schemas.py` (response DTOs; kept separate from
 `domain.entities.Run` so `owner_id` never leaks), `api/dependencies.py`
 (`get_principal`, `get_signed_in_principal`, `require_person`), `api/error_handlers.py` (exception → status, `Retry-After`),
-`api/rate_limiter.py` (slowapi; not behind a port, and the one import-time
-global; the client IP comes from `policies.client_ip_from_forwarded` with
+`api/rate_limiter.py` (slowapi; not behind a port, and built at import from
+the module-level `settings`, the one adapter that is; the client IP comes from `policies.client_ip_from_forwarded` with
 `TRUSTED_PROXY_HOPS`), `api/security_headers.py` (pure-ASGI middleware,
 added last so every response, preflights and refusals included, carries the
-hardening headers), `worker/settings.py` (arq `WorkerSettings`; takes the BYOK key out of
-the vault before calling the use case; cron `flush_extra_runs` every 10 minutes,
+hardening headers), `api/body_limit.py` (pure-ASGI request body ceiling,
+413; inside CORS so the refusal carries CORS headers, outside slowapi; order
+from outside in: security headers, CORS, body limit, slowapi), `worker/settings.py` (arq `WorkerSettings`; JSON logging and `validate_startup` on startup,
+`container.close()` on shutdown, `job_completion_wait`; takes the BYOK key out of
+the vault before calling the use case and passes the job's timeout `deadline`; cron `flush_extra_runs` every 10 minutes (reconcile held rows, void due rows past 34 days, then report),
 `account_cleanup` hourly at minute 25). `routes.py` also serves `/api/history*`
 and `POST /api/me/restore`; `dependencies.py` has `require_person_even_if_deleted`,
 used by the restore only.
 
 **`container.py`** — composition root. Builds every adapter once, wires the
-use cases, fixes the probe order. `app/main.py` and `app/worker.py` are
+use cases, fixes the probe order. The `container` itself is a module-level
+global built at import (`Container(settings)`), which is why tests patch
+attributes on it rather than build their own. `app/main.py` and `app/worker.py` are
 one-line shims so the Dockerfile, compose file and Railway configs reference
 `app.main:app` / `app.worker.WorkerSettings`.
 
@@ -117,6 +139,11 @@ one-line shims so the Dockerfile, compose file and Railway configs reference
   everywhere except the restore route; nothing is removed for good outside
   the worker's cleanup.
 - `ListRunsUseCase` never writes; the staleness check lives in `get_run` only.
+- A worker shutdown leaves a run `queued` for arq's retry with its holds and
+  source intact; a job timeout, or any own-key run, fails it. An own-key run
+  never falls back to the shared key.
+- On Postgres neither process starts against a schema older than
+  `EXPECTED_SCHEMA_REVISION`; a new migration bumps it (a test enforces it).
 - An extra run is billed only after its result is stored, at most once; a
   billing failure never fails a run, and a Stripe type never leaves
   `infrastructure/billing/`.
@@ -132,10 +159,13 @@ one-line shims so the Dockerfile, compose file and Railway configs reference
   `docs/backend/cost-abuse-protection.md` and `free-runs.md`.
 - **Response headers**: `docs/backend/security-headers.md`.
 - **Config**: `Settings` from the environment, defaults documented in
-  `.env.example`. Distributed mode is `REDIS_URL` set, which also requires
+  `.env.example`. The cross-field rules live in `Settings.startup_error(role)`,
+  checked by both processes. Distributed mode is `REDIS_URL` set, which also requires
   object storage and `DEVICE_TOKEN_SECRET`.
 - **Tests**: `tests/` mirrors `app/`; use-case tests use the fakes in
-  `tests/application/fakes.py`. All unit tests; no end-to-end run test yet.
+  `tests/application/fakes.py`. All unit tests; no end-to-end run test yet. `tests/infrastructure/persistence/test_schema_migration_drift.py`
+  compares `schema.py` with the migrated chain (SQLite) and fails on any
+  difference not on its named list.
 
 ## Adding something new
 
@@ -157,3 +187,8 @@ one-line shims so the Dockerfile, compose file and Railway configs reference
 - 2026-11-14 · backend agent · `AccountFreeRunAllowance` takes `period` (`FreeRunPeriod` day/month); free accounts count per UTC day, the paid plan per month
 - 2026-11-14 · backend agent · the paid plan's included runs count per UTC day (`BillingPlans.PAID_RUNS_PERIOD = DAY`, `PAID_RUNS_PER_DAY`); the extra-run ledger stays monthly
 - 2026-11-14 · backend agent · saved history and the deletion hold: `SavedRunRepository` port and adapters, `saved_history`/`restore_account`/`cleanup` use cases, the hold on `AccountDeleter`, `/api/history*` and `POST /api/me/restore`, the `account_cleanup` cron; two invariants
+- 2026-11-20 · Claude (backend agent) · `media/ytdlp_net.py` (`GuardedYoutubeDL`): yt-dlp requests ride `net.py`'s pinned connections, native downloaders only, so the "every outbound fetch goes through net.py" invariant now holds for yt-dlp too
+- 2026-11-20 · Claude (backend agent) · `SpendCap` gains hold/release/refund (`SpendClaim`); `CredentialFailureGuard` port and adapter, wired into `IdentifyCallerUseCase`; `api/body_limit.py` middleware; `media/deadline.py` (download deadline, dedicated pool) and `media/process.py` (shared ffmpeg runner)
+- 2026-11-20 · Claude (backend agent) · `SchemaRevisionReader` port and adapter, `CheckSchemaUseCase`, `domain/schema_revision.py`; shared `interface/startup.py` for both entry points; worker logging, shutdown and shutdown-retry invariants
+- 2026-11-20 · Claude (backend agent) · `BillingGateway` gains `expire_open_checkout_sessions`, `live_subscription_ids`, `cancel_duplicate_subscription`; `ExtraRunLedger.hold(cap=)` is the atomic cap check, plus `held`, `expire_due`, `due(account_id=)`; `HeldExtraRun` entity; `ExtraRunBilling` takes the `RunRepository` for `reconcile`; `AuthUnavailableError` (503) for a JWKS outage; `GetRunUseCase` takes the `SpendCap`
+- 2026-11-20 · Claude (backend agent) · `LongRunGuard` row in the port table; `free_run_holds` in the application codemap; the import-time globals stated correctly (the `container` is built at import, the rate limiter is the one adapter reading the module-level `settings`); pydantic in `domain/entities.py` named as deliberate; the schema drift test under Tests

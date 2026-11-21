@@ -2,11 +2,16 @@ from ..domain.entities import Principal, Run, RunStatus
 from ..domain.entitlements import MediaTier
 from ..domain.errors import RunNotFoundError
 from ..domain.policies import can_access_run, is_run_stale
-from ..domain.ports import AccountFreeRunAllowance, FreeRunAllowance, RunRepository
+from ..domain.ports import AccountFreeRunAllowance, FreeRunAllowance, RunRepository, SpendCap
 from .billing import ExtraRunBilling
-from .free_run_holds import settle_free_run_holds
+from .free_run_holds import settle_free_run_holds, settle_spend_hold
 
 RUN_ABANDONED_MESSAGE = "Analysis stopped responding and did not finish. Please try again."
+
+# The stages a run is in before the worker first calls Gemini: the worker
+# writes "analyzing_captions" or "uploading_to_gemini" before that call, so a
+# run that stopped in one of these never spent anything on the shared key.
+_BEFORE_GEMINI_STAGES = frozenset({None, "downloading", "normalizing"})
 
 
 class GetRunUseCase:
@@ -28,8 +33,11 @@ class GetRunUseCase:
         free_runs: FreeRunAllowance | None = None,
         account_free_runs: AccountFreeRunAllowance | None = None,
         extra_runs: ExtraRunBilling | None = None,
+        spend_cap: SpendCap | None = None,
     ) -> None:
         self._runs = runs
+        # The daily cap unit goes back only when the run never reached Gemini.
+        self._spend_cap = spend_cap
         # A paid extra run this check fails is never billed.
         self._extra_runs = extra_runs
         # The run's held free run is handed back when this check fails it.
@@ -78,6 +86,15 @@ class GetRunUseCase:
                 )
                 if self._extra_runs is not None:
                     await self._extra_runs.void(run_id)
+                # Only the first release acts, so the worker that later drops
+                # this job cannot settle it again.
+                if run.stage in _BEFORE_GEMINI_STAGES:
+                    await settle_spend_hold(
+                        run_id,
+                        refund=True,
+                        spend_cap=self._spend_cap,
+                        reason="stopped responding before reaching Gemini",
+                    )
             run.status = RunStatus.FAILED
             run.error = RUN_ABANDONED_MESSAGE
         return run

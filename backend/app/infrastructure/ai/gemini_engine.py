@@ -136,6 +136,21 @@ class GeminiEngine:
             )
         return self._client
 
+    @staticmethod
+    async def _release(client: genai.Client, api_key: str | None) -> None:
+        """Close a per-BYOK client once its run is done: each one opens its
+        own HTTP connection pools (sync and async), and a worker that served
+        many BYOK runs otherwise kept every one of them until the GC got to
+        it. The cached server-key client is shared and stays open. Never
+        raises: a close failure must not fail a finished run."""
+        if not api_key:
+            return
+        try:
+            await client.aio.aclose()
+            client.close()
+        except Exception:  # noqa: BLE001
+            logger.debug("Could not close a per-key Gemini client", exc_info=True)
+
     # 300 s (was 120): Gemini's file processing grows with the media, and a
     # signed-in + BYOK run may now be 10 minutes long. A short file is ACTIVE
     # within a few polls either way, so this only changes how long a stuck
@@ -303,32 +318,35 @@ class GeminiEngine:
         # Upload once. The upload is an API call too and can 503 on its own,
         # so it gets the same transient-only backoff - but a generate_content
         # failure below never sends us back here to upload the file again.
-        uploaded = await self._with_backoff(
-            lambda: client.aio.files.upload(file=video_path),
-            attempts=self._settings.gemini_retry_attempts,
-            model=self._settings.gemini_model,
-            operation="files.upload",
-        )
         try:
-            await self._wait_until_active(client, uploaded.name)
-
-            if on_stage:
-                await on_stage("analyzing")
-            response = await self._generate_with_retry(
-                client,
-                contents=[uploaded, *prompt_parts],
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTION,
-                    response_mime_type="application/json",
-                    response_schema=VideoAnalysis,
-                ),
+            uploaded = await self._with_backoff(
+                lambda: client.aio.files.upload(file=video_path),
+                attempts=self._settings.gemini_retry_attempts,
+                model=self._settings.gemini_model,
+                operation="files.upload",
             )
-            return self._parse(response)
-        finally:
             try:
-                await client.aio.files.delete(name=uploaded.name)
-            except Exception:
-                pass
+                await self._wait_until_active(client, uploaded.name)
+
+                if on_stage:
+                    await on_stage("analyzing")
+                response = await self._generate_with_retry(
+                    client,
+                    contents=[uploaded, *prompt_parts],
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_INSTRUCTION,
+                        response_mime_type="application/json",
+                        response_schema=VideoAnalysis,
+                    ),
+                )
+                return self._parse(response)
+            finally:
+                try:
+                    await client.aio.files.delete(name=uploaded.name)
+                except Exception:
+                    pass
+        finally:
+            await self._release(client, api_key)
 
     async def analyze_captions(
         self, captions: CaptionTrack, api_key: str | None = None
@@ -362,6 +380,8 @@ class GeminiEngine:
             )
         except Exception as exc:  # noqa: BLE001 - mapped, then re-raised as-is
             raise self._as_domain_error(exc) from exc
+        finally:
+            await self._release(client, api_key)
 
         return self._parse(response)
 

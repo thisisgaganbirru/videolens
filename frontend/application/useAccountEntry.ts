@@ -75,8 +75,17 @@ export function useAccountEntry(): AccountEntry {
     void readAuthCapability().then((row) => {
       if (!cancelled) setAuthCapability(row);
     });
+    /* A later report (the transport re-reads while sign-in is unconfirmed,
+       2026-11-21) replaces the first, so a recovered `auth` row shows the
+       entry without a reload. */
+    const stop = capabilitiesGateway.subscribe((report) => {
+      const row = report.capabilities.find((r) => r.name === "auth") ?? null;
+      authCapabilityRead = Promise.resolve(row);
+      if (!cancelled) setAuthCapability(row);
+    });
     return () => {
       cancelled = true;
+      stop();
     };
   }, []);
 

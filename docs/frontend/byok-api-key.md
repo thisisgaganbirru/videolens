@@ -191,6 +191,26 @@ with a key saved, "Remove key" and the status pill appear after hydration
   previous commit). The guide keeps Google's own button names ("Get API key",
   "Create API key"): they are what AI Studio shows.
 
+## Review fixes (2026-11-20)
+
+- **No password-manager save prompt.** Where the engine supports
+  `-webkit-text-security` (Chromium, WebKit, the Android WebView), the hidden
+  key is a `type="text"` field masked by CSS (`input.key-field[data-masked]`),
+  which browsers and managers do not treat as a password. Elsewhere it stays
+  `type="password"`. Both carry `autocomplete="off"` and the managers'
+  opt-outs (`data-1p-ignore`, `data-lpignore`, `data-bwignore`,
+  `data-form-type="other"`). Support is read with `useSyncExternalStore`
+  (server snapshot false), so the prerendered field is the password field and
+  hydration matches. Trade-off: on the masked text field a screen reader may
+  speak the characters, where a password field says only "secure text"; the
+  label, Show/Hide toggle and help text are unchanged. Not verified in a
+  browser in this pass.
+- **`useGeminiApiKey` follows the store.** It reads the key through
+  `apiKeyStore.subscribe` (`useSyncExternalStore`), so a key saved or
+  removed in another tab shows here; typing keeps a local draft until Save or
+  Remove. This also retired the hook's `react-hooks/set-state-in-effect`
+  lint finding.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported ApiKeyPanel; promoted the sr-only label to a visible .card-label, kept the programmatic association
@@ -206,3 +226,4 @@ with a key saved, "Remove key" and the status pill appear after hydration
 - 2026-11-14 · frontend agent · status strings say "Saved in this browser" / "Removed from this browser" (UX fix spec batch a); tab label "Gemini key" in the nav and More sheet
 - 2026-11-14 · frontend agent · UX fix spec batch e: panel h1 and field label "Gemini key"; lede says the app works without a key and what a key changes
 - 2026-11-14 · frontend agent · sign-in line's space held while it is unknown whether it applies (`signInPending`, inert ghost); pre-paint `data-session` stamp + `useStoredSessionHint` so a signed-in visit holds nothing; CLS at 412 web 0.0235 -> 0.0000 signed out, 0 signed in; consent paragraph untouched
+- 2026-11-20 · Claude (frontend agent) · masked text field (where supported) plus manager opt-outs so the key is not offered as a password; `useGeminiApiKey` subscribes to the key store (one known lint finding gone)

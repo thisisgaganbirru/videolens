@@ -197,6 +197,43 @@ class HistoryRoutesTests(unittest.TestCase):
         me = self.client.get("/api/me", headers=TOKEN).json()["saved_history"]
         self.assertEqual(me["expires_at"], body["expires_at"])
 
+    def test_another_paid_account_cannot_read_list_or_delete_a_saved_run(self) -> None:
+        # Two real signed-in people, both paying: B knows A's run id.
+        self._subscribe()
+        self._save(self.account_id, "run-a")
+        self.verifier.claims = {"sub": "user-456", "email": "b@b.test", "role": "authenticated"}
+        other_id = self.client.get("/api/me", headers=TOKEN).json()["account_id"]
+        self.assertNotEqual(other_id, self.account_id)
+
+        async def subscribe_other() -> None:
+            await self.billing_accounts.link_customer(other_id, "cus_2")
+            await self.billing_accounts.apply_subscription(
+                other_id,
+                SubscriptionSnapshot(
+                    subscription_id="sub_2",
+                    customer_id="cus_2",
+                    status="active",
+                    price_id="price_m",
+                    interval="month",
+                    current_period_end=NOW + timedelta(days=20),
+                    cancel_at_period_end=False,
+                ),
+            )
+
+        self._run(subscribe_other())
+        self._save(other_id, "run-b")
+
+        # Not 403: a 404 says nothing about whether the id exists.
+        self.assertEqual(self.client.get("/api/history/run-a", headers=TOKEN).status_code, 404)
+        self.assertEqual(self.client.delete("/api/history/run-a", headers=TOKEN).status_code, 404)
+        self.assertEqual([i["run_id"] for i in self.client.get("/api/history", headers=TOKEN).json()["items"]], ["run-b"])
+        self.assertEqual(self.client.delete("/api/history", headers=TOKEN).json(), {"deleted": 1})
+
+        # A's run is untouched and still A's.
+        self.verifier.claims = {"sub": "user-123", "email": "a@b.test", "role": "authenticated"}
+        self.assertEqual(self.client.get("/api/history/run-a", headers=TOKEN).status_code, 200)
+        self.assertEqual(self._run(self.saved.count(self.account_id)), 1)
+
     def test_bad_paging_is_rejected(self) -> None:
         self.assertEqual(self.client.get("/api/history?cursor=%21%21nope", headers=TOKEN).status_code, 400)
         self.assertEqual(self.client.get("/api/history?limit=0", headers=TOKEN).status_code, 422)

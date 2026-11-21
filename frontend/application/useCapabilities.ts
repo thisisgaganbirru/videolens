@@ -57,16 +57,21 @@ export function useCapabilities() {
     let cancelled = false;
     let have = false;
     let pending = false;
+    /* Every report that arrives, this hook's own read or a re-read the
+       transport asked for while sign-in was unconfirmed (2026-11-21), so a
+       recovered `auth` row shows here without a reload. */
+    const stopListening = capabilitiesGateway.subscribe((next) => {
+      noteReadResult("capabilities");
+      have = true;
+      if (cancelled) return;
+      setReport(next);
+      setSettled(true);
+    });
     const load = () => {
       if (have || pending) return;
       pending = true;
       capabilitiesGateway
         .fetchReport()
-        .then((next) => {
-          noteReadResult("capabilities");
-          have = true;
-          if (!cancelled) setReport(next);
-        })
         .catch((err: unknown) => {
           /* Still silent here — see (1) above. What it does report is
              whether the server could be reached at all, which Analyze says
@@ -85,6 +90,7 @@ export function useCapabilities() {
     return () => {
       cancelled = true;
       stop();
+      stopListening();
     };
   }, []);
 

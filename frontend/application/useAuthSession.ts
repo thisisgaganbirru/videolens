@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { AuthUser } from "@/domain/entities";
 import { AuthFlowError, type AuthFailureReason } from "@/domain/errors";
 import { authSession } from "@/infrastructure/container";
+import { forgetAccountHistory } from "@/application/historySync";
 
 /* The signed-in state as React sees it, and the emailed-code sign-in flow
    (auth phase 2). See docs/frontend/auth-sign-in.md.
@@ -20,27 +21,38 @@ import { authSession } from "@/infrastructure/container";
  * render differently. On a deployment with no provider `ready` is true from
  * the first render and `user` is always null.
  *
+ * `unconfirmed` (2026-11-20): loaded, nobody in memory, yet a session is
+ * still stored here. The provider could not recover it just now (it would
+ * not load, or the refresh failed on the network). Not "signed out": the
+ * Account panel offers to try again or to continue signed out.
+ *
  * Read after hydration, never during render: the stored session lives in
  * localStorage, and the prerendered HTML must match the first client render.
  */
 export function useAuthUser() {
-  const [state, setState] = useState<{ ready: boolean; user: AuthUser | null }>({
+  const [state, setState] = useState<{ ready: boolean; user: AuthUser | null; stored: boolean }>({
     ready: !authSession.enabled,
     user: null,
+    stored: false,
   });
 
   useEffect(() => {
     if (!authSession.enabled) return;
     let cancelled = false;
-    /* Only a change of person re-renders: the provider also notifies on
-       every hourly token refresh, which changes nothing anyone draws. */
+    /* Only a change of person (or of whether a session is stored) re-renders:
+       the provider also notifies on every hourly token refresh, which changes
+       nothing anyone draws. */
     const sync = () => {
       if (cancelled) return;
       const next = authSession.user();
+      const stored = authSession.hasSession();
       setState((current) =>
-        current.ready && current.user?.id === next?.id && current.user?.email === next?.email
+        current.ready &&
+        current.user?.id === next?.id &&
+        current.user?.email === next?.email &&
+        current.stored === stored
           ? current
-          : { ready: true, user: next }
+          : { ready: true, user: next, stored }
       );
     };
     const unsubscribe = authSession.subscribe(sync);
@@ -57,7 +69,17 @@ export function useAuthUser() {
     };
   }, []);
 
-  return { enabled: authSession.enabled, ready: state.ready, user: state.user };
+  return {
+    enabled: authSession.enabled,
+    ready: state.ready,
+    user: state.user,
+    unconfirmed: state.ready && !state.user && state.stored,
+  };
+}
+
+/** Asks the provider again for a stored session it could not recover. */
+export function recoverSession(): Promise<void> {
+  return authSession.recover();
 }
 
 const noSession = () => false;
@@ -218,10 +240,21 @@ export function useEmailCodeSignIn() {
   return { phase, email, setEmail, sentTo, code, setCode, error, send, resend, resendIn, verify, changeEmail };
 }
 
-/** Signs out on this device. History stays: it is this browser's, not the
- *  account's. */
-export function signOut(): Promise<void> {
-  return authSession.signOut();
+/** Signs out on this device, and the runs filed under a signed-in account
+ *  leave this device's History with it (2026-11-20; a borrowed device must
+ *  not keep someone's results). Anonymous rows stay. Both halves always run:
+ *  the provider's sign-out clears the stored session even offline, and the
+ *  History removal is local. Never rejects. Also what "Continue signed out"
+ *  and account deletion use.
+ *
+ *  The sweep runs twice: at once, so History empties even while the
+ *  provider's sign-out call is still on the network, and again once the
+ *  session is gone, for a run filed in between (History creates an
+ *  account's row only while that account is signed in here, so nothing can
+ *  land after the second). */
+export async function signOut(): Promise<void> {
+  await Promise.allSettled([authSession.signOut(), forgetAccountHistory()]);
+  await forgetAccountHistory();
 }
 
 /** Where "Sign out everywhere" is. `failed` keeps the person signed in. */
@@ -246,6 +279,8 @@ export function useSignOutEverywhere() {
     setError(null);
     try {
       await authSession.signOutEverywhere();
+      /* Signed out here too: the same History removal as `signOut()`. */
+      await forgetAccountHistory();
       setPhase("idle");
     } catch (err) {
       const reason = err instanceof AuthFlowError ? err.reason : "unknown";

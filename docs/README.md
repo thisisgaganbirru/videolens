@@ -16,6 +16,7 @@ Every new feature or component should get (or update) a doc here. Scope is stric
 | `media-validation.md` | FFmpeg validation, the resolver chain, yt-dlp, the SSRF guard, cookies |
 | `gemini-analysis.md` | The Gemini engine: prompts, structured output, retries, fallback model, caption-only analysis, source context |
 | `job-queue.md` | arq vs the in-process runner |
+| `startup-checks.md` | What the API and the worker check at startup, the `alembic_version` check, worker logging and shutdown |
 | `object-storage.md` | S3-compatible temporary storage |
 | `cost-abuse-protection.md` | Rate limit, daily cap, BYOK asymmetry, `Retry-After` |
 | `free-runs.md` | The per-device daily free-run allowance: device tokens, `GET /api/free-runs`, the 401/402 codes, refunds, how easy it is to bypass |
@@ -133,3 +134,4 @@ someone else's entry.
 - 2026-11-13 · backend agent · indexed `backend/billing.md`
 - 2026-11-14 · backend agent · indexed `backend/saved-history.md`
 2026-11-14 · frontend agent · indexed `frontend/saved-history.md`
+- 2026-11-20 · Claude (backend agent) · indexed `backend/startup-checks.md`

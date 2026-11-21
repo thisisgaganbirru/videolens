@@ -17,10 +17,11 @@ paths:
   writes a hash-based CSP `<meta>` into every prerendered document after
   `next build` and must run before `build-sw.mjs`. A new inline script needs
   its hash added there or the browser blocks it. `docs/frontend/security-headers.md`.
-- `npm run lint` exits 1 on 4 errors + 1 warning that are deliberately left:
-  `react-hooks/set-state-in-effect` in `useGeminiApiKey.ts` and
-  `UploadForm.tsx` (the read-localStorage-after-hydration pattern a static
-  export needs) and `@next/next/no-img-element` in `ResultsView.tsx`. Do not
+- `npm run lint` exits 1 on 3 errors + 1 warning that are deliberately left:
+  `react-hooks/set-state-in-effect` in `UploadForm.tsx` (the
+  read-localStorage-after-hydration pattern a static export needs; the
+  `useGeminiApiKey.ts` one went on 2026-11-20 when it moved to
+  `useSyncExternalStore`) and `@next/next/no-img-element` in `ResultsView.tsx`. Do not
   silence the rule or rewrite those effects; that is the owner's call. Do not
   add new findings. `eslint.config.mjs` ignores `android/**` and
   `public/sw.js` (generated) and turns `no-html-link-for-pages` off for
@@ -33,8 +34,8 @@ paths:
   rendered and CSS hides one; never choose chrome in React state.
 - New tab: add the id to `MAIN_TABS` (`application/useMainTab.ts`), a label
   to `TAB_LABEL` (`components/AppNav.tsx`), a `MoreSheet.tsx` row if the
-  installed shell should reach it, and a `.tab-view` section in
-  `HomeScreen.tsx`.
+  installed shell should reach it, and a `<main className="view-scroll">`
+  branch in `HomeScreen.tsx`.
 - Hooks go in `application/`, adapters in `infrastructure/` behind a port in
   `domain/ports.ts`, registered once in `infrastructure/container.ts`.
   Components never call an adapter directly. Capacitor-only adapters are

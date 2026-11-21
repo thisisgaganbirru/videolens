@@ -138,6 +138,49 @@ found." behaviour. Network errors and 5xx keep the reconnect countdown.
   expired path. Backoff, countdown and Retry now are unchanged; only
   `RunStatusView`'s words differ.
 
+## Review fixes (2026-11-20)
+
+- **Cancel aborts the upload.** `submit` gives `createRun(source, signal)`
+  an `AbortController` (`uploadRef`); `reset` and unmount abort it.
+  `ApiClient.sendAs` rethrows the `AbortError` itself instead of calling it
+  a network failure; the generation check drops it.
+- **Owner from the request.** `createRun` returns `AsOwner<RunCreateResponse>`
+  and `recordSubmitted(runId, status, source, owner)` files the run under
+  the identity that create request went out as.
+- **Polling stops on 401/403/410.** `accessEnded(err)` in the poll, a
+  reconnect and `openRun`: the run is refused for who is asking, which
+  retrying cannot change. Timers stop, no reconnect, nothing is written to
+  History, no "Try again" (retrySource cleared), and the failed view says
+  either "This server no longer accepts your sign-in, so this run can’t be
+  followed here. Sign in again from Account, then open it from History."
+  (401/403) or "Your account is scheduled for deletion, so this run can’t
+  be shown. Restore your account from Account to see it." (410; the
+  deletion-hold listener in `ApiClient` also fires as before).
+- **Saved open.** See saved-history.md, "Review fixes (2026-11-20)".
+- **Run failure advice.** `recoveryAdvice` (RunStatusView) matches two new
+  backend sentences: "took too long to download" (link) says to try the
+  same link again or upload the file; "was interrupted before it finished"
+  (BYOK) says to try the same link or file again. Neither says "try a
+  different link".
+
+## Re-review fixes (2026-11-20)
+
+- **Sign-out clears the screen.** A subscription to the session (not an
+  effect body, so no `set-state-in-effect`) calls `reset()` when the person
+  signs out by any path or another person signs in, but only if the run on
+  screen may be an account's (`accountScreenRef`: true from submit until
+  the create answers with an anonymous owner, from History's record on
+  open, true for a saved run) and only after an account was seen during
+  this mount. A stored session that could not be recovered is not a
+  sign-out.
+- **One 401 retry.** A poll or reopen refused with 401 waits about a second
+  and tries once more through the reconnect path (`retryUnauthorized`), so
+  a just-refreshed token is used; a second 401 ends the run as before. The
+  allowance resets on every successful poll and every new run.
+- **Create errors.** Only a failure of fetch itself (`FetchFailedError`)
+  becomes the file upload's cut-off message; `SignInUnconfirmedError`
+  becomes its own message (error-messaging.md).
+
 ## Changelog
 
 - 2026-08-21 · main session · made reset() clear the poll interval, and added the generation counter that drops a superseded submit/openRun response
@@ -153,3 +196,6 @@ found." behaviour. Network errors and 5xx keep the reconnect countdown.
 - 2026-11-02 · frontend agent (refinement 3) · a 404 on the live poll, a reconnect or openRun's server fallback now expires the run (History row failed + EXPIRED_MESSAGE, expired view) instead of "Connection lost" / "Run not found."; `liveUrlRef` for the link
 - 2026-11-02 · frontend agent (refinement 6) · RUN-06 web resume via sessionStorage ActiveRunStore; RUN-08 lostCause (network vs server) exposed for the lost screen
 - 2026-11-14 · frontend agent · button label "Analyze another" (UX fix spec batch a)
+- 2026-11-20 · Claude (frontend agent) · upload aborted on reset/unmount (`createRun(source, signal)`); owner returned with the create response; poll stops on 401/403/410 with its own message; saved open keeps the live run; recovery advice for slow-download and interrupted runs
+- 2026-11-20 · Claude (frontend agent) · Analyze reset on sign-out via session subscription (account-owned runs only); one 401 retry; create errors split by cause
+- 2026-11-21 · Claude (frontend agent) · `openRun`: a sign-out (or another person signing in) during the History read is deferred until the record's owner is known (`ownerPendingRef`/`deferredLeaveRef`), so a resumed anonymous run is not cleared on the provisional guess

@@ -2,6 +2,7 @@ import hashlib
 import math
 import re
 from datetime import datetime, time, timedelta, timezone
+from urllib.parse import urlsplit
 
 from .entities import AuthMethod, FreeRunPeriod, Principal
 
@@ -35,6 +36,37 @@ def bearer_credential(authorization: str) -> str:
 
 def looks_like_api_key(value: str) -> bool:
     return value.startswith(API_KEY_PREFIX)
+
+
+# The prefix and 43 URL-safe base64 characters (`secrets.token_urlsafe(32)`,
+# `api_key_repository.generate_secret`). Anything else cannot be a key we
+# issued, so it is refused without a database read.
+API_KEY_PATTERN = re.compile(rf"^{re.escape(API_KEY_PREFIX)}[A-Za-z0-9_-]{{43}}$")
+
+
+def is_well_formed_api_key(value: str) -> bool:
+    return bool(API_KEY_PATTERN.fullmatch(value))
+
+
+# Longer than any real share link, and short enough that a pasted blob is
+# turned away before it reaches a counter or the queue.
+MAX_SOURCE_URL_LENGTH = 2048
+
+
+def is_well_formed_source_url(url: str) -> bool:
+    """Whether a pasted link is even worth queueing: http(s), a host, a
+    valid port, no whitespace or control characters. Syntax only; whether it
+    is public and reachable is decided at fetch time (media/net.py)."""
+    if not url or len(url) > MAX_SOURCE_URL_LENGTH:
+        return False
+    if any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in url):
+        return False
+    try:
+        parts = urlsplit(url)
+        parts.port  # noqa: B018 - raises ValueError on a malformed port
+    except ValueError:
+        return False
+    return parts.scheme.lower() in ("http", "https") and bool(parts.hostname)
 
 
 def can_access_run(principal: Principal, run) -> bool:

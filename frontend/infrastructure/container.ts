@@ -56,6 +56,9 @@ export const savedHistoryGateway = new FetchSavedHistoryGateway(apiClient);
 /* Upload limits per tier (2026-11-13); public, no caller identity. */
 export const limitsGateway = new FetchLimitsGateway();
 export const capabilitiesGateway = new FetchCapabilitiesGateway(serverAuthStatus);
+/* A signed-in request that meets an unknown or degraded sign-in state asks
+   for the report again through here (2026-11-21), on every route. */
+serverAuthStatus.setReader(() => capabilitiesGateway.fetchReport());
 export const versionLogGateway = new FetchVersionLogGateway();
 export const updateChecker = new ApiUpdateChecker();
 export const updateDismissalStore = new LocalStorageUpdateDismissalStore();

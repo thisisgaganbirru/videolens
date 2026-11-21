@@ -125,6 +125,43 @@ class _Behaviour:
         self.assertEqual(await self.ledger.count(self.account_id, "2026-11"), 1)
         self.assertEqual(await self.ledger.count(self.other_id, "2026-11"), 0)
 
+    async def test_capped_hold(self) -> None:
+        hold = self.ledger.hold
+        self.assertTrue(await hold("a", account_id=self.account_id, customer_id="cus_1", period="2026-11", cap=2))
+        self.assertTrue(await hold("b", account_id=self.account_id, customer_id="cus_1", period="2026-11", cap=2))
+        self.assertFalse(await hold("c", account_id=self.account_id, customer_id="cus_1", period="2026-11", cap=2))
+        self.assertIsNone(await self.ledger.complete("c"))  # nothing written
+        # Another month, another account, and a voided row do not count.
+        self.assertTrue(await hold("d", account_id=self.account_id, customer_id="cus_1", period="2026-12", cap=2))
+        self.assertTrue(await hold("e", account_id=self.other_id, customer_id="cus_2", period="2026-11", cap=2))
+        await self.ledger.void("a")
+        self.assertTrue(await hold("f", account_id=self.account_id, customer_id="cus_1", period="2026-11", cap=2))
+        # cap 0 = no cap.
+        self.assertTrue(await hold("g", account_id=self.account_id, customer_id="cus_1", period="2026-11"))
+
+    async def test_held_lists_old_held_rows_only(self) -> None:
+        await self.ledger.hold("old", account_id=self.account_id, customer_id="cus_1", period="2026-11")
+        await self.ledger.hold("done", account_id=self.account_id, customer_id="cus_1", period="2026-11")
+        await self.ledger.complete("done")
+        self.clock.now += timedelta(minutes=20)
+        await self.ledger.hold("young", account_id=self.account_id, customer_id="cus_1", period="2026-11")
+        rows = await self.ledger.held(before=self.clock.now - timedelta(minutes=10))
+        self.assertEqual([row.run_id for row in rows], ["old"])
+        self.assertEqual(rows[0].account_id, self.account_id)
+
+    async def test_due_by_account_and_expiry_of_rows_too_old_to_report(self) -> None:
+        for run_id, account in (("mine", self.account_id), ("theirs", self.other_id)):
+            await self.ledger.hold(run_id, account_id=account, customer_id="cus_1", period="2026-11")
+            await self.ledger.complete(run_id)
+        self.assertEqual([c.run_id for c in await self.ledger.due(account_id=self.account_id)], ["mine"])
+        self.assertEqual(await self.ledger.expire_due(), [])
+        self.clock.now += timedelta(days=35)
+        self.assertEqual(await self.ledger.due(), [])
+        expired = await self.ledger.expire_due()
+        self.assertEqual(sorted(c.run_id for c in expired), ["mine", "theirs"])
+        self.assertEqual(await self.ledger.expire_due(), [])
+        self.assertEqual(await self.ledger.count(self.account_id, "2026-11"), 0)  # void
+
 
 class SqlBillingStoreTests(_Behaviour, unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
@@ -139,12 +176,37 @@ class SqlBillingStoreTests(_Behaviour, unittest.IsolatedAsyncioTestCase):
         self.accounts = SqlBillingAccounts(self.settings, self.database, clock=self.clock)
         self.ledger = SqlExtraRunLedger(self.settings, self.database, clock=self.clock)
 
-    async def test_stale_holds_are_voided_on_the_next_hold(self) -> None:
+    async def test_an_old_hold_is_not_voided_by_the_next_one(self) -> None:
+        # Ageing out is the reconciliation's job, after it read the run's
+        # outcome: a hold no longer voids an older, maybe completed, row.
         await self.ledger.hold("old", account_id=self.account_id, customer_id="cus_1", period="2026-11")
         self.clock.now += timedelta(days=3)
         await self.ledger.hold("new", account_id=self.account_id, customer_id="cus_1", period="2026-11")
-        self.assertIsNone(await self.ledger.complete("old"))
-        self.assertIsNotNone(await self.ledger.complete("new"))
+        self.assertIsNotNone(await self.ledger.complete("old"))
+
+    async def test_capped_hold_sql_is_one_guarded_insert(self) -> None:
+        # The Postgres shape: the billing row locked, then INSERT ... SELECT
+        # with the count in the same statement. (The SQLite test database is
+        # one shared connection, so it cannot run truly concurrent
+        # transactions; the concurrent case is covered on the in-memory
+        # ledger in tests/application/test_billing.py.)
+        from sqlalchemy.dialects import postgresql
+        from sqlalchemy.ext.asyncio import AsyncConnection
+
+        statements = []
+        real_execute = AsyncConnection.execute
+
+        async def recording(conn, statement, *args, **kwargs):
+            statements.append(str(statement.compile(dialect=postgresql.dialect())))
+            return await real_execute(conn, statement, *args, **kwargs)
+
+        with mock.patch.object(AsyncConnection, "execute", recording):
+            await self.ledger.hold("run-1", account_id=self.account_id, customer_id="cus_1", period="2026-11", cap=1)
+        self.assertIn("FOR UPDATE", statements[0])
+        self.assertIn("billing_accounts", statements[0])
+        self.assertTrue(statements[1].startswith("INSERT INTO billing_extra_runs"))
+        self.assertIn("SELECT", statements[1])
+        self.assertIn("count(*)", statements[1])
 
     async def test_deleting_the_account_removes_its_billing_rows(self) -> None:
         await self.accounts.link_customer(self.account_id, "cus_1")

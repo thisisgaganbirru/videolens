@@ -5,7 +5,9 @@ from app.application.get_run import GetRunUseCase
 from app.domain.entities import Principal, RunStatus, VideoAnalysis
 from app.domain.errors import RunNotFoundError
 
-from .fakes import FakeRunRepository
+from app.domain.entities import SpendClaim
+
+from .fakes import FakeRunRepository, FakeSpendCap
 
 ANALYSIS = VideoAnalysis(title="T", summary="S", transcript="Tx", screen_text="", markdown="# T")
 
@@ -93,3 +95,41 @@ class StaleRunTests(unittest.IsolatedAsyncioTestCase):
         run = await self.use_case.execute("run-1", self.principal)
 
         self.assertEqual(run.status, RunStatus.COMPLETE)
+
+
+class StaleRunDailyCapTests(unittest.IsolatedAsyncioTestCase):
+    """A run the sweep fails hands its daily cap unit back only when it
+    stopped before reaching Gemini; once, whoever settles it later."""
+
+    async def asyncSetUp(self) -> None:
+        self.runs = FakeRunRepository()
+        self.cap = FakeSpendCap()
+        self.use_case = GetRunUseCase(runs=self.runs, stale_after_seconds=720, spend_cap=self.cap)
+        self.principal = Principal(subject="client:owner", authenticated=False)
+
+    async def _stale(self, run_id: str, stage: str | None) -> None:
+        await self.runs.create(run_id, "client:owner")
+        await self.runs.set_status(run_id, RunStatus.PROCESSING)
+        await self.cap.hold(run_id, SpendClaim(day="2026-01-01"))
+        run = self.runs.runs[run_id]
+        run.stage = stage
+        run.updated_at = datetime.now(timezone.utc) - timedelta(seconds=900)
+
+    async def test_a_run_that_never_reached_gemini_gets_its_unit_back_once(self) -> None:
+        for stage in (None, "downloading", "normalizing"):
+            with self.subTest(stage=stage):
+                run_id = f"run-{stage}"
+                await self._stale(run_id, stage)
+                self.assertEqual((await self.use_case.execute(run_id, self.principal)).status, RunStatus.FAILED)
+                await self.use_case.execute(run_id, self.principal)
+                # The worker dropping the job later releases again: a no-op.
+                self.assertFalse(await self.cap.release(run_id, refund=False))
+        self.assertEqual(len(self.cap.refunds), 3)
+
+    async def test_a_run_that_reached_gemini_keeps_its_unit_spent(self) -> None:
+        for stage in ("analyzing_captions", "uploading_to_gemini", "analyzing"):
+            with self.subTest(stage=stage):
+                await self._stale(f"run-{stage}", stage)
+                await self.use_case.execute(f"run-{stage}", self.principal)
+        self.assertEqual(self.cap.refunds, [])
+        self.assertEqual(len(self.cap.held), 3)  # left for the worker, which keeps them spent

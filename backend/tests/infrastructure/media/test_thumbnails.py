@@ -6,12 +6,15 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import unittest
 from unittest.mock import AsyncMock, patch
 
 from app.domain.entities import MediaVisuals
 from app.infrastructure.config import Settings
+from app.infrastructure.media import deadline as deadline_module
 from app.infrastructure.media import net, thumbnails
+from app.infrastructure.media.deadline import DownloadDeadline, DownloadDeadlineExceeded
 from app.infrastructure.media.service import MediaService
 from app.infrastructure.media.thumbnails import (
     MAX_SIDE,
@@ -127,6 +130,14 @@ class _FakeResponse(io.BytesIO):
         self.headers = {"Content-Length": length} if length is not None else {}
 
 
+class _FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
 class _FakeOpener:
     def __init__(self, response: _FakeResponse) -> None:
         self._response = response
@@ -142,7 +153,7 @@ class FetchImageTests(unittest.TestCase):
         with patch.object(thumbnails, "validate_public_url"), patch.object(
             thumbnails.urllib.request, "build_opener", return_value=_FakeOpener(response)
         ):
-            return _fetch_image_sync("https://cdn.test/t.jpg", max_bytes, 1)
+            return _fetch_image_sync(DownloadDeadline(60), "https://cdn.test/t.jpg", max_bytes, 1)
 
     def test_returns_the_body_within_the_cap(self) -> None:
         self.assertEqual(self._fetch(_FakeResponse(b"12345")), b"12345")
@@ -164,14 +175,14 @@ class FetchImageTests(unittest.TestCase):
             thumbnails.urllib.request, "build_opener", side_effect=AssertionError("must not open")
         ):
             with self.assertRaises(Exception) as caught:
-                _fetch_image_sync("http://127.0.0.1/t.jpg", 10, 1)
+                _fetch_image_sync(DownloadDeadline(60), "http://127.0.0.1/t.jpg", 10, 1)
         self.assertNotIsInstance(caught.exception, AssertionError)
 
     def test_redirects_go_through_the_validating_handler(self) -> None:
         with patch.object(thumbnails, "validate_public_url"), patch.object(
             thumbnails.urllib.request, "build_opener", return_value=_FakeOpener(_FakeResponse(b"1"))
         ) as build:
-            _fetch_image_sync("https://cdn.test/t.jpg", 10, 1)
+            _fetch_image_sync(DownloadDeadline(60), "https://cdn.test/t.jpg", 10, 1)
         # The shared public-only opener: address checked and pinned on every
         # request, redirects re-checked (net.py).
         build.assert_called_once_with(
@@ -181,6 +192,43 @@ class FetchImageTests(unittest.TestCase):
     def test_async_wrapper_turns_failures_into_none(self) -> None:
         result = asyncio.run(thumbnails.fetch_image("http://127.0.0.1/t.jpg"))
         self.assertIsNone(result)
+
+    def test_a_trickling_body_trips_the_deadline(self) -> None:
+        # One byte per read and ten (fake) seconds apart: within the 3 MB
+        # cap and every socket timeout, but past the fetch's own deadline.
+        clock = _FakeClock()
+        deadline = DownloadDeadline(thumbnails.FETCH_DEADLINE_SECONDS, clock=clock)
+        reads = []
+
+        class Trickle(_FakeResponse):
+            def read1(self, _size=-1):
+                clock.now += 10
+                reads.append(1)
+                return b"x"
+
+        with patch.object(thumbnails, "validate_public_url"), patch.object(
+            thumbnails.urllib.request, "build_opener", return_value=_FakeOpener(Trickle(b""))
+        ):
+            with self.assertRaises(DownloadDeadlineExceeded):
+                _fetch_image_sync(deadline, "https://cdn.test/t.jpg", 1024, 1)
+        self.assertLessEqual(len(reads), 2)
+
+    def test_the_fetch_runs_on_the_download_pool_under_a_deadline(self) -> None:
+        seen = {}
+
+        def fake_sync(deadline, url, max_bytes, timeout):
+            seen["deadline"] = deadline_module.current_deadline() is deadline
+            seen["seconds"] = deadline.seconds
+            seen["thread"] = threading.current_thread().name
+            return b"img"
+
+        with patch.object(thumbnails, "_fetch_image_sync", fake_sync):
+            self.assertEqual(asyncio.run(thumbnails.fetch_image("https://cdn.test/t.jpg")), b"img")
+        self.assertTrue(seen["deadline"])
+        self.assertEqual(seen["seconds"], thumbnails.FETCH_DEADLINE_SECONDS)
+        # Not the shared default executor, whose threads a slow body used to
+        # keep busy after wait_for had given up on it.
+        self.assertTrue(seen["thread"].startswith("videolens-download"))
 
 
 class EncodeCeilingTests(unittest.IsolatedAsyncioTestCase):

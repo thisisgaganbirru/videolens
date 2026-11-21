@@ -1,6 +1,6 @@
 import logging
 
-from ..domain.ports import AccountFreeRunAllowance, FreeRunAllowance
+from ..domain.ports import AccountFreeRunAllowance, FreeRunAllowance, SpendCap
 
 logger = logging.getLogger("videolens")
 
@@ -33,3 +33,17 @@ async def settle_free_run_holds(
                 logger.info("Run %s %s, so its %s was handed back", run_id, reason, label)
         except Exception:
             logger.exception("Could not settle the %s for run %s", label, run_id)
+
+
+async def settle_spend_hold(run_id: str, *, refund: bool, spend_cap: SpendCap | None, reason: str) -> None:
+    """Hand a run's held daily-cap unit back (`refund`) or just forget it.
+    Same contract as the free run: only the first release of a run acts, a
+    run that took no unit (own key, paid, cap off) holds nothing, and a
+    failure here is bookkeeping only (the hold expires on its own)."""
+    if spend_cap is None:
+        return
+    try:
+        if await spend_cap.release(run_id, refund=refund):
+            logger.info("Run %s %s, so its daily cap unit was handed back", run_id, reason)
+    except Exception:
+        logger.exception("Could not settle the daily cap unit for run %s", run_id)

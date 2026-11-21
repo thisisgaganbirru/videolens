@@ -211,7 +211,7 @@ billing_extra_runs = Table(
     Column("run_id", String(36), primary_key=True),
     Column("account_id", String(36), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False),
     Column("stripe_customer_id", String(255), nullable=False),
-    Column("period", String(10), nullable=False),
+    Column("period", String(7), nullable=False),
     Column("state", String(16), nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("completed_at", DateTime(timezone=True), nullable=True),

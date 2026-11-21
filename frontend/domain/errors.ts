@@ -21,6 +21,10 @@ export class ApiError extends Error {
   /** When a held account is removed for good (ISO), sent with the 410
    *  `account_pending_deletion` (2026-11-14). Absent on every other error. */
   readonly purgeAt?: string;
+  /** Seconds from the response's `Retry-After`, when it sent one and the
+   *  browser let the page read it. The sign-in 503 (keys unavailable) and the
+   *  failed-credential 429 carry one and no `code` (2026-11-20). */
+  readonly retryAfter?: number;
 
   /** `status` is the HTTP status, when there was one. Lets a caller tell "this
    *  run no longer exists" (404 — the server forgot it) from every other
@@ -28,7 +32,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status?: number,
-    extra: { code?: string; limit?: number; used?: number; scope?: string; purgeAt?: string } = {}
+    extra: { code?: string; limit?: number; used?: number; scope?: string; purgeAt?: string; retryAfter?: number } = {}
   ) {
     super(message);
     this.code = extra.code;
@@ -36,6 +40,7 @@ export class ApiError extends Error {
     this.used = extra.used;
     this.scope = extra.scope;
     this.purgeAt = extra.purgeAt;
+    this.retryAfter = extra.retryAfter;
   }
 }
 

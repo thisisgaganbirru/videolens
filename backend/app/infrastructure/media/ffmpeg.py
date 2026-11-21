@@ -1,4 +1,3 @@
-import asyncio
 import os
 import shutil
 
@@ -6,7 +5,40 @@ from ...domain.entitlements import MediaLimits, clock, duration_over_limit_messa
 from ...domain.errors import MediaValidationError
 from ..config import Settings
 from .limits import effective_limits
+from .process import run_process
 from .uploads import cleanup_run_dir
+
+# ffprobe reads a header and a few packets: seconds even for a large file.
+# Generous, since the API runs it on every upload.
+FFPROBE_TIMEOUT_SECONDS = 30
+# The re-encode. Under WORKER_LONG_JOB_TIMEOUT_SECONDS' default (1800 s);
+# a standard job is cancelled at its own timeout first, which kills it too.
+NORMALIZE_TIMEOUT_SECONDS = 1200
+
+# Every probe and encode reads one local file and nothing else. ffmpeg picks
+# the demuxer from the content, not the extension, so a playlist named .mp4
+# (HLS, DASH, ffconcat) would otherwise be free to open the URLs it lists;
+# the whitelist is inherited by every nested open, so it cannot.
+INPUT_PROTOCOLS = ["-protocol_whitelist", "file"]
+
+# How text begins: markup (`<`: XML, a DASH or IMF manifest, SMIL, in any
+# case and after any comment) or a playlist directive (`#`: HLS). No accepted
+# container (.mp3 opens with `ID3` or an 0xFF frame sync, .mp4/.mov with a
+# box size and type) starts with either, so a file whose first non-blank
+# byte is one of them is refused before ffprobe sees it. `ffconcat` is the
+# one text signature that is neither.
+_TEXT_STARTS = (b"<", b"#", b"ffconcat")
+_WHITESPACE = b" \t\r\n\x0b\x0c"
+_SNIFF_BYTES = 64
+# Box types an MP4/MOV file opens with (ISO BMFF / QuickTime top level).
+_TOP_LEVEL_BOXES = frozenset({b"ftyp", b"mdat", b"moov", b"free", b"skip", b"wide", b"pnot", b"uuid", b"styp"})
+# Demuxers that open other files or URLs that the input names. ffprobe
+# reports the one it used as `format_name` (a comma list for a family); any
+# of these is refused even if the content check above missed the file. The
+# whitelist already stops anything but local files.
+_PLAYLIST_DEMUXERS = frozenset({
+    "hls", "applehttp", "dash", "webm_dash_manifest", "concat", "ffconcat", "imf", "smil", "sdp", "rtp", "rtsp",
+})
 
 
 def _media_binary(settings: Settings, name: str) -> str:
@@ -47,27 +79,80 @@ def _clock(seconds: float) -> str:
     return clock(seconds)
 
 
-async def probe_duration_seconds(settings: Settings, path: str) -> float:
-    proc = await asyncio.create_subprocess_exec(
-        _media_binary(settings, "ffprobe"),
-        "-v", "error",
-        "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        path,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+def _refuse_playlist(path: str) -> None:
+    """A cheap content check ahead of ffprobe: text that opens like a
+    playlist or a manifest is not media, whatever its name says."""
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(_SNIFF_BYTES)
+    except OSError:
+        return  # ffprobe reports an unreadable file in its own words
+    head = head.removeprefix(b"\xef\xbb\xbf")  # a UTF-8 BOM
+    text = head.lstrip(_WHITESPACE)
+    if not text.startswith(_TEXT_STARTS):
+        return
+    if len(text) != len(head) and head[4:8] in _TOP_LEVEL_BOXES:
+        # The "whitespace" was the first byte of an MP4/MOV box size (a
+        # first `mdat` over ~150 MB), not text: bytes 4-8 are its box type.
+        return
+    raise MediaValidationError(
+        "This file couldn't be read. It may be corrupted or in a format we don't support.",
+        log_detail=f"refused before ffprobe: the content is a playlist or manifest ({text[:12]!r})",
     )
-    stdout, stderr = await proc.communicate()
-    if proc.returncode != 0 or not stdout.strip():
+
+
+def _refuse_playlist_demuxer(format_name: str) -> None:
+    used = {name.strip().lower() for name in format_name.split(",")}
+    if used & _PLAYLIST_DEMUXERS or any("dash" in name for name in used):
+        raise MediaValidationError(
+            "This file couldn't be read. It may be corrupted or in a format we don't support.",
+            log_detail=f"refused after ffprobe: it was opened as a playlist or manifest ({format_name[:40]!r})",
+        )
+
+
+def _probe_fields(stdout: bytes) -> dict[str, str]:
+    fields = {}
+    for line in stdout.decode(errors="replace").splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            fields[key.strip()] = value.strip()
+    return fields
+
+
+async def probe_duration_seconds(settings: Settings, path: str) -> float:
+    _refuse_playlist(path)
+    try:
+        returncode, stdout, stderr = await run_process(
+            [
+                _media_binary(settings, "ffprobe"),
+                "-v", "error",
+                *INPUT_PROTOCOLS,
+                "-show_entries", "format=format_name,duration",
+                "-of", "default=noprint_wrappers=1",
+                path,
+            ],
+            timeout=FFPROBE_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as exc:
+        raise MediaValidationError(
+            "This file couldn't be read. It may be corrupted or in a format we don't support.",
+            log_detail=f"ffprobe timed out after {FFPROBE_TIMEOUT_SECONDS}s",
+        ) from exc
+    fields = _probe_fields(stdout) if returncode == 0 else {}
+    if returncode == 0:
+        # Before the duration check, so a manifest whose segments did not
+        # open (no duration) is still logged as what it is.
+        _refuse_playlist_demuxer(fields.get("format_name", ""))
+    if returncode != 0 or not fields.get("duration"):
         raise MediaValidationError(
             "This file couldn't be read. It may be corrupted or in a format we don't support.",
             log_detail=(
-                f"ffprobe exited {proc.returncode}: "
+                f"ffprobe exited {returncode}: "
                 + stderr.decode(errors="ignore")[-500:]
             ),
         )
     try:
-        return float(stdout.strip())
+        return float(fields["duration"])
     except ValueError as exc:
         raise MediaValidationError(
             "This file couldn't be read. It may be corrupted or in a format we don't support.",
@@ -91,18 +176,25 @@ async def enforce_duration_cap(
 
 
 async def _has_video_stream(settings: Settings, path: str) -> bool:
-    proc = await asyncio.create_subprocess_exec(
-        _media_binary(settings, "ffprobe"),
-        "-v", "error",
-        "-select_streams", "v:0",
-        "-show_entries", "stream=codec_type",
-        "-of", "csv=p=0",
-        path,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, _ = await proc.communicate()
-    return proc.returncode == 0 and _first_csv_field(stdout) == b"video"
+    try:
+        returncode, stdout, _ = await run_process(
+            [
+                _media_binary(settings, "ffprobe"),
+                "-v", "error",
+                *INPUT_PROTOCOLS,
+                "-select_streams", "v:0",
+                "-show_entries", "stream=codec_type",
+                "-of", "csv=p=0",
+                path,
+            ],
+            timeout=FFPROBE_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as exc:
+        raise MediaValidationError(
+            "This file couldn't be processed.",
+            log_detail=f"ffprobe (stream check) timed out after {FFPROBE_TIMEOUT_SECONDS}s",
+        ) from exc
+    return returncode == 0 and _first_csv_field(stdout) == b"video"
 
 
 def _first_csv_field(stdout: bytes) -> bytes:
@@ -120,28 +212,29 @@ async def normalize_media(settings: Settings, src_path: str, run_dir: str) -> st
     if await _has_video_stream(settings, src_path):
         normalized_path = os.path.join(run_dir, "normalized.mp4")
         command = [
-            _media_binary(settings, "ffmpeg"), "-y", "-i", src_path,
+            _media_binary(settings, "ffmpeg"), "-y", *INPUT_PROTOCOLS, "-i", src_path,
             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
             "-c:a", "aac", "-movflags", "+faststart", normalized_path,
         ]
     else:
         normalized_path = os.path.join(run_dir, "normalized.mp3")
         command = [
-            _media_binary(settings, "ffmpeg"), "-y", "-i", src_path,
+            _media_binary(settings, "ffmpeg"), "-y", *INPUT_PROTOCOLS, "-i", src_path,
             "-vn", "-c:a", "libmp3lame", "-b:a", "192k", normalized_path,
         ]
 
-    proc = await asyncio.create_subprocess_exec(
-        *command,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    _, stderr = await proc.communicate()
-    if proc.returncode != 0:
+    try:
+        returncode, _, stderr = await run_process(command, timeout=NORMALIZE_TIMEOUT_SECONDS)
+    except TimeoutError as exc:
+        raise MediaValidationError(
+            "This file couldn't be processed.",
+            log_detail=f"ffmpeg timed out after {NORMALIZE_TIMEOUT_SECONDS}s",
+        ) from exc
+    if returncode != 0:
         raise MediaValidationError(
             "This file couldn't be processed.",
             log_detail=(
-                f"ffmpeg exited {proc.returncode}: "
+                f"ffmpeg exited {returncode}: "
                 + stderr.decode(errors="ignore")[-2000:]
             ),
         )

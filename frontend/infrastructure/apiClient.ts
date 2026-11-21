@@ -1,3 +1,4 @@
+import { ANONYMOUS_OWNER } from "@/domain/entities";
 import { ApiError, NetworkError } from "@/domain/errors";
 import type {
   AccountHoldNotice,
@@ -21,12 +22,17 @@ import { getClientId } from "./clientId";
      bearer *instead of* the client id, so sending one to a server without a
      matching verifier would turn every caller route into a 401/503. With the
      report still in flight and a session present, a request waits for it
-     (bounded); unknown after that means anonymous.
+     (bounded).
 
-   When a session exists and the server takes tokens but no token can be had
-   right now, the request fails as a `NetworkError` instead of going out
-   anonymous: an anonymous poll of a run the person owns answers 404, which
-   History would otherwise read as "expired". The poll's reconnect retries.
+   A request with a session stored never goes out anonymous (2026-11-20).
+   When the server's report is still unknown (or `degraded`, 2026-11-21)
+   after the wait, or the server
+   takes tokens but no token can be had right now, it fails as a
+   `SignInUnconfirmedError` instead: an anonymous create would be filed in
+   History as `anonymous` and outlive the sign-out, and an anonymous poll of
+   a run the person owns answers 404. A poll's reconnect retries; a create
+   says so and the person sends it again. Nobody signed in means no wait at
+   all: anonymous requests are never delayed by this.
 
    The Gemini key is not here: it travels only with run creation, which adds
    it itself (runsGateway). The capabilities and release gateways do not use
@@ -37,10 +43,36 @@ export const UNREADABLE = "The server replied with something this app could not 
 const SIGN_IN_UNCONFIRMED =
   "Your sign-in could not be confirmed just now. Check your connection; the app will try again.";
 
-/** How long a signed-in request waits for the capability report. */
-const SERVER_AUTH_WAIT_MS = 4000;
+/** No HTTP response came back at all: `fetch` itself failed. The only
+ *  `NetworkError` that says anything about the bytes on the wire. */
+export class FetchFailedError extends NetworkError {}
 
-export const ANONYMOUS_OWNER = "anonymous";
+/** A session is stored but the request could not go out signed in (the
+ *  server's sign-in report is not known yet, or no token could be had). Thrown
+ *  before anything is sent. */
+export class SignInUnconfirmedError extends NetworkError {}
+
+/** Seconds to wait from a `Retry-After` header: delta-seconds or an HTTP
+ *  date. Null when absent, unreadable or already past. Note that a browser
+ *  only lets the page read this header cross-origin when the API lists it in
+ *  `Access-Control-Expose-Headers`; until then this is null and the caller
+ *  keeps its general wording. */
+export function retryAfterSeconds(value: string | null, now: number = Date.now()): number | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) {
+    const seconds = Number(trimmed);
+    return seconds > 0 ? seconds : null;
+  }
+  const at = Date.parse(trimmed);
+  if (Number.isNaN(at)) return null;
+  const seconds = Math.ceil((at - now) / 1000);
+  return seconds > 0 ? seconds : null;
+}
+
+/** How long a request with a session stored waits for the capability
+ *  report before it fails (never before it goes out anonymous). */
+const SERVER_AUTH_WAIT_MS = 8000;
 
 /** The 410 a held account gets on every identity-resolving route. */
 export const ACCOUNT_PENDING_DELETION = "account_pending_deletion";
@@ -81,46 +113,74 @@ export class ApiClient implements CallerIdentity, AccountHoldSource {
     this.holdListeners.forEach((listener) => listener(notice));
   }
 
-  /** The bearer, or null to go out anonymous. Throws `NetworkError` when it
-   *  must not go out anonymous and cannot go out signed in. */
+  /** The bearer, or null to go out anonymous. Throws
+   *  `SignInUnconfirmedError` when it must not go out anonymous (a session is
+   *  stored) and cannot go out signed in. */
   private async bearer(): Promise<string | null> {
     if (!this.auth.enabled || !this.auth.hasSession()) return null;
+    /* Resolves the moment the state is `ok` or `off`; meanwhile it asks for
+       the report again (spaced), so an unknown or degraded state recovers
+       without a reload (2026-11-21). */
     const state = await this.serverAuth.settled(SERVER_AUTH_WAIT_MS);
-    if (state !== "ok") return null;
+    /* `off`: this server does not take tokens at all, so everyone is
+       anonymous to it, signed in or not. */
+    if (state === "off") return null;
+    /* `unknown` or `degraded` after the wait: never anonymous with a
+       session stored. */
+    if (state !== "ok") throw new SignInUnconfirmedError(SIGN_IN_UNCONFIRMED);
     try {
       return await this.auth.getToken();
     } catch {
-      throw new NetworkError(SIGN_IN_UNCONFIRMED);
+      throw new SignInUnconfirmedError(SIGN_IN_UNCONFIRMED);
     }
   }
 
-  private async identityHeaders(): Promise<Record<string, string>> {
+  /** The headers and the owner they speak for, together: the owner a
+   *  response is filed under is the one this request went out as, never a
+   *  shared field another request may have moved on since. */
+  private async identityHeaders(): Promise<{ headers: Record<string, string>; owner: string | null }> {
     const headers: Record<string, string> = { "X-Client-ID": getClientId() };
     const deviceToken = this.deviceTokenStore.get();
     if (deviceToken) headers["X-Device-Token"] = deviceToken;
     const token = await this.bearer();
     const userId = token ? this.auth.user()?.id : null;
     if (token) headers["Authorization"] = `Bearer ${token}`;
-    /* Unknown (null) rather than a guess if a token came without a user. */
-    this.owner = token ? (userId ? `user:${userId}` : null) : ANONYMOUS_OWNER;
-    return headers;
+    /* Unknown (null) rather than a guess if a token came without a user.
+       History never creates a row for an unknown owner. */
+    const owner = token ? (userId ? `user:${userId}` : null) : ANONYMOUS_OWNER;
+    this.owner = owner;
+    return { headers, owner };
   }
 
   /** Transport only: resolves with whatever HTTP response came back (status
    *  untouched), throws `NetworkError` when none came back at all. `extra`
    *  headers are added last (the Gemini key on run creation, a JSON
-   *  content type). */
+   *  content type). An aborted request rethrows the `AbortError` itself, so
+   *  a cancel is never mistaken for the server being down. */
   async send(path: string, init: RequestInit = {}, extra: Record<string, string> = {}): Promise<Response> {
-    const headers = { ...(await this.identityHeaders()), ...extra };
-    const owner = this.owner;
+    return (await this.sendAs(path, init, extra)).res;
+  }
+
+  /** `send`, plus the identity this request went out as. A caller that files
+   *  the answer under an owner (History) takes it from here, not from
+   *  `lastOwner()`, which another request may have moved on since. */
+  async sendAs(
+    path: string,
+    init: RequestInit = {},
+    extra: Record<string, string> = {}
+  ): Promise<{ res: Response; owner: string | null }> {
+    const identity = await this.identityHeaders();
+    const headers = { ...identity.headers, ...extra };
+    const owner = identity.owner;
     let res: Response;
     try {
       res = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
-    } catch {
-      throw new NetworkError(UNREACHABLE);
+    } catch (error) {
+      if (init.signal?.aborted) throw error;
+      throw new FetchFailedError(UNREACHABLE);
     }
     await this.noticeHold(res, owner);
-    return res;
+    return { res, owner };
   }
 
   /** A 2xx whose body will not parse is still a server-side problem, so it
@@ -134,13 +194,14 @@ export class ApiClient implements CallerIdentity, AccountHoldSource {
   }
 
   /** A non-2xx as an `ApiError` carrying the backend's own `detail` (when it
-   *  is a string) and `code`, else `fallback (status)`. */
+   *  is a string), `code` and `Retry-After`, else `fallback (status)`. */
   async reject(res: Response, fallback: string): Promise<never> {
     const body = await res.json().catch(() => null);
     const detail = typeof body?.detail === "string" ? body.detail : null;
     const code = typeof body?.code === "string" ? body.code : undefined;
     const purgeAt = typeof body?.purge_at === "string" ? body.purge_at : undefined;
-    throw new ApiError(detail || `${fallback} (${res.status})`, res.status, { code, purgeAt });
+    const retryAfter = retryAfterSeconds(res.headers.get("Retry-After")) ?? undefined;
+    throw new ApiError(detail || `${fallback} (${res.status})`, res.status, { code, purgeAt, retryAfter });
   }
 
   async json<T>(path: string, init: RequestInit, fallback: string): Promise<T> {

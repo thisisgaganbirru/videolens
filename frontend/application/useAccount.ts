@@ -14,9 +14,13 @@ import { accountGateway } from "@/infrastructure/container";
  *    different project, or one revoked since). Offer to sign out.
  *  - `held`: 410 `account_pending_deletion` (2026-11-14): the account is in
  *    the 30-day deletion hold and can be restored until `purgeAt`.
+ *  - `unconfirmed`: 503 with `Retry-After` (2026-11-20): the server cannot
+ *    reach the sign-in keys just now, so it could neither accept nor refuse
+ *    the session. Temporary; retry, and never offer to sign out over it.
  *  - `failed`: anything else; retry. */
 export type AccountProblem =
   | { kind: "unavailable" }
+  | { kind: "unconfirmed" }
   | { kind: "rejected" }
   | { kind: "held"; purgeAt: string | null }
   | { kind: "failed"; message: string };
@@ -24,6 +28,15 @@ export type AccountProblem =
 type Loaded = { userId: string; epoch: number; account: AccountResponse | null; problem: AccountProblem | null };
 
 const FALLBACK = "Your account could not be loaded.";
+
+/* The keys-unavailable 503 carries no `code`. Its `Retry-After` tells it from
+   the "no sign-in here" 503; the sentence is the fallback for a browser that
+   was not allowed to read the header. */
+const KEYS_UNAVAILABLE = "Sign-in is unavailable right now.";
+
+function isSignInUnconfirmed(err: ApiError): boolean {
+  return err.status === 503 && (err.retryAfter !== undefined || err.message.startsWith(KEYS_UNAVAILABLE));
+}
 
 /**
  * `GET /api/me` for the signed-in person (auth phase 2). Nothing is fetched
@@ -54,13 +67,15 @@ export function useAccount(userId: string | null) {
         if (cancelled) return;
         const status = err instanceof ApiError ? err.status : undefined;
         const problem: AccountProblem =
-          status === 503
-            ? { kind: "unavailable" }
-            : status === 401
-              ? { kind: "rejected" }
-              : err instanceof ApiError && err.code === "account_pending_deletion"
-                ? { kind: "held", purgeAt: err.purgeAt ?? null }
-                : { kind: "failed", message: classifyGatewayError(err, FALLBACK).message };
+          err instanceof ApiError && isSignInUnconfirmed(err)
+            ? { kind: "unconfirmed" }
+            : status === 503
+              ? { kind: "unavailable" }
+              : status === 401
+                ? { kind: "rejected" }
+                : err instanceof ApiError && err.code === "account_pending_deletion"
+                  ? { kind: "held", purgeAt: err.purgeAt ?? null }
+                  : { kind: "failed", message: classifyGatewayError(err, FALLBACK).message };
         setLoaded({ userId, epoch: restoredEpoch, account: null, problem });
       });
     return () => {
@@ -132,9 +147,10 @@ function deletionProblem(err: unknown): DeletionProblem {
  * (supabase-js awaits a `/logout` request before clearing it; a signed-in
  * view mounted earlier would call `GET /api/me` with the old token.)
  * Signing out is the whole cleanup: the stored Supabase session is the only
- * auth state this app keeps in the browser.
- * History (IndexedDB) and the BYOK key (localStorage) are the person's own
- * data and are left alone, so nothing here calls `localStorage.clear()`.
+ * auth state this app keeps in the browser, and `signOut()` also removes the
+ * History rows filed under a signed-in account (2026-11-20). Anonymous
+ * History rows and the BYOK key (localStorage) are left alone, so nothing
+ * here calls `localStorage.clear()`.
  *
  * Whether to allow the call (the typed email, the run guard) is the panel's
  * decision; this hook only refuses a second call while one is in flight.

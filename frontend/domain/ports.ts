@@ -23,10 +23,16 @@ import type {
   RunStatusResponse,
 } from "./entities";
 
+/** A response plus the identity it was asked as (`user:<id>`, `anonymous`,
+ *  or null when a token came without a known user). Read from the request
+ *  itself, so a second request in flight cannot change whose it is. */
+export type AsOwner<T> = T & { owner: string | null };
+
 export interface RunsGateway {
-  createRun(source: MediaSource): Promise<RunCreateResponse>;
+  /** `signal` aborts the upload (cancel, or the screen going away). */
+  createRun(source: MediaSource, signal?: AbortSignal): Promise<AsOwner<RunCreateResponse>>;
   getRun(runId: string): Promise<RunStatusResponse>;
-  listRuns(): Promise<RunListResponse>;
+  listRuns(): Promise<AsOwner<RunListResponse>>;
 }
 
 /**
@@ -34,9 +40,10 @@ export interface RunsGateway {
  * one-hour hold on a run. Capped: once more than `HISTORY_LIMIT` runs are
  * stored, the oldest (by `created_at`) is dropped.
  *
- * Every method rejects with `StorageUnavailableError` when the browser offers
- * no usable storage; callers that only *write* history swallow that, because
- * History must never be the reason an analysis fails.
+ * The read and write methods reject with `StorageUnavailableError` when the
+ * browser offers no usable storage; callers that only *write* history swallow
+ * that, because History must never be the reason an analysis fails. The two
+ * removals resolve instead: an empty store has nothing to remove.
  */
 export interface HistoryStore {
   /** Every stored run, newest first. */
@@ -44,6 +51,18 @@ export interface HistoryStore {
   get(runId: string): Promise<HistoryRecord | null>;
   /** Merge into the stored record (or create it), then enforce the cap. */
   upsert(patch: HistoryPatch): Promise<void>;
+  /** Merge into the stored record only when it is still there; never
+   *  creates one. Resolves whether a row was updated. The check and the
+   *  write share one transaction, so a row removed meanwhile (sign-out, from
+   *  any tab) stays removed. */
+  update(patch: HistoryPatch): Promise<boolean>;
+  /** Drop one stored run from this device. Resolves (a no-op) when storage
+   *  is unavailable: there is nothing kept here to remove. */
+  remove(runId: string): Promise<void>;
+  /** Drop every stored run whose `owner` passes `match`; resolves with how
+   *  many went. Rows with no owner are never matched. Resolves 0 when storage
+   *  is unavailable, like `remove`. */
+  removeOwnedBy(match: (owner: string) => boolean): Promise<number>;
   /** Called after any write, from this tab or another. Returns unsubscribe. */
   subscribe(listener: () => void): () => void;
 }
@@ -53,7 +72,12 @@ export interface HistoryStore {
  *  key, nothing that scopes the answer to one user. It describes the server,
  *  not the caller's runs. */
 export interface CapabilitiesGateway {
+  /** One read at a time: a call while a read is in flight shares it. */
   fetchReport(): Promise<CapabilityReport>;
+  /** Hears every report that arrives, whoever asked for it (2026-11-21: the
+   *  transport re-reads while sign-in is unconfirmed, and the screens that
+   *  show capabilities must see the newer answer). Returns unsubscribe. */
+  subscribe(listener: (report: CapabilityReport) => void): () => void;
 }
 
 /** The run this browser tab is watching, kept for the tab's lifetime so a
@@ -296,6 +320,11 @@ export interface AuthSession {
    *  a refresh failed on the network) it **throws**: sending that request
    *  anonymously would reach runs owned by the person as someone else. */
   getToken(): Promise<string | null>;
+  /** Tries again to restore a session that is stored on this device but
+   *  could not be recovered (the provider would not load, or its refresh
+   *  failed on the network). Notifies either way; never rejects. A no-op
+   *  where sign-in is unconfigured. */
+  recover(): Promise<void>;
   /** Emails a one-time code. Creates the account on first use. */
   requestEmailCode(email: string): Promise<void>;
   /** Exchanges the emailed code for a session. */
@@ -319,14 +348,29 @@ export interface AuthSession {
  *  on `ok`, because the backend reads a bearer *instead of* `X-Client-ID`: a
  *  server without a matching verifier would answer 401/503 to every caller
  *  route (auth phase 2). Fed by the capabilities adapter, read by the API
- *  client. */
-export type ServerAuthState = "unknown" | "ok" | "off";
+ *  client.
+ *
+ *  `degraded` (2026-11-21): the server verifies tokens but could not reach
+ *  the sign-in keys just now. Not `off`: a person signed in must not be sent
+ *  anonymous because of a blip, so the client treats it like `unknown`
+ *  (waits, then fails as "sign-in could not be confirmed") and asks again. */
+export type ServerAuthState = "unknown" | "ok" | "off" | "degraded";
 
 export interface ServerAuthStatus {
   current(): ServerAuthState;
   report(state: Exclude<ServerAuthState, "unknown">): void;
-  /** Resolves with the state once known, or with `unknown` after `maxMs`. */
+  /** Resolves as soon as the state is decisive (`ok` or `off`), or after
+   *  `maxMs` with whatever it is then (`unknown` or `degraded`). While it
+   *  waits it asks for fresh reports (see `requestReport`). */
   settled(maxMs: number): Promise<ServerAuthState>;
+  /** A caller needs a decisive state and does not have one: ask the
+   *  capabilities source to read again. Deduplicated (one read in flight)
+   *  and spaced (a minimum interval), so a failing backend is not hammered.
+   *  A no-op until a reader is registered. */
+  requestReport(): void;
+  /** Registers the one reader `requestReport` runs (the composition root
+   *  wires the capabilities adapter). Its failure is swallowed. */
+  setReader(reader: () => Promise<unknown>): void;
 }
 
 /** Which identity the app's requests are going out as, so a History record

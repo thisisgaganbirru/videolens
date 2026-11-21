@@ -6,7 +6,9 @@ name: Security nightly scan
 # It must never fail on findings. A scheduled run attaches to main's head
 # commit, and Railway's Wait for CI skips any deploy - including the redeploy a
 # variable change triggers - while a workflow on that commit is red. So the
-# scan runs in advisory mode and the issue job cannot fail the run.
+# scan runs in advisory mode, a failed image build (base pull, mirror outage)
+# is a warning rather than a red job (build_failure_is_warning), and the issue
+# job cannot fail the run.
 
 on:
   schedule:
@@ -26,6 +28,7 @@ jobs:
     uses: ./.github/workflows/reusable-security-scan.yml
     with:
       enforce: false
+      build_failure_is_warning: true
 
   issue:
     name: Report findings
@@ -42,6 +45,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
       TITLE: "Security scan: fixable high/critical vulnerabilities on main"
+      INCOMPLETE_TITLE: "Security scan: the nightly scan of main could not run"
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -58,6 +62,21 @@ jobs:
           SCAN_RESULT: ${{ needs.scan.result }}
         run: |
           existing="$(gh issue list --state open --search "in:title \"${TITLE}\"" --json number --jq '.[0].number // empty')"
+          incomplete="$(gh issue list --state open --search "in:title \"${INCOMPLETE_TITLE}\"" --json number --jq '.[0].number // empty')"
+          # A scan that keeps failing to build would otherwise only ever be a
+          # warning. Track it in its own issue (opened once, commented on each
+          # failed night, closed by the next complete scan); never fail.
+          if compgen -G "findings/*.incomplete" >/dev/null || [ "$SCAN_RESULT" != "success" ]; then
+            # shellcheck disable=SC2016 # the backticks are Markdown in the issue body, not command substitution
+            note="$(printf 'The nightly scan of `main` did not scan every image (scan job: %s). An image build or the scanner failed, so new vulnerabilities may be going unnoticed. Details: %s\n\nThis issue is updated by `security-nightly-scan.yml` and closed automatically after a complete scan.' "$SCAN_RESULT" "$RUN_URL")"
+            if [ -n "$incomplete" ]; then
+              gh issue comment "$incomplete" --body "$note" || echo "::warning::Could not comment on issue #${incomplete}."
+            else
+              gh issue create --title "$INCOMPLETE_TITLE" --body "$note" || echo "::warning::Could not open the scan-could-not-run issue."
+            fi
+          elif [ -n "$incomplete" ]; then
+            gh issue close "$incomplete" --comment "Complete nightly scan: ${RUN_URL}" || true
+          fi
           if compgen -G "findings/*.txt" >/dev/null; then
             services="$(for f in findings/*.txt; do basename "$f" .txt; done | paste -sd, -)"
             # shellcheck disable=SC2016 # the backticks are Markdown in the issue body, not command substitution
@@ -67,6 +86,11 @@ jobs:
             else
               gh issue create --title "$TITLE" --body "$body"
             fi
+          elif compgen -G "findings/*.incomplete" >/dev/null; then
+            # An image did not build, so it was not scanned (the scan job
+            # stays green for that, see reusable-security-scan.yml). No
+            # findings proves nothing; leave the issue as it is.
+            echo "::warning::At least one image was not scanned; not treating this run as clean."
           elif [ "$SCAN_RESULT" != "success" ]; then
             # The scan itself broke (a build failure, not a finding), so the
             # absence of findings proves nothing. Leave the issue as it is.

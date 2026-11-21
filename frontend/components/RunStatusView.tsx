@@ -86,6 +86,20 @@ function isBlockedDownload(error: string | null | undefined): boolean {
   return !!error && error.toLowerCase().includes(BLOCKED_DOWNLOAD_PHRASE);
 }
 
+/* 2026-11-20, the same kind of match for two newer backend sentences:
+   "This link took too long to download. Try again, or upload the file
+   instead." and "Analysis was interrupted before it finished. Please try
+   again." Neither is the source's fault, so "try a different link/file" was
+   wrong for both. Each sentence already says what to do; the advice line
+   only must not contradict it. If the wording changes, the stage advice
+   below still applies. */
+const SLOW_DOWNLOAD_PHRASE = "took too long to download";
+const INTERRUPTED_PHRASE = "was interrupted before it finished";
+
+function mentions(error: string | null | undefined, phrase: string): boolean {
+  return !!error && error.toLowerCase().includes(phrase);
+}
+
 function recoveryAdvice(
   stage: string | null | undefined,
   sourceKind: SourceKind,
@@ -97,6 +111,12 @@ function recoveryAdvice(
      minutes"), so this line adds the other way through, not a second timing. */
   if (sourceKind === "url" && isBlockedDownload(error)) {
     return "You can try the same link again later, or download the video and upload the file instead.";
+  }
+  if (sourceKind === "url" && mentions(error, SLOW_DOWNLOAD_PHRASE)) {
+    return "You can try the same link again, or download the video and upload the file instead.";
+  }
+  if (mentions(error, INTERRUPTED_PHRASE)) {
+    return `You can try the same ${sourceKind === "url" ? "link" : "file"} again.`;
   }
   if (key === "uploading_to_gemini" || key === "analyzing") {
     /* ProgressFailed.png's copy. The server's own message ("Your file is

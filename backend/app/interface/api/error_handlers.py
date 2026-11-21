@@ -15,6 +15,7 @@ from ...domain.errors import (
     ApiKeyNotFoundError,
     AuthenticationError,
     AuthNotConfiguredError,
+    AuthUnavailableError,
     AlreadySubscribedError,
     BillingError,
     BillingIntervalError,
@@ -71,6 +72,9 @@ _STATUS_BY_ERROR = {
     AccountDeletionError: 500,
     # Covers AccountsNotConfiguredError, its subclass.
     AuthNotConfiguredError: 503,
+    # The JWKS cannot be fetched and no recent key set is cached; carries
+    # Retry-After.
+    AuthUnavailableError: 503,
 }
 
 
