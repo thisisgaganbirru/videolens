@@ -7,6 +7,7 @@ a socket. The schema belongs to Alembic (`backend/migrations/`), run as a
 release step; `create_all` exists for tests only.
 """
 
+import re
 import ssl
 import uuid
 from datetime import datetime, timezone
@@ -46,10 +47,9 @@ def _sslmode_for_asyncpg(url: str) -> str:
     keyword, which is what SQLAlchemy would pass it from the query string.
     Rename the one parameter, keep its value and every other parameter as
     written. An explicit `ssl=` wins over `sslmode=`."""
-    base, sep, query = url.partition("?")
-    if not sep or not query:
+    base, pairs = _query_pairs(url)
+    if not pairs:
         return url
-    pairs = [pair.split("=", 1) if "=" in pair else [pair, ""] for pair in query.split("&") if pair]
     names = {name for name, _ in pairs}
     if "sslmode" not in names:
         return url
@@ -78,24 +78,54 @@ _ROOT_CERT_PARAMETER = "sslrootcert"
 _VERIFYING_MODES = ("verify-ca", "verify-full")
 
 
+# SQLAlchemy's own URL grammar (`sqlalchemy.engine.url._parse_url`) for the
+# user-info part: a username without `:` or `/`, then an optional
+# `:password` running to the FIRST `@`. The password may hold a raw `?`, `&`,
+# `=` or `#`, so the query string is the first `?` after this, never the
+# first `?` in the URL.
+_USERINFO = re.compile(r"[^:/]*(?::[^@]*)?@")
+# A parameter name is printed in an error only when it looks like one, so a
+# message can never carry a fragment of a password, a host or a value.
+_PRINTABLE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}")
+
+
+def _split_query(url: str) -> tuple[str, str]:
+    """(everything before the query string, the query string without its
+    `?`), split where SQLAlchemy's `make_url` splits it."""
+    scheme_end = url.find("://")
+    start = 0 if scheme_end < 0 else scheme_end + 3
+    userinfo = _USERINFO.match(url, start)
+    if userinfo:
+        start = userinfo.end()
+    mark = url.find("?", start)
+    if mark < 0:
+        return url, ""
+    return url[:mark], url[mark + 1:]
+
+
 def _query_pairs(url: str) -> tuple[str, list[tuple[str, str]]]:
-    base, _, query = url.partition("?")
+    base, query = _split_query(url)
     pairs = [tuple(pair.split("=", 1)) if "=" in pair else (pair, "") for pair in query.split("&") if pair]
     return base, pairs
 
 
 def database_url_error(url: str) -> str | None:
-    """Why this (normalized) asyncpg URL cannot be used, or None. Names the
-    parameters only, never a value: the URL carries the password."""
+    """Why this (normalized) asyncpg URL cannot be used, or None. The text
+    is fixed except for the names of real query parameters, and only names
+    shaped like one (`_PRINTABLE_NAME`); never a value or any other part of
+    the URL, which carries the password."""
     if not url.startswith("postgresql+asyncpg://"):
         return None
     _, pairs = _query_pairs(url)
     names = [name for name, _ in pairs]
-    unknown = sorted({name for name in names if name not in _ASYNCPG_QUERY_PARAMETERS | {_ROOT_CERT_PARAMETER}})
+    unknown = {name for name in names if name not in _ASYNCPG_QUERY_PARAMETERS | {_ROOT_CERT_PARAMETER}}
     if unknown:
+        printable = sorted(name for name in unknown if _PRINTABLE_NAME.fullmatch(name))
+        unprintable = len(unknown) - len(printable)
+        listed = printable + ([f"{unprintable} more with an unusual name"] if unprintable else [])
         return (
             "DATABASE_URL carries parameters this app cannot pass to Postgres: "
-            + ", ".join(unknown)
+            + ", ".join(listed)
             + ". Remove them; sslmode (or ssl) and sslrootcert are supported."
         )
     values = dict(pairs)

@@ -31,7 +31,7 @@ import urllib.request
 from urllib.parse import urlparse
 
 from ...domain.errors import MediaValidationError
-from .deadline import track_socket
+from .deadline import current_deadline, track_socket
 
 MAX_URL_LENGTH = 2048
 
@@ -140,6 +140,7 @@ def _connect_pinned(conn: http.client.HTTPConnection, address: str) -> None:
     )
     # Inside a download, its wall-clock deadline can shut this socket down.
     track_socket(conn.sock)
+    _check_deadline()
     try:
         conn.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     except OSError:
@@ -173,7 +174,24 @@ class PinnedHTTPSConnection(http.client.HTTPSConnection):
             self.sock, server_hostname=server_hostname, do_handshake_on_connect=False
         )
         track_socket(self.sock)
-        self.sock.do_handshake()
+        _check_deadline()
+        try:
+            self.sock.do_handshake()
+        except (AttributeError, OSError):
+            _check_deadline()  # a deadline that fired mid-handshake
+            raise
+
+
+def _check_deadline() -> None:
+    """A deadline that has already fired shuts a socket as it is tracked;
+    the next use then fails as an OSError (Windows: closed) or, for a TLS
+    handshake on Linux (shutdown clears the SSL object), an AttributeError,
+    and the caller would say "couldn't be downloaded". Raise the deadline's
+    own `DownloadDeadlineExceeded` instead, which urllib passes through
+    unwrapped and every caller turns into "took too long"."""
+    deadline = current_deadline()
+    if deadline is not None:
+        deadline.check()
 
 
 def _pinned_connection_class(request: urllib.request.Request, connection_class):

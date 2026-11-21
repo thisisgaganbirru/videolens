@@ -117,6 +117,82 @@ class UnsupportedParameterTests(unittest.TestCase):
                 Database(_settings(url))
 
 
+def _url(password: str, host: str = "h", port: int | None = 5432, database: str = "db", query: str = "", user: str = "vl") -> str:
+    """A Postgres URL assembled from parts, so no test line holds a literal
+    `user:password@host` (secret scanners flag those even when made up)."""
+    netloc = f"{host}:{port}" if port is not None else host
+    return "postgresql://" + user + ":" + password + "@" + netloc + "/" + database + query
+
+
+def _connect_kwargs(url: str) -> dict:
+    """What asyncpg.connect() would be called with for this app URL."""
+    from sqlalchemy.dialects.postgresql.asyncpg import dialect
+    from sqlalchemy.engine import make_url
+
+    with mock.patch.object(database_module, "create_async_engine") as create:
+        Database(_settings(url)).engine()
+    _, kwargs = dialect().create_connect_args(make_url(create.call_args.args[0]))
+    return kwargs
+
+
+class PasswordCharacterTests(unittest.TestCase):
+    """The query string starts at the first `?` after the user info, as in
+    SQLAlchemy's own parser, so a password holding `?`, `&`, `=` or `#` is a
+    password and never read as parameters (it once refused startup and
+    printed pieces of the password)."""
+
+    TRICKY = ("foo?bar&baz", "foo?bar", "baz&qux", "foo=bar", "foo#bar", "foo?bar&baz=qux#zot", "foo/bar")
+
+    def test_a_tricky_password_connects_as_written(self) -> None:
+        for sample in self.TRICKY:
+            for query, ssl_value in (("", None), ("?sslmode=require&command_timeout=5", "require")):
+                url = _url(sample, host="db.example", database="postgres", query=query)
+                with self.subTest(url=url):
+                    kwargs = _connect_kwargs(url)
+                    self.assertEqual(kwargs["password"], sample)
+                    self.assertEqual((kwargs["host"], kwargs["port"], kwargs["database"]), ("db.example", 5432, "postgres"))
+                    self.assertEqual(kwargs.get("ssl"), ssl_value)
+                    self.assertNotIn("sslmode", kwargs)
+
+    def test_a_percent_encoded_password_connects_decoded(self) -> None:
+        for encoded, decoded in (("foo%40bar", "foo@bar"), ("foo%3Fbar%26baz", "foo?bar&baz"), ("foo%23bar%3D", "foo#bar=")):
+            with self.subTest(encoded=encoded):
+                kwargs = _connect_kwargs(_url(encoded, query="?sslmode=require"))
+                self.assertEqual((kwargs["password"], kwargs["host"], kwargs["ssl"]), (decoded, "h", "require"))
+
+    def test_sslrootcert_keeps_a_tricky_password(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            ca = _write_ca(directory)
+            sample = "foo?bar&baz=qux"
+            kwargs = _connect_kwargs(_url(sample, query=f"?sslmode=verify-full&sslrootcert={ca}"))
+        self.assertEqual(kwargs["password"], sample)
+        self.assertNotIn("sslrootcert", kwargs)
+
+    def _assert_no_piece_of(self, password: str, message: str) -> None:
+        for size in range(3, len(password) + 1):
+            for start in range(len(password) - size + 1):
+                self.assertNotIn(password[start:start + size], message)
+
+    def test_a_refusal_names_only_the_real_parameter(self) -> None:
+        for sample in self.TRICKY + ("foo%40bar", "foo@bar"):
+            url = _url(sample, host="db.example", database="postgres", query="?sslmode=require&application_name=vl")
+            with self.subTest(sample=sample), self.assertRaises(ValueError) as caught:
+                Database(_settings(url))
+            message = str(caught.exception)
+            self._assert_no_piece_of(sample, message)
+            self.assertNotIn("db.example", message)
+            if "@" not in sample:  # a raw `@` ends the password early, as in SQLAlchemy
+                self.assertIn("parameters this app cannot pass to Postgres: application_name.", message)
+
+    def test_an_odd_parameter_name_is_counted_not_printed(self) -> None:
+        odd_name = "foo:bar@baz"
+        with self.assertRaises(ValueError) as caught:
+            Database(_settings(_url("p", port=None, query=f"?{odd_name}=1&options=x", user="u")))
+        message = str(caught.exception)
+        self.assertIn("options, 1 more with an unusual name", message)
+        self._assert_no_piece_of(odd_name, message)
+
+
 class RootCertificateTests(unittest.TestCase):
     def setUp(self) -> None:
         directory = tempfile.TemporaryDirectory()

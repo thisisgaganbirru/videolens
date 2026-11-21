@@ -21,10 +21,24 @@ NORMALIZE_TIMEOUT_SECONDS = 1200
 # the whitelist is inherited by every nested open, so it cannot.
 INPUT_PROTOCOLS = ["-protocol_whitelist", "file"]
 
-# How a playlist or manifest begins. No audio or video container starts
-# with these, so a file that does is refused before ffprobe sees it.
-_PLAYLIST_SIGNATURES = (b"#EXTM3U", b"ffconcat", b"<?xml", b"<MPD", b"<SMIL", b"<smil")
+# How text begins: markup (`<`: XML, a DASH or IMF manifest, SMIL, in any
+# case and after any comment) or a playlist directive (`#`: HLS). No accepted
+# container (.mp3 opens with `ID3` or an 0xFF frame sync, .mp4/.mov with a
+# box size and type) starts with either, so a file whose first non-blank
+# byte is one of them is refused before ffprobe sees it. `ffconcat` is the
+# one text signature that is neither.
+_TEXT_STARTS = (b"<", b"#", b"ffconcat")
+_WHITESPACE = b" \t\r\n\x0b\x0c"
 _SNIFF_BYTES = 64
+# Box types an MP4/MOV file opens with (ISO BMFF / QuickTime top level).
+_TOP_LEVEL_BOXES = frozenset({b"ftyp", b"mdat", b"moov", b"free", b"skip", b"wide", b"pnot", b"uuid", b"styp"})
+# Demuxers that open other files or URLs that the input names. ffprobe
+# reports the one it used as `format_name` (a comma list for a family); any
+# of these is refused even if the content check above missed the file. The
+# whitelist already stops anything but local files.
+_PLAYLIST_DEMUXERS = frozenset({
+    "hls", "applehttp", "dash", "webm_dash_manifest", "concat", "ffconcat", "imf", "smil", "sdp", "rtp", "rtsp",
+})
 
 
 def _media_binary(settings: Settings, name: str) -> str:
@@ -73,12 +87,36 @@ def _refuse_playlist(path: str) -> None:
             head = handle.read(_SNIFF_BYTES)
     except OSError:
         return  # ffprobe reports an unreadable file in its own words
-    head = head.removeprefix(b"\xef\xbb\xbf").lstrip()  # a UTF-8 BOM, then whitespace
-    if head.startswith(_PLAYLIST_SIGNATURES):
+    head = head.removeprefix(b"\xef\xbb\xbf")  # a UTF-8 BOM
+    text = head.lstrip(_WHITESPACE)
+    if not text.startswith(_TEXT_STARTS):
+        return
+    if len(text) != len(head) and head[4:8] in _TOP_LEVEL_BOXES:
+        # The "whitespace" was the first byte of an MP4/MOV box size (a
+        # first `mdat` over ~150 MB), not text: bytes 4-8 are its box type.
+        return
+    raise MediaValidationError(
+        "This file couldn't be read. It may be corrupted or in a format we don't support.",
+        log_detail=f"refused before ffprobe: the content is a playlist or manifest ({text[:12]!r})",
+    )
+
+
+def _refuse_playlist_demuxer(format_name: str) -> None:
+    used = {name.strip().lower() for name in format_name.split(",")}
+    if used & _PLAYLIST_DEMUXERS or any("dash" in name for name in used):
         raise MediaValidationError(
             "This file couldn't be read. It may be corrupted or in a format we don't support.",
-            log_detail=f"refused before ffprobe: the content is a playlist or manifest ({head[:12]!r})",
+            log_detail=f"refused after ffprobe: it was opened as a playlist or manifest ({format_name[:40]!r})",
         )
+
+
+def _probe_fields(stdout: bytes) -> dict[str, str]:
+    fields = {}
+    for line in stdout.decode(errors="replace").splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            fields[key.strip()] = value.strip()
+    return fields
 
 
 async def probe_duration_seconds(settings: Settings, path: str) -> float:
@@ -89,8 +127,8 @@ async def probe_duration_seconds(settings: Settings, path: str) -> float:
                 _media_binary(settings, "ffprobe"),
                 "-v", "error",
                 *INPUT_PROTOCOLS,
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
+                "-show_entries", "format=format_name,duration",
+                "-of", "default=noprint_wrappers=1",
                 path,
             ],
             timeout=FFPROBE_TIMEOUT_SECONDS,
@@ -100,7 +138,12 @@ async def probe_duration_seconds(settings: Settings, path: str) -> float:
             "This file couldn't be read. It may be corrupted or in a format we don't support.",
             log_detail=f"ffprobe timed out after {FFPROBE_TIMEOUT_SECONDS}s",
         ) from exc
-    if returncode != 0 or not stdout.strip():
+    fields = _probe_fields(stdout) if returncode == 0 else {}
+    if returncode == 0:
+        # Before the duration check, so a manifest whose segments did not
+        # open (no duration) is still logged as what it is.
+        _refuse_playlist_demuxer(fields.get("format_name", ""))
+    if returncode != 0 or not fields.get("duration"):
         raise MediaValidationError(
             "This file couldn't be read. It may be corrupted or in a format we don't support.",
             log_detail=(
@@ -109,7 +152,7 @@ async def probe_duration_seconds(settings: Settings, path: str) -> float:
             ),
         )
     try:
-        return float(stdout.strip())
+        return float(fields["duration"])
     except ValueError as exc:
         raise MediaValidationError(
             "This file couldn't be read. It may be corrupted or in a format we don't support.",

@@ -673,7 +673,9 @@ that revision to head.
   renames `sslmode=` to asyncpg's `ssl=` and keeps the value. Any other
   parameter asyncpg cannot take (`options`, `application_name`,
   `connect_timeout`, `sslcert`/`sslkey`, ...) makes the API and the worker
-  refuse to start, naming it; before 2026-11-20 it failed every query instead.
+  refuse to start, naming it (the name only, never a value or any other part
+  of the URL); before 2026-11-20 it failed every query instead. A password
+  may hold `?`, `&`, `=` or `#` as written; percent-encode an `@` as `%40`.
   Local Postgres without TLS needs nothing.
 - **Pool size.** On the session pooler every open pooled connection is a real
   server connection. Each process opens up to `DATABASE_POOL_SIZE` +
@@ -970,3 +972,4 @@ The release is complete when:
 - 2026-11-20 · Claude (backend agent) · release checklist through 0010 with "migrations before code" and the `alembic_version` grant for the new startup schema check; worker must share `DATABASE_URL` and `STRIPE_*` (what breaks otherwise); "Database connections" (session pooler 5432, `sslmode=require`, pool sizing); `WORKER_JOB_COMPLETION_WAIT_SECONDS`, `DATABASE_POOL_SIZE`, `DATABASE_MAX_OVERFLOW`
 - 2026-11-20 · Claude (backend agent) · re-review: one download budget per run (`DOWNLOAD_DEADLINE_SECONDS`); connection figure doubles during deploy overlap; the schema check protects nothing until the `alembic_version` grant; worker has no health check and what a schema-behind worker does; readiness `schema` is a startup snapshot; `sslmode=require` does not verify the certificate, `sslrootcert` with `verify-full` does; unsupported URL parameters refuse startup
 - 2026-11-20 · Claude (CI agent) · Android release signing: CI signs in a separate `sign` job with apksigner on an unsigned Gradle build, never passing the key to Gradle; documented what the first run with secrets does and how to verify it
+- 2026-11-21 · Claude (backend agent) · Database connections: a password with `?`, `&`, `=` or `#` works as written again; a refused parameter is named without its value or any other part of the URL

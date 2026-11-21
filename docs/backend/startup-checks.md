@@ -109,7 +109,15 @@ Every query parameter is handed to asyncpg's `connect()`, which takes a
 fixed set of keywords, so a libpq-only one (`options`, `application_name`,
 `connect_timeout`, `sslcert`, `sslkey`, ...) used to make every connection
 fail with a TypeError at the first query. It is now a ValueError at startup
-naming the parameters (never their values). `sslmode` is renamed to `ssl`;
+naming the parameters. The message is fixed text plus parameter names only,
+and only names shaped like one (a letter, then letters, digits, `_`, `.`,
+`-`); any other name is counted, never printed, and no value or other part
+of the URL ever is. The query string is found where SQLAlchemy's own parser
+finds it, the first `?` after the user info, so a password holding a raw
+`?`, `&`, `=`, `#` or `/` (or a percent-encoded `@`) is a password, not
+parameters (before 2026-11-21 a raw `?` or `&` in it refused startup and
+printed pieces of it). A raw `@` in the password still ends it early, as
+SQLAlchemy reads it; percent-encode it as `%40`. `sslmode` is renamed to `ssl`;
 an empty one is refused. `sslrootcert` is translated, not passed through:
 with `sslmode=verify-full` it becomes an `ssl.SSLContext` trusting only that
 CA and checking the host name, with `verify-ca` the same without the host
@@ -175,3 +183,4 @@ and what a cancelled run does are in `job-queue.md` and `run-processing.md`.
 - 2026-11-20 · Claude (backend agent) · created: one `validate_startup(role)` for the API and the worker, the `alembic_version` check (`EXPECTED_SCHEMA_REVISION`, refuse when behind or missing on Postgres, warn when ahead), the mode line, worker JSON logging and `container.close()` on shutdown
 - 2026-11-20 · Claude (backend agent) · tests: API lifespan, worker crons, model-vs-migration drift
 - 2026-11-20 · Claude (backend agent) · re-review: readiness `schema` documented as a startup snapshot; the check protects nothing until the grant; the worker has no health check and what a refused worker does; "Database URL": unsupported parameters refuse startup, `sslrootcert` becomes an SSL context with `verify-full`/`verify-ca`
+- 2026-11-21 · Claude (backend agent) · second re-review: the query string is split after the user info as SQLAlchemy does, so a password with `?`, `&`, `=` or `#` connects again; the refusal prints only well-formed parameter names, never values or URL pieces

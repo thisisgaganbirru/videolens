@@ -319,6 +319,45 @@ class DeadlineMechanicsTests(unittest.TestCase):
         self.assertIn(conn.sock, tracked)
         self.assertIsInstance(conn.sock, ssl.SSLSocket)
 
+    def test_a_connection_made_after_the_deadline_fired_reports_the_deadline(self) -> None:
+        # 2026-11-21 re-review: tracking a socket after the deadline fired
+        # shuts it at once; on Linux (shutdown only) the handshake then raised
+        # AttributeError, which callers report as "couldn't be downloaded".
+        # Simulated here by swapping the module's `os` for each platform.
+        from types import SimpleNamespace
+
+        for os_name in ("posix", "nt"):
+            with self.subTest(os_name=os_name), patch.object(deadline_module, "os", SimpleNamespace(name=os_name)):
+                tls = _LoopbackTLS(self, trickle=False)
+                conn = PinnedHTTPSConnection(
+                    "localhost", tls.port, timeout=5, context=tls.client_context, pinned_address="127.0.0.1"
+                )
+                self.addCleanup(conn.close)
+                with DownloadDeadline(60) as deadline:
+                    deadline._fire()
+                    with self.assertRaises(DownloadDeadlineExceeded):
+                        conn.request("GET", "/")
+                tls.stop()
+        # urllib wraps only OSError in URLError, so the resolvers see it as is.
+        self.assertFalse(issubclass(DownloadDeadlineExceeded, OSError))
+
+    def test_a_handshake_cut_off_by_the_deadline_reports_the_deadline(self) -> None:
+        # A server that accepts and never answers the ClientHello.
+        listener = socket.socket()
+        self.addCleanup(listener.close)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        conn = PinnedHTTPSConnection(
+            "localhost", listener.getsockname()[1], timeout=10, context=ssl.create_default_context(),
+            pinned_address="127.0.0.1",
+        )
+        self.addCleanup(conn.close)
+        started = time.monotonic()
+        with DownloadDeadline(0.3):
+            with self.assertRaises(DownloadDeadlineExceeded):
+                conn.connect()
+        self.assertLess(time.monotonic() - started, 5)
+
     def test_no_deadline_outside_a_download(self) -> None:
         self.assertIsNone(deadline_module.current_deadline())
         track_socket(MagicMock())  # a no-op, never an error
