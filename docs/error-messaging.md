@@ -125,8 +125,8 @@ never reaches the run). No frontend test runner exists — see
 
 ### Re-review additions (2026-11-20)
 
-- Run creation while the server's sign-in status is unknown after 8 s, or
-  the token cannot be read: "Your sign-in could not be confirmed just now,
+- Run creation while the server's sign-in status is unknown (or, since
+  2026-11-21, `degraded`) after up to 8 s, or the token cannot be read: "Your sign-in could not be confirmed just now,
   so the run was not sent. Check your connection and try again." The run is
   never sent anonymously instead. A poll in the same state gets the
   general sign-in-unconfirmed message and reconnects on its own.
@@ -146,3 +146,4 @@ never reaches the run). No frontend test runner exists — see
 - 2026-11-02 · frontend agent (refinement 9) · `recoveryAdvice` now takes the run's error: a link run whose message contains "site blocked this download" (backend `_BLOCKED_DOWNLOAD`, 796d71e) is told to try the same link later or upload the file, not to try a different link. Text match only, because no reason code reaches the client. See the Known issues entry on reason codes, which would retire it
 - 2026-11-20 · Claude (frontend agent) · credential 429 detail, 413 and upload cut-off, keys-unavailable 503, poll 401/403/410, slow-download and interrupted advice
 - 2026-11-20 · Claude (frontend agent) · create with unconfirmed sign-in gets its own message (never sent anonymous); copies-removal and remove-from-device failures surfaced
+- 2026-11-21 · Claude (frontend agent) · the sign-in-unconfirmed message now also covers a `degraded` auth capability; wording unchanged

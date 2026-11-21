@@ -72,7 +72,12 @@ export interface HistoryStore {
  *  key, nothing that scopes the answer to one user. It describes the server,
  *  not the caller's runs. */
 export interface CapabilitiesGateway {
+  /** One read at a time: a call while a read is in flight shares it. */
   fetchReport(): Promise<CapabilityReport>;
+  /** Hears every report that arrives, whoever asked for it (2026-11-21: the
+   *  transport re-reads while sign-in is unconfirmed, and the screens that
+   *  show capabilities must see the newer answer). Returns unsubscribe. */
+  subscribe(listener: (report: CapabilityReport) => void): () => void;
 }
 
 /** The run this browser tab is watching, kept for the tab's lifetime so a
@@ -343,14 +348,29 @@ export interface AuthSession {
  *  on `ok`, because the backend reads a bearer *instead of* `X-Client-ID`: a
  *  server without a matching verifier would answer 401/503 to every caller
  *  route (auth phase 2). Fed by the capabilities adapter, read by the API
- *  client. */
-export type ServerAuthState = "unknown" | "ok" | "off";
+ *  client.
+ *
+ *  `degraded` (2026-11-21): the server verifies tokens but could not reach
+ *  the sign-in keys just now. Not `off`: a person signed in must not be sent
+ *  anonymous because of a blip, so the client treats it like `unknown`
+ *  (waits, then fails as "sign-in could not be confirmed") and asks again. */
+export type ServerAuthState = "unknown" | "ok" | "off" | "degraded";
 
 export interface ServerAuthStatus {
   current(): ServerAuthState;
   report(state: Exclude<ServerAuthState, "unknown">): void;
-  /** Resolves with the state once known, or with `unknown` after `maxMs`. */
+  /** Resolves as soon as the state is decisive (`ok` or `off`), or after
+   *  `maxMs` with whatever it is then (`unknown` or `degraded`). While it
+   *  waits it asks for fresh reports (see `requestReport`). */
   settled(maxMs: number): Promise<ServerAuthState>;
+  /** A caller needs a decisive state and does not have one: ask the
+   *  capabilities source to read again. Deduplicated (one read in flight)
+   *  and spaced (a minimum interval), so a failing backend is not hammered.
+   *  A no-op until a reader is registered. */
+  requestReport(): void;
+  /** Registers the one reader `requestReport` runs (the composition root
+   *  wires the capabilities adapter). Its failure is swallowed. */
+  setReader(reader: () => Promise<unknown>): void;
 }
 
 /** Which identity the app's requests are going out as, so a History record

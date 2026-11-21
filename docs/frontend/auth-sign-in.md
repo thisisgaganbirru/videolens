@@ -618,6 +618,38 @@ copy now explains the hold. Everything is in `saved-history.md`.
   account's runs leave this browser's History (deletion signs out), and that
   runs made signed out and the Gemini key stay.
 
+## Second re-review fixes (2026-11-21)
+
+- **`degraded` is its own state.** `ServerAuthState` is now
+  `unknown | ok | off | degraded`. The capabilities adapter maps the `auth`
+  row `ok` → `ok`, `degraded` (the sign-in keys briefly unreachable) →
+  `degraded`, anything else (`disabled`, a missing row, an unknown state) →
+  `off`. It used to map `degraded` to `off`, so a signed-in person's
+  requests went out anonymous for the rest of the page load and their runs
+  were filed `anonymous`, surviving sign-out. With a session stored,
+  `bearer()` treats `degraded` like `unknown`: it waits, and fails with the
+  same retryable `SignInUnconfirmedError` message. No session stored: no
+  change at all (no wait, no re-read).
+- **The status recovers without a reload.** `MemoryServerAuthStatus.settled`
+  resolves as soon as the state is `ok` or `off` (a `degraded` report does
+  not end the wait), and asks for a fresh report when it starts waiting
+  (`requestReport`). Reads are deduplicated twice over: the capabilities
+  adapter shares one in-flight `fetchReport()` with every caller, and the
+  status starts at most one read per 5 s, with one trailing read while
+  someone is still waiting. So during an 8 s wait the report is read up to
+  twice, and a failing backend sees at most one read per 5 s, only while a
+  signed-in request is waiting. The reader is wired in `container.ts`
+  (`serverAuthStatus.setReader`), so it works on every route.
+- **Screens see the newer report.** `CapabilitiesGateway.subscribe` hears
+  every report, whoever asked; `useCapabilities` and `useAccountEntry`
+  listen, so a recovered `auth` row shows the Account tab and entry without
+  a reload.
+- **Opening a run decides ownership from the record.** `openRun` no longer
+  lets a sign-out during the History read clear Analyze on its provisional
+  "may be an account's" guess: the decision waits for the record
+  (`ownerPendingRef`/`deferredLeaveRef` in `useAnalysisRun`), and only an
+  account's (or unknown-owner) run is cleared.
+
 ## Changelog
 
 - 2026-11-14 · Codex · emphasised runs left with reset below, shortened device descriptions, added static loading/failure feedback, separated ending actions, made Send code full width on phones, and adjusted section heading emphasis; browser verification unavailable this session
@@ -653,3 +685,4 @@ copy now explains the hold. Everything is in `saved-history.md`.
 - 2026-11-14 · frontend agent · `AccountEntitlement.complimentary` typed; the Plan and usage card reads it (complimentary Plus: "Plus" plus "Complimentary. Nothing to pay."), see billing.md
 - 2026-11-20 · Claude (frontend agent) · sign-out clears account-owned History rows; `unconfirmed` session state with Retry / Continue signed out (`AuthSession.recover`); keys-unavailable 503 on /api/me shown as temporary with no sign-out; `ApiError.retryAfter`; new-key status announces the sentence, not the secret; device-group note copy
 - 2026-11-20 · Claude (frontend agent) · bearer waits 8 s then fails with `SignInUnconfirmedError` (never anonymous); owner returned by `identityHeaders`; cross-tab sign-out via `storage`; Analyze reset on sign-out; one 401 retry on polls; deletion copy corrected
+- 2026-11-21 · Claude (frontend agent) · `degraded` auth kept as its own state (never anonymous with a session); capabilities re-read while a signed-in request waits (deduplicated, 5 s spacing), wait ends as soon as the state is decisive; `CapabilitiesGateway.subscribe` so screens see the newer report; `openRun` decides sign-out clearing from the record's owner

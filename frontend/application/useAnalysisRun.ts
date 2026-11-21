@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AnalysisCompleteness,
   FreeRunsStatus,
+  HistoryRecord,
   MediaSource,
   RunStatus,
   RunSourceKind,
@@ -268,6 +269,12 @@ export function useAnalysisRun() {
      run must not stay on Analyze for the next person on the device. Unknown
      counts as the account's. */
   const accountScreenRef = useRef(false);
+  /* 2026-11-21: the generation of an `openRun` still reading History's
+     record (its owner not known yet), and the generation a sign-out arrived
+     during that read. The sign-out's decision waits for the record, so an
+     anonymous run being resumed is not cleared on a provisional guess. */
+  const ownerPendingRef = useRef(-1);
+  const deferredLeaveRef = useRef(-1);
   /* The one quiet retry after a 401 (see AUTH_RETRY_MS) is spent; any good
      response gives it back. */
   const authRetriedRef = useRef(false);
@@ -705,13 +712,22 @@ export function useAnalysisRun() {
     if (!authSession.enabled) return;
     let lastUser = authSession.user()?.id ?? null;
     let accountSeen = authSession.hasSession();
+    const leave = () => {
+      /* An opened run whose owner History has not told us yet: decided once
+         the record is read (openRun), not on the provisional guess. */
+      if (ownerPendingRef.current === generationRef.current) {
+        deferredLeaveRef.current = generationRef.current;
+        return;
+      }
+      if (accountScreenRef.current) reset();
+    };
     const onSessionChange = () => {
       const user = authSession.user();
       if (user) {
         const before = lastUser;
         lastUser = user.id;
         accountSeen = true;
-        if (before && before !== user.id && accountScreenRef.current) reset();
+        if (before && before !== user.id) leave();
         return;
       }
       if (authSession.hasSession()) {
@@ -721,7 +737,7 @@ export function useAnalysisRun() {
       lastUser = null;
       if (!accountSeen) return;
       accountSeen = false;
-      if (accountScreenRef.current) reset();
+      leave();
     };
     return authSession.subscribe(onSessionChange);
   }, [reset]);
@@ -757,8 +773,10 @@ export function useAnalysisRun() {
       setStatus("processing");
       const generation = ++generationRef.current;
       /* Whose run: from History's record once it is read, unknown until
-         then (and for an id History has no record of). */
+         then (and for an id History has no record of). A sign-out during the
+         read waits for it (`ownerPendingRef`). */
       accountScreenRef.current = true;
+      ownerPendingRef.current = generation;
       authRetriedRef.current = false;
       /* Whether this browser has its own record of the run. A 404 for one it
          knows means "expired"; for an id it has never seen it just means
@@ -768,12 +786,28 @@ export function useAnalysisRun() {
       /* History first: a finished run reopens from this browser with no
          network at all. Only a record without a result (still running, or
          one the store could not hold) falls through to the server. */
+      let record: HistoryRecord | null = null;
+      let readable = true;
       try {
-        const record = await historyStore.get(runId);
-        if (generationRef.current !== generation) return;
+        record = (await historyStore.get(runId)) ?? null;
+      } catch {
+        readable = false;
+      }
+      if (ownerPendingRef.current === generation) ownerPendingRef.current = -1;
+      if (generationRef.current !== generation) return;
+      accountScreenRef.current = record ? isAccountOwned(record.owner) : true;
+      if (deferredLeaveRef.current === generation) {
+        deferredLeaveRef.current = -1;
+        /* Signed out (or someone else signed in) while the record was read:
+           now that its owner is known, an account's run leaves Analyze. */
+        if (accountScreenRef.current) {
+          reset();
+          return;
+        }
+      }
+      if (readable) {
         if (record) {
           known = true;
-          accountScreenRef.current = isAccountOwned(record.owner);
           knownUrl = record.source_url ?? record.source_metadata?.source_url ?? null;
           if (record.source_kind) setSourceKind(record.source_kind === "link" ? "url" : "file");
           const recordKind = mediaKindOfPlatform(record.platform);
@@ -811,10 +845,8 @@ export function useAnalysisRun() {
           }
           return;
         }
-      } catch {
-        /* no usable History here — ask the server as before */
       }
-      if (generationRef.current !== generation) return;
+      /* (unreadable: no usable History here — ask the server as before) */
       try {
         const run = await runsGateway.getRun(runId);
         if (generationRef.current !== generation) return;
@@ -846,7 +878,7 @@ export function useAnalysisRun() {
         fail(err, OPEN_FALLBACK);
       }
     },
-    [applyRun, clearReconnect, endAccess, expireRun, fail, retryUnauthorized, startPolling, stopTimers]
+    [applyRun, clearReconnect, endAccess, expireRun, fail, reset, retryUnauthorized, startPolling, stopTimers]
   );
 
   /* Refinement 6 (RUN-06 web): on a load of the app, pick up the run this tab

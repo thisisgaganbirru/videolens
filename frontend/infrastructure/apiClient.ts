@@ -1,3 +1,4 @@
+import { ANONYMOUS_OWNER } from "@/domain/entities";
 import { ApiError, NetworkError } from "@/domain/errors";
 import type {
   AccountHoldNotice,
@@ -24,7 +25,8 @@ import { getClientId } from "./clientId";
      (bounded).
 
    A request with a session stored never goes out anonymous (2026-11-20).
-   When the server's report is still unknown after the wait, or the server
+   When the server's report is still unknown (or `degraded`, 2026-11-21)
+   after the wait, or the server
    takes tokens but no token can be had right now, it fails as a
    `SignInUnconfirmedError` instead: an anonymous create would be filed in
    History as `anonymous` and outlive the sign-out, and an anonymous poll of
@@ -72,8 +74,6 @@ export function retryAfterSeconds(value: string | null, now: number = Date.now()
  *  report before it fails (never before it goes out anonymous). */
 const SERVER_AUTH_WAIT_MS = 8000;
 
-export const ANONYMOUS_OWNER = "anonymous";
-
 /** The 410 a held account gets on every identity-resolving route. */
 export const ACCOUNT_PENDING_DELETION = "account_pending_deletion";
 
@@ -118,10 +118,15 @@ export class ApiClient implements CallerIdentity, AccountHoldSource {
    *  stored) and cannot go out signed in. */
   private async bearer(): Promise<string | null> {
     if (!this.auth.enabled || !this.auth.hasSession()) return null;
+    /* Resolves the moment the state is `ok` or `off`; meanwhile it asks for
+       the report again (spaced), so an unknown or degraded state recovers
+       without a reload (2026-11-21). */
     const state = await this.serverAuth.settled(SERVER_AUTH_WAIT_MS);
     /* `off`: this server does not take tokens at all, so everyone is
        anonymous to it, signed in or not. */
     if (state === "off") return null;
+    /* `unknown` or `degraded` after the wait: never anonymous with a
+       session stored. */
     if (state !== "ok") throw new SignInUnconfirmedError(SIGN_IN_UNCONFIRMED);
     try {
       return await this.auth.getToken();

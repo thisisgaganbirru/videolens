@@ -168,6 +168,11 @@ export interface HistoryRecord {
  *  `undefined` keep their stored value. */
 export type HistoryPatch = Partial<HistoryRecord> & { run_id: string };
 
+/** `HistoryRecord.owner` for a run that went out without a bearer: this
+ *  device's anonymous caller. Domain, so the transport that sets it and the
+ *  History rules that read it share one value without importing each other. */
+export const ANONYMOUS_OWNER = "anonymous";
+
 export interface RunListResponse {
   runs: RunSummary[];
 }

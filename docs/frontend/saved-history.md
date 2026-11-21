@@ -219,3 +219,4 @@ finishes while saving, and after a restore.
 - 2026-11-14 · frontend agent · checked complimentary Plus: no billing gate on saved History; verified with mocked responses (Stripe on and off) that the account's runs show as for a subscriber
 - 2026-11-20 · Claude (frontend agent) · saved open keeps the live run alive on failure (own token; generation moves only when the detail is in); Remove from this device on browser-only cards; sign-out note
 - 2026-11-20 · Claude (frontend agent) · "Remove this browser's copies" for local copies of saved runs; a saved run on Analyze is cleared on sign-out
+- 2026-11-21 · Claude (frontend agent) · "Remove this browser's copies" covers copies of the saved runs listed (loaded pages); a copy of a run on an unloaded page cannot be told from a pre-Plus run locally, so Privacy now says "the saved runs listed there" (see run-history.md)

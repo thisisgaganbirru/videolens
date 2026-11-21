@@ -27,7 +27,7 @@ and host → platform), `ports.ts` (the interfaces below).
 | `SavedHistoryGateway` | `savedHistoryGateway.ts` | `/api/history`, `/api/history/{run_id}` (paid saved runs) |
 | `AccountHoldSource` | `apiClient.ts` | the shared client itself: tells listeners about every 410 `account_pending_deletion` |
 | `ServerAuthStatus`, `CallerIdentity` | `serverAuthStatus.ts`, `apiClient.ts` | the server's `auth` capability (fed by the capabilities adapter, gates the bearer); the identity requests go out as (History `owner`) |
-| `CapabilitiesGateway` | `capabilitiesGateway.ts` | `/api/capabilities`, no caller identity |
+| `CapabilitiesGateway` | `capabilitiesGateway.ts` | `/api/capabilities`, no caller identity; one read in flight, `subscribe` hears every report (the server-auth status re-reads through it while sign-in is unconfirmed) |
 | `LimitsGateway` | `limitsGateway.ts` | `/api/limits` (upload length and size per tier), no caller identity |
 | `FreeRunsGateway`, `DeviceTokenStore` | `freeRunsGateway.ts`, `deviceTokenStore.ts` | `/api/free-runs`; `localStorage` |
 | `BillingGateway` | `billingGateway.ts` | `/api/billing`, `/api/billing/checkout`, `/api/billing/portal` |
@@ -170,3 +170,4 @@ scale into the WebView before first paint).
 - 2026-11-14 · frontend agent · `SavedHistoryGateway` + `FetchSavedHistoryGateway`, `AccountHoldSource` (the `ApiClient` itself), `AccountGateway.restoreAccount`, hooks `useSavedHistory` and `accountHold` (`useAccountHold`, `useAccountRestore`, `useRestoredEpoch`), `ConfirmDialog`; see docs/frontend/saved-history.md
 - 2026-11-20 · Claude (frontend agent) · `HistoryStore.remove`/`removeOwnedBy`, `AuthSession.recover`, `ApiClient.sendAs` + `AsOwner` results from `RunsGateway`, `ApiError.retryAfter`, `createRun(source, signal)`; codemap now lists `limitsGateway`/`useMediaLimits`, `layoutHints`/`useLayoutHints`, `authSessionStamp`, `useDocumentTitle`, `accountAllowance`, `useSavedHistory`/`accountHold`; "Adding something new" names `view-scroll`, not `.tab-view`
 - 2026-11-20 · Claude (frontend agent) · `HistoryStore.update` (merge-only, never creates); `FetchFailedError`/`SignInUnconfirmedError` under `NetworkError`; `AuthSession` hears other tabs' sign-out via `storage`
+- 2026-11-21 · Claude (frontend agent) · `ServerAuthState` gains `degraded`; `ServerAuthStatus.requestReport`/`setReader` (wired in `container.ts`); `CapabilitiesGateway.subscribe` and a shared in-flight read; `ANONYMOUS_OWNER` now in `domain/entities.ts`

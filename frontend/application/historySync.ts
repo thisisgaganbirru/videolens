@@ -1,13 +1,13 @@
-import type {
-  HistoryPatch,
-  HistoryRecord,
-  MediaSource,
-  RunStatusResponse,
-  RunSummary,
+import {
+  ANONYMOUS_OWNER,
+  type HistoryPatch,
+  type HistoryRecord,
+  type MediaSource,
+  type RunStatusResponse,
+  type RunSummary,
 } from "@/domain/entities";
 import { ApiError } from "@/domain/errors";
 import { authSession, callerIdentity, historyStore, runsGateway } from "@/infrastructure/container";
-import { ANONYMOUS_OWNER } from "@/infrastructure/apiClient";
 
 /* Everything that writes History, in one place, free of React.
 
@@ -178,8 +178,19 @@ export function recordSubmitted(
     const audio = source.file.type.startsWith("audio/") || /\.mp3$/i.test(source.file.name);
     patch.platform = audio ? "audio_file" : "video_file";
   }
-  historyStore.upsert(patch).catch(ignore);
+  historyStore.upsert(patch).catch(() => {
+    /* The create did not land (quota, a transient IndexedDB error), so no
+       row exists for any tab to update. This tab, and only this one, may
+       try the create again with the next status it observes (2026-11-21). */
+    if (!forgotten.has(runId)) unfiledCreates.set(runId, patch);
+  });
 }
+
+/* Creates from this tab's own submits that failed, keyed by run id. In
+   memory, so no other tab ever holds one: a row removed in another tab was
+   a row this tab created, which takes it out of here, and the retry is
+   checked with `mayCreate` like the first try. */
+const unfiledCreates = new Map<string, HistoryPatch>();
 
 /* Polls arrive every 3s with mostly the same answer. Writing (and making
    History re-read) only when something it shows changed keeps that quiet. */
@@ -196,6 +207,21 @@ export function recordRunResponse(run: RunStatusResponse): void {
   const sig = signature(run);
   if (lastWritten.get(run.run_id) === sig) return;
   lastWritten.set(run.run_id, sig);
+  const unfiled = unfiledCreates.get(run.run_id);
+  if (unfiled) {
+    /* This tab's own submit could not create the row: create it now, as
+       the owner it was submitted as, and only while that owner may still
+       create here (a sign-out since drops it for good). */
+    if (!mayCreate(unfiled.owner ?? null)) {
+      unfiledCreates.delete(run.run_id);
+      return;
+    }
+    historyStore
+      .upsert({ ...unfiled, ...patchFromRun(run) })
+      .then(() => unfiledCreates.delete(run.run_id))
+      .catch(() => lastWritten.delete(run.run_id));
+    return;
+  }
   /* An update only: the row was created on submit (or import). Gone since
      (a sign-out sweep, "Remove from this device", from any tab) means it
      stays gone. */

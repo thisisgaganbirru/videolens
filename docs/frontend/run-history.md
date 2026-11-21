@@ -470,6 +470,30 @@ device") and removes only the local copies; the saved runs stay. A partial
 failure says "Some copies could not be removed from this browser. The ones
 still here are unchanged; try again."
 
+## Second re-review fixes (2026-11-21)
+
+- **A failed submit create is retried by its own tab.** When
+  `recordSubmitted`'s `upsert` rejects (quota, a transient IndexedDB error),
+  the patch is kept in memory in that tab only (`unfiledCreates`). The next
+  status that tab observes (`recordRunResponse`) creates the row, merged
+  with that status, as the owner it was submitted as and only if
+  `mayCreate` still allows it; a sign-out since drops it for good, and a
+  run removed in this tab (`forgotten`) is skipped. Every other follow-up
+  write stays update-only. Residual, narrow: if another tab imported the
+  same run in the seconds between the failed create and this tab's next
+  poll, and the person removed it there, this tab's retry would file it
+  again.
+- **"Remove this browser's copies" covers the saved runs listed.** A local
+  row whose saved run is on a page not loaded yet cannot be told, from the
+  row alone, from a run made before Plus (nothing on the row says it was
+  saved), so removing it would risk deleting a run kept nowhere else. The
+  control keeps covering copies of the loaded saved runs; Load more extends
+  it. Privacy now says "this browser's copies of the saved runs listed
+  there, all at once".
+- `ANONYMOUS_OWNER` moved to `domain/entities.ts` (was
+  `infrastructure/apiClient.ts`), so `historySync` no longer imports an
+  adapter module.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported HistoryPanel to day-grouped rows with status dots; fixed duplicate React keys on non-adjacent "Undated" groups
@@ -492,3 +516,4 @@ still here are unchanged; try again."
 2026-11-14 · frontend agent · paid saved history: while the account saves runs (or the plan ended) History lists the account's runs with Load more, browser-only runs in a quieter second group, no filters/search/sort; free and anonymous unchanged (see saved-history.md)
 - 2026-11-20 · Claude (frontend agent) · History: account-owned rows (`owner` `user:*`) leave this device on every sign-out path; anonymous and legacy rows stay; "Remove from this device" on browser-only cards; `HistoryStore.remove`/`removeOwnedBy`; owner taken from the request (`sendAs`); stale useMediaQuery reference marked superseded
 - 2026-11-20 · Claude (frontend agent) · update-only follow-up writes (`HistoryStore.update`), creates only for the signed-in account (`mayCreate`), cross-tab sign-out heard via `storage`, double sweep on sign-out, `forgetRun` failure clears the tombstone, Plus "Remove this browser's copies"; remaining gap: per-tab tombstones
+- 2026-11-21 · Claude (frontend agent) · submitting tab retries its own failed create (in-memory `unfiledCreates`, `mayCreate`-checked); copies removal scope stated (listed saved runs) and Privacy softened; `ANONYMOUS_OWNER` moved to domain

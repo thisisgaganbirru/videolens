@@ -198,3 +198,4 @@ found." behaviour. Network errors and 5xx keep the reconnect countdown.
 - 2026-11-14 · frontend agent · button label "Analyze another" (UX fix spec batch a)
 - 2026-11-20 · Claude (frontend agent) · upload aborted on reset/unmount (`createRun(source, signal)`); owner returned with the create response; poll stops on 401/403/410 with its own message; saved open keeps the live run; recovery advice for slow-download and interrupted runs
 - 2026-11-20 · Claude (frontend agent) · Analyze reset on sign-out via session subscription (account-owned runs only); one 401 retry; create errors split by cause
+- 2026-11-21 · Claude (frontend agent) · `openRun`: a sign-out (or another person signing in) during the History read is deferred until the record's owner is known (`ownerPendingRef`/`deferredLeaveRef`), so a resumed anonymous run is not cleared on the provisional guess
