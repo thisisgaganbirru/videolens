@@ -656,12 +656,18 @@ Four layers keep it out, from source to gate:
   belongs to the lanes' copy only. The separate workflow covers every event
   the lanes do (`opened`, `synchronize`, `reopened`, plus `edited`), so the
   lanes' copy is redundant for blocking; it stays because `required` needs
-  it, and removing it is a separate change.
+  it, and removing it is a separate change. Only `pr-hygiene` re-runs on
+  `edited`: when a lane's copy failed on the title or description, fixing
+  the text turns `pr-hygiene` green, but that lane's `required` stays red
+  until a push or a manual re-run of the lane.
 - The title and description are fetched with `gh api` into a variable first:
   a failed call or an empty title fails the job instead of checking empty
   text (an empty description is fine).
 - CI runs the **base branch's** copy of the script, so a PR cannot weaken the
-  rules that judge it; a rule change applies to PRs after it merges. That
+  rules that judge it; a rule change applies to PRs after it merges. A base
+  without the script falls back to the PR's copy with a `::warning::`. `dev`
+  has it; `main` does not until the first promotion that carries it merges,
+  so that first `dev` -> `main` promotion PR is judged by its own copy. That
   covers the script only. On `pull_request` the workflow files
   (`commit-hygiene.yml`, the lanes, `reusable-commit-hygiene.yml`) run from
   the PR's merge ref, so a PR that edits them can change or drop the check,
@@ -690,20 +696,29 @@ same day after a re-review):
 - Claude model identifiers anywhere: `claude-opus-…`, `claude-sonnet-…`,
   `claude-haiku-…`, `claude-fable-…`, `claude-instant-…`, `claude-<digit>…`
   (`_` counts as `-`), and display names such as `Claude Opus 5.5` or
-  `Claude 3.5 Sonnet`. Text inside `<details>` blocks is exempt from this one
-  rule only: Dependabot puts upstream release notes and commit lists there,
-  which can name a model and which nobody here wrote. Trailers and footers
-  inside `<details>` are still rejected.
+  `Claude 3.5 Sonnet`. In a PR description or title only (body mode, not
+  commit messages), the lines strictly between a line that opens with
+  `<details` and its matching line that opens with `</details>` are exempt
+  from this one rule: Dependabot puts upstream release notes and commit
+  lists there, which can name a model and which nobody here wrote. The tag
+  lines themselves are checked, nesting counts, and an unclosed block or a
+  `<details>` anywhere but the start of a line exempts nothing. Trailers and
+  footers inside `<details>` are still rejected.
 - an author or committer at any `anthropic.com` address (any local part or
   subdomain, any letter case), or named `Claude`, `Claude Code` or a Claude
   model name
 
 Before matching, the text is normalised: zero-width and bidi characters are
-dropped, Unicode hyphens, spaces and curly quotes fold to ASCII, a few
+dropped, Unicode hyphens, spaces, curly quotes and the fullwidth colon fold to ASCII, a few
 Cyrillic letters that look Latin (а, е, о, с, р, х, у, і and capitals) fold to
 Latin, whitespace runs squeeze to one space, leading `>`, `*`, `-`, `+` and
 `<!--` markers are stripped, and a footer split after "Generated with" is
-rejoined. Still open, by choice: other homoglyphs (Greek, fullwidth Latin,
+rejoined, across blank lines too. The commit-msg hook cuts the message at
+git's scissors line (`# ------------------------ >8 ------------------------`),
+as git does, so `git commit -v` with a staged diff that names a model passes;
+CI checks the commit as made, so the cut hides nothing from it. Passing runs
+say what they checked (`Checked N commit(s) in base..head.`, `Checked the
+pull request title.`), so a green log is not silent. Still open, by choice: other homoglyphs (Greek, fullwidth Latin,
 mathematical letters), a line that opens with a quote mark (treated as
 quoting the rule), a footer reworded beyond the known forms, and a trailer
 split across lines.
@@ -787,3 +802,4 @@ Re-verify before fixing; do not treat the line numbers as authoritative.
 - 2026-11-20 · Claude (CI agent) · Commit hygiene: documented the widened rule set (AI co-author trailers, plain footer, model ids, session URLs, case-insensitive identity), title checking, base-branch script and the `edited` workflow, and why no `ccr-` pattern; landing-order list now says which tooling exists (`.gitattributes`, Dependabot) and which is not adopted (SECURITY.md, CODEOWNERS, templates, CodeQL, secret scanning)
 - 2026-11-20 · Claude (backend agent) · layering section names the two remaining cross-layer imports instead of stale line numbers and records the re-measurement (still exactly two); Protocol count 9 -> 26, infrastructure module count 13 -> 41, generic failure message updated to the current string
 - 2026-11-20 · Claude (CI agent) · Commit hygiene after the re-review: distinct check names (require `pr-hygiene / Commit hygiene`), title/description fetch fails closed, base-branch protection scoped to the script (workflow files need owner review; CODEOWNERS recommended), co-author patterns on whole words and known tool identities, any `anthropic.com` identity, normalisation against cheap evasions, `<details>` exempt from the model-id rule, `gradlew` LF
+- 2026-11-21 · Claude (CI agent) · Commit hygiene after the second re-review: `<details>` exemption limited to body mode and to lines strictly inside a closed block that opens and closes at line start; commit-msg hook cuts at git's scissors line; fullwidth colon folded and the footer rejoin skips blank lines; passing runs print what they checked; documented that `main` lacks the script until the first promotion and that fixing a title re-runs only `pr-hygiene`

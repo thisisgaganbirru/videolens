@@ -23,11 +23,14 @@
 # spaces, quotes and a few Cyrillic look-alike letters folded to ASCII, `_`
 # read as `-`, whitespace runs squeezed, leading quote/bullet/comment markers
 # (`>`, `*`, `-`, `+`, `<!--`) stripped, and a footer split after "Generated
-# with" rejoined. Trailers and footers are matched where they stand (start of
-# a line), so prose that names the rule, a line that opens with a quote mark,
-# "Update CLAUDE.md" or a path under .claude/ still passes. Model identifiers
-# are matched anywhere except inside <details> blocks, where Dependabot puts
-# upstream release notes and commit lists.
+# with" rejoined (across blank lines too). Trailers and footers are matched
+# where they stand (start of a line), so prose that names the rule, a line
+# that opens with a quote mark, "Update CLAUDE.md" or a path under .claude/
+# still passes. Model identifiers are matched anywhere, except, in body mode
+# only, on the lines strictly between a line that opens with <details and its
+# matching line that opens with </details>: Dependabot puts upstream release
+# notes and commit lists there. An unclosed block exempts nothing. In msg
+# mode the message is cut at git's scissors line (`git commit -v`).
 #
 # POSIX sh so it also runs from Git for Windows. Everything runs under
 # LC_ALL=C and works on bytes: the folded characters are matched as their
@@ -51,6 +54,7 @@ s/$(o '\342\201\203')/-/g
 s/$(o '\342\210\222')/-/g
 s/$(o '\357\271\243')/-/g
 s/$(o '\357\274\215')/-/g
+s/$(o '\357\274\232')/:/g
 s/$(o '\302\240')/ /g
 s/$(o '\342\200')[$(o '\200-\212')]/ /g
 s/$(o '\342\200\257')/ /g
@@ -109,26 +113,40 @@ normalise() { # stdin -> stdout
   tr -d '\r' | sed -e "$FOLD_SED" | tr '\t_' ' -' | tr -s ' ' |
     sed -E 's/^([[:space:]]|>|[-*+]|<!--)+//' |
     awk '{
-      if (held != "") { print held " " $0; held = "" }
+      if (held != "") {
+        if ($0 ~ /^ *$/) next
+        print held " " $0; held = ""
+      }
       if (tolower($0) ~ /generated (with|by) ?$/) { held = $0; next }
       print
     } END { if (held != "") print held }'
 }
 
-drop_details() { # stdin -> stdout, without <details>...</details> lines
+# stdin -> stdout. Drops the lines strictly between a line that opens with
+# <details (and does not also close it) and its matching line that opens with
+# </details>; both tag lines are kept. Nested blocks count. An unclosed block
+# drops nothing: its lines are held and printed at the end.
+drop_details() {
   awk '{
     l = tolower($0)
-    opens = gsub(/<details/, "", l); closes = gsub(/<\/details>/, "", l)
-    skip = (depth > 0 || opens > 0)
-    depth += opens - closes; if (depth < 0) depth = 0
-    if (!skip) print
-  }'
+    open = (l ~ /^<details([ >]|$)/ && index(l, "</details>") == 0)
+    shut = (l ~ /^<\/details>/)
+    if (depth == 0) { print; if (open) { depth = 1; n = 0 }; next }
+    if (shut && depth == 1) { depth = 0; n = 0; print; next }
+    buf[++n] = $0
+    if (open) depth++
+    else if (shut) depth--
+  } END { for (i = 1; i <= n; i++) print buf[i] }'
 }
 
-scan_text() { # $1 = label, text on stdin; prints x on a hit
+scan_text() { # $1 = label, $2 = details (body mode); text on stdin; prints x on a hit
   text=$(normalise)
   hit=$(printf '%s\n' "$text" | grep -E -i -n -e "$PATTERNS" || true)
-  models=$(printf '%s\n' "$text" | drop_details | grep -E -i -n -e "$MODEL_PATTERNS" || true)
+  if [ "${2:-}" = details ]; then
+    models=$(printf '%s\n' "$text" | drop_details | grep -E -i -n -e "$MODEL_PATTERNS" || true)
+  else
+    models=$(printf '%s\n' "$text" | grep -E -i -n -e "$MODEL_PATTERNS" || true)
+  fi
   if [ -n "$hit$models" ]; then
     printf '%s: forbidden attribution:\n' "$1" >&2
     [ -z "$hit" ] || printf '%s\n' "$hit" >&2
@@ -152,8 +170,12 @@ is_forbidden_identity() { # $1 = name, $2 = email; case-insensitive
 
 case "${1:-}" in
   msg)
-    # Comment lines are stripped by git before the commit is made.
-    out=$(grep -v '^#' "$2" | scan_text "commit message")
+    # git drops everything from the scissors line down (`git commit -v` puts
+    # the staged diff there) and strips comment lines before the commit is
+    # made. CI's range check reads the commit as made, so this cut cannot
+    # hide anything from it.
+    out=$(sed '/^# -\{24\} >8 -\{24\}$/,$d' "$2" | grep -v '^#' |
+      scan_text "commit message")
     [ -n "$out" ] && found=1
     for var in GIT_AUTHOR_IDENT GIT_COMMITTER_IDENT; do
       ident=$(git var "$var")
@@ -181,10 +203,13 @@ case "${1:-}" in
         found=1
       fi
     done
+    n=$(printf '%s\n' "$commits" | grep -c . || true)
+    echo "Checked $n commit(s) in $2..$3."
     ;;
   body)
-    out=$(scan_text "${2:-description}")
+    out=$(scan_text "${2:-description}" details)
     [ -n "$out" ] && found=1
+    echo "Checked the ${2:-description}."
     ;;
   *)
     echo "usage: $0 msg <file> | range <base> <head> | body [label] < text" >&2

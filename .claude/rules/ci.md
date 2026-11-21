@@ -48,7 +48,11 @@ Also:
   branch's copy of the script (not of the workflow files: a PR edits those
   for its own run, so `.github/` changes need the owner's review). Never add
   `edited` to a lane: that run would replace `required` with one that
-  skipped the build. The title/description fetch must fail closed.
+  skipped the build. The title/description fetch must fail closed. Fixing
+  a bad title re-runs only `pr-hygiene`; the lane's `required` stays red
+  until a push or a manual re-run. `main` has no `scripts/commit-hygiene.sh`
+  until the first promotion carrying it merges, so that promotion PR runs
+  its own copy (with a `::warning::`).
 - Images are deliberately unsigned (keyless Cosign writes to the public
   Rekor log). SBOM and provenance stay in-registry. Never pass a secret via
   `build-args`; `provenance: mode=max` records them. Use `secrets`.

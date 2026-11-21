@@ -19,6 +19,9 @@ name: Reusable commit hygiene
 #
 # Called from both lanes (fed into their `required` job) and from
 # commit-hygiene.yml, which re-runs it when a title or description is edited.
+# Only that copy re-runs on `edited`: after a lane's copy failed on the title
+# or description, fixing the text turns `pr-hygiene` green, but the lane's
+# `required` stays red until a push or a manual re-run of the lane.
 # It needs no path filter and finishes in seconds.
 
 on:
@@ -56,8 +59,10 @@ jobs:
             git show "${BASE_SHA}:scripts/commit-hygiene.sh" > "$script"
             echo "Using scripts/commit-hygiene.sh from the base commit ${BASE_SHA}."
           else
-            # Only a base that predates the script (none of dev or main
-            # today) gets here: the PR's copy is the only one there is.
+            # A base that predates the script gets here, and the PR's copy
+            # is the only one there is. dev has the script; main does not
+            # until the first dev -> main promotion that carries it merges,
+            # so that promotion PR runs its own copy, with this warning.
             cp scripts/commit-hygiene.sh "$script"
             echo "::warning::The base branch has no scripts/commit-hygiene.sh; using this pull request's copy."
           fi
