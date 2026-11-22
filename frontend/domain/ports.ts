@@ -37,8 +37,11 @@ export interface RunsGateway {
 
 /**
  * This browser's run History — the only copy that outlives the server's
- * one-hour hold on a run. Capped: once more than `HISTORY_LIMIT` runs are
- * stored, the oldest (by `created_at`) is dropped.
+ * one-hour hold on a run. Capped per viewer (2026-11-21): once more than
+ * `HISTORY_LIMIT` runs that the written row's owner can see
+ * (`isVisibleOwner`) are stored, the oldest of those (by `created_at`) is
+ * dropped. A row hidden from that owner (another account's, kept while it is
+ * signed out) is never dropped by someone else's run.
  *
  * The read and write methods reject with `StorageUnavailableError` when the
  * browser offers no usable storage; callers that only *write* history swallow
@@ -53,15 +56,18 @@ export interface HistoryStore {
   upsert(patch: HistoryPatch): Promise<void>;
   /** Merge into the stored record only when it is still there; never
    *  creates one. Resolves whether a row was updated. The check and the
-   *  write share one transaction, so a row removed meanwhile (sign-out, from
-   *  any tab) stays removed. */
-  update(patch: HistoryPatch): Promise<boolean>;
+   *  write share one transaction, so a row removed meanwhile (from any tab)
+   *  stays removed. `when`, if given, is asked about the stored row inside
+   *  that transaction; false writes nothing and resolves false (2026-11-21:
+   *  a row hidden from whoever is signed in now is never updated). */
+  update(patch: HistoryPatch, when?: (existing: HistoryRecord) => boolean): Promise<boolean>;
   /** Drop one stored run from this device. Resolves (a no-op) when storage
    *  is unavailable: there is nothing kept here to remove. */
   remove(runId: string): Promise<void>;
   /** Drop every stored run whose `owner` passes `match`; resolves with how
    *  many went. Rows with no owner are never matched. Resolves 0 when storage
-   *  is unavailable, like `remove`. */
+   *  is unavailable, like `remove`. Used only when an account is deleted from
+   *  this browser (2026-11-21); a plain sign-out removes nothing. */
   removeOwnedBy(match: (owner: string) => boolean): Promise<number>;
   /** Called after any write, from this tab or another. Returns unsubscribe. */
   subscribe(listener: () => void): () => void;

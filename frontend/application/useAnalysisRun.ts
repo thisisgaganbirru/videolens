@@ -17,6 +17,7 @@ import { classifyGatewayError } from "@/application/gatewayError";
 import {
   EXPIRED_MESSAGE,
   isAccountOwned,
+  isVisibleNow,
   isRunGone,
   OTHER_OWNER_MESSAGE,
   recordGone,
@@ -202,6 +203,11 @@ export function useAnalysisRun() {
   const [sourceMetadata, setSourceMetadata] = useState<SourceMetadata | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  /* 2026-11-21: the run on screen has been answered for by the server since
+     it was put there (accepted on submit, or a status response applied).
+     False while `openRun` is still reading History or waiting for its first
+     answer, so a run being reopened does not count as one being followed. */
+  const [live, setLive] = useState(false);
   /* The link or file name of the run on screen, for the progress view's source
      chip. Known only for runs submitted in this session; a run reopened from
      History has none until its metadata arrives. */
@@ -348,6 +354,7 @@ export function useAnalysisRun() {
        History — that is how a run survives the server forgetting it. */
     recordRunResponse(run);
     authRetriedRef.current = false;
+    setLive(true);
     setStatus(run.status);
     setStage(run.stage);
     const kind = mediaKindOfPlatform(run.platform);
@@ -603,6 +610,7 @@ export function useAnalysisRun() {
       setSourceKind(source.url ? "url" : "file");
       setMediaKind(mediaKindOfSource(source));
       setFreeRunRefunded(false);
+      setLive(false);
       /* Taken before the request, so it is the count this run would spend
          from. Unknown (null) means no refund line can ever be claimed. */
       freeRunsBeforeRef.current = usingOwnKey() ? null : currentFreeRuns();
@@ -637,6 +645,7 @@ export function useAnalysisRun() {
         setSourceName(describeSource(source));
         setRetrySource(source);
         liveUrlRef.current = source.url || null;
+        setLive(true);
         setStatus(run.status);
         startPolling(run.run_id, generation);
       } catch (err) {
@@ -681,6 +690,7 @@ export function useAnalysisRun() {
     freeRunsBeforeRef.current = null;
     accountScreenRef.current = false;
     authRetriedRef.current = false;
+    setLive(false);
     setStatus("idle");
     setStage(null);
     setSourceKind("file");
@@ -698,8 +708,8 @@ export function useAnalysisRun() {
 
   /* 2026-11-20: signing out (here, by account deletion, "Continue signed
      out", or in another tab) takes an account's run off Analyze, so the next
-     person on this device cannot read it; History drops the same rows
-     (`forgetAccountHistory`). Heard from the session itself, so every one of
+     person on this device cannot read it; History hides the same rows
+     (2026-11-21: hidden, not removed). Heard from the session itself, so every one of
      those paths is covered. The rules:
      - only after someone was signed in (or a session was stored) during
        this mount, so a person who never signed in keeps their own result;
@@ -770,6 +780,7 @@ export function useAnalysisRun() {
       setFreeRunRefunded(false);
       setMediaKind(null);
       setSourceKind(sourceKindHint === "link" ? "url" : "file");
+      setLive(false);
       setStatus("processing");
       const generation = ++generationRef.current;
       /* Whose run: from History's record once it is read, unknown until
@@ -795,6 +806,16 @@ export function useAnalysisRun() {
       }
       if (ownerPendingRef.current === generation) ownerPendingRef.current = -1;
       if (generationRef.current !== generation) return;
+      /* 2026-11-21: a row hidden from whoever is signed in now (another
+         account's, kept while it is signed out) is never shown, whether it
+         was asked for from a stale History list or a resumed tab. Nothing is
+         fetched for it and nothing is written; Analyze goes back to the
+         intake. */
+      if (record && !isVisibleNow(record.owner)) {
+        if (deferredLeaveRef.current === generation) deferredLeaveRef.current = -1;
+        reset();
+        return;
+      }
       accountScreenRef.current = record ? isAccountOwned(record.owner) : true;
       if (deferredLeaveRef.current === generation) {
         deferredLeaveRef.current = -1;
@@ -940,6 +961,7 @@ export function useAnalysisRun() {
         liveUrlRef.current = null;
         freeRunsBeforeRef.current = null;
         setFreeRunRefunded(false);
+        setLive(false);
         setRetrySource(null);
         setSourceName(null);
         setStage(null);
@@ -1019,6 +1041,12 @@ export function useAnalysisRun() {
     reconnecting,
     reconnectAttempt,
     lostCause,
+    /* 2026-11-21: whether signing in or out should wait. Only while a
+       submit is on its way (it would be filed under the wrong owner) or a
+       run the server has answered for is still going with no error. A run
+       stalled on the connection-lost screen, reconnecting, or being reopened
+       from History does not hold it. */
+    holdsSignIn: submitting || ((status === "queued" || status === "processing") && !error && live),
     submit,
     retry,
     reconnectNow,

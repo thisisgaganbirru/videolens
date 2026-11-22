@@ -173,6 +173,17 @@ export type HistoryPatch = Partial<HistoryRecord> & { run_id: string };
  *  History rules that read it share one value without importing each other. */
 export const ANONYMOUS_OWNER = "anonymous";
 
+/** Whether History shows a row filed under `owner` to `viewer` (2026-11-21,
+ *  owner decision: signing out hides an account's runs, it does not delete
+ *  them). `viewer` is the signed-in account as an owner (`user:<id>`), or
+ *  null when nobody is. Anonymous rows and rows with no owner (written before
+ *  accounts existed) are everyone's on this device, as they always were; an
+ *  account's rows show only while that same account is signed in here. */
+export function isVisibleOwner(owner: string | null | undefined, viewer: string | null): boolean {
+  if (!owner || owner === ANONYMOUS_OWNER) return true;
+  return owner === viewer;
+}
+
 export interface RunListResponse {
   runs: RunSummary[];
 }

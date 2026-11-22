@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import type { AuthUser } from "@/domain/entities";
 import { AuthFlowError, type AuthFailureReason } from "@/domain/errors";
 import { authSession } from "@/infrastructure/container";
-import { forgetAccountHistory } from "@/application/historySync";
+import { forgetAccountRuns } from "@/application/historySync";
 
 /* The signed-in state as React sees it, and the emailed-code sign-in flow
    (auth phase 2). See docs/frontend/auth-sign-in.md.
@@ -240,21 +240,31 @@ export function useEmailCodeSignIn() {
   return { phase, email, setEmail, sentTo, code, setCode, error, send, resend, resendIn, verify, changeEmail };
 }
 
-/** Signs out on this device, and the runs filed under a signed-in account
- *  leave this device's History with it (2026-11-20; a borrowed device must
- *  not keep someone's results). Anonymous rows stay. Both halves always run:
- *  the provider's sign-out clears the stored session even offline, and the
- *  History removal is local. Never rejects. Also what "Continue signed out"
- *  and account deletion use.
+/** Signs out on this device. The provider's sign-out clears the stored
+ *  session even offline. Never rejects. Also what "Continue signed out" and
+ *  the held account's Sign out use.
  *
- *  The sweep runs twice: at once, so History empties even while the
- *  provider's sign-out call is still on the network, and again once the
- *  session is gone, for a run filed in between (History creates an
- *  account's row only while that account is signed in here, so nothing can
- *  land after the second). */
+ *  2026-11-21 (owner decision, replacing the 2026-11-20 removal): History is
+ *  not touched. The account's runs stay in this browser with their owner,
+ *  hidden from History while it is signed out and listed again when it signs
+ *  in here (`isVisibleOwner`); the session change alone re-reads the list.
+ *  Analyze still clears an account's result (`useAnalysisRun`). */
 export async function signOut(): Promise<void> {
-  await Promise.allSettled([authSession.signOut(), forgetAccountHistory()]);
-  await forgetAccountHistory();
+  await authSession.signOut().catch(() => undefined);
+}
+
+/** Account deletion from this browser: signs out, and that account's own
+ *  runs leave this browser's History, since once the deletion completes
+ *  nobody can sign in to see them again. Only that account's rows: anonymous
+ *  rows and other accounts' hidden rows stay. Removed twice: at once, and
+ *  again once the session is gone, for a run filed in between (an account's
+ *  row is created only while it is signed in here, so nothing lands after
+ *  the second). Never rejects. */
+export async function signOutAndForgetRuns(): Promise<void> {
+  const userId = authSession.user()?.id ?? null;
+  if (!userId) return signOut();
+  await Promise.allSettled([authSession.signOut(), forgetAccountRuns(userId)]);
+  await forgetAccountRuns(userId);
 }
 
 /** Where "Sign out everywhere" is. `failed` keeps the person signed in. */
@@ -278,9 +288,9 @@ export function useSignOutEverywhere() {
     setPhase("working");
     setError(null);
     try {
+      /* Signed out here too; as with `signOut()`, History only hides this
+         account's runs. */
       await authSession.signOutEverywhere();
-      /* Signed out here too: the same History removal as `signOut()`. */
-      await forgetAccountHistory();
       setPhase("idle");
     } catch (err) {
       const reason = err instanceof AuthFlowError ? err.reason : "unknown";

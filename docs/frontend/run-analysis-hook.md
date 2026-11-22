@@ -181,6 +181,23 @@ found." behaviour. Network errors and 5xx keep the reconnect countdown.
   becomes the file upload's cut-off message; `SignInUnconfirmedError`
   becomes its own message (error-messaging.md).
 
+## Sign-out hides History rows (2026-11-21)
+
+- **Screen rule unchanged.** Signing out still clears an account's run from
+  Analyze (`accountScreenRef`); an anonymous run stays. Only History changed:
+  the row is hidden, not removed (run-history.md).
+- **Hidden rows are never opened.** `openRun` reads History's record and, if
+  it is hidden from the account signed in now (`isVisibleNow`), resets to
+  the intake without fetching or writing.
+- **`holdsSignIn`.** Returned by the hook; HomeScreen passes it to the
+  Account panel as `runInProgress`. True while `submitting`, or while the
+  status is queued/processing with no `error` and the server has answered
+  for the run on screen (`live`: set on an accepted submit and in
+  `applyRun`; cleared by submit start, `openRun`, `reset` and a saved
+  open). So the connection-lost screen, a reconnect and a reopen still
+  reading History or waiting for its first answer never hold sign-in or
+  sign-out.
+
 ## Changelog
 
 - 2026-08-21 · main session · made reset() clear the poll interval, and added the generation counter that drops a superseded submit/openRun response
@@ -199,3 +216,4 @@ found." behaviour. Network errors and 5xx keep the reconnect countdown.
 - 2026-11-20 · Claude (frontend agent) · upload aborted on reset/unmount (`createRun(source, signal)`); owner returned with the create response; poll stops on 401/403/410 with its own message; saved open keeps the live run; recovery advice for slow-download and interrupted runs
 - 2026-11-20 · Claude (frontend agent) · Analyze reset on sign-out via session subscription (account-owned runs only); one 401 retry; create errors split by cause
 - 2026-11-21 · Claude (frontend agent) · `openRun`: a sign-out (or another person signing in) during the History read is deferred until the record's owner is known (`ownerPendingRef`/`deferredLeaveRef`), so a resumed anonymous run is not cleared on the provisional guess
+- 2026-11-21 · Claude (frontend agent) · `holdsSignIn` (submit in flight, or a server-confirmed run with no error) replaces HomeScreen's `runInProgress` expression; `openRun` refuses a History row hidden from the viewer

@@ -100,6 +100,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
     reconnecting,
     reconnectAttempt,
     lostCause,
+    holdsSignIn,
     submit,
     retry,
     reconnectNow,
@@ -211,8 +212,11 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   const signInForMinutes =
     showAccount && authUser.ready && !authUser.user && mediaLimits.hasKey ? mediaLimits.upgradeMinutes : null;
   /* Signing in or out changes who owns runs on the server, so a run being
-     watched would stop answering. The Account panel holds both meanwhile. */
-  const runInProgress = submitting || status === "queued" || status === "processing";
+     watched would stop answering. The Account panel holds both meanwhile,
+     but only for a submit on its way or a healthy run the server is
+     answering for (2026-11-21): a stalled, reconnecting or reopening run
+     does not hold it, so Sign out is never left greyed by a dead screen. */
+  const runInProgress = holdsSignIn;
   /* The strip and the out-of-runs offer both depend on whether sign-in is
      offered, which is known only once the capabilities read and the session
      have answered. Until then the slot keeps its stand-in, so the strip

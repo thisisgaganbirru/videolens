@@ -1,5 +1,6 @@
 import {
   ANONYMOUS_OWNER,
+  isVisibleOwner,
   type HistoryPatch,
   type HistoryRecord,
   type MediaSource,
@@ -30,8 +31,18 @@ import { authSession, callerIdentity, historyStore, runsGateway } from "@/infras
    - **update** (`HistoryStore.update`): everything after that (every poll,
      expiry, the reconcile at load, an import's detail). It merges into a row
      that is still there and never creates one, in the same transaction as
-     its check, so a row the sign-out sweep removed, in this tab or another,
-     is never written back. */
+     its check, so a row removed in this tab or another is never written
+     back.
+
+   2026-11-21 (owner decision): signing out no longer removes an account's
+   rows. They stay in this browser with their owner, hidden from History
+   while that account is not the one signed in (`isVisibleOwner`), and shown
+   again when it signs in here. Every update goes through `updateVisible`,
+   which refuses, inside the write's transaction, a row hidden from whoever
+   is signed in at that moment: a late poll for account A's run after A
+   signed out neither shows it nor changes it, and no write ever changes a
+   row's owner. Only deleting the account from this browser removes its
+   rows (`forgetAccountRuns`). */
 
 /** Said on a run that was still in progress when this browser last saw it and
  *  that the server no longer has. Truthful: we do not know whether it would
@@ -54,21 +65,40 @@ function ignore(): void {}
 
 /** Whether a run filed under `owner` belonged to an account rather than to
  *  this device's anonymous caller. Unknown (null) counts as an account's:
- *  privacy errs that way. */
+ *  privacy errs that way. Used for what is on Analyze, which a sign-out
+ *  clears; History lists rows by `isVisibleOwner` instead. */
 export function isAccountOwned(owner: string | null | undefined): boolean {
   return owner !== ANONYMOUS_OWNER;
+}
+
+/** The account signed in on this device right now, as a History owner
+ *  (`user:<id>`), or null when nobody is (or a stored session could not be
+ *  recovered yet, which shows only what is everyone's). Read at call time. */
+export function historyViewer(): string | null {
+  const id = authSession.hasSession() ? authSession.user()?.id : null;
+  return id ? `user:${id}` : null;
+}
+
+/** Whether History may show (or change) a row filed under `owner` now. */
+export function isVisibleNow(owner: string | null | undefined): boolean {
+  return isVisibleOwner(owner, historyViewer());
+}
+
+/** An update that lands only on a row visible to whoever is signed in when
+ *  the write happens (checked inside its transaction). */
+function updateVisible(patch: HistoryPatch): Promise<boolean> {
+  return historyStore.update(patch, (existing) => isVisibleNow(existing.owner));
 }
 
 /** Whether a row may be created for `owner` right now. Anonymous: yes. An
  *  account (`user:<id>`): only while that account is the one signed in on
  *  this device, read at write time, so a create that lands after a sign-out
  *  (here or in another tab, which the session hears) is dropped instead of
- *  outliving the sweep. Unknown (null): never, as nothing could sweep it. */
+ *  being filed for someone no longer here. Unknown (null): never. */
 function mayCreate(owner: string | null): owner is string {
   if (owner === ANONYMOUS_OWNER) return true;
   if (!owner || !isAccountOwner(owner)) return false;
-  const signedIn = authSession.hasSession() ? authSession.user()?.id : null;
-  return !!signedIn && owner === `user:${signedIn}`;
+  return owner === historyViewer();
 }
 
 /* ---------- mapping ---------- */
@@ -223,10 +253,10 @@ export function recordRunResponse(run: RunStatusResponse): void {
     return;
   }
   /* An update only: the row was created on submit (or import). Gone since
-     (a sign-out sweep, "Remove from this device", from any tab) means it
-     stays gone. */
-  historyStore
-    .update(patchFromRun(run))
+     ("Remove from this device", account deletion, from any tab) means it
+     stays gone; hidden from whoever is signed in now means it is left as it
+     was. */
+  updateVisible(patchFromRun(run))
     .then((updated) => {
       if (!updated) lastWritten.delete(run.run_id);
     })
@@ -250,10 +280,12 @@ export async function recordExpired(runId: string): Promise<string | null> {
   lastWritten.delete(runId);
   try {
     /* An update: a run with no row here (removed, or never filed) gets
-       none, and the link comes from whatever row is still there. */
-    await historyStore.update({ run_id: runId, status: "failed", error: EXPIRED_MESSAGE });
+       none, and the link comes from whatever row is still there. A row
+       hidden from whoever is signed in is neither changed nor read. */
+    await updateVisible({ run_id: runId, status: "failed", error: EXPIRED_MESSAGE });
     const record = await historyStore.get(runId);
-    return record?.source_url ?? record?.source_metadata?.source_url ?? null;
+    if (!record || !isVisibleNow(record.owner)) return null;
+    return record.source_url ?? record.source_metadata?.source_url ?? null;
   } catch {
     return null;
   }
@@ -348,7 +380,7 @@ async function importSummaries(summaries: RunSummary[], owner: string | null, ha
         /* A row this browser already filed keeps the owner it was filed
            with; one that was legacy (no owner) takes the list's. */
         if (owner && !existing.owner && mayCreate(owner)) patch.owner = owner;
-        if (!(await historyStore.update(patch))) continue;
+        if (!(await updateVisible(patch))) continue;
       } else {
         /* A new row: filed for the identity the list request went out as,
            and only while that identity is still the one here. */
@@ -357,8 +389,8 @@ async function importSummaries(summaries: RunSummary[], owner: string | null, ha
         await historyStore.upsert(patch);
       }
       const run = await runsGateway.getRun(summary.run_id);
-      /* An update: a sign-out during the fetch has swept the row. */
-      await historyStore.update(patchFromRun(run));
+      /* An update: a sign-out during the fetch has hidden the row. */
+      await updateVisible(patchFromRun(run));
     } catch {
       /* silent: whatever made it in, made it in */
     }
@@ -380,7 +412,14 @@ export function importServerRuns(): Promise<void> {
       try {
         await bootHistory();
         const listed = await runsGateway.listRuns();
-        await importSummaries(listed.runs, listed.owner, new Set());
+        const handled = new Set<string>();
+        await importSummaries(listed.runs, listed.owner, handled);
+        /* 2026-11-21: this account's rows were hidden, not removed, while it
+           was signed out, and nothing updated them meanwhile. One left
+           unfinished that the server no longer lists is asked about now, as
+           the boot reconcile would. */
+        const viewer = historyViewer();
+        if (viewer && listed.owner === viewer) await reconcileUnfinished(handled, viewer);
       } catch {
         /* offline, or the server forgot: History is unchanged */
       }
@@ -419,62 +458,58 @@ export async function forgetRun(runId: string): Promise<void> {
   }
 }
 
-let forgetting: Promise<void> | null = null;
-
-/** This device is now signed out (sign out, account deletion, "Continue
- *  signed out", another tab signing out, or a stale signed-in row found at
- *  load with no session stored): every row filed under a signed-in account
- *  (`owner` `user:<id>`, any id) leaves this device. Anonymous rows
- *  (`anonymous`) and rows written before accounts existed (no owner) stay:
- *  they were never an account's. Any id rather than "the one who just left"
- *  because nobody is signed in here afterwards, a stuck session may not know
- *  its id, and it also sweeps rows an older build left behind. Waits for an
- *  identity import still filing rows first. Idempotent, safe from several
- *  tabs at once, never rejects. */
-export function forgetAccountHistory(): Promise<void> {
-  if (!forgetting) {
-    forgetting = (async () => {
-      try {
-        if (identityImport) await identityImport;
-      } catch {
-        /* the import never rejects; belt and braces */
-      }
-      try {
-        const records = await historyStore.list();
-        for (const record of records) {
-          if (record.owner && isAccountOwner(record.owner)) {
-            forgotten.add(record.run_id);
-            lastWritten.delete(record.run_id);
-          }
-        }
-      } catch {
-        /* storage unavailable: nothing is kept here to forget */
-      }
-      try {
-        await historyStore.removeOwnedBy(isAccountOwner);
-      } catch {
-        /* a refused delete leaves the rows; the next sign-out or load tries again */
-      }
-    })().finally(() => {
-      forgetting = null;
-    });
+/** The account `userId` was deleted from this browser (2026-11-21): its rows
+ *  (`owner` `user:<userId>`) leave this device, since nobody could ever sign
+ *  in to see them again once the deletion completes. Only that account's:
+ *  anonymous rows, rows with no owner and other accounts' hidden rows stay.
+ *  A plain sign-out never calls this; it only hides the rows. Waits for an
+ *  identity import still filing rows first. Never rejects. */
+export async function forgetAccountRuns(userId: string): Promise<void> {
+  const owner = `user:${userId}`;
+  try {
+    if (identityImport) await identityImport;
+  } catch {
+    /* the import never rejects; belt and braces */
   }
-  return forgetting;
+  try {
+    const records = await historyStore.list();
+    for (const record of records) {
+      if (record.owner === owner) {
+        forgotten.add(record.run_id);
+        lastWritten.delete(record.run_id);
+        unfiledCreates.delete(record.run_id);
+      }
+    }
+  } catch {
+    /* storage unavailable: nothing is kept here to forget */
+  }
+  try {
+    await historyStore.removeOwnedBy((candidate) => candidate === owner);
+  } catch {
+    /* a refused delete leaves the rows, hidden like any signed-out account's */
+  }
 }
 
 /** A run left queued/processing when the tab closed is asked about once. If
  *  the server has forgotten it (404 — past its one-hour hold), it is marked
  *  failed with a message that says so. Unreachable: left alone for later. */
-async function reconcileUnfinished(skip: Set<string>): Promise<void> {
+async function reconcileUnfinished(skip: Set<string>, onlyOwner?: string): Promise<void> {
+  /* Who is signed in must be known before rows are picked by it. */
+  await authSession.load().catch(ignore);
   const records = await historyStore.list();
   const unfinished = records.filter(
-    (r) => (r.status === "queued" || r.status === "processing") && !skip.has(r.run_id)
+    (r) =>
+      (r.status === "queued" || r.status === "processing") &&
+      !skip.has(r.run_id) &&
+      isVisibleNow(r.owner) &&
+      (onlyOwner === undefined || r.owner === onlyOwner)
   );
   for (const record of unfinished) {
     try {
       const run = await runsGateway.getRun(record.run_id);
-      /* An update: swept while the answer was on its way means gone. */
-      await historyStore.update(patchFromRun(run));
+      /* An update: hidden by a sign-out while the answer was on its way
+         means left alone. */
+      await updateVisible(patchFromRun(run));
     } catch (err) {
       if (isRunGone(err)) await recordGone(record.run_id);
     }
