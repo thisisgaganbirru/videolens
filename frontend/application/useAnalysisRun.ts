@@ -17,6 +17,7 @@ import { classifyGatewayError } from "@/application/gatewayError";
 import {
   EXPIRED_MESSAGE,
   isAccountOwned,
+  isVisibleNow,
   isRunGone,
   OTHER_OWNER_MESSAGE,
   recordGone,
@@ -44,6 +45,11 @@ import {
 } from "@/infrastructure/container";
 
 const POLL_INTERVAL_MS = 3000;
+/* 2026-11-22: how long one server answer keeps sign-in/sign-out held while
+   the run is still going. Five poll intervals: room for a slow answer (the
+   transport may wait up to 8 s for the server's auth report) without ever
+   holding on a reading nobody is refreshing. */
+const HOLD_FRESH_MS = 5 * POLL_INTERVAL_MS;
 
 /* Reconnect schedule after a poll throws: 4s, 8s, 16s, then every 30s until the
    user starts over. The first wait is short because most drops are a blip (a
@@ -202,6 +208,16 @@ export function useAnalysisRun() {
   const [sourceMetadata, setSourceMetadata] = useState<SourceMetadata | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  /* 2026-11-21: the run on screen has been answered for by the server since
+     it was put there (accepted on submit, or a status response applied).
+     False while `openRun` is still reading History or waiting for its first
+     answer, so a run being reopened does not count as one being followed.
+     2026-11-22: and only recently. Each answer keeps it true for
+     HOLD_FRESH_MS (`markAnswered`); with no newer answer by then it goes
+     false on its own, so a status nobody is refreshing any more (a poll
+     stuck before its request, a frozen background tab, a timer stopped by
+     any path) never holds sign-in or sign-out. */
+  const [live, setLive] = useState(false);
   /* The link or file name of the run on screen, for the progress view's source
      chip. Known only for runs submitted in this session; a run reopened from
      History has none until its metadata arrives. */
@@ -278,6 +294,19 @@ export function useAnalysisRun() {
   /* The one quiet retry after a 401 (see AUTH_RETRY_MS) is spent; any good
      response gives it back. */
   const authRetriedRef = useRef(false);
+  /* Ends `live` HOLD_FRESH_MS after the last server answer. Deliberately not
+     cleared by `stopTimers`: whatever stops the poll, the hold lapses. */
+  const freshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /* The server just answered for the run on screen. */
+  const markAnswered = useCallback(() => {
+    setLive(true);
+    if (freshTimerRef.current) clearTimeout(freshTimerRef.current);
+    freshTimerRef.current = setTimeout(() => {
+      freshTimerRef.current = null;
+      setLive(false);
+    }, HOLD_FRESH_MS);
+  }, []);
 
   /* Every timer this hook owns, stopped in one place: unmount, reset, openRun,
      a fresh submit and a successful reconnect all need exactly this. */
@@ -298,6 +327,8 @@ export function useAnalysisRun() {
   useEffect(
     () => () => {
       stopTimers();
+      if (freshTimerRef.current) clearTimeout(freshTimerRef.current);
+      freshTimerRef.current = null;
       uploadRef.current?.abort();
       uploadRef.current = null;
       generationRef.current += 1;
@@ -348,6 +379,7 @@ export function useAnalysisRun() {
        History — that is how a run survives the server forgetting it. */
     recordRunResponse(run);
     authRetriedRef.current = false;
+    markAnswered();
     setStatus(run.status);
     setStage(run.stage);
     const kind = mediaKindOfPlatform(run.platform);
@@ -381,7 +413,7 @@ export function useAnalysisRun() {
       return true;
     }
     return false;
-  }, [settleFreeRuns]);
+  }, [markAnswered, settleFreeRuns]);
 
   /* Refinement 3, #1: the server answered 404 for a run this browser knows
      about — it forgot the run (past its hold, or a restart of an in-memory
@@ -603,6 +635,7 @@ export function useAnalysisRun() {
       setSourceKind(source.url ? "url" : "file");
       setMediaKind(mediaKindOfSource(source));
       setFreeRunRefunded(false);
+      setLive(false);
       /* Taken before the request, so it is the count this run would spend
          from. Unknown (null) means no refund line can ever be claimed. */
       freeRunsBeforeRef.current = usingOwnKey() ? null : currentFreeRuns();
@@ -637,6 +670,7 @@ export function useAnalysisRun() {
         setSourceName(describeSource(source));
         setRetrySource(source);
         liveUrlRef.current = source.url || null;
+        markAnswered();
         setStatus(run.status);
         startPolling(run.run_id, generation);
       } catch (err) {
@@ -662,7 +696,7 @@ export function useAnalysisRun() {
         setSubmitting(false);
       }
     },
-    [clearReconnect, fail, startPolling, stopTimers]
+    [clearReconnect, fail, markAnswered, startPolling, stopTimers]
   );
 
   const reset = useCallback(() => {
@@ -681,6 +715,7 @@ export function useAnalysisRun() {
     freeRunsBeforeRef.current = null;
     accountScreenRef.current = false;
     authRetriedRef.current = false;
+    setLive(false);
     setStatus("idle");
     setStage(null);
     setSourceKind("file");
@@ -698,8 +733,8 @@ export function useAnalysisRun() {
 
   /* 2026-11-20: signing out (here, by account deletion, "Continue signed
      out", or in another tab) takes an account's run off Analyze, so the next
-     person on this device cannot read it; History drops the same rows
-     (`forgetAccountHistory`). Heard from the session itself, so every one of
+     person on this device cannot read it; History hides the same rows
+     (2026-11-21: hidden, not removed). Heard from the session itself, so every one of
      those paths is covered. The rules:
      - only after someone was signed in (or a session was stored) during
        this mount, so a person who never signed in keeps their own result;
@@ -770,6 +805,7 @@ export function useAnalysisRun() {
       setFreeRunRefunded(false);
       setMediaKind(null);
       setSourceKind(sourceKindHint === "link" ? "url" : "file");
+      setLive(false);
       setStatus("processing");
       const generation = ++generationRef.current;
       /* Whose run: from History's record once it is read, unknown until
@@ -795,6 +831,16 @@ export function useAnalysisRun() {
       }
       if (ownerPendingRef.current === generation) ownerPendingRef.current = -1;
       if (generationRef.current !== generation) return;
+      /* 2026-11-21: a row hidden from whoever is signed in now (another
+         account's, kept while it is signed out) is never shown, whether it
+         was asked for from a stale History list or a resumed tab. Nothing is
+         fetched for it and nothing is written; Analyze goes back to the
+         intake. */
+      if (record && !isVisibleNow(record.owner)) {
+        if (deferredLeaveRef.current === generation) deferredLeaveRef.current = -1;
+        reset();
+        return;
+      }
       accountScreenRef.current = record ? isAccountOwned(record.owner) : true;
       if (deferredLeaveRef.current === generation) {
         deferredLeaveRef.current = -1;
@@ -940,6 +986,7 @@ export function useAnalysisRun() {
         liveUrlRef.current = null;
         freeRunsBeforeRef.current = null;
         setFreeRunRefunded(false);
+        setLive(false);
         setRetrySource(null);
         setSourceName(null);
         setStage(null);
@@ -1019,6 +1066,13 @@ export function useAnalysisRun() {
     reconnecting,
     reconnectAttempt,
     lostCause,
+    /* 2026-11-21: whether signing in or out should wait. Only while a
+       submit is on its way (it would be filed under the wrong owner) or a
+       run the server has answered for is still going with no error. A run
+       stalled on the connection-lost screen, reconnecting, or being reopened
+       from History does not hold it, and nor does one whose last answer is
+       older than HOLD_FRESH_MS (2026-11-22: `live` lapses). */
+    holdsSignIn: submitting || ((status === "queued" || status === "processing") && !error && live),
     submit,
     retry,
     reconnectNow,

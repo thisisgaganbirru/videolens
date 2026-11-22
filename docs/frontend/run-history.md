@@ -494,6 +494,58 @@ still here are unchanged; try again."
   `infrastructure/apiClient.ts`), so `historySync` no longer imports an
   adapter module.
 
+## Sign-out hides, it does not delete (owner decision, 2026-11-21)
+
+Replaces "Leaving this device" and the sweep parts of the two 2026-11-20
+sections above. Free accounts have no server copy, so removing their rows
+at sign-out lost those runs for good.
+
+- **Nothing stored changes at sign-out.** Every path (Sign out, "Continue
+  signed out", "Sign out everywhere", another tab via `storage`, a failed
+  refresh, a different account signing in) leaves the rows in IndexedDB with
+  their `owner`. `forgetAccountHistory` and both its callers in
+  `useHistoryBoot` and the double sweep in `signOut()` are gone.
+- **Who sees what** (`isVisibleOwner(owner, viewer)` in
+  `domain/entities.ts`; `historyViewer()` / `isVisibleNow()` in
+  `historySync.ts`). `viewer` is `user:<id>` of the account signed in here,
+  or null (also while a stored session is unconfirmed). Rows owned
+  `anonymous`, and legacy rows with no owner, are visible to everyone, as
+  before (they were never swept either); `user:<id>` rows only to that
+  account. Signed out: anonymous + legacy. Account B: those plus B's, never
+  A's.
+- **List.** `useRunHistory` filters by viewer, keeps the newest
+  `HISTORY_LIMIT`, and re-reads when the viewer changes (an
+  `authSession.subscribe` that skips token refreshes). Counts, filters,
+  search and the Plus "Remove this browser's copies" all read this list, so
+  they see only visible rows. Per-row Remove and copies removal work as
+  before, on the signed-in account's own rows.
+- **Open.** `openRun` resets Analyze to the intake, fetching and writing
+  nothing, when History's record is hidden from the viewer (stale list, a
+  resumed tab after a sign-out elsewhere).
+- **Writes.** Creates are unchanged (`mayCreate`: anonymous, or the account
+  signed in now). Every update goes through `updateVisible`, i.e.
+  `HistoryStore.update(patch, when)` with `when` checked inside the write's
+  transaction: a late poll, reconcile, import detail or expiry for a hidden
+  row writes nothing. No write sets or changes `owner` except an import
+  claiming a legacy row, as before. The boot reconcile waits for
+  `authSession.load()` and asks only about visible rows.
+- **Coming back.** When an account signs in, `importServerRuns` imports what
+  the server holds for it and then reconciles that account's own
+  still-unfinished rows (hidden while it was away, so never updated).
+- **Cap.** Per viewer (`historyStore.write`): the cap counts the rows the
+  written row's owner can see and drops the oldest of those, so another
+  person's runs never push a hidden account's runs out. Total storage is up
+  to 20 visible rows per viewer.
+- **Removal happens only when the account cannot come back here.**
+  `signOutAndForgetRuns()` (`useAuthSession.ts`) removes `user:<id>` rows of
+  the account signed in now (`forgetAccountRuns`, `removeOwnedBy` with an
+  exact match), twice like the old sweep. Used by account deletion and by
+  Sign out on the held card once the restore window has closed. Held but
+  restorable: plain sign-out (it can be restored). Residual: an account
+  deleted from another device, or purged later, leaves its rows hidden here
+  until the site data is cleared; copy tells people on a shared computer to
+  remove runs under History while signed in.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported HistoryPanel to day-grouped rows with status dots; fixed duplicate React keys on non-adjacent "Undated" groups
@@ -517,3 +569,4 @@ still here are unchanged; try again."
 - 2026-11-20 · Claude (frontend agent) · History: account-owned rows (`owner` `user:*`) leave this device on every sign-out path; anonymous and legacy rows stay; "Remove from this device" on browser-only cards; `HistoryStore.remove`/`removeOwnedBy`; owner taken from the request (`sendAs`); stale useMediaQuery reference marked superseded
 - 2026-11-20 · Claude (frontend agent) · update-only follow-up writes (`HistoryStore.update`), creates only for the signed-in account (`mayCreate`), cross-tab sign-out heard via `storage`, double sweep on sign-out, `forgetRun` failure clears the tombstone, Plus "Remove this browser's copies"; remaining gap: per-tab tombstones
 - 2026-11-21 · Claude (frontend agent) · submitting tab retries its own failed create (in-memory `unfiledCreates`, `mayCreate`-checked); copies removal scope stated (listed saved runs) and Privacy softened; `ANONYMOUS_OWNER` moved to domain
+- 2026-11-21 · Claude (frontend agent) · sign-out hides account rows instead of deleting them (viewer filter on list and open, guarded updates, per-viewer cap, reconcile on sign-in); only account deletion and a closed-hold sign-out remove that account's rows

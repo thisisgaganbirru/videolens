@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AccountResponse } from "@/domain/entities";
 import { ApiError, NetworkError } from "@/domain/errors";
 import { classifyGatewayError } from "@/application/gatewayError";
-import { signOut } from "@/application/useAuthSession";
+import { signOutAndForgetRuns } from "@/application/useAuthSession";
 import { useRestoredEpoch } from "@/application/accountHold";
 import { accountGateway } from "@/infrastructure/container";
 
@@ -147,10 +147,12 @@ function deletionProblem(err: unknown): DeletionProblem {
  * (supabase-js awaits a `/logout` request before clearing it; a signed-in
  * view mounted earlier would call `GET /api/me` with the old token.)
  * Signing out is the whole cleanup: the stored Supabase session is the only
- * auth state this app keeps in the browser, and `signOut()` also removes the
- * History rows filed under a signed-in account (2026-11-20). Anonymous
- * History rows and the BYOK key (localStorage) are left alone, so nothing
- * here calls `localStorage.clear()`.
+ * auth state this app keeps in the browser, and `signOutAndForgetRuns()`
+ * also removes this account's own History rows from this browser (a plain
+ * sign-out only hides them, 2026-11-21; deleted, nobody could see them
+ * again). Anonymous History rows, other accounts' hidden rows and the BYOK
+ * key (localStorage) are left alone, so nothing here calls
+ * `localStorage.clear()`.
  *
  * Whether to allow the call (the typed email, the run guard) is the panel's
  * decision; this hook only refuses a second call while one is in flight.
@@ -180,7 +182,7 @@ export function useAccountDeletion(onDeleted: (signedOut: Promise<void>, purgeAt
     }
     /* The account stops working whatever happens next; `signOut` removes
        the stored session by hand even when the provider call fails. */
-    const signedOut = signOut().catch(() => undefined);
+    const signedOut = signOutAndForgetRuns().catch(() => undefined);
     onDeleted(signedOut, purgeAt);
     await signedOut;
     inFlight.current = false;

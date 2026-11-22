@@ -32,7 +32,7 @@ and host → platform), `ports.ts` (the interfaces below).
 | `FreeRunsGateway`, `DeviceTokenStore` | `freeRunsGateway.ts`, `deviceTokenStore.ts` | `/api/free-runs`; `localStorage` |
 | `BillingGateway` | `billingGateway.ts` | `/api/billing`, `/api/billing/checkout`, `/api/billing/portal` |
 | `ApiKeyStore` | `apiKeyStore.ts` | `localStorage` (BYOK) |
-| `HistoryStore` | `historyStore.ts` | IndexedDB, capped at 20, `BroadcastChannel` across tabs; `upsert` creates, `update` only merges into a row still there; `remove`/`removeOwnedBy` resolve when storage is unavailable |
+| `HistoryStore` | `historyStore.ts` | IndexedDB, capped at 20 per viewer (`isVisibleOwner`), `BroadcastChannel` across tabs; `upsert` creates, `update(patch, when?)` only merges into a row still there that passes `when`; `remove`/`removeOwnedBy` resolve when storage is unavailable |
 | `ActiveRunStore` | `activeRunStore.ts` | `sessionStorage`, so a reload resumes the run |
 | `VersionLogGateway`, `UpdateChecker`, `UpdateDismissalStore` | `versionLogGateway.ts`, `updateCheck.ts`, `updateDismissalStore.ts` | `/api/releases`; `@capacitor/app` for the installed build |
 | `SharedUrlSource` | `sharedUrlSource.ts` | Android share intent, web `share_target` |
@@ -171,3 +171,4 @@ scale into the WebView before first paint).
 - 2026-11-20 · Claude (frontend agent) · `HistoryStore.remove`/`removeOwnedBy`, `AuthSession.recover`, `ApiClient.sendAs` + `AsOwner` results from `RunsGateway`, `ApiError.retryAfter`, `createRun(source, signal)`; codemap now lists `limitsGateway`/`useMediaLimits`, `layoutHints`/`useLayoutHints`, `authSessionStamp`, `useDocumentTitle`, `accountAllowance`, `useSavedHistory`/`accountHold`; "Adding something new" names `view-scroll`, not `.tab-view`
 - 2026-11-20 · Claude (frontend agent) · `HistoryStore.update` (merge-only, never creates); `FetchFailedError`/`SignInUnconfirmedError` under `NetworkError`; `AuthSession` hears other tabs' sign-out via `storage`
 - 2026-11-21 · Claude (frontend agent) · `ServerAuthState` gains `degraded`; `ServerAuthStatus.requestReport`/`setReader` (wired in `container.ts`); `CapabilitiesGateway.subscribe` and a shared in-flight read; `ANONYMOUS_OWNER` now in `domain/entities.ts`
+- 2026-11-21 · Claude (frontend agent) · `HistoryStore.update(patch, when)`, per-viewer cap, `isVisibleOwner` in domain; `removeOwnedBy` now only for account deletion

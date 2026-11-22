@@ -12,6 +12,7 @@ import {
   CODE_MAX_LENGTH,
   recoverSession,
   signOut,
+  signOutAndForgetRuns,
   useAuthUser,
   useEmailCodeSignIn,
   useSignOutEverywhere,
@@ -129,8 +130,10 @@ type AccountPanelProps = {
   savedUntil?: string | null;
 };
 
+/* Shown whenever `runInProgress` holds a sign-in or sign-out control off
+   (2026-11-21: only a submit on its way or a healthy run being followed). */
 const RUN_GUARD =
-  "A run is in progress on Analyze. Wait until it finishes: signing in or out now would stop this screen following it until you switch back.";
+  "A run is in progress on Analyze. Wait until it finishes: signing in or out now would stop this screen following it.";
 
 export default function AccountPanel({
   authCapability,
@@ -256,9 +259,9 @@ function Unavailable() {
 /* A session is stored here that the provider could not recover just now
    (2026-11-20): it would not load, or its refresh failed on the network.
    Neither signed in nor signed out, so neither view is drawn. Retry asks the
-   provider again; "Continue signed out" clears the stored session and the
-   History rows filed under an account, like any sign-out, and the app goes
-   on anonymous. */
+   provider again; "Continue signed out" clears the stored session like any
+   sign-out (the account's History rows stay, hidden, 2026-11-21), and the
+   app goes on anonymous. */
 function SessionUnconfirmed({ runInProgress }: { runInProgress: boolean }) {
   const [busy, setBusy] = useState<null | "retrying" | "leaving">(null);
 
@@ -280,8 +283,8 @@ function SessionUnconfirmed({ runInProgress }: { runInProgress: boolean }) {
       </h2>
       <p className="key-help">
         This device still holds your sign-in, but the sign-in service could not be reached to confirm
-        it. Check your connection and try again, or continue signed out. Continuing signed out removes
-        the runs from your account from this device&apos;s History.
+        it. Check your connection and try again, or continue signed out. Your account&apos;s runs stay in
+        this browser, hidden from History until you sign in here again.
       </p>
       <div className="key-actions">
         <button type="button" className="btn btn-primary btn-pill" onClick={retry} aria-disabled={busy !== null || undefined}>
@@ -1337,8 +1340,8 @@ function DeviceGroup({
       </div>
       <p className="key-help acct-group-note">
         {onAccount
-          ? "Your Gemini key is not synced and stays in this browser when you sign out. This browser’s copies of your runs are removed then; the copies saved to your account stay."
-          : `Not synced between devices.${signedIn ? " Signing out removes your account’s runs from this browser’s History; your Gemini key stays." : ""}`}
+          ? "Your Gemini key is not synced and stays in this browser when you sign out. This browser’s copies of your runs stay too, hidden from History until you sign in here again. On a shared computer, remove them under History before you sign out."
+          : `Not synced between devices.${signedIn ? " When you sign out, your account’s runs stay in this browser, hidden from History until you sign in here again. On a shared computer, remove them under History before you sign out." : ""}`}
       </p>
     </section>
   );
@@ -1676,7 +1679,7 @@ function DeleteAccountSection({
       </h3>
       <p className="key-help">
         Your account stops working now and is kept for 30 days, in case you change your mind. After
-        that it is removed for good. What is stored in this browser stays.
+        that it is removed for good. Its runs also leave this browser&apos;s History.
       </p>
 
       <form
@@ -1707,7 +1710,7 @@ function DeleteAccountSection({
               <li>Your own Gemini key</li>
             </ul>
             <p className="key-help acct-delete-note">
-              Deleting your account signs this browser out, which removes your account’s runs from its History. Runs made signed out and your Gemini key stay.
+              Deleting your account signs this browser out and removes your account’s runs from its History. Runs made signed out and your Gemini key stay.
               You can remove them under History and Gemini key.
             </p>
           </div>
@@ -1853,7 +1856,10 @@ function HeldAccount({
   const leave = () => {
     if (signingOut || restoring || runInProgress) return;
     setSigningOut(true);
-    void signOut().finally(() => setSigningOut(false));
+    /* 2026-11-21: a plain sign-out only hides the account's runs here. Past
+       the restore window nobody can sign in to see them again, so this
+       sign-out removes them, as deleting from this browser does. */
+    void (closed ? signOutAndForgetRuns() : signOut()).finally(() => setSigningOut(false));
   };
 
   const heldText = (
@@ -1884,7 +1890,8 @@ function HeldAccount({
       {closed ? (
         <p className="key-help">
           The 30 days to restore it have passed, so it is being removed for good. Sign out to keep using
-          VideoLens without an account. Once it is gone, signing in with the same email starts a new one.
+          VideoLens without an account. Signing out also removes its runs from this browser&apos;s History.
+          Once it is gone, signing in with the same email starts a new one.
         </p>
       ) : (
         heldText

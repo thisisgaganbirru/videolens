@@ -237,6 +237,22 @@ session.
 - **Run guard (on screen):** Verify, Sign out and Sign out everywhere are also held, with a note,
   while the run on Analyze is submitting, queued or processing
   (`runInProgress`), so the watched run is not interrupted at all.
+  Since 2026-11-21 `runInProgress` is `useAnalysisRun().holdsSignIn`: a
+  submit on its way, or a run the server has answered for that is queued or
+  processing with no error. A run stalled on the connection-lost screen,
+  reconnecting, or being reopened from History no longer holds it (it once
+  left Sign out greyed, `mem/20261121-signout-not-clickable.md`). The note
+  (`RUN_GUARD`) shows under the control whenever the guard holds it; it now
+  reads "A run is in progress on Analyze. Wait until it finishes: signing in
+  or out now would stop this screen following it."
+  Since 2026-11-22 the hold also needs a **recent** answer: each server
+  answer for the run keeps it for 15 s (`HOLD_FRESH_MS`, five polls). The
+  poll keeps running whichever view is showing (HomeScreen is never
+  unmounted by a tab switch), so on Account the control frees itself within
+  one poll of the run settling; and if the screen stops hearing from the
+  server for any reason (a poll stuck before its request, a frozen
+  background tab), the hold lapses on its own instead of greying Sign out
+  for good. See run-analysis-hook.md.
 - Busy controls use `aria-disabled` and handler guards, never `disabled`,
   so focus is not lost (the app-wide rule).
 
@@ -555,9 +571,36 @@ with "Restore account" (`POST /api/me/restore`) and "Sign out".
 `useAccount` maps the 410 to `problem.kind === "held"`. The delete form's
 copy now explains the hold. Everything is in `saved-history.md`.
 
+## Sign-out hides runs (owner decision, 2026-11-21)
+
+Supersedes the first bullet of "Review fixes (2026-11-20)" below. Signing
+out (every path) no longer touches History: the account's rows stay in this
+browser, hidden until that account signs in here again (run-history.md,
+"Sign-out hides, it does not delete"). `signOut()` is now only the
+provider's sign-out. `signOutAndForgetRuns()` also removes the signed-in
+account's own rows; account deletion and Sign out on the closed hold card
+use it. Copy, final wording:
+
+- Continue signed out: "Your account's runs stay in this browser, hidden
+  from History until you sign in here again."
+- "On this device", signed in: "Not synced between devices. When you sign
+  out, your account’s runs stay in this browser, hidden from History until
+  you sign in here again. On a shared computer, remove them under History
+  before you sign out."
+- Same, saved history: "Your Gemini key is not synced and stays in this
+  browser when you sign out. This browser’s copies of your runs stay too,
+  hidden from History until you sign in here again. On a shared computer,
+  remove them under History before you sign out."
+- Delete form lede: "... After that it is removed for good. Its runs also
+  leave this browser's History." Kept note: "Deleting your account signs
+  this browser out and removes your account’s runs from its History. ..."
+- Closed hold: "... Sign out to keep using VideoLens without an account.
+  Signing out also removes its runs from this browser's History. Once it is
+  gone, ..."
+
 ## Review fixes (2026-11-20)
 
-- **Sign out removes the account's runs from this device.** `signOut()`
+- **(Superseded 2026-11-21, see above.) Sign out removes the account's runs from this device.** `signOut()`
   (and so account deletion, "Continue signed out" and, on success, "Sign out
   everywhere") also removes every History row filed under a signed-in
   account; anonymous rows stay. Rule and mechanics in run-history.md,
@@ -686,3 +729,5 @@ copy now explains the hold. Everything is in `saved-history.md`.
 - 2026-11-20 · Claude (frontend agent) · sign-out clears account-owned History rows; `unconfirmed` session state with Retry / Continue signed out (`AuthSession.recover`); keys-unavailable 503 on /api/me shown as temporary with no sign-out; `ApiError.retryAfter`; new-key status announces the sentence, not the secret; device-group note copy
 - 2026-11-20 · Claude (frontend agent) · bearer waits 8 s then fails with `SignInUnconfirmedError` (never anonymous); owner returned by `identityHeaders`; cross-tab sign-out via `storage`; Analyze reset on sign-out; one 401 retry on polls; deletion copy corrected
 - 2026-11-21 · Claude (frontend agent) · `degraded` auth kept as its own state (never anonymous with a session); capabilities re-read while a signed-in request waits (deduplicated, 5 s spacing), wait ends as soon as the state is decisive; `CapabilitiesGateway.subscribe` so screens see the newer report; `openRun` decides sign-out clearing from the record's owner
+- 2026-11-21 · Claude (frontend agent) · sign-out hides account runs (owner decision): Account notes, Continue signed out, delete and closed-hold copy, RUN_GUARD wording; sign-in/out held only for a submit or a healthy followed run (`holdsSignIn`)
+- 2026-11-22 · frontend agent · run guard needs a recent server answer (15 s, `HOLD_FRESH_MS`), so Sign out is never held on a status the screen stopped refreshing

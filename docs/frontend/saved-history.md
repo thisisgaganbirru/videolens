@@ -197,12 +197,14 @@ finishes while saving, and after a restore.
   not the bin); its dialog says "Runs saved to your account are not
   touched." Saved cards keep "Delete from your account". See run-history.md,
   "Leaving this device".
-- **Sign-out.** The local copies of account runs leave this device at
-  sign-out; the saved copies stay on the account. The Account note says so
-  (auth-sign-in.md, "Review fixes (2026-11-20)").
+- **Sign-out.** (2026-11-21, owner decision.) The local copies of account
+  runs stay in this browser at sign-out, hidden until that account signs in
+  here again; the saved copies stay on the account. Deleting the account
+  from this browser removes the local copies. The Account note says so
+  (auth-sign-in.md, "Sign-out hides runs").
 - **Left open:** a run that is both saved and kept in this browser shows
   only as the saved card, so its local copy has no Remove control of its own
-  (it leaves at sign-out).
+  (the foot's "Remove this browser's copies" covers it).
 
 ## Re-review fixes (2026-11-20)
 
@@ -220,3 +222,4 @@ finishes while saving, and after a restore.
 - 2026-11-20 · Claude (frontend agent) · saved open keeps the live run alive on failure (own token; generation moves only when the detail is in); Remove from this device on browser-only cards; sign-out note
 - 2026-11-20 · Claude (frontend agent) · "Remove this browser's copies" for local copies of saved runs; a saved run on Analyze is cleared on sign-out
 - 2026-11-21 · Claude (frontend agent) · "Remove this browser's copies" covers copies of the saved runs listed (loaded pages); a copy of a run on an unloaded page cannot be told from a pre-Plus run locally, so Privacy now says "the saved runs listed there" (see run-history.md)
+- 2026-11-21 · Claude (frontend agent) · sign-out keeps this browser's copies of account runs, hidden until that account signs in here again (run-history.md)
