@@ -45,6 +45,11 @@ import {
 } from "@/infrastructure/container";
 
 const POLL_INTERVAL_MS = 3000;
+/* 2026-11-22: how long one server answer keeps sign-in/sign-out held while
+   the run is still going. Five poll intervals: room for a slow answer (the
+   transport may wait up to 8 s for the server's auth report) without ever
+   holding on a reading nobody is refreshing. */
+const HOLD_FRESH_MS = 5 * POLL_INTERVAL_MS;
 
 /* Reconnect schedule after a poll throws: 4s, 8s, 16s, then every 30s until the
    user starts over. The first wait is short because most drops are a blip (a
@@ -206,7 +211,12 @@ export function useAnalysisRun() {
   /* 2026-11-21: the run on screen has been answered for by the server since
      it was put there (accepted on submit, or a status response applied).
      False while `openRun` is still reading History or waiting for its first
-     answer, so a run being reopened does not count as one being followed. */
+     answer, so a run being reopened does not count as one being followed.
+     2026-11-22: and only recently. Each answer keeps it true for
+     HOLD_FRESH_MS (`markAnswered`); with no newer answer by then it goes
+     false on its own, so a status nobody is refreshing any more (a poll
+     stuck before its request, a frozen background tab, a timer stopped by
+     any path) never holds sign-in or sign-out. */
   const [live, setLive] = useState(false);
   /* The link or file name of the run on screen, for the progress view's source
      chip. Known only for runs submitted in this session; a run reopened from
@@ -284,6 +294,19 @@ export function useAnalysisRun() {
   /* The one quiet retry after a 401 (see AUTH_RETRY_MS) is spent; any good
      response gives it back. */
   const authRetriedRef = useRef(false);
+  /* Ends `live` HOLD_FRESH_MS after the last server answer. Deliberately not
+     cleared by `stopTimers`: whatever stops the poll, the hold lapses. */
+  const freshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /* The server just answered for the run on screen. */
+  const markAnswered = useCallback(() => {
+    setLive(true);
+    if (freshTimerRef.current) clearTimeout(freshTimerRef.current);
+    freshTimerRef.current = setTimeout(() => {
+      freshTimerRef.current = null;
+      setLive(false);
+    }, HOLD_FRESH_MS);
+  }, []);
 
   /* Every timer this hook owns, stopped in one place: unmount, reset, openRun,
      a fresh submit and a successful reconnect all need exactly this. */
@@ -304,6 +327,8 @@ export function useAnalysisRun() {
   useEffect(
     () => () => {
       stopTimers();
+      if (freshTimerRef.current) clearTimeout(freshTimerRef.current);
+      freshTimerRef.current = null;
       uploadRef.current?.abort();
       uploadRef.current = null;
       generationRef.current += 1;
@@ -354,7 +379,7 @@ export function useAnalysisRun() {
        History — that is how a run survives the server forgetting it. */
     recordRunResponse(run);
     authRetriedRef.current = false;
-    setLive(true);
+    markAnswered();
     setStatus(run.status);
     setStage(run.stage);
     const kind = mediaKindOfPlatform(run.platform);
@@ -388,7 +413,7 @@ export function useAnalysisRun() {
       return true;
     }
     return false;
-  }, [settleFreeRuns]);
+  }, [markAnswered, settleFreeRuns]);
 
   /* Refinement 3, #1: the server answered 404 for a run this browser knows
      about — it forgot the run (past its hold, or a restart of an in-memory
@@ -645,7 +670,7 @@ export function useAnalysisRun() {
         setSourceName(describeSource(source));
         setRetrySource(source);
         liveUrlRef.current = source.url || null;
-        setLive(true);
+        markAnswered();
         setStatus(run.status);
         startPolling(run.run_id, generation);
       } catch (err) {
@@ -671,7 +696,7 @@ export function useAnalysisRun() {
         setSubmitting(false);
       }
     },
-    [clearReconnect, fail, startPolling, stopTimers]
+    [clearReconnect, fail, markAnswered, startPolling, stopTimers]
   );
 
   const reset = useCallback(() => {
@@ -1045,7 +1070,8 @@ export function useAnalysisRun() {
        submit is on its way (it would be filed under the wrong owner) or a
        run the server has answered for is still going with no error. A run
        stalled on the connection-lost screen, reconnecting, or being reopened
-       from History does not hold it. */
+       from History does not hold it, and nor does one whose last answer is
+       older than HOLD_FRESH_MS (2026-11-22: `live` lapses). */
     holdsSignIn: submitting || ((status === "queued" || status === "processing") && !error && live),
     submit,
     retry,

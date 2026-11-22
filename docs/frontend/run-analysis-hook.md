@@ -198,6 +198,32 @@ found." behaviour. Network errors and 5xx keep the reconnect countdown.
   reading History or waiting for its first answer never hold sign-in or
   sign-out.
 
+## Sign-out held after the run finished (2026-11-22)
+
+- **Symptom.** Owner, signed in, on Account: Sign out stayed held with the
+  RUN_GUARD note after a link run had finished server-side; the backend saw
+  no `GET /api/runs/{id}` after the run settled.
+- **What the code rules out.** Polling is not tied to the view: tabs are a
+  `pushState` query param and HomeScreen is never unmounted by a tab switch,
+  and the 3 s interval has no view or visibility check. A view change cannot
+  stop it.
+- **The defect.** `live` was set once (accepted submit, `applyRun`) and never
+  expired, so `holdsSignIn` trusted the last queued/processing reading for as
+  long as nothing replaced it. Anything that left the screen without new
+  answers and without an error held sign-out forever. Paths that do that:
+  a tick that never reaches `fetch` (it awaits `ApiClient.bearer`, which
+  awaits supabase-js `getSession()` with no bound,
+  `infrastructure/authSession.ts`), the 401 quiet retry stuck the same way
+  (`reconnecting` true, no error), or a browser-frozen background tab.
+  Which one the owner hit was not confirmed (no access to that tab).
+- **Fix.** `markAnswered()` sets `live` and (re)arms a `HOLD_FRESH_MS`
+  (15 s, five polls) timer that clears it. Called from `applyRun` and the
+  accepted submit. `stopTimers` leaves that timer alone on purpose, so the
+  hold lapses whatever stopped the poll; unmount clears it. Healthy runs:
+  every 3 s answer re-arms it, so the hold is unchanged. A long-hidden tab
+  whose timers Chrome throttles to once a minute may release and re-take
+  the hold between answers; nobody can press anything in a hidden tab.
+
 ## Changelog
 
 - 2026-08-21 · main session · made reset() clear the poll interval, and added the generation counter that drops a superseded submit/openRun response
@@ -217,3 +243,4 @@ found." behaviour. Network errors and 5xx keep the reconnect countdown.
 - 2026-11-20 · Claude (frontend agent) · Analyze reset on sign-out via session subscription (account-owned runs only); one 401 retry; create errors split by cause
 - 2026-11-21 · Claude (frontend agent) · `openRun`: a sign-out (or another person signing in) during the History read is deferred until the record's owner is known (`ownerPendingRef`/`deferredLeaveRef`), so a resumed anonymous run is not cleared on the provisional guess
 - 2026-11-21 · Claude (frontend agent) · `holdsSignIn` (submit in flight, or a server-confirmed run with no error) replaces HomeScreen's `runInProgress` expression; `openRun` refuses a History row hidden from the viewer
+- 2026-11-22 · frontend agent · `live` lapses 15 s (`HOLD_FRESH_MS`) after the last server answer (`markAnswered`), so `holdsSignIn` never rests on a stale queued/processing reading

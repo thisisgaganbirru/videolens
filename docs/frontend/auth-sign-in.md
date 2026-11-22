@@ -245,6 +245,14 @@ session.
   (`RUN_GUARD`) shows under the control whenever the guard holds it; it now
   reads "A run is in progress on Analyze. Wait until it finishes: signing in
   or out now would stop this screen following it."
+  Since 2026-11-22 the hold also needs a **recent** answer: each server
+  answer for the run keeps it for 15 s (`HOLD_FRESH_MS`, five polls). The
+  poll keeps running whichever view is showing (HomeScreen is never
+  unmounted by a tab switch), so on Account the control frees itself within
+  one poll of the run settling; and if the screen stops hearing from the
+  server for any reason (a poll stuck before its request, a frozen
+  background tab), the hold lapses on its own instead of greying Sign out
+  for good. See run-analysis-hook.md.
 - Busy controls use `aria-disabled` and handler guards, never `disabled`,
   so focus is not lost (the app-wide rule).
 
@@ -722,3 +730,4 @@ use it. Copy, final wording:
 - 2026-11-20 · Claude (frontend agent) · bearer waits 8 s then fails with `SignInUnconfirmedError` (never anonymous); owner returned by `identityHeaders`; cross-tab sign-out via `storage`; Analyze reset on sign-out; one 401 retry on polls; deletion copy corrected
 - 2026-11-21 · Claude (frontend agent) · `degraded` auth kept as its own state (never anonymous with a session); capabilities re-read while a signed-in request waits (deduplicated, 5 s spacing), wait ends as soon as the state is decisive; `CapabilitiesGateway.subscribe` so screens see the newer report; `openRun` decides sign-out clearing from the record's owner
 - 2026-11-21 · Claude (frontend agent) · sign-out hides account runs (owner decision): Account notes, Continue signed out, delete and closed-hold copy, RUN_GUARD wording; sign-in/out held only for a submit or a healthy followed run (`holdsSignIn`)
+- 2026-11-22 · frontend agent · run guard needs a recent server answer (15 s, `HOLD_FRESH_MS`), so Sign out is never held on a status the screen stopped refreshing
