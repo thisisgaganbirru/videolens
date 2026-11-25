@@ -65,10 +65,12 @@ export type AuthFailureReason =
   | "rate_limited"
   | "unreachable"
   | "unavailable"
+  /** The person backed out of a provider's consent page (Google, phase 4). */
+  | "cancelled"
   | "unknown";
 
-/** A sign-in step (send code, verify code) was refused or could not be
- *  attempted. `message` is the provider's own text, for logs only. */
+/** A sign-in step (send code, verify code, Google) was refused or could not
+ *  be attempted. `message` is the provider's own text, for logs only. */
 export class AuthFlowError extends Error {
   constructor(
     readonly reason: AuthFailureReason,

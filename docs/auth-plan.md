@@ -415,8 +415,9 @@ Per `frontend/ARCHITECTURE.md`; nothing in `components/` touches
 
 Sign-in methods, in order:
 
-1. Email one-time code (6 to 8 digits; `videolens-dev` sends 8, so the field
-   accepts the whole range). Identical on web and inside the Capacitor
+1. Email one-time code (exactly 6 digits since 2026-11-22, owner's call; it
+   accepted 6 to 8 while `videolens-dev` sent 8, and the dashboard's OTP
+   length must now be 6 on every project). Identical on web and inside the Capacitor
    WebView: no redirect, no deep link, no browser hand-off. Primary for that
    reason.
 2. Google OAuth. On web, a PKCE redirect back to the app origin. On Android
@@ -568,9 +569,16 @@ on auth change, privacy paragraph. Verified on the `dev` frontend.
 Phase 3, API keys and deletion: `/api/keys` UI section, `DELETE /api/me`
 and its UI, `database` capability.
 
-Phase 4, Android: Google sign-in via `@capacitor/browser` and the custom
-scheme, manifest intent filter, redirect allowlist, verified from the
-CI-built APK. OTP needs no Android work and is live from phase 2.
+Phase 4, Google on web and Android: **implemented 2026-11-22 on
+`feat/google-signin-otp6`, uncommitted, not yet exercised end to end**.
+Web: PKCE redirect back to `/app?view=account`. Android: `@capacitor/browser`
+8.0.5 opens the consent page, the return is the custom scheme
+`ai.videolens.app://auth/callback` with a manifest intent filter. Both read
+the return in the adapter (`detectSessionInUrl` off). Still to do: enable the
+Google provider and the redirect allowlist (wildcard paths plus the custom
+scheme) on each Supabase project, and verify from a browser and from the
+CI-built APK. Details: `docs/frontend/auth-sign-in.md`, "Google sign-in".
+The same change made the emailed code exactly 6 digits.
 
 Phase 5, agents: bring `mcp/` from the paid-tier branch onto `dev`
 (`VIDEOLENS_API_KEY` alongside the anonymous BYOK mode), and reconcile
@@ -669,3 +677,4 @@ Alembic release step), `CLAUDE.md` (Product direction, the lint count, the
 - 2026-11-14 · backend agent · paid saved history (`saved_runs`, migration 0006) and the 30-day account deletion hold with restore are built; see `docs/backend/saved-history.md`
 - 2026-11-14 · frontend agent · paid plan is named Plus in the UI
 - 2026-11-20 · Claude (backend agent) · pooler corrected to the Supavisor session pooler (5432); the 6543 login note kept as history with why
+- 2026-11-22 · frontend agent · phase 4 status: Google sign-in implemented for web and Android (uncommitted, unverified end to end; dashboard steps listed); OTP is exactly 6 digits

@@ -22,6 +22,7 @@ import type {
   RunListResponse,
   RunStatusResponse,
 } from "./entities";
+import type { AuthFlowError } from "./errors";
 
 /** A response plus the identity it was asked as (`user:<id>`, `anonymous`,
  *  or null when a token came without a known user). Read from the request
@@ -335,6 +336,24 @@ export interface AuthSession {
   requestEmailCode(email: string): Promise<void>;
   /** Exchanges the emailed code for a session. */
   verifyEmailCode(email: string, code: string): Promise<void>;
+  /** Starts Google sign-in (auth phase 4). On the web this tab navigates to
+   *  the consent page; in the installed app the system browser opens it
+   *  (Google refuses embedded WebViews). Resolves once the page is on its
+   *  way; the answer comes back later as `redirectResult()`. Rejects with
+   *  `AuthFlowError` when it cannot start (`unavailable`: the provider is not
+   *  enabled on this project; `unreachable`). */
+  signInWithGoogle(): Promise<void>;
+  /** True from `signInWithGoogle()` until its answer arrives or the person
+   *  leaves the consent page without one (closes the app's browser, or comes
+   *  back to this tab with Back). Synchronous. */
+  googlePending(): boolean;
+  /** How the last provider redirect ended (signed in, cancelled, failed),
+   *  until dismissed; null when there is none. On the web it arrives with
+   *  the page load that brings the person back, read during `load()`; in the
+   *  app, with the deep link. Listeners are notified when one arrives. */
+  redirectResult(): AuthRedirectResult | null;
+  /** Forgets the redirect result with this id (shown, or acted on). */
+  dismissRedirectResult(id: number): void;
   /** Signs out on this device only. Never rejects; the stored session is
    *  cleared even when the provider cannot be reached. */
   signOut(): Promise<void>;
@@ -347,6 +366,40 @@ export interface AuthSession {
   /** Called whenever the session changes (sign-in, sign-out, a token
    *  refresh, another tab). Returns unsubscribe. */
   subscribe(listener: () => void): () => void;
+}
+
+/** How a provider redirect (Google sign-in) came back. `id` tells one answer
+ *  from the next, so a screen acts on each once. */
+export type AuthRedirectResult = { id: number; ok: true } | { id: number; ok: false; error: AuthFlowError };
+
+/**
+ * Where a provider's consent page is shown and how its answer comes back
+ * (Google sign-in, auth phase 4). The identity adapter drives it; it knows
+ * nothing about the provider.
+ *
+ * - Web: this tab navigates to the page, and the provider sends it back to
+ *   `/app?view=account` with `?code=` (or `?error=`).
+ * - Installed app: the system browser (a Custom Tab), and the provider sends
+ *   it to `ai.videolens.app://auth/callback`, which Android hands back to the
+ *   app (`AndroidManifest.xml`).
+ */
+export interface AuthRedirectBrowser {
+  /** The address the provider must send the person back to. Must be in the
+   *  provider project's redirect allowlist. */
+  returnUrl(): string;
+  /** Shows the provider's page. Web: navigates this tab away. */
+  open(url: string): Promise<void>;
+  /** Closes the app's browser if it is still open. Web: nothing. */
+  close(): Promise<void>;
+  /** A return already waiting when this page started: the current address
+   *  on the web (whose return parameters are then removed from the address
+   *  bar), the link that launched the app in the app. Null otherwise. */
+  takeInitialReturn(): Promise<string | null>;
+  /** Returns that arrive while the page runs (the app's deep link), and the
+   *  person leaving the consent page without one (the app's browser closed;
+   *  on the web, this tab restored from the back/forward cache). Returns the
+   *  unsubscribe. */
+  watch(handlers: { onReturn(url: string): void; onClosed(): void }): () => void;
 }
 
 /** Whether *this server* verifies sign-in tokens: its `auth` capability.
