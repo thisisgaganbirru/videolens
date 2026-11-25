@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { AuthUser } from "@/domain/entities";
 import { AuthFlowError, type AuthFailureReason } from "@/domain/errors";
 import { authSession } from "@/infrastructure/container";
 import { forgetAccountRuns } from "@/application/historySync";
+import { goToMainTab } from "@/application/useMainTab";
 
 /* The signed-in state as React sees it, and the emailed-code sign-in flow
    (auth phase 2). See docs/frontend/auth-sign-in.md.
@@ -107,11 +108,13 @@ export type SignInError = { field: "email" | "code"; message: string };
 /** Supabase refuses a second code for the same address inside 60 s. */
 export const RESEND_AFTER_SECONDS = 60;
 
-/** The code length the project sends is a dashboard setting (6 by Supabase's
- *  old default, 8 by the current one, which `videolens-dev` uses); accept the
- *  whole range so a settings change never locks anyone out. */
-export const CODE_MIN_LENGTH = 6;
-export const CODE_MAX_LENGTH = 8;
+/** The emailed code is exactly 6 digits (owner, 2026-11-22). It is a
+ *  Supabase dashboard setting (Authentication → Email → "Email OTP Length"),
+ *  which must be 6 on every project; the field accepted 6 to 8 while
+ *  `videolens-dev` sent 8.
+ *  A project that sends another length fails at Verify, so keep the two in
+ *  step. */
+export const CODE_LENGTH = 6;
 
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -121,6 +124,7 @@ const REASON_MESSAGE: Record<AuthFailureReason, string> = {
   rate_limited: "Too many attempts. Wait a minute, then try again.",
   unreachable: "Can't reach the sign-in service. Check your connection and try again.",
   unavailable: "Sign-in is not available on this server.",
+  cancelled: "Sign-in was cancelled. Try again.",
   unknown: "Sign-in did not work. Try again.",
 };
 
@@ -128,9 +132,10 @@ function messageFor(err: unknown): string {
   return REASON_MESSAGE[err instanceof AuthFlowError ? err.reason : "unknown"];
 }
 
-/** Keeps digits only, so a pasted "1234 5678" or "Code: 12345678" works. */
+/** Keeps digits only, then the first six, so a pasted "123 456" or
+ *  "Your code: 123456" works. */
 export function cleanCode(raw: string): string {
-  return raw.replace(/\D/g, "").slice(0, CODE_MAX_LENGTH);
+  return raw.replace(/\D/g, "").slice(0, CODE_LENGTH);
 }
 
 /**
@@ -207,8 +212,8 @@ export function useEmailCodeSignIn() {
 
   const verify = useCallback(async () => {
     if (phase !== "code-sent" || !sentTo) return;
-    if (code.length < CODE_MIN_LENGTH) {
-      setError({ field: "code", message: "Enter the code from the email. It is 6 to 8 digits." });
+    if (code.length !== CODE_LENGTH) {
+      setError({ field: "code", message: `Enter the ${CODE_LENGTH}-digit code from the email.` });
       return;
     }
     setPhase("verifying");
@@ -238,6 +243,80 @@ export function useEmailCodeSignIn() {
   }, [phase]);
 
   return { phase, email, setEmail, sentTo, code, setCode, error, send, resend, resendIn, verify, changeEmail };
+}
+
+/* ---------------------------------------------- Google (auth phase 4) */
+
+const GOOGLE_MESSAGE: Record<AuthFailureReason, string> = {
+  cancelled: "Google sign-in was cancelled. Try again, or use your email instead.",
+  unavailable: "Google sign-in is not available on this server. Use your email instead.",
+  unreachable: "Can't reach the sign-in service. Check your connection and try again.",
+  rate_limited: "Too many attempts. Wait a minute, then try again.",
+  invalid_email: "Google sign-in did not finish. Try again, or use your email instead.",
+  invalid_code: "Google sign-in did not finish. Try again, or use your email instead.",
+  unknown: "Google sign-in did not finish. Try again, or use your email instead.",
+};
+
+const noPending = () => false;
+const googlePending = () => authSession.googlePending();
+const noResult = () => null;
+const redirectResult = () => authSession.redirectResult();
+
+/**
+ * "Continue with Google". `start` leaves for Google's consent page (this tab
+ * on the web, the system browser in the installed app); the answer comes
+ * back as a session (the panel turns signed in by itself) or as `error`.
+ *
+ * `starting` covers the settings read and building the address; `waiting`
+ * is the consent page being open in the app's browser (or this tab on its
+ * way there). `start` is guarded only while starting, so a person whose
+ * browser closed without the app hearing about it can simply press again.
+ */
+export function useGoogleSignIn() {
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+  const waiting = useSyncExternalStore(subscribeSession, googlePending, noPending);
+  const result = useSyncExternalStore(subscribeSession, redirectResult, noResult);
+
+  /* A success needs no words here: the session swaps the panel to the
+     signed-in view. Only a refusal is kept on screen. */
+  useEffect(() => {
+    if (result?.ok) authSession.dismissRedirectResult(result.id);
+  }, [result]);
+
+  const start = useCallback(async () => {
+    if (starting) return;
+    setStartError(null);
+    const shown = authSession.redirectResult();
+    if (shown) authSession.dismissRedirectResult(shown.id);
+    setStarting(true);
+    try {
+      await authSession.signInWithGoogle();
+    } catch (err) {
+      setStartError(GOOGLE_MESSAGE[err instanceof AuthFlowError ? err.reason : "unknown"]);
+    } finally {
+      setStarting(false);
+    }
+  }, [starting]);
+
+  const error = startError ?? (result && !result.ok ? GOOGLE_MESSAGE[result.error.reason] : null);
+  return { enabled: authSession.enabled, starting, waiting: waiting && !starting, error, start };
+}
+
+/**
+ * Brings the shell to the Account view when a Google answer arrives, once per
+ * answer. In the installed app the deep link can land while another tab is
+ * showing (or relaunch the app onto Analyze); on the web the return address
+ * already is the Account view and this does nothing. Mounted by HomeScreen.
+ */
+export function useGoogleReturnLanding(): void {
+  const result = useSyncExternalStore(subscribeSession, redirectResult, noResult);
+  const handled = useRef<number | null>(null);
+  useEffect(() => {
+    if (!result || handled.current === result.id) return;
+    handled.current = result.id;
+    goToMainTab("account");
+  }, [result]);
 }
 
 /** Signs out on this device. The provider's sign-out clears the stored

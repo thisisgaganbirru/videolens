@@ -8,6 +8,7 @@ import { FetchAccountGateway } from "./accountGateway";
 import { FetchBillingGateway } from "./billingGateway";
 import { ApiClient } from "./apiClient";
 import { buildAuthSession } from "./authSession";
+import { SystemAuthBrowser } from "./authBrowser";
 import { LocalStorageApiKeyStore } from "./apiKeyStore";
 import { FetchCapabilitiesGateway } from "./capabilitiesGateway";
 import { LocalStorageDeviceTokenStore } from "./deviceTokenStore";
@@ -33,8 +34,11 @@ export const apiKeyStore = new LocalStorageApiKeyStore();
    the next submit carries. */
 export const deviceTokenStore = new LocalStorageDeviceTokenStore();
 /* Supabase when both NEXT_PUBLIC_SUPABASE_* variables are set, otherwise a
-   session that is never signed in (auth phase 2). */
-export const authSession = buildAuthSession();
+   session that is never signed in (auth phase 2). Google's consent page
+   (phase 4) opens through `authBrowser`: this tab on the web, the system
+   browser and the app's deep link in the installed app. */
+export const authBrowser = new SystemAuthBrowser();
+export const authSession = buildAuthSession(authBrowser);
 /* The caller's identity on every request that speaks for them: client id,
    device token, and the bearer token when signed in. */
 /* Whether this server verifies sign-in tokens, heard from the capability

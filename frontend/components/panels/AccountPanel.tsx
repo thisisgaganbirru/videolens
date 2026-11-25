@@ -9,12 +9,13 @@ import { useAccountHold, useAccountRestore } from "@/application/accountHold";
 import type { SavedHistoryMode } from "@/application/useSavedHistory";
 import { useApiKeys } from "@/application/useApiKeys";
 import {
-  CODE_MAX_LENGTH,
+  CODE_LENGTH,
   recoverSession,
   signOut,
   signOutAndForgetRuns,
   useAuthUser,
   useEmailCodeSignIn,
+  useGoogleSignIn,
   useSignOutEverywhere,
 } from "@/application/useAuthSession";
 import AppBackLink from "@/components/AppBackLink";
@@ -389,46 +390,66 @@ function SignInCard({ runInProgress }: { runInProgress: boolean }) {
       <form className="key-card acct-sign-in" onSubmit={sendCode} noValidate aria-label="Sign in or create an account">
         <h2 className="acct-card-title">Get {ACCOUNT_FREE_RUNS_PER_DAY} free runs a day</h2>
         <p className="key-help acct-form-intro">
-          Sign in or create an account with your email. No password needed.
+          Sign in or create an account. No password needed.
         </p>
-        <label htmlFor={emailId} className="key-label">
-          Email
-        </label>
-        <input
-          ref={emailRef}
-          id={emailId}
-          type="email"
-          inputMode="email"
-          autoComplete="email"
-          autoCapitalize="off"
-          autoCorrect="off"
-          spellCheck={false}
-          className="field acct-field"
-          value={flow.email}
-          readOnly={sending}
-          onChange={(event) => flow.setEmail(event.target.value)}
-          placeholder="you@example.com"
-          aria-invalid={emailError ? true : undefined}
-          aria-describedby={emailError ? `${emailErrorId} ${emailHelpId}` : emailHelpId}
-        />
-        {emailError && (
-          <p id={emailErrorId} role="alert" className="error-note key-error">
-            {emailError}
+        {/* Owner's reference layout (2026-11-22): one full-width column of
+            equal-height controls: Google, "or", email, Continue with email,
+            then the terms note. */}
+        <div className="acct-sign-in-stack">
+          <GoogleSignIn runInProgress={runInProgress} />
+          <div className="divider acct-or" aria-hidden="true">
+            or
+          </div>
+          <label htmlFor={emailId} className="sr-only">
+            Email
+          </label>
+          <input
+            ref={emailRef}
+            id={emailId}
+            type="email"
+            inputMode="email"
+            autoComplete="email"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            className="field acct-field"
+            value={flow.email}
+            readOnly={sending}
+            onChange={(event) => flow.setEmail(event.target.value)}
+            placeholder="Enter your email"
+            aria-invalid={emailError ? true : undefined}
+            aria-describedby={emailError ? `${emailErrorId} ${emailHelpId}` : emailHelpId}
+          />
+          {emailError && (
+            <p id={emailErrorId} role="alert" className="error-note key-error">
+              {emailError}
+            </p>
+          )}
+          {/* The reference has no help line under the field; what it said
+              stays available to a screen reader as the field's description. */}
+          <p id={emailHelpId} className="sr-only">
+            We’ll email you a 6-digit code. New here? Entering it creates your account.
           </p>
-        )}
-        <p id={emailHelpId} className="key-help">
-          We’ll email you a code. New here? Entering it creates your account.
-        </p>
-        <div className="key-actions">
           <button
             type="submit"
             className="btn btn-primary btn-pill acct-send-code"
             aria-disabled={sending || undefined}
           >
-            {sending ? "Sending…" : "Send code"}
+            {sending ? "Sending…" : "Continue with email"}
           </button>
-          <p role="status" className="key-status-slot">
-            {sending && <span className="key-status">Sending your code…</span>}
+          <p role="status" className="sr-only">
+            {sending ? "Sending your code…" : ""}
+          </p>
+          <p className="acct-consent">
+            By continuing, you agree to VideoLens’s{" "}
+            <a className="text-link" href="/terms">
+              Terms
+            </a>{" "}
+            and acknowledge the{" "}
+            <a className="text-link" href="/privacy">
+              Privacy Policy
+            </a>
+            .
           </p>
         </div>
       </form>
@@ -454,13 +475,20 @@ function SignInCard({ runInProgress }: { runInProgress: boolean }) {
         inputMode="numeric"
         autoComplete="one-time-code"
         pattern="[0-9]*"
-        maxLength={CODE_MAX_LENGTH + 4}
+        maxLength={CODE_LENGTH}
         spellCheck={false}
         className="field acct-field acct-code"
         value={flow.code}
         readOnly={verifying || resending}
         onChange={(event) => flow.setCode(event.target.value)}
-        placeholder="12345678"
+        onPaste={(event) => {
+          /* `maxLength` cuts a paste at six characters *before* onChange sees
+             it, so "Code: 123456" would arrive as "Code: ". Reduce the paste
+             to its digits first, then take six. */
+          event.preventDefault();
+          flow.setCode(event.clipboardData.getData("text"));
+        }}
+        placeholder="123456"
         aria-invalid={codeError ? true : undefined}
         aria-describedby={codeError ? `${codeErrorId} ${codeHelpId}` : codeHelpId}
       />
@@ -496,6 +524,69 @@ function SignInCard({ runInProgress }: { runInProgress: boolean }) {
         </button>
       </div>
     </form>
+  );
+}
+
+/* Google's own "G" (the four-colour mark from Google's sign-in branding
+   kit), unmodified: its colours are the brand's, not the palette's, so they
+   are the one set of literal colours here and do not follow the theme.
+   Google's guidelines put it on a neutral button with an approved label
+   ("Continue with Google"); the button is the page's ordinary outlined one. */
+function GoogleMark() {
+  return (
+    <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false" className="acct-google-mark">
+      <path
+        fill="#EA4335"
+        d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
+      />
+      <path
+        fill="#4285F4"
+        d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
+      />
+      <path
+        fill="#34A853"
+        d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
+      />
+    </svg>
+  );
+}
+
+/* "Continue with Google" (auth phase 4), above the email form. The run guard
+   holds it like Verify: finishing a sign-in mid-run would stop Analyze
+   following the run. Guarded with aria-disabled, never `disabled`. */
+function GoogleSignIn({ runInProgress }: { runInProgress: boolean }) {
+  const google = useGoogleSignIn();
+  const errorId = useId();
+  const held = google.starting || runInProgress;
+  return (
+    <div className="acct-google-row">
+      <button
+        type="button"
+        className="btn btn-secondary btn-pill acct-google"
+        onClick={() => {
+          if (held) return;
+          void google.start();
+        }}
+        aria-disabled={held || undefined}
+        aria-describedby={google.error ? errorId : undefined}
+      >
+        <GoogleMark />
+        <span>{google.starting ? "Opening Google…" : "Continue with Google"}</span>
+      </button>
+      <p role="status" className="key-status-slot acct-google-status">
+        {google.waiting && <span className="key-status">Finish signing in on Google’s page.</span>}
+      </p>
+      {google.error && (
+        <p id={errorId} role="alert" className="error-note key-error">
+          {google.error}
+        </p>
+      )}
+      {runInProgress && <p className="pending-note acct-guard">{RUN_GUARD}</p>}
+    </div>
   );
 }
 

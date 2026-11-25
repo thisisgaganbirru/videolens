@@ -25,7 +25,7 @@ import { refreshSavedHistory, useSavedHistory } from "@/application/useSavedHist
 import { HISTORY_LIMIT, useHistoryBoot } from "@/application/useRunHistory";
 import { useDocumentTitle } from "@/application/useDocumentTitle";
 import { useCapabilities } from "@/application/useCapabilities";
-import { useAuthUser, useStoredSessionHint } from "@/application/useAuthSession";
+import { useAuthUser, useGoogleReturnLanding, useStoredSessionHint } from "@/application/useAuthSession";
 import { useMediaLimits } from "@/application/useMediaLimits";
 import { useBilling } from "@/application/useBilling";
 import { formatPrice } from "@/components/format";
@@ -153,6 +153,9 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      account's free runs instead of this device's (2026-11-13), so
      a sign-in or sign-out re-reads the allowance. */
   const authUser = useAuthUser();
+  /* A Google answer (auth phase 4) brings the shell to Account, where it is
+     shown: in the installed app the deep link can land on any tab. */
+  useGoogleReturnLanding();
   const storedSessionHint = useStoredSessionHint();
   const freeRuns = useFreeRuns(authUser.ready ? (authUser.user?.id ?? "") : null);
 

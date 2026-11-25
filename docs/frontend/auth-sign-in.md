@@ -27,15 +27,16 @@ Dockerfile does not declare is ignored and sign-in stays hidden.
 | Layer | File | Role |
 |---|---|---|
 | domain | `entities.ts` | `AuthUser`, `AccountResponse` (+ `AccountWorkspace`, `AccountEntitlement`, which gains an optional `complimentary` on 2026-11-14, see `billing.md`), `ApiKeySummary`, `ApiKeyCreated`, `ApiKeyListResponse` |
-| domain | `ports.ts` | `AuthSession` (`enabled`, `load`, `user`, `hasSession`, `getToken`, `requestEmailCode`, `verifyEmailCode`, `signOut`, `subscribe`; no Google method yet), `AccountGateway` (`fetchAccount`, `listKeys`, `createKey`, `revokeKey`), `ServerAuthStatus` (the server's `auth` capability: `unknown`/`ok`/`off`), `CallerIdentity` (`lastOwner()`) |
+| domain | `ports.ts` | `AuthSession` (`enabled`, `load`, `user`, `hasSession`, `getToken`, `requestEmailCode`, `verifyEmailCode`, `signOut`, `subscribe`, and since 2026-11-22 `signInWithGoogle`, `googlePending`, `redirectResult`, `dismissRedirectResult`), `AuthRedirectBrowser` (where Google's consent page opens and how its answer comes back: `returnUrl`, `open`, `close`, `takeInitialReturn`, `watch`), `AuthRedirectResult`, `AccountGateway` (`fetchAccount`, `listKeys`, `createKey`, `revokeKey`), `ServerAuthStatus` (the server's `auth` capability: `unknown`/`ok`/`off`), `CallerIdentity` (`lastOwner()`) |
 | domain | `entities.ts` (History) | `HistoryRecord.owner`: `user:<id>` or `anonymous`, the identity the run was created or imported under |
-| domain | `errors.ts` | `AuthFlowError(reason)`, reasons `invalid_email`, `invalid_code`, `rate_limited`, `unreachable`, `unavailable`, `unknown` |
-| infrastructure | `authSession.ts` | `SupabaseAuthSession` and `NullAuthSession`, `buildAuthSession()`. The only file that names Supabase |
+| domain | `errors.ts` | `AuthFlowError(reason)`, reasons `invalid_email`, `invalid_code`, `rate_limited`, `unreachable`, `unavailable`, `cancelled` (Google consent refused, 2026-11-22), `unknown` |
+| infrastructure | `authSession.ts` | `SupabaseAuthSession` and `NullAuthSession`, `buildAuthSession(browser)`. The only file that names Supabase |
+| infrastructure | `authBrowser.ts` | `SystemAuthBrowser` (the `AuthRedirectBrowser`): this tab on the web; `@capacitor/browser` + `@capacitor/app` deep links in the installed app, lazily imported. `NATIVE_RETURN_URL`, `readReturn` |
 | infrastructure | `apiClient.ts` | The shared caller transport: `X-Client-ID` always, `X-Device-Token` when held, `Authorization: Bearer` only when signed in **and** the server's `auth` capability is `ok`. Records the identity each request went out as (`lastOwner`) |
 | infrastructure | `serverAuthStatus.ts` | `MemoryServerAuthStatus`, fed by `FetchCapabilitiesGateway` from every report's `auth` row (a report without the row counts as `off`) |
 | infrastructure | `accountGateway.ts` | `/api/me`, `/api/keys` (GET, POST), `DELETE /api/keys/{id}` |
-| infrastructure | `container.ts` | `authSession`, `serverAuthStatus`, `apiClient` (also exported as `callerIdentity`), `accountGateway`; `runsGateway` and `freeRunsGateway` now take the `ApiClient` |
-| application | `useAuthSession.ts` | `useAuthUser()` (who is signed in, `ready`), `useEmailCodeSignIn()` (the OTP form state), `signOut()` |
+| infrastructure | `container.ts` | `authBrowser`, `authSession`, `serverAuthStatus`, `apiClient` (also exported as `callerIdentity`), `accountGateway`; `runsGateway` and `freeRunsGateway` now take the `ApiClient` |
+| application | `useAuthSession.ts` | `useAuthUser()` (who is signed in, `ready`), `useEmailCodeSignIn()` (the OTP form state), `useGoogleSignIn()` (the Google button), `useGoogleReturnLanding()` (mounted by HomeScreen: a Google answer brings the shell to Account), `signOut()` |
 | application | `useAccount.ts` | `/api/me` for the signed-in user: `unavailable` (503), `rejected` (401), `failed` |
 | application | `useApiKeys.ts` | list, create, revoke. The one-time secret lives only in `justCreated`; the list gets the summary with `secret` stripped, so "Done" drops it for good |
 | application | `useRunHistory.ts` / `historySync.ts` | `useHistoryBoot({ready, userId})` re-imports the server's runs (`importServerRuns`) when a person signs in. `recordSubmitted` and imports stamp `owner`; `recordGone` decides what a 404 means (below) |
@@ -48,8 +49,8 @@ Dockerfile does not declare is ignored and sign-in stays hidden.
   `import()` the first time anything asks for a token, so a build without
   sign-in never fetches it.
 - Client options: `persistSession: true`, `autoRefreshToken: true`,
-  `flowType: "pkce"`, `detectSessionInUrl` on web only (false inside
-  Capacitor; it only matters for the Google redirect in phase 4).
+  `flowType: "pkce"`, `detectSessionInUrl: false` everywhere (since
+  2026-11-22; the Google return is read by the adapter itself, below).
 - The session lives in this origin's localStorage, which the Android backup
   rules already exclude (`security-headers.md`).
 - `hasSession()` is synchronous: a session in memory, or the stored
@@ -83,17 +84,123 @@ request goes out anonymous. Anonymous is also what a server reporting `auth`
 as anything but `ok` gets, so the app keeps working there with a leftover
 session.
 
-## Emailed code (the only method this phase)
+## Emailed code
 
 - `signInWithOtp({ email, options: { shouldCreateUser: true } })`, then
   `verifyOtp({ email, token, type: "email" })`.
-- The code field accepts **6 to 8 digits** (`inputmode="numeric"`,
-  `autocomplete="one-time-code"`). `videolens-dev` sends 8; the plan's
-  "6 digits" was Supabase's old default. Pasted text is reduced to digits.
+- The code is **exactly 6 digits** (owner, 2026-11-22; it accepted 6 to 8
+  while `videolens-dev` sent 8). `CODE_LENGTH = 6` in `useAuthSession.ts`;
+  the field keeps `inputmode="numeric"` and `autocomplete="one-time-code"`,
+  has `maxLength={6}` and placeholder `123456`. Typed or pasted text is
+  reduced to digits and cut to six (`cleanCode`); the field's own `onPaste`
+  does this before `maxLength` could truncate a paste such as
+  "Your code: 123456". Verify with anything but six digits says "Enter the
+  6-digit code from the email." **Dashboard dependency:** every Supabase
+  project must send 6 (Authentication, Email, "Email OTP Length"); a project
+  left at 8 fails at Verify.
 - Copy says the code expires in 10 minutes (the project's 600 s setting).
 - Resend is offered after 60 s (Supabase refuses a second code sooner), with
   a visible countdown. "Use a different email" goes back to step one.
-- Google has no button. It is phase 4 (`auth-plan.md`).
+- Google sits above it since 2026-11-22 (next section).
+
+## Google sign-in (auth phase 4, 2026-11-22)
+
+"Continue with Google" is the first control on the signed-out card, a
+neutral outlined pill (`.btn-secondary` on the card's white, so the
+four-colour mark sits on a neutral ground in both themes, as Google's
+branding asks) with the official "G" inline as SVG, then the intake's
+`.divider` "or", then the email form. While a run is in progress it is held
+with the same `RUN_GUARD` note as Verify (`aria-disabled` plus a handler
+guard). A start failure or a refused or failed return shows as
+`role="alert"` under it; "Finish signing in on Google's page." is a polite
+status while the app's browser is open.
+
+**Card layout (owner's reference, 2026-11-22).** Under the title and the
+"No password needed" line, one column (`.acct-sign-in-stack`), every
+control full width at 3rem: "Continue with Google" (outlined, quieter),
+an uppercase centred "OR" (`.divider.acct-or`), the email field
+(placeholder "Enter your email"; the "Email" label is `sr-only`, and the old
+help line "We'll email you a 6-digit code. New here?…" is now its
+`sr-only` description), then the filled primary "Continue with email",
+which is the old Send code (same `flow.send()`; "Sending…" while busy, the
+status line moved to `sr-only`). Under it a centred muted note
+(`.acct-consent`): "By continuing, you agree to VideoLens's Terms and
+acknowledge the Privacy Policy." with `.text-link`s to `/terms` and
+`/privacy`. No marketing-consent clause: VideoLens sends no promotional
+email, and implied consent would not be a valid opt-in. The code step that
+follows is unchanged. Verified light and dark, and at 301px control width
+(phone card content), by screenshot on the dev server.
+
+**One return path for web and app.** `detectSessionInUrl` is off; the
+adapter reads the answer itself (`finishReturn`), because supabase-js leaves
+a refusal's `?error=` in the address bar and never reports it to a screen,
+leaves `?code=` behind after a failed exchange, and strips the URL with a
+`replaceState` Next does not see.
+
+1. `signInWithGoogle()`: a settings preflight (`GET <supabase>/auth/v1/settings`,
+   4 s) refuses early with `unavailable` when `external.google` is false (the
+   consent address would otherwise be a bare JSON error page with no way
+   back) and `unreachable` when the read cannot be made at all. Then
+   `signInWithOAuth({ provider: "google", options: { redirectTo:
+   browser.returnUrl(), skipBrowserRedirect: true, queryParams: { prompt:
+   "select_account" } } })` builds the address and stores the PKCE verifier
+   (`sb-<ref>-auth-token-code-verifier`). A marker
+   `videolens-google-signin-pending` (a timestamp) goes into localStorage,
+   and `browser.open(url)` leaves.
+2. The answer reaches `finishReturn(raw)`: it closes the app browser,
+   **synchronously takes the marker** (missing or older than 30 min: the
+   link is ignored, so a reload, a bookmark or a link heard twice at cold
+   start never exchanges twice), then either publishes the error
+   (`access_denied` is `cancelled`; provider or signup disabled is
+   `unavailable`; rate limits `rate_limited`; else `unknown`) or calls
+   `exchangeCodeForSession(code)`. The outcome is `redirectResult()`
+   (`{id, ok}` or `{id, ok: false, error}`), and listeners are notified.
+3. `useGoogleSignIn` dismisses an ok result (the panel turns signed in on its
+   own) and keeps a failure on screen; `useGoogleReturnLanding` (HomeScreen)
+   routes to Account once per result id.
+
+**Web.** Return address `${location.origin}/app?view=account`. The page
+loads; `load()` calls `takeInitialReturn()`, which (on `/app` with
+`view=account` and any of `code`, `error`, `error_code`, `error_description`)
+strips those and `sb_flow_id` with a `replaceState` that keeps Next's history
+state shape, and hands the URL over before `load()` settles, so the panel
+goes from "Loading…" straight to signed in. Coming back from Google's page
+with the browser's back button (bfcache `pageshow`) clears the pending state.
+No CSP change: the consent page is a top-level navigation (not covered by
+`connect-src` or `form-action`), and the settings read and code exchange go
+to the Supabase origin `connect-src` already allows.
+
+**Android.** Return address `ai.videolens.app://auth/callback`.
+`SystemAuthBrowser` lazily imports `@capacitor/browser` (**8.0.5**, exact)
+and `@capacitor/app`, opens the consent page in a Custom Tab, and listens
+for `appUrlOpen` (warm) plus `App.getLaunchUrl()` (cold start); both filter
+on that scheme, host and path. `browserFinished` (the person closed the tab)
+clears the waiting state. `AndroidManifest.xml` has an intent filter on
+`MainActivity` (VIEW, DEFAULT, BROWSABLE, scheme `ai.videolens.app`, host
+`auth`, path `/callback`); `launchMode="singleTask"` delivers the link to the
+running activity. The PKCE verifier and the marker live in the WebView's
+Local Storage, which the backup rules already exclude, so they are
+unchanged. `npx cap update android` registered the plugin in the two tracked
+Gradle files (`capacitor.settings.gradle`, `app/capacitor.build.gradle`).
+On the web every native call is skipped and the plugins are never loaded.
+
+**Identity.** Supabase links a Google sign-in to an existing user with the
+same verified email, so the `user:<id>` owner, server-side runs, saved
+history and the sign-out-hides-runs behaviour are identical to an emailed
+code. Nothing in History, `ApiClient` or ownership knows how a session was
+made.
+
+**Dashboard requirements (not in code).**
+- Supabase, Authentication, Providers, Google: enabled with the Google
+  client id and secret.
+- Supabase, Authentication, URL Configuration, Redirect URLs: each web
+  origin **with a wildcard path** (`http://localhost:3005/**`,
+  `https://<dev frontend>/**`, `https://<prod frontend>/**`); an exact
+  origin does not match `/app?view=account`. Plus
+  `ai.videolens.app://auth/callback`. A return address not on the list makes
+  Supabase fall back to the Site URL.
+- Google Cloud OAuth client (Web application): authorized redirect URI
+  `https://<project-ref>.supabase.co/auth/v1/callback`.
 
 ## The Account tab
 
@@ -731,3 +838,5 @@ use it. Copy, final wording:
 - 2026-11-21 · Claude (frontend agent) · `degraded` auth kept as its own state (never anonymous with a session); capabilities re-read while a signed-in request waits (deduplicated, 5 s spacing), wait ends as soon as the state is decisive; `CapabilitiesGateway.subscribe` so screens see the newer report; `openRun` decides sign-out clearing from the record's owner
 - 2026-11-21 · Claude (frontend agent) · sign-out hides account runs (owner decision): Account notes, Continue signed out, delete and closed-hold copy, RUN_GUARD wording; sign-in/out held only for a submit or a healthy followed run (`holdsSignIn`)
 - 2026-11-22 · frontend agent · run guard needs a recent server answer (15 s, `HOLD_FRESH_MS`), so Sign out is never held on a status the screen stopped refreshing
+- 2026-11-22 · frontend agent · OTP is exactly 6 digits (`CODE_LENGTH`, paste cut to six, placeholder `123456`); Google sign-in (auth phase 4) on web and Android: `AuthSession.signInWithGoogle` + redirect result, `AuthRedirectBrowser` port, `SystemAuthBrowser` adapter (`@capacitor/browser` 8.0.5), deep link `ai.videolens.app://auth/callback`, `detectSessionInUrl` off, button and "or" divider on the signed-out card; dashboard requirements listed
+- 2026-11-22 · frontend agent · signed-out sign-in card reworked to the owner's reference layout: full-width equal-height stack (Google, uppercase OR, email with sr-only label and "Enter your email" placeholder, primary "Continue with email" replacing Send code with the same behaviour), centred Terms/Privacy note with no marketing clause; checked light, dark and phone content width

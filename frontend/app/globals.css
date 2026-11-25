@@ -3392,6 +3392,56 @@ h3 {
   .acct-page .acct-group-information > .acct-group-label {
     font-weight: 400;
   }
+  /* Signed-out sign-in card (owner's reference layout, 2026-11-22): one
+     column, every control full width at one height (3rem), so Google, the
+     email field and Continue with email line up as a single stack. Google is
+     the page's outlined button on the card's surface (a neutral ground for
+     the four-colour mark, Google's branding rule, in both themes); Continue
+     with email is the filled primary. The "or" is the intake's divider,
+     uppercase and centred. */
+  .acct-page .acct-sign-in-stack {
+    display: flex;
+    flex-direction: column;
+  }
+  .acct-page .acct-sign-in-stack .acct-google,
+  .acct-page .acct-sign-in-stack .acct-field,
+  .acct-page .acct-sign-in-stack .acct-send-code {
+    flex: none; /* .acct-field grows (flex: 1) in its usual row; not here */
+    width: 100%;
+    height: 3rem;
+  }
+  .acct-page .acct-google {
+    justify-content: center;
+    padding-inline: 1.5rem;
+    gap: 0.625rem;
+    background: var(--color-surface);
+  }
+  .acct-page .acct-google .acct-google-mark {
+    flex: none;
+    width: 1.125rem;
+    height: 1.125rem;
+  }
+  .acct-page .acct-google-status:not(:empty) {
+    margin-top: 0.5rem;
+  }
+  .acct-page .acct-or {
+    margin: 1.25rem 0;
+    font-size: 0.75rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .acct-page .acct-sign-in-stack .acct-send-code {
+    justify-content: center;
+    margin-top: 0.75rem;
+  }
+  .acct-page .acct-consent {
+    margin: 1rem 0 0;
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    text-align: center;
+    color: var(--color-muted);
+    text-wrap: balance;
+  }
   @media (width < 40rem) {
     .acct-page .acct-sign-in .acct-send-code { width: 100%; }
   }

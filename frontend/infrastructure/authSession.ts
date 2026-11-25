@@ -1,8 +1,8 @@
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
-import { Capacitor } from "@capacitor/core";
 import type { AuthUser } from "@/domain/entities";
 import { AuthFlowError, type AuthFailureReason } from "@/domain/errors";
-import type { AuthSession } from "@/domain/ports";
+import type { AuthRedirectBrowser, AuthRedirectResult, AuthSession } from "@/domain/ports";
+import { readReturn } from "./authBrowser";
 import { providerStorageKey } from "./authSessionStamp";
 
 /* The identity provider, behind the `AuthSession` port (auth phase 2).
@@ -29,6 +29,18 @@ import { providerStorageKey } from "./authSessionStamp";
  *  all the request then goes out anonymous; with one, it fails (see the
  *  port) so a run the person owns is never asked for as someone else. */
 const LOAD_WAIT_MS = 4000;
+
+/** Set when Google sign-in starts here, cleared when its answer is read. A
+ *  return without it is not acted on: a WebView reload re-reading the app's
+ *  launch link, or a stale `?code=` in a bookmarked address, would otherwise
+ *  be exchanged again and fail with a message nobody asked for. In
+ *  localStorage (not memory) because the answer can arrive in a new page or
+ *  a relaunched app; the Android backup rules already exclude it. */
+const GOOGLE_PENDING_KEY = "videolens-google-signin-pending";
+/** A consent page left open longer than this is treated as abandoned. */
+const GOOGLE_PENDING_MAX_MS = 30 * 60 * 1000;
+/** The settings read before leaving for Google is bounded like the load. */
+const SETTINGS_WAIT_MS = 4000;
 
 export class NullAuthSession implements AuthSession {
   readonly enabled = false;
@@ -57,6 +69,20 @@ export class NullAuthSession implements AuthSession {
     throw new AuthFlowError("unavailable", "sign-in is not configured");
   }
 
+  async signInWithGoogle(): Promise<void> {
+    throw new AuthFlowError("unavailable", "sign-in is not configured");
+  }
+
+  googlePending(): boolean {
+    return false;
+  }
+
+  redirectResult(): AuthRedirectResult | null {
+    return null;
+  }
+
+  dismissRedirectResult(): void {}
+
   async signOut(): Promise<void> {}
 
   async signOutEverywhere(): Promise<void> {}
@@ -66,10 +92,27 @@ export class NullAuthSession implements AuthSession {
   }
 }
 
+/** Why a provider return carried an error, from its `error` and
+ *  `error_code` parameters. `access_denied` is Google's "the person said no
+ *  or closed the page". */
+function returnFailure(error: string | null, errorCode: string | null, description: string | null): AuthFlowError {
+  const message = description || error || "provider sign-in failed";
+  if (error === "access_denied") return new AuthFlowError("cancelled", message);
+  if (
+    errorCode === "provider_disabled" ||
+    errorCode === "signup_disabled" ||
+    errorCode === "oauth_provider_not_supported" ||
+    error === "unsupported_provider"
+  )
+    return new AuthFlowError("unavailable", message);
+  if (errorCode === "over_request_rate_limit" || errorCode?.includes("rate_limit")) return new AuthFlowError("rate_limited", message);
+  return new AuthFlowError("unknown", message);
+}
+
 /** Supabase's error objects carry `status` and a machine `code`; a network
  *  failure is `AuthRetryableFetchError`. Read structurally so this stays a
  *  pure function and needs no handle on the lazily loaded module. */
-function classify(error: unknown, step: "request" | "verify"): AuthFlowError {
+function classify(error: unknown, step: "request" | "verify" | "google"): AuthFlowError {
   const e = (typeof error === "object" && error !== null ? error : {}) as {
     name?: unknown;
     status?: unknown;
@@ -84,21 +127,18 @@ function classify(error: unknown, step: "request" | "verify"): AuthFlowError {
   let reason: AuthFailureReason = "unknown";
   if (name === "AuthRetryableFetchError" || (status === 0 && error instanceof TypeError)) reason = "unreachable";
   else if (status === 429 || code.includes("rate_limit")) reason = "rate_limited";
-  else if (code === "otp_disabled" || code === "signup_disabled" || code === "email_provider_disabled")
+  else if (
+    code === "otp_disabled" ||
+    code === "signup_disabled" ||
+    code === "email_provider_disabled" ||
+    code === "provider_disabled"
+  )
     reason = "unavailable";
   else if (step === "verify" && (code === "otp_expired" || code === "invalid_credentials" || status === 403))
     reason = "invalid_code";
   else if (step === "request" && (code === "email_address_invalid" || code === "validation_failed" || status === 400))
     reason = "invalid_email";
   return new AuthFlowError(reason, message);
-}
-
-function isNative(): boolean {
-  try {
-    return Capacitor.isNativePlatform();
-  } catch {
-    return false;
-  }
 }
 
 export class SupabaseAuthSession implements AuthSession {
@@ -112,9 +152,17 @@ export class SupabaseAuthSession implements AuthSession {
    *  so `hasSession()` can see a stored session before the library loads. */
   private readonly storageKey: string;
 
+  /** Google sign-in (phase 4): on its way to the consent page. */
+  private pending = false;
+  /** The last provider return's outcome, until a screen dismisses it. */
+  private result: AuthRedirectResult | null = null;
+  private resultSeq = 0;
+  private watchingReturns = false;
+
   constructor(
     private readonly url: string,
-    private readonly publishableKey: string
+    private readonly publishableKey: string,
+    private readonly browser: AuthRedirectBrowser
   ) {
     this.storageKey = providerStorageKey(url);
   }
@@ -167,10 +215,13 @@ export class SupabaseAuthSession implements AuthSession {
               autoRefreshToken: true,
               flowType: "pkce",
               storageKey: this.storageKey,
-              /* Only a web redirect (Google, phase 4) ever lands a session in
-                 the URL. In the Capacitor WebView the app's own URL never
-                 carries one, and parsing it there is pointless. */
-              detectSessionInUrl: !isNative(),
+              /* Off everywhere (2026-11-22, phase 4). The one redirect that
+                 lands here, Google's, is read by `finishReturn` below on the
+                 web and in the app alike: it also reads a refusal (which the
+                 library leaves in the address bar and reports nowhere a
+                 screen can see) and strips the parameters through a history
+                 entry Next keeps in sync. */
+              detectSessionInUrl: false,
             },
           });
           /* The callback only records: calling back into the client from
@@ -183,6 +234,12 @@ export class SupabaseAuthSession implements AuthSession {
           const { data } = await client.auth.getSession();
           this.client = client;
           this.session = data.session;
+          this.watchReturns(client);
+          /* A Google answer that is already here (the web return page, or the
+             link that launched the app) is read before `load` settles, so the
+             panel goes from "Loading…" straight to signed in. */
+          const initial = await this.browser.takeInitialReturn().catch(() => null);
+          if (initial) await this.finishReturn(client, initial);
           this.notify();
         })
         .catch((err) => {
@@ -294,6 +351,164 @@ export class SupabaseAuthSession implements AuthSession {
     if (error) throw classify(error, "verify");
   }
 
+  /* ------------------------------------------------- Google (auth phase 4) */
+
+  async signInWithGoogle(): Promise<void> {
+    const client = await this.ready();
+    await this.checkGoogleEnabled();
+    let url: string | null = null;
+    let error: unknown;
+    try {
+      /* `skipBrowserRedirect`: the library only builds the address (and
+         stores the PKCE verifier); `browser.open` decides where it opens. */
+      const response = await client.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: this.browser.returnUrl(),
+          skipBrowserRedirect: true,
+          /* Always offer the account chooser, so a shared phone or browser
+             does not sign in as whoever used Google there last. */
+          queryParams: { prompt: "select_account" },
+        },
+      });
+      error = response.error;
+      url = response.data?.url ?? null;
+    } catch (err) {
+      error = err;
+    }
+    if (error || !url) throw classify(error ?? new Error("no consent address"), "google");
+    this.setPendingMarker(true);
+    this.pending = true;
+    this.notify();
+    try {
+      await this.browser.open(url);
+    } catch (err) {
+      this.setPendingMarker(false);
+      this.pending = false;
+      this.notify();
+      throw new AuthFlowError("unknown", err instanceof Error ? err.message : "could not open the consent page");
+    }
+  }
+
+  googlePending(): boolean {
+    return this.pending;
+  }
+
+  redirectResult(): AuthRedirectResult | null {
+    return this.result;
+  }
+
+  dismissRedirectResult(id: number): void {
+    if (this.result?.id !== id) return;
+    this.result = null;
+    this.notify();
+  }
+
+  /** Asks the project whether Google is switched on before leaving for it:
+   *  with the provider off, Supabase answers the consent address with a bare
+   *  JSON error page, a dead end with no way back into the app. A settings
+   *  read that answers oddly lets the attempt go ahead (the return then
+   *  carries any refusal); one that cannot be made at all means the sign-in
+   *  service is out of reach, as for an emailed code. */
+  private async checkGoogleEnabled(): Promise<void> {
+    const controller = typeof AbortController === "undefined" ? null : new AbortController();
+    const timer = controller ? setTimeout(() => controller.abort(), SETTINGS_WAIT_MS) : undefined;
+    let response: Response;
+    try {
+      response = await fetch(`${this.url.replace(/\/+$/, "")}/auth/v1/settings`, {
+        headers: { apikey: this.publishableKey },
+        signal: controller?.signal,
+      });
+    } catch (err) {
+      throw new AuthFlowError("unreachable", err instanceof Error ? err.message : "settings unreachable");
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    if (!response.ok) return;
+    let google: unknown;
+    try {
+      const body = (await response.json()) as { external?: Record<string, unknown> };
+      google = body.external?.google;
+    } catch {
+      return;
+    }
+    if (google === false) throw new AuthFlowError("unavailable", "the Google provider is not enabled");
+  }
+
+  private setPendingMarker(on: boolean): void {
+    try {
+      if (on) window.localStorage.setItem(GOOGLE_PENDING_KEY, String(Date.now()));
+      else window.localStorage.removeItem(GOOGLE_PENDING_KEY);
+    } catch {
+      /* no storage: the PKCE verifier cannot be kept either, and the
+         exchange will say so */
+    }
+  }
+
+  /** Reads and clears the marker. True when a sign-in started here recently. */
+  private takePendingMarker(): boolean {
+    let raw: string | null = null;
+    try {
+      raw = window.localStorage.getItem(GOOGLE_PENDING_KEY);
+      window.localStorage.removeItem(GOOGLE_PENDING_KEY);
+    } catch {
+      return false;
+    }
+    const started = raw === null ? NaN : Number(raw);
+    return Number.isFinite(started) && Date.now() - started <= GOOGLE_PENDING_MAX_MS;
+  }
+
+  private publish(outcome: { ok: true } | { ok: false; error: AuthFlowError }): void {
+    this.resultSeq += 1;
+    this.result = { id: this.resultSeq, ...outcome };
+    this.notify();
+  }
+
+  /** The app's deep links, and the consent page left without an answer.
+   *  Registered once, when the client exists. */
+  private watchReturns(client: SupabaseClient): void {
+    if (this.watchingReturns) return;
+    this.watchingReturns = true;
+    this.browser.watch({
+      onReturn: (url) => {
+        void this.finishReturn(client, url);
+      },
+      onClosed: () => {
+        if (!this.pending) return;
+        this.pending = false;
+        this.notify();
+      },
+    });
+  }
+
+  /** One provider return: the code is exchanged for a session (PKCE; the
+   *  verifier is in this origin's storage), or the error is kept for the
+   *  panel. Never rejects. */
+  private async finishReturn(client: SupabaseClient, raw: string): Promise<void> {
+    void this.browser.close();
+    /* Synchronous, before any await: a cold start can hear the same link
+       twice (launch URL and `appUrlOpen`), and only the first is acted on. */
+    if (!this.takePendingMarker()) return;
+    this.pending = false;
+    const { code, error, errorCode, description } = readReturn(raw);
+    if (error || errorCode || !code) {
+      this.publish({ ok: false, error: returnFailure(error, errorCode, description) });
+      return;
+    }
+    let failure: unknown;
+    try {
+      ({ error: failure } = await client.auth.exchangeCodeForSession(code));
+    } catch (err) {
+      failure = err;
+    }
+    if (failure) {
+      this.publish({ ok: false, error: classify(failure, "google") });
+      return;
+    }
+    /* `onAuthStateChange` has already recorded the session. */
+    this.publish({ ok: true });
+  }
+
   async signOut(): Promise<void> {
     /* `local`: this device only. A failed network call still clears the
        stored session (supabase-js removes it before the request). The key is
@@ -340,10 +555,10 @@ export class SupabaseAuthSession implements AuthSession {
   }
 }
 
-export function buildAuthSession(): AuthSession {
+export function buildAuthSession(browser: AuthRedirectBrowser): AuthSession {
   /* Read as two literal `process.env.NEXT_PUBLIC_*` expressions so Next
      inlines them at build time. */
   const url = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
   const key = (process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "").trim();
-  return url && key ? new SupabaseAuthSession(url, key) : new NullAuthSession();
+  return url && key ? new SupabaseAuthSession(url, key, browser) : new NullAuthSession();
 }

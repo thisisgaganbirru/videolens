@@ -23,6 +23,7 @@ and host → platform), `ports.ts` (the interfaces below).
 |---|---|---|
 | `RunsGateway` | `runsGateway.ts` | `/api/runs`; adds `X-Gemini-Api-Key` on create, the rest from `ApiClient` |
 | `AuthSession` | `authSession.ts` | Supabase Auth (dynamic import), or `NullAuthSession` when unconfigured |
+| `AuthRedirectBrowser` | `authBrowser.ts` | Where Google's consent page opens and how its answer returns: this tab on the web; `@capacitor/browser` and the `ai.videolens.app://auth/callback` deep link (`@capacitor/app`) in the installed app, both lazily imported. Passed to `buildAuthSession` in `container.ts` |
 | `AccountGateway` | `accountGateway.ts` | `/api/me`, `/api/me/restore`, `/api/keys` |
 | `SavedHistoryGateway` | `savedHistoryGateway.ts` | `/api/history`, `/api/history/{run_id}` (paid saved runs) |
 | `AccountHoldSource` | `apiClient.ts` | the shared client itself: tells listeners about every 410 `account_pending_deletion` |
@@ -172,3 +173,4 @@ scale into the WebView before first paint).
 - 2026-11-20 · Claude (frontend agent) · `HistoryStore.update` (merge-only, never creates); `FetchFailedError`/`SignInUnconfirmedError` under `NetworkError`; `AuthSession` hears other tabs' sign-out via `storage`
 - 2026-11-21 · Claude (frontend agent) · `ServerAuthState` gains `degraded`; `ServerAuthStatus.requestReport`/`setReader` (wired in `container.ts`); `CapabilitiesGateway.subscribe` and a shared in-flight read; `ANONYMOUS_OWNER` now in `domain/entities.ts`
 - 2026-11-21 · Claude (frontend agent) · `HistoryStore.update(patch, when)`, per-viewer cap, `isVisibleOwner` in domain; `removeOwnedBy` now only for account deletion
+- 2026-11-22 · frontend agent · `AuthRedirectBrowser` port + `SystemAuthBrowser` adapter (`authBrowser.ts`) for Google sign-in, injected into `buildAuthSession`; hooks `useGoogleSignIn`/`useGoogleReturnLanding`; see docs/frontend/auth-sign-in.md

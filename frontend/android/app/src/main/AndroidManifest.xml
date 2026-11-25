@@ -26,6 +26,22 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
+
+            <!-- Google sign-in (auth phase 4): Supabase sends the system
+                 browser back to ai.videolens.app://auth/callback?code=...
+                 and this filter hands that link to the running app
+                 (singleTask, so the same activity; @capacitor/app's
+                 appUrlOpen). Exact host and path, so no other link of the
+                 scheme opens the app. infrastructure/authBrowser.ts. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="ai.videolens.app"
+                    android:host="auth"
+                    android:path="/callback" />
+            </intent-filter>
         </activity>
 
         <provider
