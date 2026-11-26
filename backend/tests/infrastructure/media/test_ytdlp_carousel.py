@@ -214,7 +214,36 @@ class CarouselDownloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(instagram["match_filter"], ytdlp_downloader._skip_entries_without_media)
         self.assertNotIn("ignore_no_formats_error", youtube)
         self.assertNotIn("match_filter", youtube)
-        self.assertEqual(youtube["playlistend"], ytdlp_downloader.MAX_SLIDES)
+        self.assertEqual(instagram["playlistend"], ytdlp_downloader.MAX_SLIDES)
+        self.assertEqual(youtube["playlistend"], 1)
+
+    async def test_another_sites_playlist_is_refused_after_one_entry(self) -> None:
+        # A SoundCloud set: not a post, so never "Slide 1 of N (video)".
+        playlist = {**self._post(self._video("t1", "/a.mp4"), self._video("t2", "/b.mp4")), "extractor_key": "SoundcloudSet"}
+
+        with self.assertRaises(MediaValidationError) as caught:
+            await self._download(playlist, url="https://soundcloud.com/maker/sets/mix")
+
+        self.assertEqual(
+            str(caught.exception), "This link is a playlist or set. Paste a link to one video or track instead."
+        )
+        self.assertIn("SoundcloudSet returned a playlist of 2 entries", caught.exception.log_detail)
+        # Only the first entry was fetched before telling it apart.
+        self.assertEqual([path for path, _ in _Handler.seen], ["/a.mp4"])
+        self.assertEqual(os.listdir(self.temp.name), [])
+
+    async def test_another_sites_one_entry_playlist_is_just_a_video(self) -> None:
+        saved = await self._download(self._post(self._video("v1", "/a.mp4")), url="https://example.com/watch/1")
+
+        self.assertEqual(saved.slides, ())
+        self.assertTrue(os.path.isfile(saved.path))
+        self.assertEqual(saved.size_bytes, len(VIDEO))
+
+    async def test_another_sites_photo_is_never_fetched_as_a_slide(self) -> None:
+        with self.assertRaises(MediaValidationError):
+            await self._download(self._post(self._image("i1"), self._image("i2")), url="https://example.com/album/1")
+
+        self.assertNotIn("/big.jpg", [path for path, _ in _Handler.seen])
 
     async def test_slides_past_the_limit_are_dropped(self) -> None:
         entries = [self._image(f"i{index}") for index in range(1, 24)]

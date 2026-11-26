@@ -176,8 +176,10 @@ def _download_failure(exc: DownloadError) -> tuple[str, str]:
 
 # ---------------------------------------------------------------- slides
 #
-# An Instagram carousel (and any other source yt-dlp returns as a playlist of
-# media) is one post made of up to 20 slides, each a video or a still image.
+# An Instagram carousel is one post made of up to 20 slides, each a video or a
+# still image. Only Instagram links take this path: any other site's playlist
+# stops after its first entry (`playlistend` 1) and is refused with
+# `_PLAYLIST_LINK`, unless it holds exactly one entry, which is just a video.
 # yt-dlp's own playlist processing downloads the video slides, each to its own
 # file through the template below; image slides have no formats, so on
 # Instagram they are let through extraction (`ignore_no_formats_error`) and
@@ -202,6 +204,10 @@ _PLAYLIST_TYPES = ("playlist", "multi_video")
 
 _UNREADABLE_SLIDE = "A slide in this post couldn't be read."
 _NOTHING_TO_ANALYZE = "This post has no video or image we could download."
+# Any other site's playlist, set or multi-part link. Slides are an Instagram
+# idea: a SoundCloud set or a YouTube playlist is not one post, and running it
+# as one would download up to MAX_SLIDES files and label audio as video.
+_PLAYLIST_LINK = "This link is a playlist or set. Paste a link to one video or track instead."
 
 
 def _is_instagram(url: str) -> bool:
@@ -325,11 +331,27 @@ def _fetch_image(
     return path, size
 
 
-def _is_multi_slide(info: dict, instagram: bool) -> bool:
-    if info.get("_type") in _PLAYLIST_TYPES:
-        return True
-    # A post that is one photo: no playlist, nothing downloaded.
-    return instagram and _is_image_entry(info)
+def _is_multi_slide(info: dict) -> bool:
+    """For an Instagram link: a carousel, or a post that is one photo (no
+    playlist, nothing downloaded)."""
+    return info.get("_type") in _PLAYLIST_TYPES or _is_image_entry(info)
+
+
+def _single_entry_of(info: dict) -> tuple[str, dict]:
+    """Another site's playlist: its one downloaded entry when the playlist
+    holds exactly one (some extractors wrap a single video that way), else
+    refused. Only the first entry was downloaded (`playlistend` 1)."""
+    entries = [entry for entry in info.get("entries") or [] if isinstance(entry, dict)]
+    path = _downloaded_file(entries[0]) if entries else None
+    if info.get("playlist_count") == 1 and path is not None:
+        return path, entries[0]
+    raise MediaValidationError(
+        _PLAYLIST_LINK,
+        log_detail=(
+            f"{info.get('extractor_key') or 'unknown'} returned a {info.get('_type')} "
+            f"of {info.get('playlist_count')} entries"
+        ),
+    )
 
 
 def _collect_slides(
@@ -338,7 +360,6 @@ def _collect_slides(
     run_dir: str,
     deadline: DownloadDeadline,
     max_bytes: int,
-    instagram: bool,
     over_limit: str,
 ) -> tuple[tuple[MediaSlide, ...], dict]:
     """The post's slides in order, and the info dict of the first one (its
@@ -357,7 +378,7 @@ def _collect_slides(
         if path is not None:
             slides.append(MediaSlide(path=path, kind=SlideKind.VIDEO))
             spent += os.path.getsize(path)
-        elif instagram and _is_image_entry(entry):
+        elif _is_image_entry(entry):
             image_path, size = _fetch_image(
                 downloader,
                 _image_url(entry) or "",
@@ -408,7 +429,9 @@ async def download_url(
             **_format_options(settings),
             "outtmpl": os.path.join(run_dir, _OUTTMPL),
             "noplaylist": True,
-            "playlistend": MAX_SLIDES,
+            # A carousel's slides; anything else only needs its first entry
+            # to be told apart from a playlist (`_single_entry_of`).
+            "playlistend": MAX_SLIDES if instagram else 1,
             "max_filesize": max_bytes,
             "socket_timeout": 30,
             "retries": 2,
@@ -430,9 +453,12 @@ async def download_url(
             # A deadline that fired mid-read can surface as a short read
             # yt-dlp accepted; a cut-off file is not a download.
             deadline.check()
-            if _is_multi_slide(info, instagram):
+            if not instagram and info.get("_type") in _PLAYLIST_TYPES:
+                path, entry = _single_entry_of(info)
+                return path, info, (), entry
+            if instagram and _is_multi_slide(info):
                 slides, first = _collect_slides(
-                    downloader, info, run_dir, deadline, max_bytes, instagram, over_limit
+                    downloader, info, run_dir, deadline, max_bytes, over_limit
                 )
                 deadline.check()
                 if not slides:
