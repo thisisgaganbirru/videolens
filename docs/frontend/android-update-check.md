@@ -370,7 +370,7 @@ only when Gradle gets `-PdevBuild=true`, adds `applicationIdSuffix ".dev"` and
   each other in `app/build/outputs/apk/debug/`. CI is unaffected: it globs
   `*.apk` and the artifact name carries `dev`.
 
-App version is **2.2.0** (`frontend/package.json`, which `build.gradle` reads
+App version is **2.3.0** (`frontend/package.json`, which `build.gradle` reads
 as `versionName`).
 
 ## Changelog
@@ -392,3 +392,4 @@ as `versionName`).
 - 2026-11-02 · android-66 (device QA) · verified refinement 14 on the bundled APK (run 16 in docs/qa/android-app-test-cases.md): document-start script active on WebView 124 (no fallback), root font-size 16–32px with text zoom at 100, no cold-launch size jump at 1.5/2.0, live change and reload on /terms keep the new scale; the "Pinch zoom … nothing is lost" claim is not borne out statically: Capacitor's setBuiltInZoomControls follows zoomEnabled (default false), and a real pinch couldn't be run on the emulator
 - 2026-11-02 · frontend (refinement 15) · corrected the pinch-zoom note: Capacitor's Bridge sets setBuiltInZoomControls(zoomEnabled), default false and unset here, so pinch zoom never existed in the app and R14 lost nothing; zoom left off (open owner question); no behaviour change
 - 2026-11-05 · frontend (dev-apk suffix) · added the `debug` build type with the `-PdevBuild` `.dev` applicationId / `-dev` versionName suffix (dev APK installs beside production), bumped the app to 2.2.0, documented the package-id dependents checked
+- 2026-11-26 · release agent · bumped the app to 2.3.0 for the dev release ahead of promotion to main
