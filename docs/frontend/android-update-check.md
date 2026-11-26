@@ -373,7 +373,7 @@ only when Gradle gets `-PdevBuild=true`, adds `applicationIdSuffix ".dev"` and
   each other in `app/build/outputs/apk/debug/`. CI is unaffected: it globs
   `*.apk` and the artifact name carries `dev`.
 
-App version is **2.3.0** (`frontend/package.json`, which `build.gradle` reads
+App version is **2.3.1** (`frontend/package.json`, which `build.gradle` reads
 as `versionName`).
 
 ## Changelog
@@ -397,3 +397,4 @@ as `versionName`).
 - 2026-11-05 · frontend (dev-apk suffix) · added the `debug` build type with the `-PdevBuild` `.dev` applicationId / `-dev` versionName suffix (dev APK installs beside production), bumped the app to 2.2.0, documented the package-id dependents checked
 - 2026-11-26 · release agent · bumped the app to 2.3.0 for the dev release ahead of promotion to main
 - 2026-11-26 · frontend agent · package-id dependents: the sign-in deep-link scheme is now `${applicationId}` and follows the `.dev` suffix (replaces the stale "no deep-link filters" note)
+- 2026-11-26 · Claude (release agent) · bumped the app to 2.3.1 for the dev release ahead of promotion to main
