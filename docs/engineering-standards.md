@@ -565,10 +565,11 @@ Commit hygiene` on both. That shared check name let a PR retargeted from
 (`docs/container-workflows.md`, "Required checks"), so on 2026-11-26 it is
 split in two, matching the rename of both aggregate jobs (dev lane
 `required` -> `dev-required`, production lane `required` ->
-`production-required`; PR #156). The split is a settings change, made by the
-owner before #156 merges, not by the workflow change; the table is the
-intended state, and the first API read after applying it is the
-verification:
+`production-required`; PR #156). The split is a settings change, not part of
+the workflow change. Applied and read back from the API on 2026-11-26:
+ruleset 28180966 "protected dev" and 28180968 "protected main" replace
+26660378 (deleted), the default branch is `dev`, and the GitHub `dev`
+environment admits `dev` only (`production` admits `main` only):
 
 | Ruleset target | Required checks | Shared rules |
 |---|---|---|
@@ -582,10 +583,10 @@ workflow job names must stay in step: renaming `dev-required` in
 without the matching ruleset change leaves that branch waiting forever on a
 check nobody reports, and `dev`'s ruleset must never require
 `production-required` (the dev lane does not report it). There is no
-classic branch protection and no ruleset on tags (release tags `v*` are
-unprotected; a tag ruleset blocking deletion and update, not creation, is
-recommended and not adopted). With no bypass, nobody can push to either
-branch directly or use "Update branch" on a PR into `dev` that is behind
+classic branch protection. Release tags are covered by ruleset 28181012
+"protected release tags" on `refs/tags/v*`, which blocks deletion and update
+(moving a tag); creation stays allowed so the release job can tag. With no
+bypass, nobody can push to either branch directly or use "Update branch" on a PR into `dev` that is behind
 because `main` moved: that is why the post-release `main` -> `dev` sync PR is
 a standard step. The head-branch rule for `main` (`dev` or `hotfix/*` only)
 is enforced by the production lane's `source-branch` job, not by the ruleset;
@@ -852,3 +853,4 @@ Re-verify before fixing; do not treat the line numbers as authoritative.
 - 2026-11-21 · Claude (CI agent) · Commit hygiene after the second re-review: `<details>` exemption limited to body mode and to lines strictly inside a closed block that opens and closes at line start; commit-msg hook cuts at git's scissors line; fullwidth colon folded and the footer rejoin skips blank lines; passing runs print what they checked; documented that `main` lacks the script until the first promotion and that fixing a title re-runs only `pr-hygiene`
 - 2026-11-26 · ci-separation agent · "Branch protection is unverified" replaced by "Branch protection": the verified single ruleset, its split into a `dev` ruleset (`required`) and a `main` ruleset (`production-required`), both with `pr-hygiene / Commit hygiene`, no bypass, merge commits only, kept in step with the job names; Commit hygiene now names both aggregates and records `pr-hygiene` as required
 - 2026-11-26 · ci-separation agent · dev ruleset now requires `dev-required` (dev lane aggregate renamed from `required`); added the switch-over order (rulesets before #156 merges; which PRs wait in between)
+- 2026-11-26 · orchestrator follow-up · "Branch protection" records the applied state instead of the intended one: rulesets 28180966 (dev) and 28180968 (main) replace the deleted 26660378, default branch `dev`, `dev` environment limited to `dev`, all read back from the API; tag ruleset 28181012 on `refs/tags/v*` blocks deletion and update (creation allowed)
