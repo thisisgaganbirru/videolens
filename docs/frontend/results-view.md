@@ -517,6 +517,10 @@ selected and copied by hand, as the legal pages' article can. The
 transcript's toolbar (search, timestamps switch) stays `select-none`; tabs,
 buttons and the rest of the card are unchanged.
 
+## Multi-slide posts (2026-11-26)
+
+A carousel's segments carry `slide` and their seconds restart at 0 on every slide (both 0 on an image slide), so a column of "0:00" would be noise. `SegmentPlace` shows "Slide 3" in the accent column instead, with the time under it in muted only when the segment is timed (a video slide, `end_seconds > 0`); a list with any slide gets `data-slides="on"`, which widens the column to 4.75rem unless timestamps are switched off. The On-screen intro reads "Text found on each slide of the post." and the list is labelled "On-screen text by slide". The downloaded report heads such a segment `### Slide 3` or `### Slide 3 · 0:02–0:05`. A plain video never has `slide` (the backend clears it), so nothing changes for one. Checked at 390 px in a throwaway preview route, no horizontal scroll; no new tokens.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported ResultsView + SourceCard; de-boxed the source card, wired .disclosure and role=tabpanel, rebuilt SourceCard.preview with six states
@@ -541,3 +545,4 @@ buttons and the rest of the card are unchanged.
 - 2026-11-14 · frontend agent · UX fix spec batch c: result title is the page h1; "History keeps your last 20 runs…" line under the card; "Back to History" before "Analyze another" for a run opened from History
 2026-11-14 · frontend agent · the line under the card says "Saved to your account. Open it from History on any device where you sign in." for a run this account saved; the expired view gains `expiredReason: "saved"` (Unavailable, "This run is no longer saved") for a saved run that answers 404 (see saved-history.md)
 - 2026-11-20 · Claude (frontend agent) · the four result panels are `select-text`; the transcript toolbar stays `select-none`
+- 2026-11-26 · Claude (session ccr-3d42b168) · slide labels for multi-slide posts in the transcript, On-screen and report (`SegmentPlace`, `data-slides`, `.t-time--slide`, `.t-slide-time`)

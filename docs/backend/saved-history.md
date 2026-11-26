@@ -368,3 +368,4 @@ on Postgres if `DATABASE_APP_ROLE` does not exist.
 - 2026-11-20 · Claude (backend agent) · the post-cancel window runs wherever saving does (a cleared complimentary flag starts the 30 days with Stripe off too), never for a stored live subscription with Stripe off; the purge flushes due extra runs and cancels every live subscription first, and goes ahead with a WARNING when billing is off
 - 2026-11-20 · Claude (backend agent) · tests: cross-account read/list/delete of a saved run at route level
 - 2026-11-20 · Claude (backend agent) · re-review: with billing off the purge waits for billing (retried hourly) while a live stored subscription is on file
+- 2026-11-26 · Claude (session ccr-3d42b168) · the saved `source` descriptor gains `slide_count` for a multi-slide post (a JSON key, no migration); segments in the saved result may carry `slide`

@@ -78,6 +78,49 @@ function capitalise(text: string): string {
 const DEFAULT_TAB: TabKey = "summary";
 type TimelineSegment = ScreenTextSegment | TranscriptSegment;
 
+/* ---- multi-slide posts ----
+   An Instagram carousel is analyzed as one post, and each segment names the
+   slide it came from (`slide`). Its seconds restart at 0 on every slide and
+   are both 0 on an image slide, so a bare "0:00" on every row would be
+   noise: the left column says "Slide 3" instead, with the time under it
+   only for a video slide's segment. A plain video never carries `slide`
+   (the backend clears it), so nothing changes for one. */
+function onSlide(segment: TimelineSegment): segment is TimelineSegment & { slide: number } {
+  return typeof segment.slide === "number";
+}
+
+function hasSlides(segments: TimelineSegment[]): boolean {
+  return segments.some(onSlide);
+}
+
+/** Whether a slide's segment has a time worth showing (a video slide). */
+function slideIsTimed(segment: TimelineSegment): boolean {
+  return segment.end_seconds > 0;
+}
+
+function SegmentPlace({ segment }: { segment: TimelineSegment }) {
+  const range = `${formatTimestamp(segment.start_seconds)}–${formatTimestamp(segment.end_seconds)}`;
+  const dateTime = `PT${Math.max(0, Math.round(segment.start_seconds))}S`;
+  if (onSlide(segment)) {
+    const timed = slideIsTimed(segment);
+    return (
+      <span className="t-time t-time--slide" title={timed ? `Slide ${segment.slide}, ${range}` : `Slide ${segment.slide}`}>
+        Slide {segment.slide}
+        {timed ? (
+          <time dateTime={dateTime} className="t-slide-time">
+            {formatTimestamp(segment.start_seconds)}
+          </time>
+        ) : null}
+      </span>
+    );
+  }
+  return (
+    <time dateTime={dateTime} title={range} className="t-time">
+      {formatTimestamp(segment.start_seconds)}
+    </time>
+  );
+}
+
 function formatTimestamp(value: number) {
   const totalSeconds = Math.max(0, Math.round(value));
   const hours = Math.floor(totalSeconds / 3600);
@@ -114,25 +157,26 @@ function OnScreenView({
     return <p className="t-intro">{emptyMessage}</p>;
   }
 
+  const slides = hasSlides(segments);
   return (
     <>
-      <p className="t-intro">Text found in the video frames, with the time it appears.</p>
+      <p className="t-intro">
+        {slides ? "Text found on each slide of the post." : "Text found in the video frames, with the time it appears."}
+      </p>
       {segments.length === 0 ? (
         /* An older run, or a model reply without timings: the text alone. */
         <p className="screen-text" dir="auto">
           {text}
         </p>
       ) : (
-        <ol className="t-list t-list--screen" aria-label="On-screen text by time">
+        <ol
+          className="t-list t-list--screen"
+          data-slides={slides ? "on" : undefined}
+          aria-label={slides ? "On-screen text by slide" : "On-screen text by time"}
+        >
           {segments.map((segment, index) => (
-            <li key={`${segment.start_seconds}-${segment.end_seconds}-${index}`} className="t-row">
-              <time
-                dateTime={`PT${Math.max(0, Math.round(segment.start_seconds))}S`}
-                title={`${formatTimestamp(segment.start_seconds)}–${formatTimestamp(segment.end_seconds)}`}
-                className="t-time"
-              >
-                {formatTimestamp(segment.start_seconds)}
-              </time>
+            <li key={`${segment.slide ?? ""}-${segment.start_seconds}-${segment.end_seconds}-${index}`} className="t-row">
+              <SegmentPlace segment={segment} />
               <p className="t-text" dir="auto">
                 {segment.text.trim()}
               </p>
@@ -244,18 +288,15 @@ function TranscriptView({ segments, fallback }: { segments: TranscriptSegment[];
           </button>
         </div>
       ) : (
-        <ol className="t-list" data-times={showTimes ? "on" : "off"} aria-label="Timestamped transcript">
+        <ol
+          className="t-list"
+          data-times={showTimes ? "on" : "off"}
+          data-slides={hasSlides(visible) ? "on" : undefined}
+          aria-label="Timestamped transcript"
+        >
           {visible.map((segment, index) => (
-            <li key={`${segment.start_seconds}-${segment.end_seconds}-${index}`} className="t-row">
-              {showTimes ? (
-                <time
-                  dateTime={`PT${Math.max(0, Math.round(segment.start_seconds))}S`}
-                  title={`${formatTimestamp(segment.start_seconds)}–${formatTimestamp(segment.end_seconds)}`}
-                  className="t-time"
-                >
-                  {formatTimestamp(segment.start_seconds)}
-                </time>
-              ) : null}
+            <li key={`${segment.slide ?? ""}-${segment.start_seconds}-${segment.end_seconds}-${index}`} className="t-row">
+              {showTimes ? <SegmentPlace segment={segment} /> : null}
               <div className="t-body">
                 {segment.speaker ? (
                   <span className="t-speaker" dir="auto">
@@ -284,7 +325,11 @@ function timelineMarkdown(segments: TimelineSegment[], fallback: string, emptyMe
   return segments
     .map((segment) => {
       const speaker = "speaker" in segment && segment.speaker ? ` — ${singleLine(segment.speaker)}` : "";
-      return `### ${formatTimestamp(segment.start_seconds)}–${formatTimestamp(segment.end_seconds)}${speaker}\n\n${segment.text.trim()}`;
+      const range = `${formatTimestamp(segment.start_seconds)}–${formatTimestamp(segment.end_seconds)}`;
+      const place = onSlide(segment)
+        ? `Slide ${segment.slide}${slideIsTimed(segment) ? ` · ${range}` : ""}`
+        : range;
+      return `### ${place}${speaker}\n\n${segment.text.trim()}`;
     })
     .join("\n\n");
 }

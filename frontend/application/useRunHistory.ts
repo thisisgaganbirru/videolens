@@ -74,6 +74,7 @@ function toEntry(record: HistoryRecord, thumbnailUrl: string | null): HistoryEnt
     source_kind: record.source_kind,
     platform,
     duration_seconds: record.duration_seconds,
+    slide_count: record.slide_count ?? null,
     summary_snippet: record.summary_snippet,
     orientation: record.orientation,
     width: record.width,

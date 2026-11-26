@@ -30,6 +30,9 @@ class RunStatusResponse(BaseModel):
     width: Optional[int] = None
     height: Optional[int] = None
     orientation: Optional[Literal["landscape", "portrait"]] = None
+    # A multi-slide post (an Instagram carousel): how many slides it was
+    # analyzed as. Its segments then carry `slide`. None for one media file.
+    slide_count: Optional[int] = None
 
 
 class RunSummary(BaseModel):
@@ -51,6 +54,7 @@ class RunSummary(BaseModel):
     # not here: a 20-row list of inline JPEGs is ~0.5 MB per poll.
     width: Optional[int] = None
     height: Optional[int] = None
+    slide_count: Optional[int] = None
 
 
 class MediaLimitsResponse(BaseModel):
@@ -239,6 +243,7 @@ class SavedRunSourceResponse(BaseModel):
     duration_seconds: Optional[float] = None
     width: Optional[int] = None
     height: Optional[int] = None
+    slide_count: Optional[int] = None
 
 
 class SavedRunSummaryResponse(BaseModel):

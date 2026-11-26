@@ -192,6 +192,7 @@ class SavedHistory:
             duration_seconds=facts.duration_seconds,
             width=facts.width,
             height=facts.height,
+            slide_count=facts.slide_count,
         )
         result = run.result.model_dump(mode="json")
         thumbnail = run.thumbnail or None

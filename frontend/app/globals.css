@@ -1525,6 +1525,21 @@ h3 {
   .t-list[data-times="off"] .t-row {
     grid-template-columns: minmax(0, 1fr);
   }
+  /* A multi-slide post: "Slide 12" needs a wider column than "1:05", with a
+     video slide's time under it in muted. Times-off still wins. */
+  .t-list[data-slides="on"]:not([data-times="off"]) .t-row {
+    grid-template-columns: 4.75rem minmax(0, 1fr);
+  }
+  .t-time--slide {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+  .t-slide-time {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--color-muted);
+  }
   .t-time {
     padding-top: 0.15rem;
     font-size: 0.9375rem;

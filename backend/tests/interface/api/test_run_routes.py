@@ -107,11 +107,21 @@ class RunRouteTests(unittest.TestCase):
         self.assertEqual((body["width"], body["height"]), (1080, 1920))
         self.assertEqual(body["orientation"], "portrait")
 
+    def test_a_carousel_reports_its_slide_count_in_status_and_list(self) -> None:
+        run = LINK_RUN.model_copy(update={"slide_count": 5})
+        with patch.object(container.get_run_use_case, "execute", AsyncMock(return_value=run)):
+            body = self.client.get("/api/runs/link-1", headers=HEADERS).json()
+        with patch.object(container.list_runs_use_case, "execute", AsyncMock(return_value=[run])):
+            (item,) = self.client.get("/api/runs", headers=HEADERS).json()["runs"]
+
+        self.assertEqual(body["slide_count"], 5)
+        self.assertEqual(item["slide_count"], 5)
+
     def test_status_of_a_legacy_run_has_null_poster_fields(self) -> None:
         with patch.object(container.get_run_use_case, "execute", AsyncMock(return_value=LEGACY_RUN)):
             body = self.client.get("/api/runs/old-1", headers=HEADERS).json()
 
-        for field in ("thumbnail", "width", "height", "orientation"):
+        for field in ("thumbnail", "width", "height", "orientation", "slide_count"):
             with self.subTest(field=field):
                 self.assertIn(field, body)
                 self.assertIsNone(body[field])

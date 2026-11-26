@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from ...domain.entities import CaptionTrack, MediaVisuals, SavedUpload
+from ...domain.entities import CaptionTrack, MediaSlide, MediaVisuals, SavedUpload
 from ...domain.entitlements import MediaLimits
 from ...domain.ports import UploadedFile
 from ..config import Settings
@@ -62,6 +62,14 @@ class MediaService:
 
     async def normalize_media(self, src_path: str, run_dir: str) -> str:
         return await ffmpeg.normalize_media(self._settings, src_path, run_dir)
+
+    async def enforce_slides_cap(
+        self, run_id: str, slides: tuple[MediaSlide, ...], limits: MediaLimits | None = None
+    ) -> float:
+        return await ffmpeg.enforce_slides_cap(self._settings, run_id, slides, limits)
+
+    async def normalize_slides(self, slides: tuple[MediaSlide, ...], run_dir: str) -> tuple[MediaSlide, ...]:
+        return await ffmpeg.normalize_slides(self._settings, slides, run_dir)
 
     async def describe_visuals(
         self,

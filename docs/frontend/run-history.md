@@ -546,6 +546,10 @@ at sign-out lost those runs for good.
   until the site data is cleared; copy tells people on a shared computer to
   remove runs under History while signed in.
 
+## Multi-slide posts (2026-11-26)
+
+`slide_count` rides along like `duration_seconds`: on `RunStatusResponse` and `RunSummary` (patched into the record by `patchFromRun`/`patchFromSummary` only when present), on `HistoryRecord` (optional, so older records read as none), and on a saved run's `source` (`savedEntry`). `posterBadge` shows `formatSlides` ("7 slides", or "Photo" for one image) ahead of the duration, as a `slides` badge kind with the default badge style.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported HistoryPanel to day-grouped rows with status dots; fixed duplicate React keys on non-adjacent "Undated" groups
@@ -570,3 +574,4 @@ at sign-out lost those runs for good.
 - 2026-11-20 · Claude (frontend agent) · update-only follow-up writes (`HistoryStore.update`), creates only for the signed-in account (`mayCreate`), cross-tab sign-out heard via `storage`, double sweep on sign-out, `forgetRun` failure clears the tombstone, Plus "Remove this browser's copies"; remaining gap: per-tab tombstones
 - 2026-11-21 · Claude (frontend agent) · submitting tab retries its own failed create (in-memory `unfiledCreates`, `mayCreate`-checked); copies removal scope stated (listed saved runs) and Privacy softened; `ANONYMOUS_OWNER` moved to domain
 - 2026-11-21 · Claude (frontend agent) · sign-out hides account rows instead of deleting them (viewer filter on list and open, guarded updates, per-viewer cap, reconcile on sign-in); only account deletion and a closed-hold sign-out remove that account's rows
+- 2026-11-26 · Claude (session ccr-3d42b168) · `slide_count` on run, summary, record and saved source; slides badge on the poster

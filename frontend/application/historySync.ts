@@ -140,6 +140,7 @@ export function patchFromRun(run: RunStatusResponse): HistoryPatch {
   if (run.source_kind) patch.source_kind = run.source_kind;
   if (run.platform) patch.platform = run.platform;
   if (typeof run.duration_seconds === "number") patch.duration_seconds = run.duration_seconds;
+  if (typeof run.slide_count === "number") patch.slide_count = run.slide_count;
   if (typeof run.width === "number") patch.width = run.width;
   if (typeof run.height === "number") patch.height = run.height;
   if (run.orientation) patch.orientation = run.orientation;
@@ -173,6 +174,7 @@ function patchFromSummary(summary: RunSummary): HistoryPatch {
   if (summary.source_kind) patch.source_kind = summary.source_kind;
   if (summary.platform) patch.platform = summary.platform;
   if (typeof summary.duration_seconds === "number") patch.duration_seconds = summary.duration_seconds;
+  if (typeof summary.slide_count === "number") patch.slide_count = summary.slide_count;
   if (summary.summary_snippet) patch.summary_snippet = summary.summary_snippet;
   if (summary.orientation) patch.orientation = summary.orientation;
   if (typeof summary.width === "number") patch.width = summary.width;

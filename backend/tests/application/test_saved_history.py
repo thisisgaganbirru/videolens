@@ -16,6 +16,7 @@ from app.application.process_run import ProcessRunUseCase
 from app.application.restore_account import RestoreAccountUseCase
 from app.application.saved_history import SavedHistory, SavedHistoryQueries, encode_cursor
 from app.domain.entities import (
+    ScreenTextSegment,
     AnalysisCompleteness,
     AuthMethod,
     BillingWebhookEvent,
@@ -105,6 +106,24 @@ class SavingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.result["markdown"], "# T")
         self.assertEqual(saved.source.source_kind, "link")
         self.assertEqual(saved.source.source_url, URL)
+
+    async def test_a_carousel_keeps_its_slide_count_and_slide_labels(self) -> None:
+        await self.h.subscribe()
+        result = ANALYSIS.model_copy(
+            update={"screen_text_segments": [ScreenTextSegment(start_seconds=0, end_seconds=0, text="x", slide=2)]}
+        )
+        # Recorded while the run is live, as the pipeline does; a finished run
+        # takes no more writes.
+        run_id = "run-c"
+        await self.h.runs.create(run_id, "user:sub-1", source_kind="link", platform="instagram", account_id=ACCOUNT)
+        await self.h.runs.set_slide_count(run_id, 4)
+        await self.h.runs.set_result(run_id, result, AnalysisCompleteness.FULL)
+
+        self.assertTrue(await self.h.history.save_completed(run_id, source_url=URL))
+
+        saved = await self.h.queries.get(_person(), run_id)
+        self.assertEqual(saved.source.slide_count, 4)
+        self.assertEqual(saved.result["screen_text_segments"][0]["slide"], 2)
 
     async def test_free_anonymous_and_billing_off_are_never_saved(self) -> None:
         free = await self.h.finished_run("free-run")

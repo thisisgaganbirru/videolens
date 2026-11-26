@@ -1,6 +1,7 @@
 import os
 import shutil
 
+from ...domain.entities import MediaSlide, SlideKind
 from ...domain.entitlements import MediaLimits, clock, duration_over_limit_message
 from ...domain.errors import MediaValidationError
 from ..config import Settings
@@ -39,6 +40,15 @@ _TOP_LEVEL_BOXES = frozenset({b"ftyp", b"mdat", b"moov", b"free", b"skip", b"wid
 _PLAYLIST_DEMUXERS = frozenset({
     "hls", "applehttp", "dash", "webm_dash_manifest", "concat", "ffconcat", "imf", "smil", "sdp", "rtp", "rtsp",
 })
+
+# Image slides of a multi-slide post. They must decode as one of these (the
+# downloader only sniffed their first bytes), and are re-encoded to a JPEG
+# whose longest side is at most MAX_SLIDE_IMAGE_SIDE: Gemini tiles a large
+# image into 768 px squares, so this keeps a dense infographic legible
+# without paying for pixels no post has (Instagram's largest are 1440 px).
+_IMAGE_SLIDE_CODECS = frozenset({"mjpeg", "png", "webp"})
+MAX_SLIDE_IMAGE_SIDE = 2048
+_UNREADABLE_SLIDE = "A slide in this post couldn't be read."
 
 
 def _media_binary(settings: Settings, name: str) -> str:
@@ -175,6 +185,64 @@ async def enforce_duration_cap(
     return duration
 
 
+async def probe_image(settings: Settings, path: str) -> None:
+    """Refuse an image slide that is not really a JPEG, PNG or WebP image."""
+    _refuse_playlist(path)
+    try:
+        returncode, stdout, stderr = await run_process(
+            [
+                _media_binary(settings, "ffprobe"),
+                "-v", "error",
+                *INPUT_PROTOCOLS,
+                "-select_streams", "v:0",
+                "-show_entries", "stream=codec_name:format=format_name",
+                "-of", "default=noprint_wrappers=1",
+                path,
+            ],
+            timeout=FFPROBE_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as exc:
+        raise MediaValidationError(
+            _UNREADABLE_SLIDE, log_detail=f"ffprobe (image slide) timed out after {FFPROBE_TIMEOUT_SECONDS}s"
+        ) from exc
+    fields = _probe_fields(stdout) if returncode == 0 else {}
+    if returncode == 0:
+        _refuse_playlist_demuxer(fields.get("format_name", ""))
+    if returncode != 0 or fields.get("codec_name") not in _IMAGE_SLIDE_CODECS:
+        raise MediaValidationError(
+            _UNREADABLE_SLIDE,
+            log_detail=(
+                f"image slide: ffprobe exited {returncode}, codec {fields.get('codec_name')!r}: "
+                + stderr.decode(errors="ignore")[-300:]
+            ),
+        )
+
+
+async def enforce_slides_cap(
+    settings: Settings, run_id: str, slides: tuple[MediaSlide, ...], limits: MediaLimits | None = None
+) -> float:
+    """`enforce_duration_cap` for a multi-slide post: every slide is probed,
+    and the video slides' lengths count against the cap together (images
+    take no time). Returns that total."""
+    limits = effective_limits(settings, limits)
+    total = 0.0
+    try:
+        for slide in slides:
+            if slide.kind is SlideKind.IMAGE:
+                await probe_image(settings, slide.path)
+            else:
+                total += await probe_duration_seconds(settings, slide.path)
+    except MediaValidationError:
+        cleanup_run_dir(settings, run_id)
+        raise
+    if total > limits.max_duration_seconds:
+        cleanup_run_dir(settings, run_id)
+        raise MediaValidationError(
+            duration_over_limit_message(total, limits, lead="The videos in this post are")
+        )
+    return total
+
+
 async def _has_video_stream(settings: Settings, path: str) -> bool:
     try:
         returncode, stdout, _ = await run_process(
@@ -208,16 +276,17 @@ def _first_csv_field(stdout: bytes) -> bytes:
     return lines[0].split(b",")[0].strip() if lines else b""
 
 
-async def normalize_media(settings: Settings, src_path: str, run_dir: str) -> str:
+async def normalize_media(settings: Settings, src_path: str, run_dir: str, *, name: str = "normalized") -> str:
+    # `name`: the output's stem, so a post's slides do not overwrite each other.
     if await _has_video_stream(settings, src_path):
-        normalized_path = os.path.join(run_dir, "normalized.mp4")
+        normalized_path = os.path.join(run_dir, f"{name}.mp4")
         command = [
             _media_binary(settings, "ffmpeg"), "-y", *INPUT_PROTOCOLS, "-i", src_path,
             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
             "-c:a", "aac", "-movflags", "+faststart", normalized_path,
         ]
     else:
-        normalized_path = os.path.join(run_dir, "normalized.mp3")
+        normalized_path = os.path.join(run_dir, f"{name}.mp3")
         command = [
             _media_binary(settings, "ffmpeg"), "-y", *INPUT_PROTOCOLS, "-i", src_path,
             "-vn", "-c:a", "libmp3lame", "-b:a", "192k", normalized_path,
@@ -239,3 +308,44 @@ async def normalize_media(settings: Settings, src_path: str, run_dir: str) -> st
             ),
         )
     return normalized_path
+
+
+async def normalize_image(settings: Settings, src_path: str, dest_path: str) -> str:
+    """One image slide as a JPEG no larger than MAX_SLIDE_IMAGE_SIDE on its
+    longest side (never enlarged). Re-encoding also drops the source's
+    metadata, so nothing but pixels reaches Gemini."""
+    side = MAX_SLIDE_IMAGE_SIDE
+    command = [
+        _media_binary(settings, "ffmpeg"), "-y", *INPUT_PROTOCOLS, "-i", src_path,
+        "-frames:v", "1",
+        "-vf", f"scale='min({side},iw)':'min({side},ih)':force_original_aspect_ratio=decrease",
+        "-map_metadata", "-1", "-q:v", "2", dest_path,
+    ]
+    try:
+        returncode, _, stderr = await run_process(command, timeout=FFPROBE_TIMEOUT_SECONDS)
+    except TimeoutError as exc:
+        raise MediaValidationError(
+            _UNREADABLE_SLIDE, log_detail=f"ffmpeg (image slide) timed out after {FFPROBE_TIMEOUT_SECONDS}s"
+        ) from exc
+    if returncode != 0 or not os.path.isfile(dest_path):
+        raise MediaValidationError(
+            _UNREADABLE_SLIDE,
+            log_detail=f"ffmpeg (image slide) exited {returncode}: " + stderr.decode(errors="ignore")[-1000:],
+        )
+    return dest_path
+
+
+async def normalize_slides(
+    settings: Settings, slides: tuple[MediaSlide, ...], run_dir: str
+) -> tuple[MediaSlide, ...]:
+    """Every slide of a post, in order: video slides through `normalize_media`,
+    image slides through `normalize_image`."""
+    normalized: list[MediaSlide] = []
+    for index, slide in enumerate(slides, start=1):
+        stem = f"normalized-{index:02d}"
+        if slide.kind is SlideKind.IMAGE:
+            path = await normalize_image(settings, slide.path, os.path.join(run_dir, f"{stem}.jpg"))
+        else:
+            path = await normalize_media(settings, slide.path, run_dir, name=stem)
+        normalized.append(MediaSlide(path=path, kind=slide.kind))
+    return tuple(normalized)

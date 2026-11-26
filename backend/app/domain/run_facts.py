@@ -192,6 +192,8 @@ class RunFacts:
     summary_snippet: Optional[str]
     width: Optional[int] = None
     height: Optional[int] = None
+    # A multi-slide post's slide count (an Instagram carousel); None otherwise.
+    slide_count: Optional[int] = None
 
 
 def describe_run(run: Run) -> RunFacts:
@@ -208,4 +210,5 @@ def describe_run(run: Run) -> RunFacts:
         summary_snippet=summary_snippet(run.result.summary if run.result else None),
         width=run.width,
         height=run.height,
+        slide_count=run.slide_count,
     )

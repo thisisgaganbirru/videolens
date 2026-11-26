@@ -186,7 +186,9 @@ never a deployment manifest. See `docs/container-workflows.md`.
   verified by signature. `docs/backend/billing.md`.
 - `GET /api/runs/{run_id}` — `{ run_id, status, stage, result,
   source_metadata, completeness, error, source_kind, platform,
-  duration_seconds, thumbnail, width, height, orientation }`. `status` is
+  duration_seconds, thumbnail, width, height, orientation, slide_count }`.
+  `slide_count` is set for a multi-slide post (an Instagram carousel), whose
+  result segments then carry `slide`. `status` is
   `queued` | `processing` | `complete` | `failed`; `stage` while processing is
   `downloading` | `normalizing` | `uploading_to_gemini` | `analyzing` |
   `analyzing_captions`; `completeness` is `full` | `captions_only`.

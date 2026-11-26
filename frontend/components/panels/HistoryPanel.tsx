@@ -402,6 +402,7 @@ function savedEntry(item: SavedRunSummary): HistoryEntry {
     source_kind: source?.source_kind ?? null,
     platform: source?.platform ?? null,
     duration_seconds: source?.duration_seconds ?? null,
+    slide_count: source?.slide_count ?? null,
     summary_snippet: item.summary_snippet ?? null,
     width: source?.width ?? null,
     height: source?.height ?? null,

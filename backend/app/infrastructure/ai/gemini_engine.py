@@ -13,7 +13,7 @@ from google.genai import types
 # are only served on `v1beta`). Moving to `v1` is a separate, tested change.
 _HTTP_OPTIONS = types.HttpOptions(api_version="v1beta")
 
-from ...domain.entities import CaptionTrack, SourceMetadata, VideoAnalysis
+from ...domain.entities import CaptionTrack, MediaSlide, SourceMetadata, VideoAnalysis
 from ...domain.errors import AnalysisUnavailableError, GeminiConfigurationError
 from ...domain.ports import StageCallback
 from ..config import Settings
@@ -38,7 +38,7 @@ class _FileProcessingError(RuntimeError):
     never reached ACTIVE in time). The one failure where re-uploading the file
     is the right retry, because the uploaded copy itself is the problem."""
 
-SYSTEM_INSTRUCTION = """You are analyzing a short media file. It may be audio-only or a video.
+_BASE_INSTRUCTION = """You are analyzing a short media file. It may be audio-only or a video.
 
 Analyze the entire file and:
 - Transcribe all spoken content.
@@ -78,6 +78,29 @@ Return your analysis in the requested structured format:
   conclusion the video reaches. Include the detail the summary deliberately leaves out -
   these two fields are read side by side, so they must not be two versions of the same
   paragraph."""
+
+SYSTEM_INSTRUCTION = _BASE_INSTRUCTION + """
+
+Leave `slide` unset on every segment: it is only used for multi-slide posts."""
+
+# A multi-slide post (an Instagram carousel, or a post that is one photo):
+# every slide is a part of one request, each after a "Slide k of N (kind):"
+# label, so the notes follow the post the way its author laid it out.
+CAROUSEL_SYSTEM_INSTRUCTION = _BASE_INSTRUCTION + """
+
+This time the media is not one file but a multi-slide post (a carousel). The slides arrive in
+order, each one preceded by a label such as "Slide 2 of 5 (image):". Treat them as one piece of
+content read in that order, and write the title, summary and notes about the post as a whole.
+- Image slides have no sound and no timeline. Read every legible piece of text on them, small
+  print, chart labels and handwriting included, and describe what a slide shows when that matters
+  to what the post says.
+- Video slides: transcribe their speech and read their on-screen text as for any video.
+- Set `slide` on every transcript_segments and screen_text_segments entry to the 1-based number
+  of the slide it comes from.
+- Timestamps restart at 0 on every slide. On an image slide, set start_seconds and end_seconds to 0.
+- Give every slide with legible text at least one screen_text_segments entry.
+- Follow the slide order in the markdown notes, and name the slide a point comes from when that
+  helps the reader find it."""
 
 
 CAPTION_SYSTEM_INSTRUCTION = """You are analyzing the caption/subtitle track of a video whose
@@ -304,47 +327,102 @@ class GeminiEngine:
         api_key: str | None = None,
         metadata: Optional[SourceMetadata] = None,
     ) -> VideoAnalysis:
+        result = await self._analyze_files(
+            [(None, video_path)],
+            system_instruction=SYSTEM_INSTRUCTION,
+            intro="Analyze this media file as instructed.",
+            on_stage=on_stage,
+            api_key=api_key,
+            metadata=metadata,
+        )
+        return _checked_slides(result, None)
+
+    async def _analyze_slides(
+        self,
+        slides: tuple[MediaSlide, ...],
+        on_stage: Optional[StageCallback] = None,
+        api_key: str | None = None,
+        metadata: Optional[SourceMetadata] = None,
+    ) -> VideoAnalysis:
+        count = len(slides)
+        result = await self._analyze_files(
+            [
+                (f"Slide {index} of {count} ({slide.kind.value}):", slide.path)
+                for index, slide in enumerate(slides, start=1)
+            ],
+            system_instruction=CAROUSEL_SYSTEM_INSTRUCTION,
+            intro=f"Analyze this {count}-slide post as instructed.",
+            on_stage=on_stage,
+            api_key=api_key,
+            metadata=metadata,
+        )
+        return _checked_slides(result, count)
+
+    async def _analyze_files(
+        self,
+        files: list[tuple[Optional[str], str]],
+        *,
+        system_instruction: str,
+        intro: str,
+        on_stage: Optional[StageCallback] = None,
+        api_key: str | None = None,
+        metadata: Optional[SourceMetadata] = None,
+    ) -> VideoAnalysis:
+        """Upload every file (each after its own label, when it has one),
+        analyze them in one request, and delete every upload however that
+        went."""
         if on_stage:
             await on_stage("uploading_to_gemini")
         client = self._get_client(api_key)
 
-        # The media part comes first so the model reads the thing it is
+        # The media parts come first so the model reads the thing it is
         # analyzing before any publisher-supplied text about it.
-        prompt_parts: list[str] = ["Analyze this media file as instructed."]
+        prompt_parts: list[str] = [intro]
         source_context = build_source_context(metadata)
         if source_context:
             prompt_parts.append(source_context)
 
         # Upload once. The upload is an API call too and can 503 on its own,
         # so it gets the same transient-only backoff - but a generate_content
-        # failure below never sends us back here to upload the file again.
+        # failure below never sends us back here to upload the files again.
+        uploaded: list[Any] = []
         try:
-            uploaded = await self._with_backoff(
-                lambda: client.aio.files.upload(file=video_path),
-                attempts=self._settings.gemini_retry_attempts,
-                model=self._settings.gemini_model,
-                operation="files.upload",
-            )
             try:
-                await self._wait_until_active(client, uploaded.name)
+                for _, path in files:
+                    uploaded.append(
+                        await self._with_backoff(
+                            lambda path=path: client.aio.files.upload(file=path),
+                            attempts=self._settings.gemini_retry_attempts,
+                            model=self._settings.gemini_model,
+                            operation="files.upload",
+                        )
+                    )
+                for file in uploaded:
+                    await self._wait_until_active(client, file.name)
 
                 if on_stage:
                     await on_stage("analyzing")
+                media_parts: list[Any] = []
+                for (label, _), file in zip(files, uploaded):
+                    if label:
+                        media_parts.append(label)
+                    media_parts.append(file)
                 response = await self._generate_with_retry(
                     client,
-                    contents=[uploaded, *prompt_parts],
+                    contents=[*media_parts, *prompt_parts],
                     config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_INSTRUCTION,
+                        system_instruction=system_instruction,
                         response_mime_type="application/json",
                         response_schema=VideoAnalysis,
                     ),
                 )
                 return self._parse(response)
             finally:
-                try:
-                    await client.aio.files.delete(name=uploaded.name)
-                except Exception:
-                    pass
+                for file in uploaded:
+                    try:
+                        await client.aio.files.delete(name=file.name)
+                    except Exception:
+                        pass
         finally:
             await self._release(client, api_key)
 
@@ -422,12 +500,31 @@ class GeminiEngine:
         propagates on the first attempt so ProcessRunUseCase can mask it and
         log the traceback.
         """
+        return await self._with_reupload(
+            lambda: self._analyze(video_path, on_stage=on_stage, api_key=api_key, metadata=metadata),
+            attempts,
+        )
+
+    async def analyze_slides_with_retry(
+        self,
+        slides: tuple[MediaSlide, ...],
+        on_stage: Optional[StageCallback] = None,
+        attempts: int = 2,
+        api_key: str | None = None,
+        metadata: Optional[SourceMetadata] = None,
+    ) -> VideoAnalysis:
+        """`analyze_with_retry` for a multi-slide post: one request with every
+        slide, re-uploaded together if Gemini fails to process any of them."""
+        return await self._with_reupload(
+            lambda: self._analyze_slides(slides, on_stage=on_stage, api_key=api_key, metadata=metadata),
+            attempts,
+        )
+
+    async def _with_reupload(self, analyze: Callable[[], Awaitable[VideoAnalysis]], attempts: int) -> VideoAnalysis:
         attempts = max(1, attempts)
         for attempt in range(1, attempts + 1):
             try:
-                return await self._analyze(
-                    video_path, on_stage=on_stage, api_key=api_key, metadata=metadata
-                )
+                return await analyze()
             except _FileProcessingError as exc:
                 if attempt == attempts:
                     raise
@@ -445,3 +542,24 @@ class GeminiEngine:
                     raise
                 raise mapped from exc
         raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _checked_slides(result: VideoAnalysis, count: Optional[int]) -> VideoAnalysis:
+    """Keep a segment's `slide` only where it can be true: on a post of
+    `count` slides, a number from 1 to `count`; on one media file (`count`
+    None), never. Returns `result` itself when nothing needed clearing."""
+
+    def check(segment):
+        slide = segment.slide
+        if slide is None or (count is not None and 1 <= slide <= count):
+            return segment
+        return segment.model_copy(update={"slide": None})
+
+    transcript = [check(segment) for segment in result.transcript_segments]
+    screen = [check(segment) for segment in result.screen_text_segments]
+    unchanged = all(a is b for a, b in zip(transcript, result.transcript_segments)) and all(
+        a is b for a, b in zip(screen, result.screen_text_segments)
+    )
+    if unchanged:
+        return result
+    return result.model_copy(update={"transcript_segments": transcript, "screen_text_segments": screen})

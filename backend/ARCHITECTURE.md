@@ -58,13 +58,13 @@ intake and the pipeline). `check_schema`
 | Port | Adapter | Notes |
 |---|---|---|
 | `RunRepository` | `persistence/run_repository.py` | Redis or in-process dict; entries expire `RUN_TTL_SECONDS` after the last write |
-| `MediaProcessor` | `media/service.py` | Composes `ffmpeg.py`, `uploads.py`, the resolver chain, `captions.py`, `thumbnails.py` |
+| `MediaProcessor` | `media/service.py` | Composes `ffmpeg.py`, `uploads.py`, the resolver chain, `captions.py`, `thumbnails.py`; `enforce_slides_cap`/`normalize_slides` for a multi-slide post |
 | `SourceResolver` | `media/resolvers/` | Ordered chain, set in `MediaService`: `YtDlpResolver` (primary, wraps `ytdlp_downloader.py`) then `DirectHttpResolver` |
 | — | `media/net.py` | `validate_public_url` and the shared fetch rules: the single SSRF guard every outbound request uses |
 | — | `media/ytdlp_net.py` | `GuardedYoutubeDL`: yt-dlp's requests on `net.py`'s pinned connections, native downloaders only |
 | — | `media/deadline.py` | `run_download`: every link download on the bounded `DOWNLOAD_EXECUTOR` under a wall-clock `DownloadDeadline` |
 | — | `media/process.py` | `run_process`: ffmpeg/ffprobe with a timeout, killed on timeout and cancellation |
-| `AnalysisEngine` | `ai/gemini_engine.py` | Upload, structured output, jittered retries, optional fallback model, caption-only analysis; `ai/source_context.py` fences publisher metadata as untrusted text |
+| `AnalysisEngine` | `ai/gemini_engine.py` | Upload, structured output, jittered retries, optional fallback model, caption-only analysis, a multi-slide post (carousel) in one request; `ai/source_context.py` fences publisher metadata as untrusted text |
 | `ObjectStore` | `storage/s3_object_store.py` | |
 | `JobQueue` | `queue/job_queue.py` | arq/Redis, or an in-process task it keeps a reference to |
 | `SpendCap` | `quota/daily_budget.py` | Atomic take-if-under-cap (Lua), hold/release per run and refund onto the claim's own UTC day, never below zero |
@@ -192,3 +192,4 @@ one-line shims so the Dockerfile, compose file and Railway configs reference
 - 2026-11-20 · Claude (backend agent) · `SchemaRevisionReader` port and adapter, `CheckSchemaUseCase`, `domain/schema_revision.py`; shared `interface/startup.py` for both entry points; worker logging, shutdown and shutdown-retry invariants
 - 2026-11-20 · Claude (backend agent) · `BillingGateway` gains `expire_open_checkout_sessions`, `live_subscription_ids`, `cancel_duplicate_subscription`; `ExtraRunLedger.hold(cap=)` is the atomic cap check, plus `held`, `expire_due`, `due(account_id=)`; `HeldExtraRun` entity; `ExtraRunBilling` takes the `RunRepository` for `reconcile`; `AuthUnavailableError` (503) for a JWKS outage; `GetRunUseCase` takes the `SpendCap`
 - 2026-11-20 · Claude (backend agent) · `LongRunGuard` row in the port table; `free_run_holds` in the application codemap; the import-time globals stated correctly (the `container` is built at import, the rate limiter is the one adapter reading the module-level `settings`); pydantic in `domain/entities.py` named as deliberate; the schema drift test under Tests
+- 2026-11-26 · Claude (session ccr-3d42b168) · multi-slide posts (Instagram carousels): `MediaSlide`/`SlideKind` and `SavedUpload.slides`, `MediaProcessor.enforce_slides_cap`/`normalize_slides`, `AnalysisEngine.analyze_slides_with_retry`, `RunRepository.set_slide_count`; `process_run` branches on slides at the cap, normalize and analyze steps

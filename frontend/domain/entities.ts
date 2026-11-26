@@ -5,12 +5,18 @@ export interface TranscriptSegment {
   end_seconds: number;
   text: string;
   speaker?: string | null;
+  /** A multi-slide post (an Instagram carousel): the 1-based slide this came
+   *  from. The seconds then restart at 0 on every slide, and are both 0 on an
+   *  image slide. Absent for one media file (the backend clears it there). */
+  slide?: number | null;
 }
 
 export interface ScreenTextSegment {
   start_seconds: number;
   end_seconds: number;
   text: string;
+  /** See `TranscriptSegment.slide`. */
+  slide?: number | null;
 }
 
 export interface VideoAnalysis {
@@ -90,6 +96,9 @@ export interface RunStatusResponse {
   width?: number | null;
   height?: number | null;
   orientation?: RunOrientation | null;
+  /** How many slides a multi-slide post (an Instagram carousel, or a post
+   *  that is one photo) was analyzed as. Absent for one media file. */
+  slide_count?: number | null;
 }
 
 /** Deliberately has no `completeness`: `GET /api/runs` does not return one, and
@@ -115,6 +124,8 @@ export interface RunSummary {
   /** Display size, when the backend measured it. Wider than tall = landscape. */
   width?: number | null;
   height?: number | null;
+  /** See `RunStatusResponse.slide_count`. The poster badge shows it. */
+  slide_count?: number | null;
 }
 
 /** One run as this browser's History keeps it (IndexedDB, newest 20).
@@ -135,6 +146,8 @@ export interface HistoryRecord {
   source_kind: RunSourceKind | null;
   platform: RunPlatform | null;
   duration_seconds: number | null;
+  /** Optional: records written before carousels existed have none. */
+  slide_count?: number | null;
   width: number | null;
   height: number | null;
   orientation: RunOrientation | null;
@@ -452,6 +465,7 @@ export interface SavedRunSource {
   duration_seconds?: number | null;
   width?: number | null;
   height?: number | null;
+  slide_count?: number | null;
 }
 
 /** One saved run as `GET /api/history` lists it: light fields only. */

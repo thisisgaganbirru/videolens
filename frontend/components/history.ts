@@ -79,6 +79,7 @@ export function formatDuration(seconds: number | null | undefined): string | nul
 
 export type PosterBadge =
   | { kind: "duration"; text: string }
+  | { kind: "slides"; text: string }
   | { kind: "failed"; text: string }
   | { kind: "expired"; text: string }
   | { kind: "processing"; text: string };
@@ -94,8 +95,19 @@ export function posterBadge(run: PosterRun): PosterBadge | null {
   if (run.status === "failed" && run.expired) return { kind: "expired", text: "Expired" };
   if (run.status === "failed") return { kind: "failed", text: "Failed" };
   if (run.status === "queued" || run.status === "processing") return { kind: "processing", text: "Processing" };
+  /* A multi-slide post is counted in slides, not seconds: an all-image
+     carousel has no length at all, and a mixed one's total would read as one
+     video's. */
+  const slides = formatSlides(run.slide_count);
+  if (slides) return { kind: "slides", text: slides };
   const duration = formatDuration(run.duration_seconds);
   return duration ? { kind: "duration", text: duration } : null;
+}
+
+/** "7 slides", or "Photo" for a post that is one image; null otherwise. */
+export function formatSlides(count: number | null | undefined): string | null {
+  if (typeof count !== "number" || !Number.isFinite(count) || count < 1) return null;
+  return count === 1 ? "Photo" : `${Math.round(count)} slides`;
 }
 
 export const UNTITLED = "Untitled run";

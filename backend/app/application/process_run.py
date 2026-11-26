@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 
-from ..domain.entities import AnalysisCompleteness, MediaVisuals, Run, RunStatus
+from ..domain.entities import AnalysisCompleteness, MediaSlide, MediaVisuals, Run, RunStatus
 from ..domain.entitlements import MediaLimits, MediaTier
 from ..domain.errors import (  # the two messages are re-exported for callers and tests
     BYOK_KEY_EXPIRED_MESSAGE,
@@ -218,6 +218,16 @@ class ProcessRunUseCase:
         except Exception:
             logger.exception("Could not record duration for run %s", run_id)
 
+    async def _record_slide_count(self, run_id: str, slides: tuple[MediaSlide, ...]) -> None:
+        # A media fact for the result and the history card, like the
+        # duration: a failed write must not fail an otherwise healthy run.
+        if not slides:
+            return
+        try:
+            await self._runs.set_slide_count(run_id, len(slides))
+        except Exception:
+            logger.exception("Could not record the slide count for run %s", run_id)
+
     def _start_visuals(self, **kwargs) -> "asyncio.Task[MediaVisuals]":
         """Capture the history poster and display size alongside the analysis
         rather than ahead of it: it is a second or two of HTTP and FFmpeg work
@@ -400,6 +410,9 @@ class ProcessRunUseCase:
             return
         await self._runs.set_status(run_id, RunStatus.PROCESSING)
         metadata = None
+        # A multi-slide post (an Instagram carousel): its slides, in order.
+        # Empty for one media file, which keeps the single-file path.
+        slides: tuple[MediaSlide, ...] = ()
         visuals: asyncio.Task[MediaVisuals] | None = None
         # True only when a link run is turned away before any analysis: the
         # link could not be fetched, or it was fetched and then failed the
@@ -441,11 +454,17 @@ class ProcessRunUseCase:
                     raise
                 saved_path = downloaded.path
                 run_dir = downloaded.run_dir
+                slides = downloaded.slides
                 if downloaded.metadata is not None:
                     metadata = downloaded.metadata
                     await self._runs.set_source_metadata(run_id, metadata)
                 try:
-                    duration = await self._media.enforce_duration_cap(run_id, saved_path, limits)
+                    if slides:
+                        # Every slide probed; the video slides' total length
+                        # is what the cap and the long-run slot count.
+                        duration = await self._media.enforce_slides_cap(run_id, slides, limits)
+                    else:
+                        duration = await self._media.enforce_duration_cap(run_id, saved_path, limits)
                     # A link's length is only known now: claim the account's
                     # one long-run slot if it is above the standard limits.
                     await self._claim_long_run(run_id, limits, duration, downloaded.size_bytes)
@@ -455,13 +474,17 @@ class ProcessRunUseCase:
                     # not caught here and is not a rejection.
                     rejected_before_analysis = True
                     raise
-                await self._record_duration(run_id, duration)
+                await self._record_slide_count(run_id, slides)
+                # A post of images only has no length worth showing.
+                await self._record_duration(run_id, duration if not slides or duration > 0 else None)
                 visuals = self._start_visuals(
+                    # A post's poster is its first slide, the post's own cover.
                     media_path=saved_path,
                     thumbnail_urls=downloaded.thumbnail_urls,
                     width=downloaded.width,
                     height=downloaded.height,
-                    duration_seconds=duration,
+                    # The total says nothing about the first slide's length.
+                    duration_seconds=None if slides else duration,
                 )
             elif source_key:
                 run_dir = self._media.create_run_dir(run_id)
@@ -487,7 +510,10 @@ class ProcessRunUseCase:
             # re-encode can outlast the stale-run threshold.
             await self._ensure_not_ended(run_id)
             await self._runs.set_stage(run_id, "normalizing")
-            normalized_path = await self._media.normalize_media(saved_path, run_dir)
+            if slides:
+                normalized_slides = await self._media.normalize_slides(slides, run_dir)
+            else:
+                normalized_path = await self._media.normalize_media(saved_path, run_dir)
 
             async def on_stage(stage: str) -> None:
                 await self._runs.set_stage(run_id, stage)
@@ -498,12 +524,20 @@ class ProcessRunUseCase:
             # falls back to analyzing the media alone.
             await self._ensure_not_ended(run_id)
             reached.value = True
-            result = await self._analysis.analyze_with_retry(
-                normalized_path,
-                on_stage=on_stage,
-                api_key=gemini_api_key,
-                metadata=metadata,
-            )
+            if slides:
+                result = await self._analysis.analyze_slides_with_retry(
+                    normalized_slides,
+                    on_stage=on_stage,
+                    api_key=gemini_api_key,
+                    metadata=metadata,
+                )
+            else:
+                result = await self._analysis.analyze_with_retry(
+                    normalized_path,
+                    on_stage=on_stage,
+                    api_key=gemini_api_key,
+                    metadata=metadata,
+                )
             await self._record_visuals(run_id, visuals)
             if not await self._runs.set_result(run_id, result):
                 # The stale-run check failed it while Gemini was working. The
