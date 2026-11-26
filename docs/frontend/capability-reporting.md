@@ -301,8 +301,7 @@ listeners), which is why the run 25 check passed.
   launch reads now have their own `online` path (free runs since run 25).
 
 Verified in Chromium at 412 px with `/api/*` mocked and an `auth: ok` row
-(`scratchpad
-un25erify_run25b.py`, dev server with the dev Supabase
+(`scratchpad/run25/verify_run25b.py`, dev server with the dev Supabase
 values): load with every API request aborted, then (a) real events via
 `context.set_offline(true/false)`, (b) synthetic `online` with `onLine`
 already true, (c) synthetic with `onLine` lagging. On `/app` all three show
@@ -329,3 +328,4 @@ reconnect either.
 - 2026-11-02 · frontend (refinement 15) · `.cap-notice` is an em size container; below 15em the toggle drops under the sentence (no more 84px column split mid-word at 412/200%); sentence `overflow-wrap` anywhere → break-word; also covers the reachability notice
 - 2026-11-26 · frontend agent · Android QA run 25: the `online` event retries the launch reads without the `navigator.onLine` gate (focus and visibility keep it), so the unreachable notice clears when the network returns
 - 2026-11-26 · frontend agent · Android QA run 25b: one shared capabilities read (`application/capabilitiesReport.ts`) for `useCapabilities` and `useAccountEntry`, retried on `online` (ungated, only while no report has arrived), so the Account tab and the sign-in hint come back after an offline launch; root cause was the reachability retry's `online` listener being removed mid-dispatch by its own `[state]` effect
+- 2026-11-26 · Claude (release agent) · fixed a mangled scratchpad path in the run 25b "Verified in Chromium" note (lost backslashes had become a line break and a vertical-tab control character); no content change
