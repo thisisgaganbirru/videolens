@@ -32,7 +32,7 @@ promotion PR, push to `main`), built its images three times, and published a
 | Event | Runs | Does not run, and why |
 |---|---|---|
 | PR into `dev` | `changes`, then only the touched parts: backend and/or frontend checks, Android if `frontend/` changed (the APK is kept as a 14-day artifact, built against the dev backend with the `.dev` application id; `dev_artifact` input), advisory scan of the touched images, `lint-workflows` (actionlint) if `.github/` changed, `hygiene` (no AI-tool attribution in the PR's commits or description) always; `dev-required` aggregates | — |
-| Any PR event into `dev` or `main`, including `edited` | `commit-hygiene.yml`: the same hygiene job, reported as `pr-hygiene / Commit hygiene` (the lanes' copy is `hygiene / Commit hygiene`) | The lanes cannot listen for `edited` (see engineering-standards.md, "Commit hygiene"), so fixing a bad title or description re-runs only this copy; the lane's aggregate (`dev-required` / `production-required`) stays red until a push or a manual re-run. CI runs the base branch's script; `main` has none until the first promotion carrying it merges, so that promotion PR runs its own copy with a `::warning::`. |
+| Any PR event into `dev` or `main`, including `edited` | `commit-hygiene.yml`: the same hygiene job, reported as `pr-hygiene / Commit hygiene` (the lanes' copy is `hygiene / Commit hygiene`) | The lanes cannot listen for `edited` (see engineering-standards.md, "Commit hygiene"), so fixing a bad title or description re-runs only this copy; the lane's aggregate (`dev-required` / `production-required`) stays red until a push or a manual re-run. CI runs the base branch's script; both `dev` and `main` have it (`main` since the 2.3.0 promotion, PR #154, 2026-11-26), so the fallback to the PR's own copy with a `::warning::` no longer applies. |
 | Push to `dev` | nothing | The PR just tested this exact tree (requires "up to date before merging"). Railway deploys. |
 | PR into `main` (promotion from `dev`, or a `hotfix/*` branch) | `source-branch` (head must be `dev` or `hotfix/*` of this repository), full application checks, **enforced** scan of both images, `hygiene`; `production-required` aggregates | Android: `dev`'s PRs built this tree, and the push builds it again with the production URL. |
 | Push to `main` | `publish` (build once, scan, promote), `android` (APK with the production URL), `release` | Application checks: the promotion PR tested this tree. |
@@ -84,9 +84,11 @@ and `main`'s requires `production-required`, each reported by one lane only,
 both next to `pr-hygiene / Commit hygiene`; a retargeted PR needs a push or a
 close-and-reopen to run the right lane. Both lanes and both rulesets must
 stay in step: renaming either job without its ruleset leaves that branch
-waiting forever on a check nobody reports. The owner switches the rulesets
-before #156 (the rename) merges; the order, and which PRs wait in between, is
-in `engineering-standards.md`, "Branch protection".
+waiting forever on a check nobody reports. The owner switched the rulesets
+before #156 (the rename) merged; the order, and which PRs waited in between, is
+in `engineering-standards.md`, "Branch protection". The switch-over is
+complete: the first promotion (2.3.1, PR #162, 2026-11-26) moved `main`'s tree
+to `production-required`, so hotfix PRs into `main` can merge again.
 
 **Source branch.** `main` takes pull requests from `dev` (the promotion) and
 from `hotfix/*` branches (owner decision, 2026-11-26), and only from branches
@@ -986,3 +988,4 @@ require the aggregate checks (`dev-required` on `dev`, `production-required` on
 - 2026-11-26 · ci-separation agent · dev lane aggregate renamed `required` -> `dev-required` (owner decision); dev ruleset requires `dev-required`, main ruleset `production-required`, both with `pr-hygiene / Commit hygiene`; rulesets switched before #156 merges
 - 2026-11-26 · deps agent · took Dependabot #151's eight pip bumps (fastapi 0.165.0, python-multipart 0.0.34, pydantic 2.14.4, pydantic-settings 2.16.3, google-genai 3.6.1, boto3 1.44.6, sqlalchemy 2.1.9, stripe 17.1.0; transitive botocore 1.44.12, pydantic-core 2.50.5) in a hand-regenerated, marker-preserving `requirements.txt` (uv `--universal`, exact versions via `-P`). Dependabot dropping the markers is now four-for-four on pip PRs (#95, #136, #137, #151)
 - 2026-11-26 · Claude (apk-supabase-config agent) · APKs had sign-in off: the Android sync step passed only `NEXT_PUBLIC_API_BASE_URL`. `reusable-android-checks.yml` takes `supabase_url` and `supabase_publishable_key` (literal per lane in both callers, like `api_base_url`), validates them before checkout for `upload_apk`/`dev_artifact` (https `*.supabase.co`, `sb_publishable_` only) and checks after the sync that the host is in the export JS and the origin in `out/index.html`'s CSP; section renamed "The APK's build-time configuration"; stale "dev callers omit api_base_url" text corrected
+- 2026-11-26 · Claude (docs agent) · Required checks: switch-over recorded as complete; the first promotion (2.3.1, PR #162) moved `main`'s tree to `production-required`, so hotfix PRs into `main` can merge again. Hygiene row: `main` has `scripts/commit-hygiene.sh` since the 2.3.0 promotion (PR #154), so the own-copy fallback note is resolved
