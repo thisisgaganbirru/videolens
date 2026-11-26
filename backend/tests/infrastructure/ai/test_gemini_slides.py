@@ -1,7 +1,9 @@
 """A multi-slide post in one Gemini request (`analyze_slides_with_retry`),
 with the same fake client as test_gemini_engine.py."""
 
+import asyncio
 import unittest
+from types import SimpleNamespace
 
 from google.genai import errors as genai_errors
 from google.genai import types
@@ -95,8 +97,10 @@ class AnalyzeSlidesTests(unittest.IsolatedAsyncioTestCase):
         result = await engine.analyze_slides_with_retry(_SLIDES)
 
         self.assertIs(result, _RESULT)
-        self.assertEqual(client.files.upload_calls, 6)
-        self.assertEqual(len(client.files.deleted), 6)
+        # First attempt: slides 1 and 2 (no new upload starts after the
+        # failure); second attempt: all three. Every upload is deleted.
+        self.assertEqual(client.files.upload_calls, 5)
+        self.assertEqual(len(client.files.deleted), 5)
 
     async def test_an_upload_that_fails_still_deletes_the_slides_before_it(self) -> None:
         bad = _api_error(genai_errors.ClientError, 400, "Unsupported file.")
@@ -108,6 +112,37 @@ class AnalyzeSlidesTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(client.files.deleted, ["files/1"])
         self.assertEqual(client.models.contents_seen, [])
+
+
+class ParallelUploadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_uploads_overlap_but_never_more_than_four_at_once(self) -> None:
+        client = _FakeClient([_RESULT])
+        in_flight = 0
+        peak = 0
+        order: list[str] = []
+
+        async def slow_upload(file):
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0.01)
+            in_flight -= 1
+            order.append(file)
+            return SimpleNamespace(name=f"files/{file}")
+
+        client.files.upload = slow_upload
+        slides = tuple(MediaSlide(path=f"normalized-{n:02d}.jpg", kind=SlideKind.IMAGE) for n in range(1, 10))
+        engine, _ = _engine(client)
+
+        await engine.analyze_slides_with_retry(slides)
+
+        self.assertEqual(peak, 4)
+        self.assertEqual(sorted(order), [slide.path for slide in slides])
+        # Whatever order the uploads finished in, each label sits before its own file.
+        (contents,) = client.models.contents_seen
+        uploads = [part.name for part in contents if not isinstance(part, str)]
+        self.assertEqual(uploads, [f"files/{slide.path}" for slide in slides])
+        self.assertEqual(len(client.files.deleted), 9)
 
 
 if __name__ == "__main__":

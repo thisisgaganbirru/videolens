@@ -31,6 +31,11 @@ _BACKOFF_BASE_SECONDS = 2.0
 # The fallback model is a second opinion, not a second full wait: by the time
 # it runs, the primary has already spent its whole retry budget.
 _FALLBACK_ATTEMPTS = 2
+# A multi-slide post uploads its slides (and waits for each to be ACTIVE) this
+# many at a time: up to 20 one after another was 10-20 s of queuing before the
+# analysis could start, and a small cap keeps a burst inside the Files API's
+# own rate limits.
+_UPLOAD_CONCURRENCY = 4
 
 
 class _FileProcessingError(RuntimeError):
@@ -385,20 +390,12 @@ class GeminiEngine:
         # Upload once. The upload is an API call too and can 503 on its own,
         # so it gets the same transient-only backoff - but a generate_content
         # failure below never sends us back here to upload the files again.
-        uploaded: list[Any] = []
+        # `uploaded[i]` is file i once its upload returns, so the cleanup
+        # below deletes every upload that happened, whatever failed.
+        uploaded: list[Any] = [None] * len(files)
         try:
             try:
-                for _, path in files:
-                    uploaded.append(
-                        await self._with_backoff(
-                            lambda path=path: client.aio.files.upload(file=path),
-                            attempts=self._settings.gemini_retry_attempts,
-                            model=self._settings.gemini_model,
-                            operation="files.upload",
-                        )
-                    )
-                for file in uploaded:
-                    await self._wait_until_active(client, file.name)
+                await self._upload_all(client, [path for _, path in files], uploaded)
 
                 if on_stage:
                     await on_stage("analyzing")
@@ -419,12 +416,47 @@ class GeminiEngine:
                 return self._parse(response)
             finally:
                 for file in uploaded:
+                    if file is None:
+                        continue
                     try:
                         await client.aio.files.delete(name=file.name)
                     except Exception:
                         pass
         finally:
             await self._release(client, api_key)
+
+    async def _upload_all(self, client: genai.Client, paths: list[str], uploaded: list[Any]) -> None:
+        """Upload every path and wait for each to be ACTIVE, at most
+        `_UPLOAD_CONCURRENCY` at a time, filling `uploaded` by position.
+        Every upload is allowed to finish (so none is left undeleted), no new
+        one starts after a failure, and the first failure in slide order is
+        raised once all have settled."""
+        gate = asyncio.Semaphore(_UPLOAD_CONCURRENCY)
+        failed = False
+
+        async def one(index: int, path: str) -> None:
+            nonlocal failed
+            async with gate:
+                if failed:
+                    return
+                try:
+                    uploaded[index] = await self._with_backoff(
+                        lambda: client.aio.files.upload(file=path),
+                        attempts=self._settings.gemini_retry_attempts,
+                        model=self._settings.gemini_model,
+                        operation="files.upload",
+                    )
+                    await self._wait_until_active(client, uploaded[index].name)
+                except BaseException:
+                    failed = True
+                    raise
+
+        outcomes = await asyncio.gather(
+            *(one(index, path) for index, path in enumerate(paths)), return_exceptions=True
+        )
+        for outcome in outcomes:
+            if isinstance(outcome, BaseException):
+                raise outcome
 
     async def analyze_captions(
         self, captions: CaptionTrack, api_key: str | None = None
