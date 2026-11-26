@@ -5,15 +5,17 @@ name: Reusable Android checks
 #     dev_artifact true, the APK is built against the dev backend with the
 #     `.dev` application id suffix and kept as a short-lived workflow artifact
 #     for testing on a device. Never a release.
-#   production-environment.yml  -> push to main, upload_apk true, then a
+#   production-environment.yml  -> push to main, upload_apk true and
+#     environment production (where the signing secrets live), then a
 #     separate release job in that workflow consumes the artifact.
 # This workflow never creates a tag or a release; it is capped at contents: read.
 #
 # Three jobs, so that release signing material never shares a runner with
 # dependency code (npm packages, Gradle plugins, Capacitor from node_modules):
-#   signing -> decides the signing variant from which ANDROID_* secrets exist.
-#              No checkout, no dependencies. Checks the keystore decodes and
-#              writes nothing to disk.
+#   signing -> production APK only, in `inputs.environment`: decides the
+#              signing variant from which ANDROID_* secrets exist. No
+#              checkout, no dependencies. Checks the keystore decodes and
+#              writes nothing to disk. Skipped for every other caller.
 #   android -> checkout, Gradle wrapper validation, npm ci, Capacitor sync,
 #              Gradle build and unit tests. Never sees a secret. For the
 #              release variant it builds an UNSIGNED release APK and uploads
@@ -33,7 +35,8 @@ on:
         description: >-
           Build the production APK and upload it with the version manifest as
           a workflow artifact for a downstream release job. Release-signed
-          (assembleRelease) when all four ANDROID_* secrets are set;
+          (assembleRelease) when all four ANDROID_* secrets are set in
+          `environment`, which is then required;
           debug-signed with the checked-in keystore, with a warning, when none
           are; fails when only some are.
         required: false
@@ -57,6 +60,26 @@ on:
         required: false
         default: ""
         type: string
+      supabase_url:
+        description: >-
+          Supabase project URL compiled into the APK as
+          NEXT_PUBLIC_SUPABASE_URL (sign-in; its origin also goes into the
+          export's CSP connect-src). Required whenever upload_apk or
+          dev_artifact is true: blank turns sign-in off in that APK with no
+          error anywhere (no Account tab).
+        required: false
+        default: ""
+        type: string
+      supabase_publishable_key:
+        description: >-
+          The same project's publishable key (sb_publishable_..., public by
+          design), compiled in as NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY.
+          Required with supabase_url. Never a secret or service_role key:
+          validation rejects anything that does not start with
+          sb_publishable_.
+        required: false
+        default: ""
+        type: string
       tag_prefix:
         description: >-
           Prefix for the release tag this build will be published under. Only
@@ -67,20 +90,23 @@ on:
         required: false
         default: "v"
         type: string
-    secrets:
-      # Release signing, used only when upload_apk is true. All four set:
-      # the production APK is release-signed with this key. None set: it
-      # falls back to the debug build signed with the checked-in keystore
-      # (the pre-2026-11-07 behaviour) and warns. Some set: the job fails.
-      ANDROID_KEYSTORE_BASE64:
-        description: The release keystore (.jks / .keystore), base64-encoded
+      environment:
+        description: >-
+          GitHub environment holding the four ANDROID_* release signing
+          secrets (`production`). Required when upload_apk is true; the
+          `signing` and `sign` jobs, and only they, run in it. Leave empty
+          otherwise: those two jobs are then skipped, so no job of the dev
+          lane ever names an environment.
         required: false
-      ANDROID_KEYSTORE_PASSWORD:
-        required: false
-      ANDROID_KEY_ALIAS:
-        required: false
-      ANDROID_KEY_PASSWORD:
-        required: false
+        default: ""
+        type: string
+    # No `secrets:` block, on purpose. The signing secrets are not passed by
+    # the caller: they are environment secrets of `inputs.environment`, which
+    # GitHub resolves for a job that runs in that environment (and, for
+    # `production`, only on main). All four set: the production APK is
+    # release-signed. None set: it falls back to the debug build signed with
+    # the checked-in keystore (the pre-2026-11-07 behaviour) and warns. Some
+    # set: the job fails.
     outputs:
       version_name:
         description: Application version name read from frontend/package.json
@@ -106,12 +132,19 @@ permissions:
   contents: read
 
 jobs:
+  # Runs only for the production APK, and only there in the environment that
+  # holds the signing secrets. For every other caller (the dev lane) the job
+  # is skipped rather than run with an empty `environment:`, so its output is
+  # empty and `android` falls back to the debug variant. With upload_apk but
+  # no environment it is skipped too, and `android`'s input validation fails.
   signing:
     name: Android signing mode
+    if: inputs.upload_apk && inputs.environment != ''
+    environment: ${{ inputs.environment }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      # release, debug, or empty (upload_apk false: the step is skipped).
+      # release or debug; empty when this job is skipped.
       variant: ${{ steps.signing.outputs.variant }}
     steps:
       # TEMPORARY: remove the debug fallback once the release key exists
@@ -132,7 +165,6 @@ jobs:
       # Values are only tested for emptiness here, never printed.
       - name: Prepare release signing
         id: signing
-        if: inputs.upload_apk
         shell: bash
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -167,6 +199,9 @@ jobs:
   android:
     name: Android
     needs: signing
+    # `signing` is skipped outside the production APK; that must not skip
+    # this job too. A failed signing check (secrets partly set) still stops it.
+    if: ${{ !cancelled() && needs.signing.result != 'failure' }}
     runs-on: ubuntu-latest
     # Generous: green runs take well under 10 minutes. The cap exists so a hung
     # Gradle daemon costs 25 minutes, not GitHub's default 360.
@@ -188,11 +223,25 @@ jobs:
         working-directory: .
         env:
           API_BASE_URL: ${{ inputs.api_base_url }}
+          SUPABASE_URL: ${{ inputs.supabase_url }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ inputs.supabase_publishable_key }}
           UPLOAD_APK: ${{ inputs.upload_apk }}
           DEV_ARTIFACT: ${{ inputs.dev_artifact }}
+          SIGNING_ENVIRONMENT: ${{ inputs.environment }}
         run: |
           if [ "$UPLOAD_APK" = "true" ] && [ "$DEV_ARTIFACT" = "true" ]; then
             echo "upload_apk and dev_artifact are mutually exclusive: a release APK must not carry the .dev suffix." >&2
+            exit 1
+          fi
+          # Without it the signing job was skipped and the signing secrets
+          # were never looked up, so the APK would silently come out
+          # debug-signed even once the release key exists.
+          if [ "$UPLOAD_APK" = "true" ] && [ -z "$SIGNING_ENVIRONMENT" ]; then
+            echo "environment is required when upload_apk is true: it names the GitHub environment that holds the ANDROID_* signing secrets (production)." >&2
+            exit 1
+          fi
+          if [ "$UPLOAD_APK" != "true" ] && [ -n "$SIGNING_ENVIRONMENT" ]; then
+            echo "environment is only for the production APK (upload_apk true); a dev or gate build must not run in '${SIGNING_ENVIRONMENT}'." >&2
             exit 1
           fi
           # Both failures below are silent at runtime, which is why they are
@@ -206,6 +255,25 @@ jobs:
               echo "api_base_url is required when upload_apk or dev_artifact is true: this APK is installed on real devices and must know where the backend lives." >&2
               exit 1
             }
+            # Same class of silent failure: with either Supabase value blank
+            # the bundle builds NullAuthSession, auth.enabled is false and the
+            # Account tab never appears. v2.3.0-build543 shipped that way.
+            case "$SUPABASE_URL" in
+              https://*.supabase.co) ;;
+              *)
+                echo "::error::supabase_url must be the https://<ref>.supabase.co project URL when upload_apk or dev_artifact is true (got '${SUPABASE_URL}'): without it sign-in is off in this APK." >&2
+                exit 1
+                ;;
+            esac
+            # The key is not printed: it is public, but a wrong value pasted
+            # here could be a secret one.
+            case "$SUPABASE_PUBLISHABLE_KEY" in
+              sb_publishable_?*) ;;
+              *)
+                echo "::error::supabase_publishable_key must be the project's sb_publishable_... key when upload_apk or dev_artifact is true. Never a secret or service_role key: it is compiled into a public APK." >&2
+                exit 1
+                ;;
+            esac
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -219,12 +287,38 @@ jobs:
       - uses: ./.github/actions/setup-frontend
       - uses: ./.github/actions/setup-android
       # `android:sync` runs `build:mobile`, and Next inlines NEXT_PUBLIC_* at
-      # build time — so this value is baked into the static export the APK
-      # ships, not read at runtime. It has to be set here, or the APK is
-      # permanently pointed at whatever the fallback is.
+      # build time — so these values are baked into the static export the APK
+      # ships, not read at runtime. They have to be set here, or the APK is
+      # permanently pointed at whatever the fallback is (localhost for the
+      # backend; sign-in off for Supabase). inject-csp.mjs reads the same
+      # environment, so the Supabase origin lands in the export's CSP.
+      # NEXT_PUBLIC_SITE_URL and NEXT_PUBLIC_NOINDEX, which the web Dockerfile
+      # also takes, are deliberately absent: they only feed canonical links,
+      # robots.txt and the sitemap, none of which an APK serves.
       - run: npm run android:sync
         env:
           NEXT_PUBLIC_API_BASE_URL: ${{ inputs.api_base_url }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ inputs.supabase_url }}
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ inputs.supabase_publishable_key }}
+      # Proves the values reached the export the APK bundles, not just the
+      # step's environment: the Supabase host in the JS and its origin in the
+      # CSP meta of the entry page. Only for APKs that reach a device.
+      - name: Check sign-in is compiled into the export
+        if: inputs.upload_apk || inputs.dev_artifact
+        env:
+          SUPABASE_URL: ${{ inputs.supabase_url }}
+        run: |
+          origin="${SUPABASE_URL%/}"
+          host="${origin#https://}"
+          grep -rqF --include='*.js' "$host" out/_next/static || {
+            echo "::error::The mobile export's JS does not contain ${host}: sign-in would be off in this APK." >&2
+            exit 1
+          }
+          grep -o "connect-src[^;\"]*" out/index.html | grep -qF "$origin" || {
+            echo "::error::out/index.html's CSP does not allow ${origin}: sign-in requests would be blocked." >&2
+            exit 1
+          }
+          echo "Sign-in compiled in: ${host} in the JS, ${origin} in the CSP."
       - id: version
         env:
           TAG_PREFIX: ${{ inputs.tag_prefix }}
@@ -324,6 +418,9 @@ jobs:
     name: Android release signing
     needs: [signing, android]
     if: needs.signing.outputs.variant == 'release'
+    # Never empty here: variant is only `release` when `signing` ran, which
+    # needs a non-empty environment.
+    environment: ${{ inputs.environment }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

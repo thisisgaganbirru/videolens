@@ -10,7 +10,7 @@ name: Development environment
 # the promotion into main instead (production-environment.yml).
 #
 # Only the parts a change touches are run. Branch protection should require
-# the single `required` job below, never the individual jobs, because a
+# the single `dev-required` job below, never the individual jobs, because a
 # skipped job would otherwise leave its check pending forever.
 
 on:
@@ -89,6 +89,10 @@ jobs:
     with:
       dev_artifact: true
       api_base_url: https://videolens-backend-dev.up.railway.app
+      # The dev Supabase project (the one the dev backend's AUTH_* settings
+      # trust). Public values: the publishable key is meant for the bundle.
+      supabase_url: https://pjekwwiaocywdbwqgtgl.supabase.co
+      supabase_publishable_key: sb_publishable_cDWRVT0W3KHbqt-3oneDCA_co4Lz1X3
 
   security:
     needs: changes
@@ -121,8 +125,8 @@ jobs:
       contents: read
       pull-requests: read
 
-  required:
-    name: required
+  dev-required:
+    name: dev-required
     needs: [changes, application, android, security, lint-workflows, hygiene]
     if: always()
     runs-on: ubuntu-latest

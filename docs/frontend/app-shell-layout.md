@@ -365,6 +365,31 @@ entries; back with the More sheet open closes it; back on History → `/app`;
 back on Analyze calls `App.exitApp`; opening a run from History adds 1 entry
 and back returns to `?view=history`.
 
+**More sheet rows push (2026-11-26, Android QA run 25).** History → More →
+Releases → Back went to Analyze: the sheet's `kind: "tab"` rows (Gemini key,
+Releases) went through the plain native switch, which replaced the History
+entry, so `canGoBack` was false and `decideBack` sent the user to Analyze.
+Privacy and Terms were right because they are document navigations. Now
+`MoreSheet.handleTabClick` calls `onSelectTab(tab, { push })` with `push`
+true unless the current view is itself a sheet view (`sheetOwnsLocation`);
+the callback type is `SelectTab` in `useMainTab.ts`. So Back from Releases or
+Gemini key returns to the view the sheet was opened over, and going from one
+sheet view to another replaces, so Back skips to the view under both. The
+in-screen `AppBackLink` follows the same entry (`hasInAppPrevious`). Known
+property, same as Privacy and an opened run: after a pushed sub-view, a dock
+tap replaces the sub-view's entry and leaves the earlier view under it, so
+History → Releases → dock Analyze → Back lands on History, then exits.
+Other entry points into Gemini key (the intake's "Use your own Gemini key")
+still switch in place, so Back there goes to Analyze, which is where they
+start. Verified in Chromium at 412 px with `window.androidBridge` stubbed so
+`isNative()` is true (`scratchpad\run25\verify_run25.py`): History → Releases
+adds an entry (index 0 → 1, `videolensInApp` set), Releases → Gemini key
+replaces (index stays 1), `history.back()` lands on `?view=history`, and the
+Back link does too. Before the change the same script showed index 0 after
+Releases and `history.back()` leaving the app. The physical button →
+`canGoBack` hop was not exercised (no device); it is the same path an opened
+run already takes.
+
 **Phase scroll (#6).** `HomeScreen` resets the Analyze section and `.viewport`
 to `scrollTop = 0` in a layout effect whenever the run phase (intake →
 progress → result / failed) changes. Measured: progress, result and failed all
@@ -1023,3 +1048,4 @@ route's title is left alone.
 - 2026-11-14 · frontend agent · UX fix spec batch e: phone menu order Analyze, History, Account, Gemini key, Releases with a gap before the minor pair; signed-out menu row "Sign in for 10 runs a day" on every route
 - 2026-11-14 · frontend agent · idle Analyze column widened to 46rem (one line per intake line on desktop); Codex's single-column layout verified in the browser at 320-1440, both shells, both themes
 - 2026-11-20 · Claude (frontend agent) · `useDocumentTitle` re-asserts the view's title when something overwrites it (MutationObserver on head); removed the deleted `components/useMediaQuery.ts` from the file list
+- 2026-11-26 · frontend agent · Android QA run 25: More sheet rows (Gemini key, Releases) push on the native shell (`SelectTab` / `TabSwitchOptions` in `useMainTab.ts`), so hardware Back and the Back link return to the view the sheet was opened over instead of Analyze; sheet-to-sheet replaces. See "More sheet rows push"

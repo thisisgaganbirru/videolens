@@ -263,6 +263,61 @@ and the notice is up while either read's latest result is unreachable. A
 healthy capabilities reply no longer clears a free-runs 503, and the other way
 round. Details in `free-runs.md`.
 
+**`online` is not gated on `navigator.onLine` (2026-11-26, Android QA run
+25).** The retry used to check `navigator.onLine` before every reconnect
+chance, the `online` event included. If the WebView fires `online` a moment
+before `onLine` reads true, that skipped the only retry, and the notice
+stayed up next to a free-runs strip that had come back. `focus` and
+`visibilitychange` keep the check; `online` now retries straight away.
+Details and verification in `free-runs.md`, "Coming back online".
+
+**Shared read, retried on `online` (2026-11-26, Android QA run 25b).**
+After an offline launch, coming back online left the Account tab and the
+"Sign in for 10 a day" hint missing until the app was left and reopened
+(android-64, dev APK code559). The capabilities read had no `online` path of
+its own: it relied on `useServerReachability`'s reconnect retry, and that
+retry is lost on a real `online` event. The engine's own event flips the
+reachability state (`offline` to `unreachable`), React re-renders inside the
+same dispatch and re-runs the `[state]` effect, which removes the very
+`online` listener that has not been called yet; the new one is added too late
+for this event. Only a later focus or visibility change retried. A synthetic
+`dispatchEvent` does not show this (no microtask checkpoint between
+listeners), which is why the run 25 check passed.
+
+- `application/capabilitiesReport.ts` is now the one read:
+  `loadCapabilities()` (shares an in-flight read, no-op once a report has
+  arrived, reports to `serverReachability`), `onCapabilities(listener)`,
+  `latestCapabilities()`. `useCapabilities` (`/app`) and `useAccountEntry`
+  (nav, dock and landing hint on the other routes) both use it;
+  `useAccountEntry`'s private `readAuthCapability` promise is gone.
+- It installs one page-lifetime `online` listener, ungated by
+  `navigator.onLine`, that retries the read only while no report has arrived.
+  A healthy app toggling Wi-Fi makes no capability request. It is one retry
+  per event, not a loop: if the network is not usable yet when `online`
+  fires, `/app` still has the focus/visibility chances and the next `online`
+  tries again.
+- `useCapabilities` keeps `onReconnectChance(load)` for focus and
+  visibility. The `useServerReachability` race itself is unchanged: both
+  launch reads now have their own `online` path (free runs since run 25).
+
+Verified in Chromium at 412 px with `/api/*` mocked and an `auth: ok` row
+(`scratchpad/run25/verify_run25b.py`, dev server with the dev Supabase
+values): load with every API request aborted, then (a) real events via
+`context.set_offline(true/false)`, (b) synthetic `online` with `onLine`
+already true, (c) synthetic with `onLine` lagging. On `/app` all three show
+the dock as Analyze / History / Account / More and the strip's "Sign in for
+10 a day." within 8 s, with exactly one `GET /api/capabilities` after
+reconnect; on `/` (web shell) the landing hint gains "Sign in for 10 a day."
+the same way. Control: a healthy load then an offline/online toggle makes
+zero capability reads. Against the pre-fix hooks, case (a) on `/app` made
+zero reads and the dock stayed Analyze / History / More (the device bug),
+while (b) and (c) passed; on `/` all three stayed without the hint.
+Not yet checked on a device: re-check on the next APK.
+
+Known gap (not capabilities): on `/` the "Videos up to 3 minutes" half of the
+landing hint (`useMediaLimits`, `GET /api/limits`) is not read again on
+reconnect either.
+
 ## Changelog
 
 - 2026-08-29 · frontend agent · added the capability surface: `CapabilitiesGateway` port + `FetchCapabilitiesGateway` adapter (normalising, not casting), `useCapabilities` hook fetched once in `HomeScreen`, the `CapabilityNotice` intake strip with a `probed`-aware disclosure, and `CapabilityCallout` wired to the URL field and the API-key panel; extracted `infrastructure/apiBase.ts` so two adapters share one origin
@@ -271,3 +326,6 @@ round. Details in `free-runs.md`.
 - 2026-11-02 · frontend agent (refinement 5) · LCH-06d: offline branch unreachable in the app because WebView needs ACCESS_NETWORK_STATE for navigator.onLine; permission added to the manifest (device check pending)
 - 2026-11-02 · frontend agent (refinement 11) · capabilities reports reachability under its own source name; the notice holds while any launch read is unreachable (D-R10-1)
 - 2026-11-02 · frontend (refinement 15) · `.cap-notice` is an em size container; below 15em the toggle drops under the sentence (no more 84px column split mid-word at 412/200%); sentence `overflow-wrap` anywhere → break-word; also covers the reachability notice
+- 2026-11-26 · frontend agent · Android QA run 25: the `online` event retries the launch reads without the `navigator.onLine` gate (focus and visibility keep it), so the unreachable notice clears when the network returns
+- 2026-11-26 · frontend agent · Android QA run 25b: one shared capabilities read (`application/capabilitiesReport.ts`) for `useCapabilities` and `useAccountEntry`, retried on `online` (ungated, only while no report has arrived), so the Account tab and the sign-in hint come back after an offline launch; root cause was the reachability retry's `online` listener being removed mid-dispatch by its own `[state]` effect
+- 2026-11-26 · Claude (release agent) · fixed a mangled scratchpad path in the run 25b "Verified in Chromium" note (lost backslashes had become a line break and a vertical-tab control character); no content change

@@ -28,17 +28,21 @@
             </intent-filter>
 
             <!-- Google sign-in (auth phase 4): Supabase sends the system
-                 browser back to ai.videolens.app://auth/callback?code=...
+                 browser back to <applicationId>://auth/callback?code=...
                  and this filter hands that link to the running app
                  (singleTask, so the same activity; @capacitor/app's
                  appUrlOpen). Exact host and path, so no other link of the
-                 scheme opens the app. infrastructure/authBrowser.ts. -->
+                 scheme opens the app. The scheme is the build's own
+                 application id (ai.videolens.app, or ai.videolens.app.dev
+                 with -PdevBuild), so a dev APK installed beside production
+                 never receives production's return, or the reverse.
+                 infrastructure/authBrowser.ts reads the same id at runtime. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
-                    android:scheme="ai.videolens.app"
+                    android:scheme="${applicationId}"
                     android:host="auth"
                     android:path="/callback" />
             </intent-filter>

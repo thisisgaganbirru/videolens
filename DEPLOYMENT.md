@@ -460,6 +460,14 @@ CSP `connect-src`. The Account tab appears only when both are set *and* the
 backend reports the `auth` capability as `ok`. See
 `docs/frontend/auth-sign-in.md`.
 
+The web image gets them as Railway service variables (Dockerfile `ARG`s).
+The APK does not read Railway at all: CI compiles in literal per-lane values
+from `production-environment.yml` and `development-environment.yml`
+(`api_base_url`, `supabase_url`, `supabase_publishable_key`). Moving either
+environment to another Supabase project or backend means changing those
+workflow lines as well as the Railway variables
+(`docs/container-workflows.md`, "The APK's build-time configuration").
+
 Because these values are inlined into the browser bundle at build time,
 configure them before building the frontend image. A frontend image or APK is
 therefore bound to one backend and cannot be promoted between environments.
@@ -797,7 +805,15 @@ signing.** That release cannot install over a debug-signed one (see the
 migration note at the end of this section), so set them deliberately, right
 before a release whose notes carry the reinstall warning.
 
-The four repository secrets:
+The four secrets, created in the GitHub **`production` environment**
+(Settings → Environments → production → Environment secrets), **not** as
+repository secrets. The environment admits `main` only, and the two jobs that
+read them (`signing` and `sign` in `reusable-android-checks.yml`) run in it,
+so no other branch's workflow can read the key; a repository secret would
+reach any same-repository branch. `production-environment.yml` passes no
+`secrets:` (since 2026-11-26). If a repository secret of the same name
+exists, delete it: the environment's value wins inside those jobs, but the
+repository copy is still readable everywhere else.
 
 | Secret | Value |
 |---|---|
@@ -816,20 +832,23 @@ keytool -genkeypair -v -keystore videolens-release.jks -alias videolens \
 ```
 
 ```bash
-base64 -w0 videolens-release.jks | gh secret set ANDROID_KEYSTORE_BASE64
+base64 -w0 videolens-release.jks | gh secret set ANDROID_KEYSTORE_BASE64 --env production
 ```
 
 ```bash
-gh secret set ANDROID_KEYSTORE_PASSWORD
+gh secret set ANDROID_KEYSTORE_PASSWORD --env production
 ```
 
 ```bash
-gh secret set ANDROID_KEY_ALIAS --body videolens
+gh secret set ANDROID_KEY_ALIAS --env production --body videolens
 ```
 
 ```bash
-gh secret set ANDROID_KEY_PASSWORD
+gh secret set ANDROID_KEY_PASSWORD --env production
 ```
+
+Check with `gh secret list --env production` (names only; it never prints
+values) and `gh secret list`, which must not list any `ANDROID_*`.
 
 `frontend/android/app/build.gradle` reads `ANDROID_KEYSTORE_PATH`,
 `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`
@@ -838,8 +857,9 @@ present. **CI never sets them for Gradle** (since 2026-11-20): the Gradle
 build runs `npm ci` and builds Capacitor from `node_modules`, so the key is
 kept off that runner. `reusable-android-checks.yml` instead runs three jobs:
 
-1. `signing` (no checkout) checks the four secrets for emptiness and that
-   the keystore decodes, and picks `release`.
+1. `signing` (no checkout, in the `production` environment, skipped on the
+   dev lane) checks the four secrets for emptiness and that the keystore
+   decodes, and picks `release`.
 2. `android` builds `assembleRelease` with no signing variables, i.e. an
    **unsigned** release APK, and uploads it with `version.json` as the
    artifact `videolens-ai-v<version>-code<code>-<sha>-release-unsigned`
@@ -973,3 +993,5 @@ The release is complete when:
 - 2026-11-20 · Claude (backend agent) · re-review: one download budget per run (`DOWNLOAD_DEADLINE_SECONDS`); connection figure doubles during deploy overlap; the schema check protects nothing until the `alembic_version` grant; worker has no health check and what a schema-behind worker does; readiness `schema` is a startup snapshot; `sslmode=require` does not verify the certificate, `sslrootcert` with `verify-full` does; unsupported URL parameters refuse startup
 - 2026-11-20 · Claude (CI agent) · Android release signing: CI signs in a separate `sign` job with apksigner on an unsigned Gradle build, never passing the key to Gradle; documented what the first run with secrets does and how to verify it
 - 2026-11-21 · Claude (backend agent) · Database connections: a password with `?`, `&`, `=` or `#` works as written again; a refused parameter is named without its value or any other part of the URL
+- 2026-11-26 · ci-separation agent · Android release signing: the four `ANDROID_*` secrets go in the `production` GitHub environment (`gh secret set --env production`), not the repository; no `secrets:` passthrough; the signing jobs run in that environment and are skipped on the dev lane
+- 2026-11-26 · Claude (apk-supabase-config agent) · Frontend variables: the APK takes its backend and Supabase values from literal workflow inputs per lane, not Railway; changing an environment's Supabase project means updating both

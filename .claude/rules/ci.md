@@ -28,31 +28,39 @@ Also:
 
 - The production APK is `assembleRelease` signed with the keystore in the
   `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS`
-  / `ANDROID_KEY_PASSWORD` secrets, passed explicitly by
-  `production-environment.yml`, when all four exist. Gradle never sees
+  / `ANDROID_KEY_PASSWORD` secrets when all four exist. They are secrets of
+  the GitHub `production` environment (admits `main` only), never repository
+  secrets, and nothing passes them (`secrets:`): the `signing` and `sign`
+  jobs in `reusable-android-checks.yml` run in `inputs.environment`, which
+  only `production-environment.yml` sets; the dev lane names none, so
+  `signing` is skipped there. Gradle never sees
   them: `android` builds the release APK unsigned, and the separate `sign`
   job (no checkout, no npm, no Gradle) signs it with `apksigner`. Keep the
-  key out of any job that runs dependency code. With none it falls back
+  key out of any job that runs dependency code, and out of any job without
+  `environment:`. With none it falls back
   (temporary, removed once the release key exists) to `assembleDebug` with the checked-in keystore (no `-PdevBuild`) and a
   `::warning::`; with only some it fails before Gradle. Never print them. Version values reach
   Gradle through the step environment, never `${{ }}` on the command line.
-- Advisory scans (dev PRs, nightly) must finish green; Railway's Wait for CI
-  skips a deploy while any workflow on the commit is red.
-- Branch protection requires the `required` job, which always reports, and
-  (recommended 2026-11-20, owner setting) `pr-hygiene / Commit hygiene` from
-  `commit-hygiene.yml`, which runs on every PR event including `edited`.
-  Renaming that job id renames the check; update branch protection with it.
+- Advisory scans (dev PRs, nightly) must finish green; production's Railway
+  Wait for CI skips a deploy while any workflow on the commit is red.
+- Two rulesets, one per branch (`docs/engineering-standards.md`, "Branch
+  protection"). `dev` requires `dev-required` (dev lane aggregate); `main`
+  requires `production-required` (production lane aggregate, which also
+  needs `source-branch`: head must be `dev` or `hotfix/*` of this repo).
+  Both require `pr-hygiene / Commit hygiene` from `commit-hygiene.yml`,
+  which runs on every PR event including `edited`. The aggregates always
+  report. Renaming either aggregate (or `pr-hygiene`) renames the check:
+  change its ruleset in the same step, or that branch waits forever. `dev`'s
+  ruleset must never require `production-required`.
 - Both lanes call `reusable-commit-hygiene.yml` as `hygiene` (check
-  `hygiene / Commit hygiene`) and feed it into `required`. Keep it there;
+  `hygiene / Commit hygiene`) and feed it into their aggregate. Keep it there;
   the rules live in `scripts/commit-hygiene.sh`, and CI runs the base
   branch's copy of the script (not of the workflow files: a PR edits those
   for its own run, so `.github/` changes need the owner's review). Never add
-  `edited` to a lane: that run would replace `required` with one that
+  `edited` to a lane: that run would replace the aggregate with one that
   skipped the build. The title/description fetch must fail closed. Fixing
-  a bad title re-runs only `pr-hygiene`; the lane's `required` stays red
-  until a push or a manual re-run. `main` has no `scripts/commit-hygiene.sh`
-  until the first promotion carrying it merges, so that promotion PR runs
-  its own copy (with a `::warning::`).
+  a bad title re-runs only `pr-hygiene`; the lane's aggregate stays red
+  until a push or a manual re-run.
 - Images are deliberately unsigned (keyless Cosign writes to the public
   Rekor log). SBOM and provenance stay in-registry. Never pass a secret via
   `build-args`; `provenance: mode=max` records them. Use `secrets`.
