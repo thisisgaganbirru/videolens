@@ -31,8 +31,8 @@ promotion PR, push to `main`), built its images three times, and published a
 
 | Event | Runs | Does not run, and why |
 |---|---|---|
-| PR into `dev` | `changes`, then only the touched parts: backend and/or frontend checks, Android if `frontend/` changed (the APK is kept as a 14-day artifact, built against the dev backend with the `.dev` application id; `dev_artifact` input), advisory scan of the touched images, `lint-workflows` (actionlint) if `.github/` changed, `hygiene` (no AI-tool attribution in the PR's commits or description) always; `required` aggregates | — |
-| Any PR event into `dev` or `main`, including `edited` | `commit-hygiene.yml`: the same hygiene job, reported as `pr-hygiene / Commit hygiene` (the lanes' copy is `hygiene / Commit hygiene`) | The lanes cannot listen for `edited` (see engineering-standards.md, "Commit hygiene"), so fixing a bad title or description re-runs only this copy; the lane's aggregate (`required` / `production-required`) stays red until a push or a manual re-run. CI runs the base branch's script; `main` has none until the first promotion carrying it merges, so that promotion PR runs its own copy with a `::warning::`. |
+| PR into `dev` | `changes`, then only the touched parts: backend and/or frontend checks, Android if `frontend/` changed (the APK is kept as a 14-day artifact, built against the dev backend with the `.dev` application id; `dev_artifact` input), advisory scan of the touched images, `lint-workflows` (actionlint) if `.github/` changed, `hygiene` (no AI-tool attribution in the PR's commits or description) always; `dev-required` aggregates | — |
+| Any PR event into `dev` or `main`, including `edited` | `commit-hygiene.yml`: the same hygiene job, reported as `pr-hygiene / Commit hygiene` (the lanes' copy is `hygiene / Commit hygiene`) | The lanes cannot listen for `edited` (see engineering-standards.md, "Commit hygiene"), so fixing a bad title or description re-runs only this copy; the lane's aggregate (`dev-required` / `production-required`) stays red until a push or a manual re-run. CI runs the base branch's script; `main` has none until the first promotion carrying it merges, so that promotion PR runs its own copy with a `::warning::`. |
 | Push to `dev` | nothing | The PR just tested this exact tree (requires "up to date before merging"). Railway deploys. |
 | PR into `main` (promotion from `dev`, or a `hotfix/*` branch) | `source-branch` (head must be `dev` or `hotfix/*` of this repository), full application checks, **enforced** scan of both images, `hygiene`; `production-required` aggregates | Android: `dev`'s PRs built this tree, and the push builds it again with the production URL. |
 | Push to `main` | `publish` (build once, scan, promote), `android` (APK with the production URL), `release` | Application checks: the promotion PR tested this tree. |
@@ -70,8 +70,8 @@ the publish job rebuilt an image separate from the one the check job scanned.
 A failed scan leaves an unpromoted `sha-` tag, which nothing pulls.
 
 **Required checks.** Each lane ends in one aggregate job that always reports
-(`if: always()`): `required` on the dev lane, `production-required` on the
-production lane (since 2026-11-26). The rulesets require exactly that check,
+(`if: always()`): `dev-required` on the dev lane, `production-required` on the
+production lane (both were `required` until 2026-11-26). The rulesets require exactly that check,
 not the individual jobs: the `dev` lane skips jobs on purpose, and a required
 check that never reports leaves a PR waiting forever. The `dev` gate treats
 `skipped` as fine; the production gate demands every job `success`, since
@@ -79,11 +79,14 @@ nothing there is path-filtered. The names differ on purpose: a PR opened into
 `dev` and then retargeted to `main` fires only `edited`, which neither lane
 listens to, so with one shared name the dev lane's green `required` on the
 same head commit satisfied `main`'s ruleset without the production lane (and
-its enforced scan) ever running. Now `main`'s ruleset waits for a
-`production-required` that only the production lane reports; a retargeted PR
-needs a push or a close-and-reopen to run it. Both lanes and both rulesets
-must stay in step: renaming either job without its ruleset leaves that branch
-waiting forever on a check nobody reports.
+its enforced scan) ever running. Now `dev`'s ruleset requires `dev-required`
+and `main`'s requires `production-required`, each reported by one lane only,
+both next to `pr-hygiene / Commit hygiene`; a retargeted PR needs a push or a
+close-and-reopen to run the right lane. Both lanes and both rulesets must
+stay in step: renaming either job without its ruleset leaves that branch
+waiting forever on a check nobody reports. The owner switches the rulesets
+before #156 (the rename) merges; the order, and which PRs wait in between, is
+in `engineering-standards.md`, "Branch protection".
 
 **Source branch.** `main` takes pull requests from `dev` (the promotion) and
 from `hotfix/*` branches (owner decision, 2026-11-26), and only from branches
@@ -123,7 +126,7 @@ are fixed, not suppressed; the one inline `# shellcheck disable=` (SC2016 in
 the nightly issue script) carries its reason beside it.
 
 **Timeouts.** Every job carries `timeout-minutes`, so a hung step costs that
-much and not GitHub's default of 360 minutes: 5 for `changes`, `required`,
+much and not GitHub's default of 360 minutes: 5 for `changes`, `dev-required`,
 `production-required`, `source-branch`, Android `signing`,
 `lint-workflows` and the nightly `issue`; 15 for `backend` and `frontend`; 20
 for `scan`; 25 for `android`; 30 for `publish` (arm64 under QEMU); 10 for
@@ -139,7 +142,7 @@ separate actions repo, and an in-repo path cannot drift from the code it builds.
 **Repository settings this design relies on** (not files; an administrator
 sets them in GitHub; current state in `docs/engineering-standards.md`,
 "Branch protection"):
-- One ruleset per branch. `dev`: require `required` and `pr-hygiene / Commit
+- One ruleset per branch. `dev`: require `dev-required` and `pr-hygiene / Commit
   hygiene`. `main`: require `production-required` and `pr-hygiene / Commit
   hygiene`. Both: pull request required (0 approvals, conversation
   resolution, merge commits only), branches up to date before merging, no
@@ -594,7 +597,7 @@ this, chosen by the owner on 2026-11-07.
 It reads the update type with `dependabot/fetch-metadata` and, for anything
 that is not a semver-major, turns on GitHub auto-merge (`gh pr merge --auto
 --merge`). GitHub then merges the moment branch protection is satisfied: the
-`required` check green and the branch up to date. A red PR stays open. Majors
+`dev-required` check green and the branch up to date. A red PR stays open. Majors
 are skipped; `update-type` is the highest change in the PR, so one major in a
 group keeps the group out. Digest bumps carry no semver change and go through.
 It needs the repository setting "Allow auto-merge" turned on.
@@ -763,7 +766,7 @@ and, by owner decision (2026-11-26), requires no reviewers: the gate is the
 `main` ruleset and its `production-required` check. It holds
 `PRODUCTION_API_BASE_URL` and, once created, the four `ANDROID_*` signing
 secrets. The `dev` GitHub environment is used by no workflow. The rulesets
-require the aggregate checks (`required` on `dev`, `production-required` on
+require the aggregate checks (`dev-required` on `dev`, `production-required` on
 `main`) plus `pr-hygiene / Commit hygiene`, never the individual jobs.
 
 ## Files touched
@@ -800,7 +803,7 @@ require the aggregate checks (`required` on `dev`, `production-required` on
 - GitHub environment protection and the branch rulesets are repository
   settings, not files, and must be configured by a repository administrator.
   The workflows and the rulesets must agree on the check names
-  (`required`, `production-required`, `pr-hygiene / Commit hygiene`); nothing
+  (`dev-required`, `production-required`, `pr-hygiene / Commit hygiene`); nothing
   in CI detects a mismatch, which shows only as a PR waiting forever.
 - The Android `signing` / `sign` jobs read the signing secrets from the
   `production` environment without any `secrets:` declaration or
@@ -944,3 +947,4 @@ require the aggregate checks (`required` on `dev`, `production-required` on
 - 2026-11-20 · Claude (CI agent) · hygiene check names made distinct (`pr-hygiene / Commit hygiene` from `commit-hygiene.yml`, `hygiene / Commit hygiene` in the lanes); the nightly `issue` job tracks scans that could not run in their own issue
 - 2026-11-21 · Claude (CI agent) · hygiene row: fixing a title re-runs only `pr-hygiene` (the lane's `required` stays red until a push or re-run), and `main` has no `scripts/commit-hygiene.sh` until the first promotion carrying it merges, so that PR runs its own copy
 - 2026-11-26 · ci-separation agent · main/dev separation: production aggregate renamed `production-required` (one ruleset per branch, kept in step); `source-branch` job (PRs into `main` only from `dev` or `hotfix/*` of this repo); Android signing secrets moved to the `production` environment (no `secrets:` passthrough; `signing`/`sign` run in the new `environment` input and are skipped on the dev lane); hotfix flow and post-release `main` -> `dev` sync documented; default branch `dev`, so the nightly scan pins `ref: main`; replaced the stale environments/reviewers paragraph
+- 2026-11-26 · ci-separation agent · dev lane aggregate renamed `required` -> `dev-required` (owner decision); dev ruleset requires `dev-required`, main ruleset `production-required`, both with `pr-hygiene / Commit hygiene`; rulesets switched before #156 merges

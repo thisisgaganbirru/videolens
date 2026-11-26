@@ -22,7 +22,7 @@ production. Work on a feature branch, open a pull request into `dev`, and let
 the promotion PR from `dev` into `main` carry it to production. `main` takes
 pull requests from `dev` and from `hotfix/*` branches only (a hotfix is then
 merged back from `main` into `dev`). Neither branch accepts direct pushes;
-`dev` requires the `required` CI check, `main` requires
+`dev` requires the `dev-required` CI check, `main` requires
 `production-required`, both require `pr-hygiene / Commit hygiene` and an
 up-to-date branch. A
 merge into `dev` deploys the dev environment on Railway; a merge into `main`

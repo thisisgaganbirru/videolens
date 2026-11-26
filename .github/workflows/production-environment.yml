@@ -8,12 +8,13 @@ name: Production environment
 # `production-required`, so it cannot merge. This is the only place security
 # is mandatory before code reaches main.
 #
-# The aggregate check is `production-required`, not `required`: the dev lane's
-# aggregate is `required`, and a PR first opened into dev and then retargeted
-# to main fires only `edited`, which this lane does not listen to. With one
-# shared name, the dev lane's green `required` on the same head commit would
+# The aggregate check is `production-required`, and the dev lane's is
+# `dev-required` (both renamed from `required`, 2026-11-26). With one
+# shared name, a PR first opened into dev and then retargeted to main fires
+# only `edited`, which this lane does not listen to, and the
+# dev lane's green check on the same head commit would
 # satisfy main's ruleset without this lane ever running. main's ruleset
-# requires `production-required` and dev's requires `required`; renaming
+# requires `production-required` and dev's requires `dev-required`; renaming
 # either job means changing its ruleset in the same breath
 # (docs/engineering-standards.md, "Branch protection").
 #
