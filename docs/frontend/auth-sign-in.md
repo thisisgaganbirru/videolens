@@ -282,10 +282,13 @@ made.
   `AppNav` / `BottomTabBar`) call `useAccountEntry()` in
   `application/useAccountEntry.ts`, which applies the same gate (provider
   configured *and* `auth` capability `ok`) and the same state
-  (`accountEntryFrom`, also used by HomeScreen on `/app`). The `auth` row is
-  read once per page load through a module-level promise shared by nav and
-  dock (one `/api/capabilities` request); a failed read hides the entry and
-  is retried on a later mount. Prerendered and first client render show no
+  (`accountEntryFrom`, also used by HomeScreen on `/app`). The `auth` row
+  comes from the one shared capabilities read
+  (`application/capabilitiesReport.ts`, 2026-11-26), the same one `/app`'s
+  `useCapabilities` uses: one `/api/capabilities` request for nav, dock and
+  landing hint. A failed read hides the entry and is retried on the next
+  `online` event (and on a later mount) until a report arrives; see
+  `capability-reporting.md`, "Shared read, retried on `online`". Prerendered and first client render show no
   entry, so no hydration mismatch; it appears once both reads answer. Links
   go to `/app?view=account`. Landing's "Start analyzing" CTAs are unchanged.
   Offline (`/offline`) keeps plain `AppNav`: it is served with no network,
@@ -872,3 +875,4 @@ use it. Copy, final wording:
 - 2026-11-26 · frontend agent · Android sign-in return scheme is now the build's own applicationId (manifest `${applicationId}`, runtime `App.getInfo().id`, fallback `ai.videolens.app`): prod unchanged, dev APK `ai.videolens.app.dev://auth/callback` (fixes android-64 run 25: both apps claimed the link); `AuthRedirectBrowser.returnUrl()` async; dev Supabase redirect allowlist needs the `.dev` entry (owner)
 - 2026-11-26 · Claude (android-fixes integration agent) · merged the apk-supabase-config, return-scheme and run 25 changes; "Android build configuration" no longer says both APKs share `ai.videolens.app://auth/callback` (each lane has its own scheme and Redirect URL)
 - 2026-11-26 · frontend agent · Android QA run 25 copy: the unavailable Account card is "Sign-in isn’t available right now" (was "…not available on this server", which blamed the server even for a build with no sign-in configured) and its body names the real label, "your own key under Gemini key" (was "under API key"); `REASON_MESSAGE.unavailable` and `GOOGLE_MESSAGE.unavailable` in `useAuthSession.ts` reworded the same way
+- 2026-11-26 · frontend agent · Android QA run 25b: `useAccountEntry` drops its private `readAuthCapability` promise for the shared capabilities read (`capabilitiesReport.ts`), which retries on `online` until a report arrives, so the Account entry (dock, nav, landing and Analyze "Sign in for 10 a day") returns after an offline launch without leaving the app

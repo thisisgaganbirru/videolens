@@ -417,6 +417,15 @@ device fires `online` with `onLine` lagging is a hypothesis that fits the
 QA repro, not something observed on the device; the `online` listener is
 the ungated path either way. Re-check on the next APK.
 
+Run 25b (android-64, code559) passed the strip but found the Account tab and
+the strip's "Sign in for 10 a day." still missing after reconnect: the
+capabilities read had no `online` path of its own, and the reachability
+retry's `online` listener is removed by its own `[state]` effect when a real
+event flips the state. It now has one (`capabilitiesReport.ts`, see
+`capability-reporting.md`, "Shared read, retried on `online`"). The
+synthetic-event checks above could not show this; `verify_run25b.py` adds a
+real-event case.
+
 ## Changelog
 
 - 2026-11-01 · frontend agent (Phase 5b) · created: device token store, free-runs gateway/port, `useFreeRuns` store, 401 retry-once and 402 limit state in `useAnalysisRun`, `FreeRunsBanner` on all shells, `UploadForm` `blocked`, API key lede and Privacy sentence
@@ -438,3 +447,4 @@ the ungated path either way. Re-check on the next APK.
 - 2026-11-14 · frontend agent · desktop (60rem up): the strip sits at the right end of the "New analysis" row (`.intake-head` grid, `justify-self: end`, max 26rem, 0.875rem/1.35 with 8px block padding so two lines stay shorter than the h1 and the card never moves); ghost stand-in and `data-byok` rule unchanged; below 60rem the stacked strip is as before
 - 2026-11-14 · frontend agent · out-of-runs and signed-in strip shifts: `data-runs-spent` pre-paint hint (`infrastructure/layoutHints.ts`, `application/useLayoutHints.ts`) reserves the spent strip and the out-of-runs block (`UploadForm` `blockedHeld`) for a returning spent visitor; three strip stand-ins chosen by `data-session` / `data-runs-spent`. Numbers under "Remembered spent state"
 - 2026-11-26 · frontend agent · Android QA run 25: re-read on the `online` event in `useFreeRuns` (same throttled path as resume), and `useServerReachability` no longer gates its `online` retry on `navigator.onLine`, so after an offline launch the strip comes back and the "Can't reach the server" notice clears without leaving the app
+- 2026-11-26 · frontend agent · Android QA run 25b: note on the capabilities reconnect fix (the strip's sign-in hint depends on the `auth` row) and why the run 25 synthetic `online` check missed the real-event race
