@@ -17,11 +17,12 @@ name: Reusable commit hygiene
 # change or drop the step above. Changes under .github/ need the owner's
 # review (docs/engineering-standards.md, "Commit hygiene").
 #
-# Called from both lanes (fed into their `required` job) and from
-# commit-hygiene.yml, which re-runs it when a title or description is edited.
-# Only that copy re-runs on `edited`: after a lane's copy failed on the title
-# or description, fixing the text turns `pr-hygiene` green, but the lane's
-# `required` stays red until a push or a manual re-run of the lane.
+# Called from both lanes (fed into their aggregate job: `required` on dev,
+# `production-required` on main) and from commit-hygiene.yml, which re-runs
+# it when a title or description is edited. Only that copy re-runs on
+# `edited`: after a lane's copy failed on the title or description, fixing
+# the text turns `pr-hygiene` green, but the lane's aggregate stays red until
+# a push or a manual re-run of the lane.
 # It needs no path filter and finishes in seconds.
 
 on:

@@ -3,12 +3,18 @@ name: Security nightly scan
 # Scans main every morning so a newly published CVE shows up as an issue,
 # instead of being discovered when every open PR turns red at once.
 #
-# It must never fail on findings. A scheduled run attaches to main's head
-# commit, and Railway's Wait for CI skips any deploy - including the redeploy a
-# variable change triggers - while a workflow on that commit is red. So the
-# scan runs in advisory mode, a failed image build (base pull, mirror outage)
-# is a warning rather than a red job (build_failure_is_warning), and the issue
-# job cannot fail the run.
+# A scheduled run starts from the default branch, which is dev since
+# 2026-11-26, so the scan checks out main explicitly (`ref: main`); without it
+# the "scan of main" would scan dev. The run itself still attaches to the
+# default branch's head commit (and a manual run to the branch it is started
+# on).
+#
+# It must never fail on findings. Railway's Wait for CI skips any deploy -
+# including the redeploy a variable change triggers - while a workflow on the
+# commit is red, and the commit this run attaches to is a deployed branch's
+# head. So the scan runs in advisory mode, a failed image build (base pull,
+# mirror outage) is a warning rather than a red job
+# (build_failure_is_warning), and the issue job cannot fail the run.
 
 on:
   schedule:
@@ -29,6 +35,7 @@ jobs:
     with:
       enforce: false
       build_failure_is_warning: true
+      ref: main
 
   issue:
     name: Report findings
