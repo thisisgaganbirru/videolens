@@ -606,8 +606,10 @@ new names only once its base or its head carries #156. In order:
    `required` and waits; after it merges, their next run (push, or
    close-and-reopen) picks the new name up from `dev`.
 4. Promote `dev` -> `main`; the promotion reports `production-required`.
-   Between step 2 and this merge no hotfix into `main` can merge, since
-   `main`'s own tree still names its check `required`.
+   Between step 2 and this merge no hotfix into `main` could merge, since
+   `main`'s own tree still named its check `required`. Resolved: the first
+   promotion (2.3.1, PR #162, merged as 8453b00 on 2026-11-26) moved `main`
+   to `production-required`, so hotfix PRs into `main` can merge again.
 5. Sync `main` -> `dev` after the release, as after every release.
 6. Switch the default branch to `dev` (any time after step 3: the nightly
    scan's `ref: main` pin must already be on `dev`).
@@ -713,9 +715,10 @@ Four layers keep it out, from source to gate:
   text (an empty description is fine).
 - CI runs the **base branch's** copy of the script, so a PR cannot weaken the
   rules that judge it; a rule change applies to PRs after it merges. A base
-  without the script falls back to the PR's copy with a `::warning::`. `dev`
-  has it; `main` does not until the first promotion that carries it merges,
-  so that first `dev` -> `main` promotion PR is judged by its own copy. That
+  without the script falls back to the PR's copy with a `::warning::`. Both
+  `dev` and `main` have it: `main` got it with the 2.3.0 promotion (PR #154,
+  merged as 28cb9ad on 2026-11-26), so the fallback no longer applies to
+  either branch. That
   covers the script only. On `pull_request` the workflow files
   (`commit-hygiene.yml`, the lanes, `reusable-commit-hygiene.yml`) run from
   the PR's merge ref, so a PR that edits them can change or drop the check,
@@ -854,3 +857,4 @@ Re-verify before fixing; do not treat the line numbers as authoritative.
 - 2026-11-26 · ci-separation agent · "Branch protection is unverified" replaced by "Branch protection": the verified single ruleset, its split into a `dev` ruleset (`required`) and a `main` ruleset (`production-required`), both with `pr-hygiene / Commit hygiene`, no bypass, merge commits only, kept in step with the job names; Commit hygiene now names both aggregates and records `pr-hygiene` as required
 - 2026-11-26 · ci-separation agent · dev ruleset now requires `dev-required` (dev lane aggregate renamed from `required`); added the switch-over order (rulesets before #156 merges; which PRs wait in between)
 - 2026-11-26 · orchestrator follow-up · "Branch protection" records the applied state instead of the intended one: rulesets 28180966 (dev) and 28180968 (main) replace the deleted 26660378, default branch `dev`, `dev` environment limited to `dev`, all read back from the API; tag ruleset 28181012 on `refs/tags/v*` blocks deletion and update (creation allowed)
+- 2026-11-26 · Claude (docs agent) · switch-over step 4: the hotfix block is resolved; the first promotion (2.3.1, PR #162, 8453b00) moved `main` to `production-required`, so hotfix PRs into `main` can merge again. Commit hygiene: `main` has `scripts/commit-hygiene.sh` since the 2.3.0 promotion (PR #154, 28cb9ad), so the "until the first promotion" note is resolved
