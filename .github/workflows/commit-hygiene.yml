@@ -3,18 +3,19 @@ name: Commit hygiene
 # Re-runs the commit hygiene check when a pull request's title or description
 # is edited. The lanes (development-environment.yml, production-environment.yml)
 # run the same check on opened/synchronize/reopened and feed it into their
-# `required` job, but they cannot listen for `edited`: a lane run on an edit
-# would replace that `required` check with one that skipped the build and
+# aggregate job (`dev-required` on the dev lane, `production-required` on the
+# production lane), but they cannot listen for `edited`: a lane run on an edit
+# would replace that aggregate check with one that skipped the build and
 # tests. So this small workflow covers edits (and every other PR event, so
 # its check is always present on the head commit and can be made required).
 #
 # Its check is named `pr-hygiene / Commit hygiene` (job id below / the
 # reusable's job name). The lanes' copy keeps the name `hygiene / Commit
-# hygiene` and feeds their `required` job. Branch protection on dev and main
-# should require `pr-hygiene / Commit hygiene` in addition to `required`;
-# until it does, a red run here is visible on the PR but does not block the
-# merge. Renaming the job id renames the check and would leave a required
-# check pending forever: change branch protection in the same breath.
+# hygiene` and feeds their aggregate job. Both branch rulesets require
+# `pr-hygiene / Commit hygiene`: dev's next to `dev-required`, main's next to
+# `production-required`. Renaming the job id renames the check and would
+# leave a required check pending forever: change both rulesets in the same
+# breath.
 #
 # Plain `pull_request`, never `pull_request_target`: it runs with the PR's
 # read-only token, and the rules come from the base branch (see the reusable;
