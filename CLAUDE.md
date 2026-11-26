@@ -84,11 +84,11 @@ Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
   in distributed mode with `ALLOWED_ORIGINS=*`. In front of all four: failed
   API keys and tokens per IP (429, 15-minute window, checked before any
   lookup) and a request-body ceiling (413).
-- The production APK is release-signed with a key held only in CI secrets
-  when the four `ANDROID_*` signing secrets exist, and falls back to the
-  debug build signed with the checked-in `debug.keystore` (with a CI
-  warning) when none do (temporary: the fallback is removed once the first
-  release-signed APK ships). Currently debug: the owner deferred the key.
+- The production APK is release-signed with a key held only in the GitHub
+  `production` environment (main only) when its four `ANDROID_*` secrets
+  exist, and falls back to the debug build signed with the checked-in
+  `debug.keystore` (with a CI warning) when none do (temporary: the
+  fallback is removed once the first release-signed APK ships). Currently debug: the owner deferred the key.
   Adding the secrets forces a one-time reinstall for every user; see
   `DEPLOYMENT.md`, "Android release signing".
 - Both apps send security headers and the frontend ships a hash-based CSP
@@ -105,9 +105,10 @@ Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
 - Railway builds from source. The GHCR images CI publishes are an archive
   and nothing deploys them. A worker deploy (SIGTERM) cancels running jobs;
   their runs go back to `queued` and resume on arq's retry, while a job
-  timeout fails the run (`docs/backend/job-queue.md`). Deploys are gated by Railway's Wait for CI, which
-  skips a deploy while any workflow on the commit is red, so advisory jobs
-  must finish green.
+  timeout fails the run (`docs/backend/job-queue.md`). Production deploys are
+  gated by Railway's Wait for CI, which skips a deploy while any workflow on
+  the commit is red, so advisory jobs must finish green. `dev` has it off; its
+  gate is the PR ruleset.
 
 ## Docs and session logs (every agent and subagent, no exceptions)
 
@@ -138,7 +139,14 @@ bypass the hook with `--no-verify`, and never push from a clone made before
 `docs/engineering-standards.md`, "Commit hygiene".
 
 Branch flow: feature branch → PR into `dev` → promotion PR `dev` → `main`.
-No direct pushes to either. Do not open a PR unless asked.
+`hotfix/*` → `main` only for urgent fixes; `main` accepts PRs from nothing
+else (`source-branch` job; until the first promotion after 2026-11-26 lands,
+`main`'s tree still reports `required`, so a hotfix cannot merge). After
+every promotion or hotfix, a `main` → `dev` sync PR. Default branch is
+`dev`. No direct pushes to either; each has its own ruleset requiring
+`dev-required` / `production-required` plus `pr-hygiene / Commit hygiene`
+(`docs/engineering-standards.md`, "Branch protection").
+Do not open a PR unless asked.
 
 ## Cloud sessions
 
