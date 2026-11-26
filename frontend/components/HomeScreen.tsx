@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import AppNav from "@/components/AppNav";
+import { accountEntryFrom } from "@/application/useAccountEntry";
 import BottomTabBar from "@/components/BottomTabBar";
 import SiteFooter from "@/components/SiteFooter";
 import CapabilityNotice from "@/components/CapabilityNotice";
 import FreeRunsBanner from "@/components/FreeRunsBanner";
+import type { FreeRunsBanner as FreeRunsBannerState } from "@/application/useFreeRuns";
 import ReachabilityNotice from "@/components/ReachabilityNotice";
 import { useServerReachability } from "@/application/serverReachability";
 import { revalidateFreeRuns, useFreeRuns } from "@/application/useFreeRuns";
@@ -17,13 +19,21 @@ import ResultsView, { FileSourceCard, SourceCard, creatorInitials } from "@/comp
 import ApiKeyPanel from "@/components/panels/ApiKeyPanel";
 import HistoryPanel from "@/components/panels/HistoryPanel";
 import VersionLogPanel from "@/components/panels/VersionLogPanel";
+import AccountPanel from "@/components/panels/AccountPanel";
 import { useAnalysisRun } from "@/application/useAnalysisRun";
-import { useHistoryBoot } from "@/application/useRunHistory";
+import { refreshSavedHistory, useSavedHistory } from "@/application/useSavedHistory";
+import { HISTORY_LIMIT, useHistoryBoot } from "@/application/useRunHistory";
+import { useDocumentTitle } from "@/application/useDocumentTitle";
 import { useCapabilities } from "@/application/useCapabilities";
+import { useAuthUser, useGoogleReturnLanding, useStoredSessionHint } from "@/application/useAuthSession";
+import { useMediaLimits } from "@/application/useMediaLimits";
+import { useBilling } from "@/application/useBilling";
+import { formatPrice } from "@/components/format";
 import { useSharedUrl, type SharedUrl } from "@/application/useSharedUrl";
 import { canonicalizeAppPath, goToMainTab, useMainTab, type MainTab } from "@/application/useMainTab";
-import type { RunSourceKind } from "@/domain/entities";
+import type { RunSourceKind, SavedRunSummary } from "@/domain/entities";
 import { platformName } from "@/domain/platforms";
+import { useRememberPlan, useRememberRunsSpent } from "@/application/useLayoutHints";
 
 /**
  * The app shell for one tab.
@@ -33,6 +43,40 @@ import { platformName } from "@/domain/platforms";
  * fallback — the fallback is what gets baked into the prerendered HTML, and it
  * has to be a real Analyze view, not a placeholder.
  */
+/* The stand-in the free-runs slot sizes itself with before the first read
+   (2026-11-14, Android QA run 22): a signed-out device with runs left and
+   sign-in offered, the first-visit case and the longest "runs left" line, so
+   the real strip is the same height or a line shorter, never taller. Never
+   seen: the slot hides it and it is inert. */
+const FREE_RUNS_GHOST: FreeRunsBannerState = {
+  scope: "device",
+  period: "day",
+  plan: "free",
+  remaining: 3,
+  limit: 3,
+  exhausted: false,
+  overage: false,
+  complimentary: false,
+  /* A valid time, so the stand-in carries the "Resets at …" sentence and is
+     as long as the real strip (UX fix spec 3.2). */
+  resetsAt: "2026-01-01T00:00:00Z",
+};
+/* The other stand-ins (2026-11-14), picked by CSS from the pre-paint stamps
+   (`data-session`, `data-runs-spent`) so a returning visitor reserves the
+   strip they will actually get: signed in, the one-line account sentence;
+   spent last time, the spent sentence. */
+const FREE_RUNS_GHOST_SIGNED_IN: FreeRunsBannerState = {
+  ...FREE_RUNS_GHOST,
+  scope: "account",
+  remaining: 10,
+  limit: 10,
+};
+const FREE_RUNS_GHOST_SPENT: FreeRunsBannerState = {
+  ...FREE_RUNS_GHOST,
+  remaining: 0,
+  exhausted: true,
+};
+
 export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   const [sourceOpen, setSourceOpen] = useState(false);
   const {
@@ -50,16 +94,19 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
     durationSeconds,
     canRetry,
     expired,
+    expiredReason,
     againUrl,
     reconnectIn,
     reconnecting,
     reconnectAttempt,
     lostCause,
+    holdsSignIn,
     submit,
     retry,
     reconnectNow,
     reset,
     openRun,
+    openSavedRun,
     resume,
   } = useAnalysisRun();
 
@@ -85,14 +132,32 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      calls in three conditionally-rendered children would be one request per
      tab visit. The two contextual notices therefore take props instead of
      reaching for the hook themselves. */
-  const { notice, urlDownload, dailyBudget } = useCapabilities();
+  const {
+    notice,
+    urlDownload,
+    dailyBudget,
+    auth: authCapability,
+    billing: billingCapability,
+    settled: capabilitiesSettled,
+  } = useCapabilities();
 
   const sharedUrl = useSharedUrl();
 
   /* Here for the same reason as `useCapabilities`: this shell is never
      unmounted by a tab switch, so the allowance is read once per app load
      (and again after each run, on a 402, or when the key is removed). */
-  const freeRuns = useFreeRuns();
+  /* Auth phase 2: who is signed in (declared here because the free-run
+     allowance depends on it). History re-imports the server's runs when a
+     person signs in (useHistoryBoot, below), and the Account tab is offered
+     only where sign-in actually works. Signed in, the server counts the
+     account's free runs instead of this device's (2026-11-13), so
+     a sign-in or sign-out re-reads the allowance. */
+  const authUser = useAuthUser();
+  /* A Google answer (auth phase 4) brings the shell to Account, where it is
+     shown: in the installed app the deep link can land on any tab. */
+  useGoogleReturnLanding();
+  const storedSessionHint = useStoredSessionHint();
+  const freeRuns = useFreeRuns(authUser.ready ? (authUser.user?.id ?? "") : null);
 
   /* Refinement 9 (items 6 and 8, device QA): every time the intake comes
      back — "Analyze another file" after a refunded run, stop watching, a
@@ -111,7 +176,95 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   /* Once per app load: seed History from the server the first time, and
      re-check runs this browser last saw unfinished. Here, not in the History
      panel, because it has to happen whichever tab the app opens on. */
-  useHistoryBoot();
+  /* The Account tab is offered only where sign-in actually works: a
+     provider is configured in this build *and* the server says it verifies
+     tokens. */
+  useHistoryBoot({ ready: authUser.ready, userId: authUser.user?.id ?? null });
+  /* Shared with every other route (useAccountEntry): the gate, plus the top
+     bar's control: a "Sign in" pill signed out, the signed-in person's
+     initial (null, no email: the person glyph), nothing until the session is
+     known. */
+  const { showAccount, accountState, accountInitial } = accountEntryFrom(authUser, authCapability);
+  /* The paid plan (2026-11-13): read only where sign-in works and the
+     server's `billing` capability is `ok`, for whoever is signed in. With
+     billing off nothing is requested and `billing` stays null, so every
+     screen looks as it did before billing existed. */
+  const { billing, notice: checkoutReturn, pending: billingPending, failed: billingFailed } = useBilling(
+    authUser.ready ? (authUser.user?.id ?? null) : null,
+    showAccount && billingCapability?.state === "ok"
+  );
+  /* Either read can say so first: the plan, or the free-run count (which
+     carries `plan` too, and is the one read while no key is saved). */
+  const paid = billing?.plan === "paid" || freeRuns.banner?.plan === "paid";
+  /* Complimentary Plus (2026-11-14): paid, with nothing to buy or manage.
+     Either read can say so; with Stripe off only the run count does (the
+     plan is not read there), and the Account panel adds `/api/me`. */
+  const complimentary = billing?.complimentary === true || freeRuns.banner?.complimentary === true;
+  const extraRunPrice = billing?.prices.extraRun ? formatPrice(billing.prices.extraRun) : null;
+  /* Paid saved history (2026-11-14): whether this account saves its runs,
+     read once someone is signed in where sign-in works. Off for everyone
+     else, and on a backend without the routes, so nothing changes there. */
+  const savedHistory = useSavedHistory(authUser.ready ? (authUser.user?.id ?? null) : null, showAccount, paid);
+  const savingRuns = savedHistory.mode === "saving";
+  /* Upload limits (2026-11-13): the paid plan, or signed in on their own key,
+     gets the larger tier. Read once per app load here, recomputed on
+     sign-in/out, on a plan change, and when the key is saved or removed. The
+     sign-in hint is offered only where sign-in works, to someone with a key
+     saved who is signed out. */
+  const mediaLimits = useMediaLimits(Boolean(authUser.user), paid);
+  const signInForMinutes =
+    showAccount && authUser.ready && !authUser.user && mediaLimits.hasKey ? mediaLimits.upgradeMinutes : null;
+  /* Signing in or out changes who owns runs on the server, so a run being
+     watched would stop answering. The Account panel holds both meanwhile,
+     but only for a submit on its way or a healthy run the server is
+     answering for (2026-11-21): a stalled, reconnecting or reopening run
+     does not hold it, so Sign out is never left greyed by a dead screen. */
+  const runInProgress = holdsSignIn;
+  /* The strip and the out-of-runs offer both depend on whether sign-in is
+     offered, which is known only once the capabilities read and the session
+     have answered. Until then the slot keeps its stand-in, so the strip
+     never lands short and then grows a "Sign in" sentence (a measured 0.037
+     layout shift at 412 px, UX fix spec 3.6). */
+  const stripKnown = capabilitiesSettled && authUser.ready;
+  /* The out-of-runs offer, in order: sign in, upgrade, key. */
+  const blockedOffer =
+    showAccount && authUser.ready && !authUser.user
+      ? ("sign-in" as const)
+      : billing !== null && billing.plan === "free"
+        ? ("upgrade" as const)
+        : ("key" as const);
+  const blockedShown = freeRuns.blocked && stripKnown;
+  /* Out-of-runs space (2026-11-14): while the block may still appear, the
+     card holds an unseen copy of it, shown only when the pre-paint stamp
+     says this device was out of runs last time (CSS), so a returning spent
+     visitor's card does not grow when the count lands. */
+  const blockedHeld =
+    !blockedShown && !mediaLimits.hasKey && (freeRuns.pending || (freeRuns.blocked && !stripKnown));
+  useRememberRunsSpent({
+    known: (stripKnown && !freeRuns.pending) || mediaLimits.hasKey,
+    blocked: blockedShown,
+    available: mediaLimits.hasKey || (freeRuns.banner !== null && !freeRuns.blocked),
+    resetsAt: freeRuns.banner?.resetsAt ?? "",
+    offer: blockedOffer,
+  });
+  useRememberPlan(
+    billing?.plan ?? freeRuns.banner?.plan ?? null,
+    authUser.ready && !authUser.user,
+    complimentary
+  );
+  /* The Gemini key page's "Sign in" line needs the session, the auth
+     capability and `/api/limits`. It is known not to apply as soon as any of
+     them says so (no provider in this build, someone signed in, sign-in not
+     offered); otherwise its space is held until all three have answered.
+     A session stored on this device counts as signed in for this purpose,
+     so a signed-in visit never holds the line while the provider loads.
+     What still moves once: the server turning sign-in off, `/api/limits`
+     failing, or a stored session that turns out to be expired. */
+  const keySignInPending =
+    authUser.enabled &&
+    !(authUser.ready ? authUser.user : storedSessionHint) &&
+    !(capabilitiesSettled && !showAccount) &&
+    !(capabilitiesSettled && authUser.ready && mediaLimits.settled);
 
   /* A link shared into the app is a request to analyze *that*, so it takes the
      screen over: whatever tab is showing, and whatever run is on it, gives way
@@ -154,6 +307,10 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      remounts on reset and would otherwise take the same share again). Derived
      during render, no effect: the form itself applies whatever it is handed. */
   const [againPrefill, setAgainPrefill] = useState<SharedUrl | null>(null);
+  const [fromHistory, setFromHistory] = useState(false);
+  /* Opened from the account's saved runs, rather than this browser's own
+     (2026-11-14): decides which "where it is kept" line the result shows. */
+  const [openedSaved, setOpenedSaved] = useState(false);
   const [dismissedShare, setDismissedShare] = useState<SharedUrl | null>(null);
   const liveShare = sharedUrl && sharedUrl !== dismissedShare ? sharedUrl : null;
   const formPrefill =
@@ -162,6 +319,8 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
   /** Every "analyze another" / "stop watching": a fresh, empty intake. Terms
    *  stay accepted (they are remembered by the form, not cleared here). */
   const startOver = () => {
+    setFromHistory(false);
+    setOpenedSaved(false);
     setDismissedShare(sharedUrl);
     setAgainPrefill(null);
     reset();
@@ -169,6 +328,8 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
 
   /** Expired run: back to the intake with its link in the field, if stored. */
   const analyzeAgain = () => {
+    setFromHistory(false);
+    setOpenedSaved(false);
     setDismissedShare(sharedUrl);
     setAgainPrefill(againUrl ? { url: againUrl, receivedAt: Date.now() } : null);
     reset();
@@ -222,8 +383,67 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
        `source_kind`, when it has one, seeds the run's frames before the
        first status response arrives. */
     goToMainTab("analyze", { push: true });
+    setFromHistory(true);
+    setOpenedSaved(false);
     void openRun(runId, sourceKind);
   };
+
+  /* A run saved to the account. The detail is fetched first, from History,
+     so a failure stays there with its reason; once it is on screen (or the
+     unavailable view is), the same push to Analyze as above. */
+  const handleOpenSaved = async (summary: SavedRunSummary) => {
+    const outcome = await openSavedRun(summary);
+    if (outcome.kind === "shown" || outcome.kind === "gone") {
+      goToMainTab("analyze", { push: true });
+      setFromHistory(true);
+      setOpenedSaved(outcome.kind === "shown");
+    }
+    return outcome;
+  };
+
+  /* The account's list is re-read when History opens and after a run of
+     this session finishes (the server has just saved it). */
+  useEffect(() => {
+    if (activeTab === "history") void refreshSavedHistory();
+  }, [activeTab]);
+  useEffect(() => {
+    if (status === "complete" && !fromHistory && savingRuns) void refreshSavedHistory();
+  }, [status, fromHistory, savingRuns]);
+
+  /* UX fix spec 4.5: a run opened from History offers the way back to it.
+     True only from `handleOpenRun`; every reset and every new submit clears
+     it. */
+  const backToHistory = () => goToMainTab("history");
+  const submitFresh: typeof submit = (...args) => {
+    setFromHistory(false);
+    setOpenedSaved(false);
+    return submit(...args);
+  };
+
+  /* UX fix spec 4.6: the tab title names the view and the run state. */
+  const titleLabel =
+    activeTab === "analyze"
+      ? status === "idle"
+        ? "Analyze a video"
+        : status === "complete"
+          ? result?.title?.trim() || "Result"
+          : status === "failed"
+            ? expired
+              ? expiredReason === "saved"
+                ? "Run unavailable"
+                : "Run expired"
+              : "Run failed"
+            : "Analyzing"
+      : activeTab === "history"
+        ? "History"
+        : activeTab === "api-key"
+          ? "Gemini key"
+          : activeTab === "releases"
+            ? "Releases"
+            : activeTab === "account"
+              ? "Account"
+              : null;
+  useDocumentTitle(titleLabel);
 
   /* No `data-frame` here any more. Phase 2 retired the inner results pane:
      the whole Analyze band is the one scroller (from 32rem up it scrolls
@@ -232,7 +452,13 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
      only on the standalone routes that still opt into it. */
   return (
     <div className="shell" data-view={activeTab}>
-      <AppNav activeTab={activeTab} onSelectTab={goToMainTab} />
+      <AppNav
+        activeTab={activeTab}
+        onSelectTab={goToMainTab}
+        showAccount={showAccount}
+        accountState={accountState}
+        accountInitial={accountInitial}
+      />
 
       {activeTab === "analyze" && (
         <main ref={analyzeRef} className="view-scroll" data-view="analyze" aria-label="Analyze">
@@ -243,10 +469,8 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                   report lands and can announce it. A conditionally-rendered
                   live region announces nothing, and a permanently visible
                   "all systems operational" strip is chrome that tells the
-                  user nothing they can act on. A grid item of its own: first
-                  on a phone, top of the panel column on a wide screen, so it
-                  never sits between the lede and the card. First in the DOM
-                  too, so it is read before the form it is about. */}
+                  user nothing they can act on. A grid item of its own above
+                  the centred intake, read before the controls it describes. */}
               <div className="cap-slot" aria-live="polite">
                 {reachability !== "ok" ? (
                   <ReachabilityNotice state={reachability} />
@@ -256,27 +480,52 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
               </div>
               <div className="intake">
                 {/* Free runs (Phase 5b, IntakeFreeApp / IntakeLimitApp), above
-                    the eyebrow on every shell. The wrapper is always in the DOM
+                    the title on every shell. The wrapper is always in the DOM
                     so the polite status region exists before the count lands
                     and can announce it (and the switch to "used"); empty and
                     zero-height when a key is saved, the deployment has no
-                    limit, or the allowance could not be read. */}
-                <div className="free-runs-slot" role="status">
-                  {freeRuns.banner && <FreeRunsBanner banner={freeRuns.banner} />}
+                    limit, or the allowance could not be read.
+                    Until the first read answers (2026-11-14, Android QA run
+                    22) it holds an invisible, inert stand-in strip with the
+                    commonest sentence, so the real one lands in space already
+                    taken at every width instead of pushing the page down. */}
+                {/* Desktop (60rem up, 2026-11-14 owner): the allowance sits at
+                    the right end of the title's row, sized to its words; the
+                    title row's height is the title's, so the card does not
+                    move when the count lands. Phones keep the strip stacked
+                    above the title (DOM order: status first). */}
+                <div className="intake-head">
+                  <div className="free-runs-slot" role="status" data-pending={freeRuns.pending || undefined}>
+                    {freeRuns.banner && stripKnown ? (
+                      <FreeRunsBanner
+                        banner={freeRuns.banner}
+                        offerSignIn={showAccount && authUser.ready && !authUser.user}
+                        offerUpgrade={billing !== null && billing.plan === "free"}
+                        extraRunPrice={extraRunPrice}
+                      />
+                    ) : freeRuns.pending || freeRuns.banner ? (
+                      <>
+                        <div className="free-runs-ghost" data-variant="signed-out" aria-hidden="true" inert>
+                          <FreeRunsBanner banner={FREE_RUNS_GHOST} offerSignIn />
+                        </div>
+                        <div className="free-runs-ghost" data-variant="signed-in" aria-hidden="true" inert>
+                          <FreeRunsBanner banner={FREE_RUNS_GHOST_SIGNED_IN} />
+                        </div>
+                        <div className="free-runs-ghost" data-variant="spent" aria-hidden="true" inert>
+                          <FreeRunsBanner banner={FREE_RUNS_GHOST_SPENT} />
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+                  <h1 className="intake-title">New analysis</h1>
                 </div>
-                <p className="eyebrow">New analysis</p>
-                <h1 className="intake-title">Turn any short video into clean notes.</h1>
-                <p className="intake-lede">
-                  {/* Same pointer/touch swap as the drop zone's title
-                      (globals.css): "drop" is a lie on a touch screen. */}
-                  <span className="only-pointer">Paste a link or drop a file.</span>
-                  <span className="only-touch">Paste a link or add a file.</span> You get a
-                  transcript, the text on screen, a short summary, and notes you can keep.
-                </p>
                 <UploadForm
-                  onSubmit={submit}
+                  onSubmit={submitFresh}
                   submitting={submitting}
-                  blocked={freeRuns.blocked}
+                  blocked={blockedShown}
+                  blockedHeld={blockedHeld}
+                  blockedPeriod={freeRuns.banner?.period}
+                  blockedOffer={blockedOffer}
                   sharedUrl={formPrefill}
                   urlCapability={urlDownload}
                   /* Back at idle with an error means the submit was rejected,
@@ -288,55 +537,17 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                   submitError={error}
                   handoff={handoff}
                   onHandoffTaken={takeHandoff}
+                  limits={mediaLimits.limits}
+                  signInForMinutes={signInForMinutes}
                 />
-              </div>
-
-              <aside className="wyg" aria-labelledby="wyg-title">
-                <h2 id="wyg-title" className="wyg-title">
-                  What you get
-                </h2>
-                <dl className="wyg-list">
-                  <div className="wyg-row">
-                    <dt className="chip">TL;DR</dt>
-                    <dd>
-                      <WhatYouGet
-                        short="A short read of what the video says."
-                        long="A short read of what the video says, so you can decide if it is worth your time."
-                      />
-                    </dd>
-                  </div>
-                  <div className="wyg-row">
-                    <dt className="chip">Notes</dt>
-                    <dd>
-                      <WhatYouGet
-                        short="Structured notes to copy or download."
-                        long="Structured notes to copy or download as Markdown."
-                      />
-                    </dd>
-                  </div>
-                  <div className="wyg-row">
-                    <dt className="chip">Transcript</dt>
-                    <dd>
-                      <WhatYouGet
-                        short="Timestamped, with speakers when clear."
-                        long="Timestamped, with speakers labeled when they can be told apart."
-                      />
-                    </dd>
-                  </div>
-                  <div className="wyg-row">
-                    <dt className="chip">On-screen</dt>
-                    <dd>
-                      <WhatYouGet
-                        short="Text, code, and charts from the frames."
-                        long="Text, code, and charts that appear in the frames, not just the audio."
-                      />
-                    </dd>
-                  </div>
-                </dl>
-                <p className="wyg-foot">
-                  Files are deleted from our servers as soon as a run finishes.
+                {/* Paid saved history (2026-11-14): for an account that saves
+                    its runs the result is kept on the account, not for an hour. */}
+                <p className="intake-retention">
+                  {savingRuns
+                    ? "Your video is deleted from our servers when the run finishes. The result is saved to your account until you delete it."
+                    : "Your video is deleted from our servers when the run finishes. The result is kept for up to an hour, then deleted."}
                 </p>
-              </aside>
+              </div>
             </div>
           )}
 
@@ -358,8 +569,10 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                 onRetry={canRetry ? retry : undefined}
                 onRetryNow={reconnectNow}
                 expired={expired}
+                expiredReason={expiredReason}
                 canRefill={againUrl !== null}
                 onAnalyzeAgain={sourceKind === "file" && againUrl === null ? chooseFileAgain : analyzeAgain}
+                onBackToHistory={fromHistory ? backToHistory : undefined}
                 mediaKind={mediaKind}
                 freeRunRefunded={freeRunRefunded}
               />
@@ -411,8 +624,13 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     </p>
                   )}
                 </div>
+                {fromHistory ? (
+                  <button type="button" className="btn btn-secondary btn-block reset-wide" onClick={backToHistory}>
+                    Back to History
+                  </button>
+                ) : null}
                 <button type="button" className="btn btn-secondary btn-block reset-wide" onClick={startOver}>
-                  Analyze another file
+                  Analyze another
                 </button>
               </div>
 
@@ -425,11 +643,28 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     completeness={completeness}
                   />
                 </article>
-                {/* The same action, placed under the card on a phone where
+                {/* UX fix spec 4.4: where the result is kept. Static text, so
+                    it reserves its own height. Shown even when History cannot
+                    be saved: that error is only known to the History panel's
+                    own read, and a second IndexedDB read here is not cheap. */}
+                {/* Saved history (2026-11-14): a run this account saved (just
+                    finished while saving, or opened from its saved runs) says
+                    so; anything else is this browser's copy, as before. */}
+                <p className="result-saved">
+                  {(fromHistory ? openedSaved : savingRuns)
+                    ? "Saved to your account. Open it from History on any device where you sign in."
+                    : `History keeps your last ${HISTORY_LIMIT} runs in this browser. Not synced.`}
+                </p>
+                {/* The same actions, placed under the card on a phone where
                     the source column is a pill above it. CSS shows exactly
-                    one of the two. */}
+                    one of each pair. */}
+                {fromHistory ? (
+                  <button type="button" className="btn btn-secondary btn-block reset-narrow" onClick={backToHistory}>
+                    Back to History
+                  </button>
+                ) : null}
                 <button type="button" className="btn btn-secondary btn-block reset-narrow" onClick={startOver}>
-                  Analyze another file
+                  Analyze another
                 </button>
               </div>
             </div>
@@ -446,13 +681,27 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
           renders at a time, so a page has exactly one main landmark. */}
       {activeTab === "history" && (
         <main className="view-scroll" data-view="history" aria-label="History">
-          <HistoryPanel onOpenRun={handleOpenRun} onAnalyze={() => goToMainTab("analyze")} />
+          <HistoryPanel
+            onOpenRun={handleOpenRun}
+            onAnalyze={() => goToMainTab("analyze")}
+            saved={savedHistory}
+            paid={paid}
+            onOpenSaved={handleOpenSaved}
+            onOpenAccount={() => goToMainTab("account")}
+          />
         </main>
       )}
 
       {activeTab === "api-key" && (
-        <main className="view-scroll" data-view="api-key" aria-label="API key">
-          <ApiKeyPanel budgetCapability={dailyBudget} />
+        <main className="view-scroll" data-view="api-key" aria-label="Gemini key">
+          <ApiKeyPanel
+            budgetCapability={dailyBudget}
+            /* Unlike the intake hint, offered with or without a key saved:
+               this page is where the key goes in. */
+            signInForMinutes={showAccount && authUser.ready && !authUser.user ? mediaLimits.upgradeMinutes : null}
+            signInPending={keySignInPending}
+            signInStandInMinutes={mediaLimits.byokMinutes ?? 10}
+          />
         </main>
       )}
 
@@ -462,11 +711,31 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
         </main>
       )}
 
+      {activeTab === "account" && (
+        <main className="view-scroll" data-view="account" aria-label="Account">
+          <AccountPanel
+            authCapability={authCapability}
+            runInProgress={runInProgress}
+            capabilitiesSettled={capabilitiesSettled}
+            freeRuns={freeRuns.banner}
+            freeRunsPending={freeRuns.pending}
+            billing={billing}
+            billingPending={billingPending}
+            billingFailed={billingFailed}
+            complimentary={complimentary}
+            checkoutReturn={checkoutReturn}
+            limits={mediaLimits}
+            savedHistory={savedHistory.mode}
+            savedUntil={savedHistory.status?.expires_at ?? null}
+          />
+        </main>
+      )}
+
       {/* Both shells' chrome is always rendered; `<html data-shell>` decides
           which shows (footer in a browser tab and a wide installed window,
           dock in a phone-width installed app). */}
       <SiteFooter />
-      <BottomTabBar activeTab={activeTab} onSelectTab={goToMainTab} />
+      <BottomTabBar activeTab={activeTab} onSelectTab={goToMainTab} showAccount={showAccount} />
 
       {/* The expired view's picker (item 7, above). Out of the tab order and
           the accessibility tree: the visible control is the button. */}
@@ -484,19 +753,6 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
         }}
       />
     </div>
-  );
-}
-
-/* The "What you get" lines come in two lengths, as drawn: the phone board
-   (single column, panel under the card) uses the short ones, the desktop
-   board the long. Both are in the DOM and CSS shows one — `display: none`
-   keeps the other out of the accessibility tree, so it is read once. */
-function WhatYouGet({ short, long }: { short: string; long: string }) {
-  return (
-    <>
-      <span className="wyg-short">{short}</span>
-      <span className="wyg-long">{long}</span>
-    </>
   );
 }
 

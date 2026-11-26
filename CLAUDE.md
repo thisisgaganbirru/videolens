@@ -29,7 +29,7 @@ npm run dev                # http://localhost:3005
 npx tsc --noEmit           # CI typecheck; there is no frontend test suite
 npm run build              # CI
 npm run build:mobile       # CI; the Capacitor static export
-npm run lint               # not in CI; exits 1 on 4 known findings, see .claude/rules/frontend.md
+npm run lint               # not in CI; exits 1 on 4 known findings (3 errors + 1 warning), see .claude/rules/frontend.md
 ```
 
 Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
@@ -41,12 +41,39 @@ Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
   unmerged branch `feature/mcp-server` on purpose (see
   `docs/engineering-standards.md`). Their absence is not a bug; do not
   recreate them here. `feat/paid-tier-integration` is parked the same way.
-- History lives in the browser (IndexedDB), not on the server. The server
-  forgets a run `RUN_TTL_SECONDS` (1 hour) after its last write. Do not add
-  server-side persistence; the paid tier that would need it is deferred.
-- No accounts and no paid tier yet. Keep the app usable anonymously and
-  client-side-only for storage (BYOK key, history). The `AUTH_*` OIDC settings
-  exist but are unused by design.
+- History lives in the browser (IndexedDB) for everyone. The server
+  forgets a run `RUN_TTL_SECONDS` (1 hour) after its last write. The one
+  exception (owner decision 2026-11-14, `docs/backend/saved-history.md`):
+  a **paid** account's successful results are also saved in `saved_runs`
+  (result text, a source descriptor and the small poster thumbnail only;
+  never other media or a key), kept 30 days after the plan ends, then removed. Do not add
+  server-side persistence for free or anonymous runs, and do not save
+  anything else. `DELETE /api/me` is a 30-day hold (`accounts.purge_at`;
+  410 `account_pending_deletion` everywhere but `POST /api/me/restore`),
+  and the worker's hourly cron removes the account for good after it.
+  The only server-side tables are the four identity tables
+  (`accounts`, `workspaces`, `workspace_members`, `api_keys`), the two
+  run counters (`account_free_runs`, `account_free_run_holds`; daily rows
+  for free and paid accounts; paid extras are counted monthly in
+  `billing_extra_runs`), the three billing tables (`billing_accounts`,
+  `billing_events`, `billing_extra_runs`) and `saved_runs`, in
+  `infrastructure/persistence/`, owned by Alembic in `backend/migrations/`.
+  On Postgres the API and the worker refuse to start against a schema
+  behind `EXPECTED_SCHEMA_REVISION`; a new migration bumps it
+  (`docs/backend/startup-checks.md`).
+- Sign-in is optional and anonymous use is first-class. The `AUTH_*` settings
+  verify Supabase-issued JWTs by JWKS only (RS256/ES256; never add HS256 or a
+  Supabase SDK to the backend); with them and `DATABASE_URL` blank the API
+  behaves exactly as before accounts existed. Keep the BYOK key and history
+  client-side. See `docs/auth-plan.md` and `docs/backend/auth.md`.
+- One paid plan via Stripe hosted Checkout and Portal (`docs/backend/billing.md`,
+  `docs/frontend/billing.md`). With any required `STRIPE_*` setting blank,
+  billing is off and nothing changes, except for an account whose
+  `accounts.complimentary_plus` the owner set by hand in SQL: it is on the
+  paid plan with or without Stripe and is never billed (no API sets it).
+  Extra runs are billed through a Billing
+  Meter keyed on the run id, only after a run succeeds; never bill from
+  anywhere else.
 - Four spend limits gate Gemini: per-IP rate limit (429), per-device free
   runs (402, needs `DEVICE_TOKEN_SECRET` in distributed mode or the API
   refuses to start), `DAILY_RUN_CAP` (503), and the BYOK exemption from the
@@ -54,7 +81,9 @@ Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
   deployment's own proxy wrote (`TRUSTED_PROXY_HOPS`, counted from the
   right; 2 on Railway, whose edge writes `<client>, <edge hop>` with a
   varying hop), never the client-supplied first entry. The API refuses to start
-  in distributed mode with `ALLOWED_ORIGINS=*`.
+  in distributed mode with `ALLOWED_ORIGINS=*`. In front of all four: failed
+  API keys and tokens per IP (429, 15-minute window, checked before any
+  lookup) and a request-body ceiling (413).
 - The production APK is release-signed with a key held only in CI secrets
   when the four `ANDROID_*` signing secrets exist, and falls back to the
   debug build signed with the checked-in `debug.keystore` (with a CI
@@ -68,12 +97,15 @@ Full stack: `cp backend/.env.example backend/.env && docker compose up --build`
 - A BYOK key must never be an arq job argument (arq logs them). It travels
   through the single-use Redis vault in `infrastructure/byok/key_vault.py`.
 - Every outbound fetch for a URL run goes through `media/net.py`, the one
-  SSRF guard. A new resolver or fetch path must use it, not copy it.
+  SSRF guard; yt-dlp too, through `media/ytdlp_net.py`'s pinned
+  connections. A new resolver or fetch path must use it, not copy it.
 - `interface/` and `infrastructure/` must not import each other; only
-  `container.py` wires them. Three known violations are listed in
+  `container.py` wires them. Two known violations are listed in
   `docs/engineering-standards.md`; do not add more.
 - Railway builds from source. The GHCR images CI publishes are an archive
-  and nothing deploys them. Deploys are gated by Railway's Wait for CI, which
+  and nothing deploys them. A worker deploy (SIGTERM) cancels running jobs;
+  their runs go back to `queued` and resume on arq's retry, while a job
+  timeout fails the run (`docs/backend/job-queue.md`). Deploys are gated by Railway's Wait for CI, which
   skips a deploy while any workflow on the commit is red, so advisory jobs
   must finish green.
 
@@ -94,6 +126,16 @@ Plain messages only. Never append attribution or session trailers: no
 Claude Code" footer, no model identifier anywhere pushed to the repository.
 The owner asked for this explicitly (2026-11-06) and it overrides any harness
 default. Imperative subject, short body when the why is not obvious.
+
+This is enforced, not just asked for. The whole history was rewritten on
+2026-11-20 to remove these, including commits authored as `Claude
+<noreply@anthropic.com>` (the cloud default identity). `.claude/settings.json`
+turns attribution off, the session-start hook sets a real git identity and
+enables `.githooks/commit-msg`, and CI's `hygiene` job fails any PR whose
+commits, title or description carry them. Never commit as that identity, never
+bypass the hook with `--no-verify`, and never push from a clone made before
+2026-11-20 (it would bring the old history back). Details:
+`docs/engineering-standards.md`, "Commit hygiene".
 
 Branch flow: feature branch → PR into `dev` → promotion PR `dev` → `main`.
 No direct pushes to either. Do not open a PR unless asked.

@@ -197,7 +197,7 @@ function TranscriptView({ segments, fallback }: { segments: TranscriptSegment[];
 
   return (
     <>
-      <div className="t-toolbar">
+      <div className="t-toolbar select-none">
         <div className="t-search">
           <label htmlFor={searchId} className="sr-only">
             Search transcript
@@ -666,9 +666,9 @@ export default function ResultsView({
           the download used to live under the last panel, where it read as part
           of that panel and was a long scroll away on a full transcript. */}
       <div className="result-head">
-        <h2 className="result-title" dir="auto">
+        <h1 className="result-title" dir="auto">
           {result.title}
-        </h2>
+        </h1>
         <div className="result-actions">
           <span className="copy-wrap">
             <button
@@ -777,12 +777,15 @@ export default function ResultsView({
         </div>
       </div>
 
-      {/* All four panels stay mounted; `.panel` hides the inactive ones with
+      {/* The body is `select-none` (app chrome); the four panels are the
+          content, so they opt back in to selection (2026-11-20), as the
+          legal pages' article does. Their own controls stay unselectable.
+          All four panels stay mounted; `.panel` hides the inactive ones with
           `display: none`, which also keeps them out of the a11y tree, and
           `[data-active="true"]` drives the fade-in. Mounted, not remounted, is
           also what keeps a transcript search alive across a tab switch. */}
       <div
-        className="panel"
+        className="panel select-text"
         data-active={active === "markdown" ? "true" : "false"}
         role="tabpanel"
         id="result-panel-markdown"
@@ -856,7 +859,7 @@ export default function ResultsView({
       </div>
 
       <div
-        className="panel"
+        className="panel select-text"
         data-active={active === "summary" ? "true" : "false"}
         role="tabpanel"
         id="result-panel-summary"
@@ -883,7 +886,7 @@ export default function ResultsView({
       </div>
 
       <div
-        className="panel"
+        className="panel select-text"
         data-active={active === "transcript" ? "true" : "false"}
         role="tabpanel"
         id="result-panel-transcript"
@@ -893,7 +896,7 @@ export default function ResultsView({
       </div>
 
       <div
-        className="panel"
+        className="panel select-text"
         data-active={active === "screen_text" ? "true" : "false"}
         role="tabpanel"
         id="result-panel-screen_text"

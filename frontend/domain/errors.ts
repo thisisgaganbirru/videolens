@@ -15,6 +15,16 @@ export class ApiError extends Error {
    *  `free_runs_used`. Absent on every other error. */
   readonly limit?: number;
   readonly used?: number;
+  /** Whose allowance a 402 `free_runs_used` refers to (`device` or
+   *  `account`). Absent on other errors and from servers that predate it. */
+  readonly scope?: string;
+  /** When a held account is removed for good (ISO), sent with the 410
+   *  `account_pending_deletion` (2026-11-14). Absent on every other error. */
+  readonly purgeAt?: string;
+  /** Seconds from the response's `Retry-After`, when it sent one and the
+   *  browser let the page read it. The sign-in 503 (keys unavailable) and the
+   *  failed-credential 429 carry one and no `code` (2026-11-20). */
+  readonly retryAfter?: number;
 
   /** `status` is the HTTP status, when there was one. Lets a caller tell "this
    *  run no longer exists" (404 — the server forgot it) from every other
@@ -22,12 +32,15 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status?: number,
-    extra: { code?: string; limit?: number; used?: number } = {}
+    extra: { code?: string; limit?: number; used?: number; scope?: string; purgeAt?: string; retryAfter?: number } = {}
   ) {
     super(message);
     this.code = extra.code;
     this.limit = extra.limit;
     this.used = extra.used;
+    this.scope = extra.scope;
+    this.purgeAt = extra.purgeAt;
+    this.retryAfter = extra.retryAfter;
   }
 }
 
@@ -43,3 +56,26 @@ export class NetworkError extends Error {}
  *  failure of the app: History simply cannot be saved here, and everything
  *  else still works. */
 export class StorageUnavailableError extends Error {}
+
+/** Why a sign-in step failed, as the identity adapter can tell it. The hook
+ *  turns this into the sentence; the adapter never writes copy. */
+export type AuthFailureReason =
+  | "invalid_email"
+  | "invalid_code"
+  | "rate_limited"
+  | "unreachable"
+  | "unavailable"
+  /** The person backed out of a provider's consent page (Google, phase 4). */
+  | "cancelled"
+  | "unknown";
+
+/** A sign-in step (send code, verify code, Google) was refused or could not
+ *  be attempted. `message` is the provider's own text, for logs only. */
+export class AuthFlowError extends Error {
+  constructor(
+    readonly reason: AuthFailureReason,
+    message: string
+  ) {
+    super(message);
+  }
+}

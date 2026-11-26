@@ -2,16 +2,19 @@ import asyncio
 import os
 import re
 
-from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError, GeoRestrictedError
 
 from ...domain.entities import SavedUpload, SourceMetadata
+from ...domain.entitlements import MediaLimits, size_over_limit_message
 from ...domain.errors import MediaValidationError
 from ..config import Settings
+from .deadline import DownloadDeadline, DownloadDeadlineExceeded, run_download
 from .ffmpeg import _media_binary
+from .limits import effective_limits
 from .net import validate_public_url
 from .thumbnails import dimensions_from_info, thumbnail_urls_from_info
 from .uploads import _cleanup_dir, create_run_dir
+from .ytdlp_net import GuardedYoutubeDL
 
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
@@ -149,6 +152,9 @@ _GENERIC_DOWNLOAD_FAILURE = (
 )
 
 
+_TOO_SLOW_DOWNLOAD = "This link took too long to download. Try again, or upload the file instead."
+
+
 def _download_failure(exc: DownloadError) -> tuple[str, str]:
     """Split one yt-dlp failure into (what the user sees, what the log gets)."""
     detail = ANSI_ESCAPE.sub("", str(exc)).removeprefix("ERROR: ")
@@ -163,19 +169,25 @@ def _download_failure(exc: DownloadError) -> tuple[str, str]:
     return _GENERIC_DOWNLOAD_FAILURE, detail
 
 
-async def download_url(settings: Settings, run_id: str, url: str) -> SavedUpload:
+async def download_url(
+    settings: Settings, run_id: str, url: str, limits: MediaLimits | None = None
+) -> SavedUpload:
+    limits = effective_limits(settings, limits)
     await asyncio.to_thread(validate_public_url, url)
     cookie_options = _cookie_options(settings)
     ffmpeg_path = _media_binary(settings, "ffmpeg")
     run_dir = create_run_dir(settings, run_id)
-    max_bytes = settings.max_file_size_mb * 1024 * 1024
+    max_bytes = limits.max_file_size_bytes
 
-    def progress_hook(status: dict) -> None:
-        downloaded = status.get("downloaded_bytes") or 0
-        if downloaded > max_bytes:
-            raise DownloadError(f"The video is over the {settings.max_file_size_mb}MB limit.")
+    def fetch(deadline: DownloadDeadline) -> tuple[str, dict]:
+        def progress_hook(status: dict) -> None:
+            # Called for every chunk and fragment: the wall-clock bound
+            # first, then the size cap.
+            deadline.check()
+            downloaded = status.get("downloaded_bytes") or 0
+            if downloaded > max_bytes:
+                raise DownloadError(f"The video is over the {limits.max_file_size_mb}MB limit.")
 
-    def run_download() -> tuple[str, dict]:
         options = {
             **_format_options(settings),
             "outtmpl": os.path.join(run_dir, "download.%(ext)s"),
@@ -192,8 +204,11 @@ async def download_url(settings: Settings, run_id: str, url: str) -> SavedUpload
             "progress_hooks": [progress_hook],
             **cookie_options,
         }
-        with YoutubeDL(options) as downloader:
+        with GuardedYoutubeDL(options, deadline=deadline) as downloader:
             info = downloader.extract_info(url, download=True)
+            # A deadline that fired mid-read can surface as a short read
+            # yt-dlp accepted; a cut-off file is not a download.
+            deadline.check()
             requested = info.get("requested_downloads") or []
             candidates = [item.get("filepath") for item in requested if item.get("filepath")]
             candidates.append(info.get("filepath"))
@@ -204,11 +219,10 @@ async def download_url(settings: Settings, run_id: str, url: str) -> SavedUpload
         raise DownloadError("The downloaded media file could not be found.")
 
     try:
-        path, info = await asyncio.to_thread(run_download)
-        if os.path.getsize(path) > max_bytes:
-            raise MediaValidationError(
-                f"Download exceeds the {settings.max_file_size_mb}MB size limit."
-            )
+        path, info = await run_download(settings.download_deadline_seconds, fetch, run_budget=True)
+        size_bytes = os.path.getsize(path)
+        if size_bytes > max_bytes:
+            raise MediaValidationError(size_over_limit_message(limits, subject="That video"))
         metadata = _source_metadata_from_info(info, url)
         width, height = dimensions_from_info(info)
         return SavedUpload(
@@ -218,10 +232,14 @@ async def download_url(settings: Settings, run_id: str, url: str) -> SavedUpload
             thumbnail_urls=thumbnail_urls_from_info(info),
             width=width,
             height=height,
+            size_bytes=size_bytes,
         )
     except MediaValidationError:
         _cleanup_dir(run_dir)
         raise
+    except DownloadDeadlineExceeded as exc:
+        _cleanup_dir(run_dir)
+        raise MediaValidationError(_TOO_SLOW_DOWNLOAD, log_detail=f"yt-dlp deadline: {exc}") from exc
     except DownloadError as exc:
         _cleanup_dir(run_dir)
         message, detail = _download_failure(exc)

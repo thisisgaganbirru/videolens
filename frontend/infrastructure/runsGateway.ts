@@ -1,28 +1,24 @@
 import type { MediaSource, RunCreateResponse, RunListResponse, RunStatusResponse } from "@/domain/entities";
 import { ApiError, NetworkError } from "@/domain/errors";
-import type { ApiKeyStore, DeviceTokenStore, RunsGateway } from "@/domain/ports";
-import { API_BASE_URL } from "./apiBase";
-import { getClientId } from "./clientId";
+import type { ApiKeyStore, AsOwner, RunsGateway } from "@/domain/ports";
+import type { ApiClient } from "./apiClient";
+import { FetchFailedError, retryAfterSeconds, SignInUnconfirmedError, UNREADABLE } from "./apiClient";
 
-/* The one place in the app that knows the difference between "the server said
-   no" and "there was no server to say anything". `fetch` rejects (with a
-   TypeError, but that detail stops here) when the connection is refused, DNS
-   fails, the device is offline, or a CORS preflight is blocked; it resolves
-   for every HTTP status, including 4xx/5xx. Classifying it here is what lets
-   hooks and components stay out of the business of guessing. */
-const UNREACHABLE = "Can't reach the server. It may be offline, or your connection dropped.";
-const UNREADABLE = "The server replied with something this app could not read.";
+/* Transport failures (no response at all) are classified in `ApiClient`,
+   the one place that calls `fetch` for the caller's own requests. */
 
 /* An error body's `code` and a 402's `limit`/`used`, carried onto the
    `ApiError` so the hook can branch on `code` (`free_runs_used`,
    `device_token_invalid`) instead of matching the sentence. */
-function errorExtras(body: unknown): { code?: string; limit?: number; used?: number } {
+function errorExtras(body: unknown): { code?: string; limit?: number; used?: number; scope?: string } {
   if (typeof body !== "object" || body === null) return {};
   const b = body as Record<string, unknown>;
   return {
     code: typeof b.code === "string" ? b.code : undefined,
     limit: typeof b.limit === "number" ? b.limit : undefined,
     used: typeof b.used === "number" ? b.used : undefined,
+    /* `device` or `account` (2026-11-13); absent from older servers. */
+    scope: typeof b.scope === "string" ? b.scope : undefined,
   };
 }
 
@@ -39,6 +35,17 @@ function errorExtras(body: unknown): { code?: string; limit?: number; used?: num
 const CREATE_SERVER_TROUBLE = "The server had a problem starting this run. Try again in a moment.";
 const CREATE_UNREADABLE_REFUSAL = "The server could not accept this run. Check the link or file and try again.";
 const RATE_LIMITED = "You're going a bit fast.";
+/* An upload that got no answer at all. The server may refuse an oversize
+   body (413) before it has read it, and a browser then sees the connection
+   close, not the 413, so the size is the likely cause worth naming. */
+const UPLOAD_CUT_OFF =
+  "The upload was cut off before the server answered. The file may be over the size limit; otherwise check your connection and try again.";
+/* A session is stored here but the request could not go out signed in, so
+   it was not sent at all (2026-11-20): sending it anonymous would file the
+   run under nobody and keep it past sign-out. Nothing retries a create on
+   its own, so the sentence asks for the press. */
+const CREATE_SIGN_IN_UNCONFIRMED =
+  "Your sign-in could not be confirmed just now, so the run was not sent. Check your connection and try again.";
 const DETAIL_MAX = 240;
 
 /** `detail` when it is a plain sentence fit to show, else null. FastAPI's
@@ -53,24 +60,6 @@ function userFacingDetail(body: unknown): string | null {
   return text;
 }
 
-/** Seconds to wait from a `Retry-After` header: delta-seconds or an HTTP
- *  date. Null when absent, unreadable or already past. Note that a browser
- *  only lets the page read this header cross-origin when the API lists it in
- *  `Access-Control-Expose-Headers`; until then this is null and the caller
- *  keeps its general wording. */
-function retryAfterSeconds(value: string | null, now: number = Date.now()): number | null {
-  if (!value) return null;
-  const trimmed = value.trim();
-  if (/^\d+$/.test(trimmed)) {
-    const seconds = Number(trimmed);
-    return seconds > 0 ? seconds : null;
-  }
-  const at = Date.parse(trimmed);
-  if (Number.isNaN(at)) return null;
-  const seconds = Math.ceil((at - now) / 1000);
-  return seconds > 0 ? seconds : null;
-}
-
 /** "Try again in about a minute." / "… about 5 minutes." Never "0 minutes". */
 function tryAgainIn(seconds: number): string {
   const minutes = Math.max(1, Math.ceil(seconds / 60));
@@ -80,6 +69,31 @@ function tryAgainIn(seconds: number): string {
 /** The sentence for a refused run creation. */
 function createRunFailureMessage(status: number, body: unknown, retryAfter: string | null): string {
   const detail = userFacingDetail(body);
+  /* 2026-11-13: a signed-in BYOK person may run one long video at a time;
+     a second one is refused with this code. That is not "going too fast",
+     and any Retry-After is beside the point: the server's sentence says
+     what to wait for. */
+  if (status === 429 && errorExtras(body).code === "long_run_in_progress") {
+    return detail ?? "You already have a long video processing. Wait for it to finish.";
+  }
+  /* 2026-11-13, paid plan: a paid account past its monthly cap on extra
+     runs. Its own quiet sentence and no upgrade offer (it is already paid);
+     the cap comes from the body's `limit`. Since 2026-11-14 the included
+     runs count a day, so they come back at the daily reset even though the
+     extra-run cap holds until next month. Never "tomorrow" (UX fix spec,
+     2026-11-14): the reset is a fixed UTC time, which is today for many
+     readers. */
+  const extras = errorExtras(body);
+  if (status === 402 && extras.code === "extra_runs_cap") {
+    return extras.limit !== undefined
+      ? `You’ve reached this month’s limit of ${extras.limit} extra runs. Your included runs still reset every day.`
+      : "You’ve reached this month’s limit of extra runs. Your included runs still reset every day.";
+  }
+  /* 2026-11-20: the 429 for too many failed credentials from one network has
+     no code and its own sentence (wait a few minutes). Only the per-IP rate
+     limit's sentence opens with RATE_LIMITED, so any other detail is shown as
+     sent rather than turned into "going a bit fast". */
+  if (status === 429 && detail && !detail.startsWith(RATE_LIMITED)) return detail;
   if (status === 429) {
     const wait = retryAfterSeconds(retryAfter);
     if (wait !== null) return `${RATE_LIMITED} ${tryAgainIn(wait)}`;
@@ -91,47 +105,26 @@ function createRunFailureMessage(status: number, body: unknown, retryAfter: stri
 
 export class FetchRunsGateway implements RunsGateway {
   constructor(
-    private readonly apiKeyStore: ApiKeyStore,
-    private readonly deviceTokenStore: DeviceTokenStore
+    private readonly client: ApiClient,
+    private readonly apiKeyStore: ApiKeyStore
   ) {}
 
   /* BYOK: the Gemini key travels ONLY on run creation (POST /api/runs), the
      one endpoint that reads it (backend interface/api/routes.py create_run).
      Polling a run and listing history never needed it, and before 2026-11-01
      it rode along on every one of those requests too — dozens per run, each a
-     fresh copy of the secret on the wire for no reason. `X-Client-ID` still
-     goes everywhere: it scopes which runs a caller can see.
+     fresh copy of the secret on the wire for no reason.
 
-     `X-Device-Token` (Phase 5b) rides on run creation too, and only there — it
-     is what the server counts a free run against. Sent alongside a key as
-     well; the server simply does not count bring-your-own-key runs. */
-  private requestHeaders({ withGeminiKey }: { withGeminiKey: boolean }): HeadersInit {
-    const headers: Record<string, string> = { "X-Client-ID": getClientId() };
+     Everything else about who is calling (`X-Client-ID`, `X-Device-Token`,
+     and since auth phase 2 the bearer token when someone is signed in) comes
+     from `ApiClient`, on every request. */
+  private send(path: string, init: RequestInit = {}, { withGeminiKey = false }: { withGeminiKey?: boolean } = {}) {
+    const extra: Record<string, string> = {};
     if (withGeminiKey) {
       const geminiApiKey = this.apiKeyStore.get();
-      if (geminiApiKey) headers["X-Gemini-Api-Key"] = geminiApiKey;
-      const deviceToken = this.deviceTokenStore.get();
-      if (deviceToken) headers["X-Device-Token"] = deviceToken;
+      if (geminiApiKey) extra["X-Gemini-Api-Key"] = geminiApiKey;
     }
-    return headers;
-  }
-
-  /** Transport layer only: resolves with whatever HTTP response came back
-   *  (status untouched), throws `NetworkError` when none came back at all.
-   *  `withGeminiKey` defaults to false; only `createRun` passes true. */
-  private async send(
-    path: string,
-    init: RequestInit = {},
-    { withGeminiKey = false }: { withGeminiKey?: boolean } = {}
-  ): Promise<Response> {
-    try {
-      return await fetch(`${API_BASE_URL}${path}`, {
-        ...init,
-        headers: this.requestHeaders({ withGeminiKey }),
-      });
-    } catch {
-      throw new NetworkError(UNREACHABLE);
-    }
+    return this.client.sendAs(path, init, extra);
   }
 
   /** A 2xx whose body will not parse is still a server-side problem — we
@@ -145,13 +138,23 @@ export class FetchRunsGateway implements RunsGateway {
     }
   }
 
-  async createRun(source: MediaSource): Promise<RunCreateResponse> {
+  async createRun(source: MediaSource, signal?: AbortSignal): Promise<AsOwner<RunCreateResponse>> {
     const formData = new FormData();
     if (source.file) formData.append("file", source.file);
     if (source.url) formData.append("url", source.url);
     formData.append("accept_terms", "true");
 
-    const res = await this.send("/api/runs", { method: "POST", body: formData }, { withGeminiKey: true });
+    let res: Response;
+    let owner: string | null;
+    try {
+      ({ res, owner } = await this.send("/api/runs", { method: "POST", body: formData, signal }, { withGeminiKey: true }));
+    } catch (error) {
+      /* Only a failure of the fetch itself says anything about the upload.
+         The sign-in check fails before a byte is sent. */
+      if (error instanceof SignInUnconfirmedError) throw new NetworkError(CREATE_SIGN_IN_UNCONFIRMED);
+      if (source.file && error instanceof FetchFailedError) throw new NetworkError(UPLOAD_CUT_OFF);
+      throw error;
+    }
 
     if (!res.ok) {
       const body = await res.json().catch(() => null);
@@ -162,24 +165,28 @@ export class FetchRunsGateway implements RunsGateway {
       );
     }
 
-    return this.parse<RunCreateResponse>(res);
+    return { ...(await this.parse<RunCreateResponse>(res)), owner };
   }
 
   async getRun(runId: string): Promise<RunStatusResponse> {
-    const res = await this.send(`/api/runs/${runId}`);
+    const { res } = await this.send(`/api/runs/${runId}`);
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      throw new ApiError(body?.detail || `Could not fetch run status (${res.status})`, res.status);
+      /* The code rides along so a poll can tell the deletion hold's 410
+         (`account_pending_deletion`) from any other refusal. */
+      throw new ApiError(body?.detail || `Could not fetch run status (${res.status})`, res.status, {
+        code: errorExtras(body).code,
+      });
     }
     return this.parse<RunStatusResponse>(res);
   }
 
-  async listRuns(): Promise<RunListResponse> {
-    const res = await this.send("/api/runs");
+  async listRuns(): Promise<AsOwner<RunListResponse>> {
+    const { res, owner } = await this.send("/api/runs");
     if (!res.ok) {
       const body = await res.json().catch(() => null);
       throw new ApiError(body?.detail || `Could not fetch run history (${res.status})`, res.status);
     }
-    return this.parse<RunListResponse>(res);
+    return { ...(await this.parse<RunListResponse>(res)), owner };
   }
 }

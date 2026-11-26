@@ -17,10 +17,23 @@ import { nativeShell } from "@/infrastructure/container";
    folders would mean four prerendered pages each carrying the whole shell, and
    a real document navigation on every tab switch. */
 
-/** The four destinations, in nav order. */
-export const MAIN_TABS = ["analyze", "history", "api-key", "releases"] as const;
+/** The destinations, in nav order. `account` (auth phase 2) is offered only
+ *  where sign-in is available; see `navTabs`. */
+export const MAIN_TABS = ["analyze", "history", "api-key", "releases", "account"] as const;
 
 export type MainTab = (typeof MAIN_TABS)[number];
+
+/**
+ * The tabs a nav should draw. The Account tab is left out unless the caller
+ * says sign-in is available (the deployment has a provider and its `auth`
+ * capability reports `ok`). Only `/app` knows that, so the legal and offline
+ * routes, which pass nothing, draw the tabs without it. Its address still
+ * works everywhere: `/app?view=account` renders the panel, which explains
+ * itself when sign-in is off.
+ */
+export function navTabs(showAccount = false): readonly MainTab[] {
+  return showAccount ? MAIN_TABS : MAIN_TABS.filter((tab) => tab !== "account");
+}
 
 /** The tab a bare `/app` shows, and the one that needs no param to address it. */
 export const DEFAULT_MAIN_TAB: MainTab = "analyze";
@@ -156,4 +169,24 @@ export function canonicalizeAppPath(): void {
 export function useMainTab(): MainTab {
   const raw = useSearchParams().get(VIEW_PARAM);
   return isMainTab(raw) ? raw : DEFAULT_MAIN_TAB;
+}
+
+/**
+ * Reads one query param from the current address and removes it in place
+ * (billing return, 2026-11-13: `/app?view=account&billing=success`), so a
+ * reload or a shared link does not repeat what it announced. Keeps the tab,
+ * the other params, the hash and the in-app marker; a fresh state object for
+ * the same reason as `goToMainTab` (Next then syncs `useSearchParams`).
+ * Client-only. Returns null when the param is absent.
+ */
+export function takeSearchParam(name: string): string | null {
+  const url = new URL(window.location.href);
+  const value = url.searchParams.get(name);
+  if (value === null) return null;
+  url.searchParams.delete(name);
+  const current: unknown = window.history.state;
+  const marked =
+    !!current && typeof current === "object" && !!(current as Record<string, unknown>)[IN_APP_ENTRY_KEY];
+  window.history.replaceState(marked ? { [IN_APP_ENTRY_KEY]: true } : {}, "", `${url.pathname}${url.search}${url.hash}`);
+  return value;
 }

@@ -92,7 +92,31 @@ Under the current model this costs nothing, because Railway builds each environm
 - **Config-only redeploys are gated too.** Changing a Railway variable triggers a redeploy that Wait for CI evaluates against the commit currently deployed. If that commit has a failed workflow, the variable change never takes effect and Railway still shows a deployment entry — as `SKIPPED`.
 - **`connect_service_source` cannot express this topology.** Any automation of branch mapping has to go through the dashboard or Railway's own per-environment API, not that call.
 
+## Blank `NEXT_PUBLIC_API_BASE_URL` fails the build (2026-11-20)
+
+`frontend/next.config.mjs` refuses a production build (`next build`, web and
+`build:mobile`) when `NEXT_PUBLIC_API_BASE_URL` is blank and `CI` is not
+`true`, with a message naming the variable. Before, such a build inlined the
+`http://localhost:8000` fallback and deployed an app that reached nothing.
+The Railway frontend build (Dockerfile, which takes the variable as an
+`ARG` and does not declare `CI`) is therefore refused when the service
+variable is missing. GitHub Actions sets `CI=true`: the application checks
+build without the variable on purpose and stay green; the container-publish
+and Android jobs pass the URL and already check it themselves.
+
+A Docker build does not inherit the runner's `CI=true`, so every image
+build sees the guard. `reusable-security-scan.yml` (dev lane, `main` PRs,
+nightly) passes `NEXT_PUBLIC_API_BASE_URL=https://scan-placeholder.invalid`
+to its throwaway frontend image; before that, the scan's frontend build
+failed. The GHCR publish passes the production URL and `docker compose`
+passes `http://localhost:8000`. `frontend/railway.json` builds with
+`frontend/Dockerfile`, which declares the `ARG`, so the Railway service
+variable is what reaches the build: the repo cannot show that it is set
+in each environment. Check it in the dashboard before promoting.
+
 ## Changelog
 - 2026-08-29 · main session · created; documents the new `production` environment, the source-build vs GHCR-archive split, Wait for CI semantics, the service-level branch-mapping trap, and the three silent-skip modes
 - 2026-10-29 · claude (session ccr-ee9ca9d3) · documented what each environment's Wait for CI now waits on after the CI redesign; `dev` services were found with `checkSuites: false` while this doc said on
 - 2026-11-06 · claude (session ccr-ee9ca9d3) · recorded the first production-lane promotion (#92, fb1e7b8): Wait for CI held all three production deploys until the run was green; `dev` re-checked, still `checkSuites: false`, now documented as a no-op under the redesign with branch protection as the real `dev` gate
+- 2026-11-20 · Claude (frontend agent) · documented the build-time refusal of a blank `NEXT_PUBLIC_API_BASE_URL` outside CI
+- 2026-11-20 · Claude (CI agent) · the security scan's frontend image now gets a `.invalid` placeholder URL, because Docker builds do not see `CI=true`; listed every build path and its URL source

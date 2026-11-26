@@ -4,18 +4,23 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AnalysisCompleteness,
   FreeRunsStatus,
+  HistoryRecord,
   MediaSource,
   RunStatus,
   RunSourceKind,
   RunStatusResponse,
+  SavedRunSummary,
   SourceMetadata,
   VideoAnalysis,
 } from "@/domain/entities";
 import { classifyGatewayError } from "@/application/gatewayError";
 import {
   EXPIRED_MESSAGE,
+  isAccountOwned,
+  isVisibleNow,
   isRunGone,
-  recordExpired,
+  OTHER_OWNER_MESSAGE,
+  recordGone,
   recordRunResponse,
   recordSubmitted,
 } from "@/application/historySync";
@@ -28,9 +33,23 @@ import {
   usingOwnKey,
 } from "@/application/useFreeRuns";
 import { ApiError } from "@/domain/errors";
-import { activeRunStore, apiKeyStore, historyStore, runsGateway, sharedUrlSource } from "@/infrastructure/container";
+import { markSavedRunGone } from "@/application/useSavedHistory";
+import {
+  activeRunStore,
+  apiKeyStore,
+  authSession,
+  historyStore,
+  runsGateway,
+  savedHistoryGateway,
+  sharedUrlSource,
+} from "@/infrastructure/container";
 
 const POLL_INTERVAL_MS = 3000;
+/* 2026-11-22: how long one server answer keeps sign-in/sign-out held while
+   the run is still going. Five poll intervals: room for a slow answer (the
+   transport may wait up to 8 s for the server's auth report) without ever
+   holding on a reading nobody is refreshing. */
+const HOLD_FRESH_MS = 5 * POLL_INTERVAL_MS;
 
 /* Reconnect schedule after a poll throws: 4s, 8s, 16s, then every 30s until the
    user starts over. The first wait is short because most drops are a blip (a
@@ -66,6 +85,20 @@ function describeSource(source: MediaSource): string {
 const SUBMIT_FALLBACK = "Could not submit media.";
 const OPEN_FALLBACK = "Could not load that run.";
 const POLL_FALLBACK = "Something went wrong.";
+const SAVED_OPEN_FALLBACK = "That saved run could not be opened.";
+/** Said when a run listed as saved to the account is no longer there (a 404
+ *  on opening it): deleted on another device, or removed when the plan's
+ *  30 days ran out. */
+export const SAVED_GONE_MESSAGE = "This run is no longer saved to your account.";
+
+/** How opening a saved run went, for History: `shown` (on Analyze now),
+ *  `gone` (the unavailable view is on Analyze), `error` (nothing changed on
+ *  screen; History says why), `stale` (something else was opened meanwhile). */
+export type SavedOpenOutcome = { kind: "shown" | "gone" | "stale" } | { kind: "error"; message: string };
+
+/** Why the expired view is showing: the server forgot a live run
+ *  (`server`), or a run saved to the account is gone (`saved`). */
+export type ExpiredReason = "server" | "saved";
 
 /** Why the poll is down (refinement 6, RUN-08). `network`: no answer at all
  *  (offline, refused, DNS). `server`: the server answered, with an error
@@ -121,9 +154,37 @@ function provesRefund(before: FreeRunsStatus, after: FreeRunsStatus | null): boo
     after !== null &&
     before.enabled &&
     after.enabled &&
+    /* A sign-in or sign-out between the two reads swaps whose count it is. */
+    after.scope === before.scope &&
     after.resetsAt === before.resetsAt &&
     after.remaining === before.remaining
   );
+}
+
+/* 2026-11-20: a poll the server refuses for who is asking, not for the run.
+   401/403: this sign-in is no longer accepted; 410: the account is in its
+   deletion hold. Retrying cannot change either, so the poll stops instead of
+   reconnecting forever, and the screen says what would. */
+const SIGN_IN_ENDED =
+  "This server no longer accepts your sign-in, so this run can’t be followed here. Sign in again from Account, then open it from History.";
+const ACCOUNT_HELD =
+  "Your account is scheduled for deletion, so this run can’t be shown. Restore your account from Account to see it.";
+
+function accessEnded(err: unknown): string | null {
+  if (!(err instanceof ApiError)) return null;
+  if (err.status === 410) return ACCOUNT_HELD;
+  if (err.status === 401 || err.status === 403) return SIGN_IN_ENDED;
+  return null;
+}
+
+/* 2026-11-20: a 401 can be an access token that expired while the request
+   was out. One quiet retry, this long after, asks the session for a token
+   again (it refreshes an expired one) before the 401 counts as final.
+   Nothing on screen changes for it. */
+const AUTH_RETRY_MS = 1000;
+
+function isUnauthorized(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 401;
 }
 
 function lostCauseOf(err: unknown): LostCause {
@@ -147,6 +208,16 @@ export function useAnalysisRun() {
   const [sourceMetadata, setSourceMetadata] = useState<SourceMetadata | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  /* 2026-11-21: the run on screen has been answered for by the server since
+     it was put there (accepted on submit, or a status response applied).
+     False while `openRun` is still reading History or waiting for its first
+     answer, so a run being reopened does not count as one being followed.
+     2026-11-22: and only recently. Each answer keeps it true for
+     HOLD_FRESH_MS (`markAnswered`); with no newer answer by then it goes
+     false on its own, so a status nobody is refreshing any more (a poll
+     stuck before its request, a frozen background tab, a timer stopped by
+     any path) never holds sign-in or sign-out. */
+  const [live, setLive] = useState(false);
   /* The link or file name of the run on screen, for the progress view's source
      chip. Known only for runs submitted in this session; a run reopened from
      History has none until its metadata arrives. */
@@ -174,7 +245,7 @@ export function useAnalysisRun() {
      source was wrong, so the failed view drops its "try a different link"
      advice and offers to analyze it again. `againUrl` is the link to put back
      in the field, when this browser stored one. */
-  const [expired, setExpired] = useState<{ againUrl: string | null } | null>(null);
+  const [expired, setExpired] = useState<{ againUrl: string | null; reason?: ExpiredReason } | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const runIdRef = useRef<string | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -201,6 +272,41 @@ export function useAnalysisRun() {
      failure check, so it is used at most once per submit. */
   const freeRunsBeforeRef = useRef<FreeRunsStatus | null>(null);
   const refundTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /* The upload in flight, so starting over or leaving the screen stops the
+     bytes instead of finishing a run nobody is watching (2026-11-20). */
+  const uploadRef = useRef<AbortController | null>(null);
+  /* Opening a saved run fetches before it touches the screen, so it keeps
+     its own token: a newer saved open drops an older one without retiring
+     the live run's generation, which only moves once the detail is in. */
+  const savedOpenRef = useRef(0);
+  /* 2026-11-20: whether what is on screen (a result, a run in progress, an
+     opened saved run) may belong to a signed-in account rather than to this
+     device's anonymous caller. Read when the person signs out: an account's
+     run must not stay on Analyze for the next person on the device. Unknown
+     counts as the account's. */
+  const accountScreenRef = useRef(false);
+  /* 2026-11-21: the generation of an `openRun` still reading History's
+     record (its owner not known yet), and the generation a sign-out arrived
+     during that read. The sign-out's decision waits for the record, so an
+     anonymous run being resumed is not cleared on a provisional guess. */
+  const ownerPendingRef = useRef(-1);
+  const deferredLeaveRef = useRef(-1);
+  /* The one quiet retry after a 401 (see AUTH_RETRY_MS) is spent; any good
+     response gives it back. */
+  const authRetriedRef = useRef(false);
+  /* Ends `live` HOLD_FRESH_MS after the last server answer. Deliberately not
+     cleared by `stopTimers`: whatever stops the poll, the hold lapses. */
+  const freshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /* The server just answered for the run on screen. */
+  const markAnswered = useCallback(() => {
+    setLive(true);
+    if (freshTimerRef.current) clearTimeout(freshTimerRef.current);
+    freshTimerRef.current = setTimeout(() => {
+      freshTimerRef.current = null;
+      setLive(false);
+    }, HOLD_FRESH_MS);
+  }, []);
 
   /* Every timer this hook owns, stopped in one place: unmount, reset, openRun,
      a fresh submit and a successful reconnect all need exactly this. */
@@ -221,6 +327,10 @@ export function useAnalysisRun() {
   useEffect(
     () => () => {
       stopTimers();
+      if (freshTimerRef.current) clearTimeout(freshTimerRef.current);
+      freshTimerRef.current = null;
+      uploadRef.current?.abort();
+      uploadRef.current = null;
       generationRef.current += 1;
     },
     [stopTimers]
@@ -268,6 +378,8 @@ export function useAnalysisRun() {
     /* Every response the screen applies is also filed into this browser's
        History — that is how a run survives the server forgetting it. */
     recordRunResponse(run);
+    authRetriedRef.current = false;
+    markAnswered();
     setStatus(run.status);
     setStage(run.stage);
     const kind = mediaKindOfPlatform(run.platform);
@@ -301,7 +413,7 @@ export function useAnalysisRun() {
       return true;
     }
     return false;
-  }, [settleFreeRuns]);
+  }, [markAnswered, settleFreeRuns]);
 
   /* Refinement 3, #1: the server answered 404 for a run this browser knows
      about — it forgot the run (past its hold, or a restart of an in-memory
@@ -309,18 +421,43 @@ export function useAnalysisRun() {
      History row as expired, and show the expired view with its normal
      actions. `knownUrl` is the link when the caller already has it; otherwise
      the one History stored is used once the write lands. */
+  /* Auth phase 2: a 404 for a run History filed under a different identity
+     (signed in as someone else, or signed out) is not an expiry. The server
+     holds it for that caller; the screen says so and History is not
+     touched, so switching back finds the run again (`recordGone`). */
   const expireRun = useCallback(
     async (runId: string, generation: number, knownUrl: string | null) => {
       stopTimers();
       clearReconnect();
       activeRunStore.clear();
+      const outcome = await recordGone(runId);
+      if (generationRef.current !== generation) return;
       setStatus("failed");
       setStage(null);
+      if (outcome.kind === "other-owner") {
+        setError(OTHER_OWNER_MESSAGE);
+        setExpired(null);
+        return;
+      }
       setError(EXPIRED_MESSAGE);
-      setExpired({ againUrl: knownUrl });
-      const storedUrl = await recordExpired(runId);
-      if (generationRef.current !== generation) return;
-      if (!knownUrl && storedUrl) setExpired({ againUrl: storedUrl });
+      setExpired({ againUrl: knownUrl ?? outcome.againUrl });
+    },
+    [clearReconnect, stopTimers]
+  );
+
+  /* The server refused the poll for who is asking (see `accessEnded`). Final
+     for this screen: every timer stops, nothing is filed into History (the
+     run may be fine), and nothing offers to resubmit it. */
+  const endAccess = useCallback(
+    (message: string) => {
+      stopTimers();
+      clearReconnect();
+      activeRunStore.clear();
+      setRetrySource(null);
+      setExpired(null);
+      setStage(null);
+      setStatus("failed");
+      setError(message);
     },
     [clearReconnect, stopTimers]
   );
@@ -329,6 +466,25 @@ export function useAnalysisRun() {
      schedules a reconnect; a good reconnect resumes polling), so the second is
      called through a ref rather than a dependency cycle. */
   const scheduleReconnectRef = useRef<(generation: number) => void>(() => {});
+  /* The quiet retry after a first 401 goes through a ref for the same reason. */
+  const attemptReconnectRef = useRef<(generation: number) => void>(() => {});
+
+  /** Takes a 401 as maybe an expired token, once: stops the poll and asks
+   *  again shortly, saying nothing. False when it is not a 401 (or the retry
+   *  is spent), so the caller treats the failure as it always has. */
+  const retryUnauthorized = useCallback((runId: string, err: unknown, generation: number): boolean => {
+    if (!isUnauthorized(err) || authRetriedRef.current) return false;
+    authRetriedRef.current = true;
+    runIdRef.current = runId;
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = null;
+    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+    reconnectTimerRef.current = setTimeout(() => {
+      reconnectTimerRef.current = null;
+      attemptReconnectRef.current(generation);
+    }, AUTH_RETRY_MS);
+    return true;
+  }, []);
 
   const startPolling = useCallback(
     (runId: string, generation: number) => {
@@ -351,6 +507,12 @@ export function useAnalysisRun() {
             void expireRun(runId, generation, liveUrlRef.current);
             return;
           }
+          if (retryUnauthorized(runId, err, generation)) return;
+          const ended = accessEnded(err);
+          if (ended) {
+            endAccess(ended);
+            return;
+          }
           /* The interval stops, and the screen stops claiming progress:
              `HomeScreen` reads (error && status is queued or processing) as
              "connection lost". What changed is that this is no longer the end —
@@ -364,7 +526,7 @@ export function useAnalysisRun() {
         }
       }, POLL_INTERVAL_MS);
     },
-    [applyRun, expireRun, fail]
+    [applyRun, endAccess, expireRun, fail, retryUnauthorized]
   );
 
   const attemptReconnect = useCallback(
@@ -389,14 +551,27 @@ export function useAnalysisRun() {
           void expireRun(runId, generation, liveUrlRef.current);
           return;
         }
+        if (retryUnauthorized(runId, err, generation)) {
+          setReconnecting(false);
+          return;
+        }
+        const ended = accessEnded(err);
+        if (ended) {
+          endAccess(ended);
+          return;
+        }
         fail(err, POLL_FALLBACK);
         setLostCause(lostCauseOf(err));
         attemptRef.current += 1;
         scheduleReconnectRef.current(generation);
       }
     },
-    [applyRun, clearReconnect, expireRun, fail, startPolling]
+    [applyRun, clearReconnect, endAccess, expireRun, fail, retryUnauthorized, startPolling]
   );
+
+  useEffect(() => {
+    attemptReconnectRef.current = (generation: number) => void attemptReconnect(generation);
+  }, [attemptReconnect]);
 
   const scheduleReconnect = useCallback(
     (generation: number) => {
@@ -460,14 +635,21 @@ export function useAnalysisRun() {
       setSourceKind(source.url ? "url" : "file");
       setMediaKind(mediaKindOfSource(source));
       setFreeRunRefunded(false);
+      setLive(false);
       /* Taken before the request, so it is the count this run would spend
          from. Unknown (null) means no refund line can ever be claimed. */
       freeRunsBeforeRef.current = usingOwnKey() ? null : currentFreeRuns();
       const generation = ++generationRef.current;
+      /* Whose run this is is known once the server accepts it. */
+      accountScreenRef.current = true;
+      authRetriedRef.current = false;
+      uploadRef.current?.abort();
+      const upload = new AbortController();
+      uploadRef.current = upload;
       try {
         let run;
         try {
-          run = await runsGateway.createRun(source);
+          run = await runsGateway.createRun(source, upload.signal);
         } catch (err) {
           /* Free runs (Phase 5b): the stored device token was missing or no
              longer valid. Read the allowance again — the adapter stores the
@@ -476,16 +658,19 @@ export function useAnalysisRun() {
           if (!(err instanceof ApiError && err.code === "device_token_invalid")) throw err;
           await refreshFreeRuns();
           if (generationRef.current !== generation) return;
-          run = await runsGateway.createRun(source);
+          run = await runsGateway.createRun(source, upload.signal);
         }
         /* Filed even if the screen has moved on: the run exists server-side
-           and belongs in History either way. */
-        recordSubmitted(run.run_id, run.status, source);
+           and belongs in History either way. Under the identity this create
+           request went out as. */
+        recordSubmitted(run.run_id, run.status, source, run.owner);
         noteRunAccepted();
         if (generationRef.current !== generation) return;
+        accountScreenRef.current = isAccountOwned(run.owner);
         setSourceName(describeSource(source));
         setRetrySource(source);
         liveUrlRef.current = source.url || null;
+        markAnswered();
         setStatus(run.status);
         startPolling(run.run_id, generation);
       } catch (err) {
@@ -494,7 +679,7 @@ export function useAnalysisRun() {
            truth. No error line: the limit banner above the card says it, with
            the one action that fixes it, and the form stays as typed. */
         if (err instanceof ApiError && err.code === "free_runs_used") {
-          markFreeRunsUsed(err.limit, err.used);
+          markFreeRunsUsed(err.limit, err.used, err.scope);
           if (generationRef.current !== generation) return;
           /* A retry from the failed view lands here too; the banner lives on
              the intake, so go back to it. With a key saved the banner is
@@ -506,11 +691,12 @@ export function useAnalysisRun() {
         if (generationRef.current !== generation) return;
         fail(err, SUBMIT_FALLBACK);
       } finally {
+        if (uploadRef.current === upload) uploadRef.current = null;
         submittingRef.current = false;
         setSubmitting(false);
       }
     },
-    [clearReconnect, fail, startPolling, stopTimers]
+    [clearReconnect, fail, markAnswered, startPolling, stopTimers]
   );
 
   const reset = useCallback(() => {
@@ -520,10 +706,16 @@ export function useAnalysisRun() {
     stopTimers();
     clearReconnect();
     activeRunStore.clear();
+    /* Starting over cancels an upload still on its way. */
+    uploadRef.current?.abort();
+    uploadRef.current = null;
     runIdRef.current = null;
     liveUrlRef.current = null;
     generationRef.current += 1;
     freeRunsBeforeRef.current = null;
+    accountScreenRef.current = false;
+    authRetriedRef.current = false;
+    setLive(false);
     setStatus("idle");
     setStage(null);
     setSourceKind("file");
@@ -538,6 +730,52 @@ export function useAnalysisRun() {
     setError(null);
     setExpired(null);
   }, [clearReconnect, stopTimers]);
+
+  /* 2026-11-20: signing out (here, by account deletion, "Continue signed
+     out", or in another tab) takes an account's run off Analyze, so the next
+     person on this device cannot read it; History hides the same rows
+     (2026-11-21: hidden, not removed). Heard from the session itself, so every one of
+     those paths is covered. The rules:
+     - only after someone was signed in (or a session was stored) during
+       this mount, so a person who never signed in keeps their own result;
+     - only what may be an account's: an anonymous run on screen stays;
+     - a session still stored but not recovered (an outage) is not a
+       sign-out and changes nothing, and nor does a refused `/api/me` (a 503
+       while the sign-in keys are down), which never touches the session;
+     - another person signing in (in another tab) takes it off too. */
+  useEffect(() => {
+    if (!authSession.enabled) return;
+    let lastUser = authSession.user()?.id ?? null;
+    let accountSeen = authSession.hasSession();
+    const leave = () => {
+      /* An opened run whose owner History has not told us yet: decided once
+         the record is read (openRun), not on the provisional guess. */
+      if (ownerPendingRef.current === generationRef.current) {
+        deferredLeaveRef.current = generationRef.current;
+        return;
+      }
+      if (accountScreenRef.current) reset();
+    };
+    const onSessionChange = () => {
+      const user = authSession.user();
+      if (user) {
+        const before = lastUser;
+        lastUser = user.id;
+        accountSeen = true;
+        if (before && before !== user.id) leave();
+        return;
+      }
+      if (authSession.hasSession()) {
+        accountSeen = true;
+        return;
+      }
+      lastUser = null;
+      if (!accountSeen) return;
+      accountSeen = false;
+      leave();
+    };
+    return authSession.subscribe(onSessionChange);
+  }, [reset]);
 
   /* `sourceKindHint` is the History summary's `source_kind`, when it has one,
      so a reopened run shows the right frames before its first status
@@ -567,8 +805,15 @@ export function useAnalysisRun() {
       setFreeRunRefunded(false);
       setMediaKind(null);
       setSourceKind(sourceKindHint === "link" ? "url" : "file");
+      setLive(false);
       setStatus("processing");
       const generation = ++generationRef.current;
+      /* Whose run: from History's record once it is read, unknown until
+         then (and for an id History has no record of). A sign-out during the
+         read waits for it (`ownerPendingRef`). */
+      accountScreenRef.current = true;
+      ownerPendingRef.current = generation;
+      authRetriedRef.current = false;
       /* Whether this browser has its own record of the run. A 404 for one it
          knows means "expired"; for an id it has never seen it just means
          "not found" (refinement 3, #1). */
@@ -577,9 +822,36 @@ export function useAnalysisRun() {
       /* History first: a finished run reopens from this browser with no
          network at all. Only a record without a result (still running, or
          one the store could not hold) falls through to the server. */
+      let record: HistoryRecord | null = null;
+      let readable = true;
       try {
-        const record = await historyStore.get(runId);
-        if (generationRef.current !== generation) return;
+        record = (await historyStore.get(runId)) ?? null;
+      } catch {
+        readable = false;
+      }
+      if (ownerPendingRef.current === generation) ownerPendingRef.current = -1;
+      if (generationRef.current !== generation) return;
+      /* 2026-11-21: a row hidden from whoever is signed in now (another
+         account's, kept while it is signed out) is never shown, whether it
+         was asked for from a stale History list or a resumed tab. Nothing is
+         fetched for it and nothing is written; Analyze goes back to the
+         intake. */
+      if (record && !isVisibleNow(record.owner)) {
+        if (deferredLeaveRef.current === generation) deferredLeaveRef.current = -1;
+        reset();
+        return;
+      }
+      accountScreenRef.current = record ? isAccountOwned(record.owner) : true;
+      if (deferredLeaveRef.current === generation) {
+        deferredLeaveRef.current = -1;
+        /* Signed out (or someone else signed in) while the record was read:
+           now that its owner is known, an account's run leaves Analyze. */
+        if (accountScreenRef.current) {
+          reset();
+          return;
+        }
+      }
+      if (readable) {
         if (record) {
           known = true;
           knownUrl = record.source_url ?? record.source_metadata?.source_url ?? null;
@@ -619,10 +891,8 @@ export function useAnalysisRun() {
           }
           return;
         }
-      } catch {
-        /* no usable History here — ask the server as before */
       }
-      if (generationRef.current !== generation) return;
+      /* (unreadable: no usable History here — ask the server as before) */
       try {
         const run = await runsGateway.getRun(runId);
         if (generationRef.current !== generation) return;
@@ -632,6 +902,13 @@ export function useAnalysisRun() {
         if (known && isRunGone(err)) {
           runIdRef.current = runId;
           void expireRun(runId, generation, knownUrl);
+          return;
+        }
+        if (retryUnauthorized(runId, err, generation)) return;
+        const ended = accessEnded(err);
+        if (ended) {
+          runIdRef.current = runId;
+          endAccess(ended);
           return;
         }
         if (resumed) {
@@ -647,7 +924,7 @@ export function useAnalysisRun() {
         fail(err, OPEN_FALLBACK);
       }
     },
-    [applyRun, clearReconnect, expireRun, fail, startPolling, stopTimers]
+    [applyRun, clearReconnect, endAccess, expireRun, fail, reset, retryUnauthorized, startPolling, stopTimers]
   );
 
   /* Refinement 6 (RUN-06 web): on a load of the app, pick up the run this tab
@@ -665,6 +942,102 @@ export function useAnalysisRun() {
     void openRun(runId, null, { resumed: true });
     return true;
   }, [openRun]);
+
+  /* Paid saved history (2026-11-14): open a run saved to the account. This
+     browser's own finished copy, when it has one, opens with no network (as
+     History always has). Otherwise the saved detail is fetched *before*
+     anything on screen changes, so a failure leaves History where it was
+     and History can say why; a 404 shows the unavailable view.
+
+     2026-11-20: the live run's generation moves only once the detail is in
+     (or a 404 says it is gone). Taking it up front retired the run on
+     Analyze before the fetch, so a failed open left that run's poll
+     dropping every answer: frozen, with nothing on screen saying so. Until
+     then a token of its own (`savedOpenRef`) tells a newer saved open from
+     this one, and any other intent (a submit, a reset, a History open)
+     moving the generation makes this one stale. */
+  const openSavedRun = useCallback(
+    async (summary: SavedRunSummary): Promise<SavedOpenOutcome> => {
+      const token = ++savedOpenRef.current;
+      const base = generationRef.current;
+      const stale = () => savedOpenRef.current !== token || generationRef.current !== base;
+      try {
+        const record = await historyStore.get(summary.run_id);
+        if (stale()) return { kind: "stale" };
+        if (record?.status === "complete" && record.result) {
+          void openRun(summary.run_id, record.source_kind);
+          return { kind: "shown" };
+        }
+      } catch {
+        /* no usable History here; ask the account */
+      }
+      if (stale()) return { kind: "stale" };
+      const source = summary.source ?? null;
+      /* The screen changes from here on, so the live run (if any) retires. */
+      const resetScreen = () => {
+        generationRef.current += 1;
+        /* A run saved to the account is the account's. */
+        accountScreenRef.current = true;
+        authRetriedRef.current = false;
+        stopTimers();
+        clearReconnect();
+        activeRunStore.clear();
+        runIdRef.current = null;
+        liveUrlRef.current = null;
+        freeRunsBeforeRef.current = null;
+        setFreeRunRefunded(false);
+        setLive(false);
+        setRetrySource(null);
+        setSourceName(null);
+        setStage(null);
+        setSourceKind(source?.source_kind === "link" ? "url" : "file");
+        setMediaKind(mediaKindOfPlatform(source?.platform ?? null));
+        setDurationSeconds(typeof source?.duration_seconds === "number" ? source.duration_seconds : null);
+      };
+      try {
+        const detail = await savedHistoryGateway.get(summary.run_id);
+        if (stale()) return { kind: "stale" };
+        const known = detail.source ?? source;
+        resetScreen();
+        setSourceKind(known?.source_kind === "link" ? "url" : "file");
+        setSourceMetadata(
+          known?.source_url
+            ? {
+                platform: known.platform ?? "other",
+                source_url: known.source_url,
+                title: known.source_title ?? null,
+                uploader: known.uploader ?? null,
+              }
+            : null
+        );
+        setError(null);
+        setExpired(null);
+        setResult(detail.result);
+        setCompleteness(detail.completeness === "captions_only" ? "captions_only" : "full");
+        setStatus("complete");
+        return { kind: "shown" };
+      } catch (err) {
+        if (stale()) return { kind: "stale" };
+        if (err instanceof ApiError && err.status === 404) {
+          /* Not redrawn now: History is on its way out and must not drop
+             the card first. It is left out of the list next time. */
+          markSavedRunGone(summary.run_id);
+          resetScreen();
+          setSourceMetadata(null);
+          setResult(null);
+          setCompleteness("full");
+          setError(SAVED_GONE_MESSAGE);
+          setExpired({ againUrl: source?.source_url ?? null, reason: "saved" });
+          setStatus("failed");
+          return { kind: "gone" };
+        }
+        /* Nothing on screen changed and the live run keeps going; History
+           shows the message. */
+        return { kind: "error", message: classifyGatewayError(err, SAVED_OPEN_FALLBACK).message };
+      }
+    },
+    [clearReconnect, openRun, stopTimers]
+  );
 
   /* Resubmit the run that just failed, same link or same file. Only offered
      while `canRetry` is true. */
@@ -688,15 +1061,24 @@ export function useAnalysisRun() {
     canRetry: retrySource !== null,
     expired: expired !== null,
     againUrl: expired?.againUrl ?? null,
+    expiredReason: (expired?.reason ?? "server") as ExpiredReason,
     reconnectIn,
     reconnecting,
     reconnectAttempt,
     lostCause,
+    /* 2026-11-21: whether signing in or out should wait. Only while a
+       submit is on its way (it would be filed under the wrong owner) or a
+       run the server has answered for is still going with no error. A run
+       stalled on the connection-lost screen, reconnecting, or being reopened
+       from History does not hold it, and nor does one whose last answer is
+       older than HOLD_FRESH_MS (2026-11-22: `live` lapses). */
+    holdsSignIn: submitting || ((status === "queued" || status === "processing") && !error && live),
     submit,
     retry,
     reconnectNow,
     reset,
     openRun,
+    openSavedRun,
     resume,
   };
 }

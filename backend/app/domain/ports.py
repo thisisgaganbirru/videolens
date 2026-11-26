@@ -2,22 +2,42 @@
 implement these structurally (Protocol = duck typing, no inheritance
 required) so use cases never import a framework or a driver library."""
 
+from datetime import datetime
 from typing import Awaitable, Callable, Optional, Protocol
 
 from .entities import (
+    Account,
+    AccountFreeRunClaim,
+    FreeRunPeriod,
+    SpendClaim,
+    BillingAccount,
+    BillingPrices,
+    BillingWebhookEvent,
+    ExtraRunCharge,
+    HeldExtraRun,
+    SubscriptionSnapshot,
     AnalysisCompleteness,
+    ApiKey,
+    ApiKeyCreated,
     Capability,
     CaptionTrack,
     FreeRunClaim,
     FreeRunStatus,
     MediaVisuals,
+    PendingAccountPurge,
     ReleaseIndex,
     Run,
     RunStatus,
+    SavedRun,
+    SavedRunCursor,
+    SavedRunPage,
     SavedUpload,
     SourceMetadata,
     VideoAnalysis,
+    Workspace,
 )
+from .entitlements import MediaLimits
+from .schema_revision import SchemaReading
 
 StageCallback = Callable[[str], Awaitable[None]]
 
@@ -42,6 +62,9 @@ class RunRepository(Protocol):
         source_kind: str | None = None,
         platform: str | None = None,
         duration_seconds: float | None = None,
+        media_tier: str | None = None,
+        admitted_byok: bool = False,
+        account_id: str | None = None,
     ) -> Run: ...
 
     async def get(self, run_id: str) -> Optional[Run]: ...
@@ -57,7 +80,11 @@ class RunRepository(Protocol):
         run_id: str,
         result: VideoAnalysis,
         completeness: AnalysisCompleteness = AnalysisCompleteness.FULL,
-    ) -> None: ...
+    ) -> bool:
+        """Mark the run complete. False when nothing was written: the run is
+        gone, or it already ended (complete or failed). An ended run is
+        final; every write to it is skipped, not only this one."""
+        ...
 
     async def set_source_metadata(self, run_id: str, metadata: SourceMetadata) -> None: ...
 
@@ -68,7 +95,16 @@ class RunRepository(Protocol):
         left as they were."""
         ...
 
-    async def set_error(self, run_id: str, error: str) -> None: ...
+    async def set_error(self, run_id: str, error: str) -> bool:
+        """Mark the run failed. False when the run is gone or already ended,
+        as for `set_result`."""
+        ...
+
+    async def delete_for_owner(self, owner_id: str) -> int:
+        """Remove every run the owner's index (or, in memory, the store)
+        holds for `owner_id`, and the index itself. Returns how many runs
+        were removed; an owner with none is 0, not an error."""
+        ...
 
     async def ping(self) -> bool: ...
 
@@ -82,16 +118,20 @@ class MediaProcessor(Protocol):
 
     def cleanup_run_dir(self, run_id: str) -> None: ...
 
-    async def save_upload(self, run_id: str, upload: UploadedFile) -> SavedUpload: ...
+    # `limits` is the run's own (application/entitlements.py); None means
+    # the deployment's standard limits.
+    async def save_upload(
+        self, run_id: str, upload: UploadedFile, limits: Optional[MediaLimits] = None
+    ) -> SavedUpload: ...
 
-    async def enforce_duration_cap(self, run_id: str, path: str) -> float:
+    async def enforce_duration_cap(self, run_id: str, path: str, limits: Optional[MediaLimits] = None) -> float:
         """Probe the file, reject it if over the cap, and return the probed
         length in seconds so the caller can record it."""
         ...
 
-    async def download_url(self, run_id: str, url: str) -> SavedUpload: ...
+    async def download_url(self, run_id: str, url: str, limits: Optional[MediaLimits] = None) -> SavedUpload: ...
 
-    async def fetch_captions(self, url: str) -> Optional[CaptionTrack]: ...
+    async def fetch_captions(self, url: str, limits: Optional[MediaLimits] = None) -> Optional[CaptionTrack]: ...
 
     async def normalize_media(self, src_path: str, run_dir: str) -> str: ...
 
@@ -121,7 +161,7 @@ class SourceResolver(Protocol):
 
     def can_handle(self, url: str) -> bool: ...
 
-    async def fetch(self, run_id: str, url: str) -> SavedUpload: ...
+    async def fetch(self, run_id: str, url: str, limits: Optional[MediaLimits] = None) -> SavedUpload: ...
 
 
 class AnalysisEngine(Protocol):
@@ -161,13 +201,70 @@ class JobQueue(Protocol):
         source_url: str | None = None,
         source_key: str | None = None,
         gemini_api_key: str | None = None,
-    ) -> None: ...
+        limits: Optional[MediaLimits] = None,
+    ) -> None:
+        """`limits` travels with the job (never the key: that goes through
+        the KeyVault), so the worker enforces what the API admitted."""
+        ...
+
+    async def close(self) -> None: ...
+
+
+class LongRunGuard(Protocol):
+    """At most one run above the standard media limits in flight per
+    account. A slot is held by one run id; acquiring again for the same run
+    succeeds (and re-arms the expiry), so intake and worker can both claim it.
+    It expires on its own after a whole long job could have taken, so a dead
+    worker never leaves an account locked out."""
+
+    async def try_acquire(self, key: str, run_id: str) -> bool: ...
+
+    async def release(self, key: str, run_id: str) -> None:
+        """Free the slot if `run_id` holds it; otherwise a no-op."""
+        ...
 
     async def close(self) -> None: ...
 
 
 class SpendCap(Protocol):
-    async def try_consume(self) -> bool: ...
+    """The shared daily cap on runs spent on the shared Gemini key. Same
+    take / hold / release shape as `FreeRunAllowance`, so a run that never
+    reaches Gemini (rejected upload, unreachable link) hands its unit back."""
+
+    async def try_consume(self) -> SpendClaim | None:
+        """Atomically take one unit, or None (taking nothing) when today's
+        cap is already reached."""
+        ...
+
+    async def refund(self, claim: SpendClaim) -> None:
+        """Give a unit back to the day it was taken from, never below zero."""
+        ...
+
+    async def hold(self, run_id: str, claim: SpendClaim) -> None:
+        """Remember the unit `run_id` took, so the worker can hand it back."""
+        ...
+
+    async def release(self, run_id: str, *, refund: bool) -> bool:
+        """Forget the unit held for `run_id`, handing it back first when
+        `refund` is true. Atomic and idempotent like `FreeRunAllowance.release`.
+        True when a unit was handed back."""
+        ...
+
+    async def close(self) -> None: ...
+
+
+class CredentialFailureGuard(Protocol):
+    """Counts failed credentials (unknown API key, token that does not
+    verify) per client IP, so a flood of bogus credentials is refused
+    before each one costs a key lookup or a token check. Only failures are
+    counted."""
+
+    async def retry_after(self, client_ip: str) -> int | None:
+        """Seconds until `client_ip` may try a credential again, or None
+        when it is under the limit (or the guard is off)."""
+        ...
+
+    async def record_failure(self, client_ip: str) -> None: ...
 
     async def close(self) -> None: ...
 
@@ -219,6 +316,52 @@ class FreeRunAllowance(Protocol):
     async def close(self) -> None: ...
 
 
+class AccountFreeRunAllowance(Protocol):
+    """How many runs a signed-in account without its own Gemini key may
+    start per counter period: per UTC day on the free plan
+    (`FREE_RUNS_PER_ACCOUNT_DAILY`), and per UTC day too for the paid
+    plan's included runs (`PAID_RUNS_PER_DAY`; the caller passes `limit`
+    and `period`). Replaces the
+    device counter for that caller (never adds to it), so the runs follow
+    the person across devices. Same hold/release contract as
+    `FreeRunAllowance`, so the pipeline can hand a run back the same way."""
+
+    @property
+    def enabled(self) -> bool: ...
+
+    async def status(
+        self, account_id: str, *, limit: int | None = None, period: FreeRunPeriod = FreeRunPeriod.DAY
+    ) -> FreeRunStatus:
+        """Read-only: never consumes. `scope` is ACCOUNT. `limit` overrides
+        the free daily limit and `period` the free daily period (the paid
+        plan's included runs: docs/backend/billing.md). A daily and a
+        monthly counter are different rows ("YYYY-MM-DD" vs "YYYY-MM"); the
+        free and the paid plan's daily counters are the same row."""
+        ...
+
+    async def try_consume(
+        self, account_id: str, *, limit: int | None = None, period: FreeRunPeriod = FreeRunPeriod.DAY
+    ) -> AccountFreeRunClaim | None:
+        """Atomically take one run if the current `period`'s count is below
+        the limit (`limit`, else the free daily one), or None (taking
+        nothing). Concurrent calls can never take the account past it. The
+        claim records the counter key, so a refund goes back to it."""
+        ...
+
+    async def refund(self, claim: AccountFreeRunClaim) -> None:
+        """Hand one run back to the claim's day or month, never below zero."""
+        ...
+
+    async def hold(self, run_id: str, claim: AccountFreeRunClaim) -> None: ...
+
+    async def release(self, run_id: str, *, refund: bool) -> bool:
+        """Forget the run held for `run_id`, refunding first when `refund`.
+        Only the first call for a run acts. True when a run was handed back."""
+        ...
+
+    async def close(self) -> None: ...
+
+
 class KeyVault(Protocol):
     async def store(self, run_id: str, api_key: str) -> None: ...
 
@@ -228,7 +371,178 @@ class KeyVault(Protocol):
 
 
 class TokenVerifier(Protocol):
-    def decode(self, token: str) -> dict: ...
+    def decode(self, token: str) -> dict:
+        """Verified claims, or raises. `AuthNotConfiguredError` (domain) when
+        no identity provider is configured, `AuthUnavailableError` when its
+        signing keys cannot be had right now; anything else means the token
+        is not acceptable. Synchronous: a JWKS cache miss is a network call, so
+        callers run it off the event loop."""
+        ...
+
+
+class AccountDirectory(Protocol):
+    """Accounts and workspaces: who is signed in and which workspace they
+    act in. `enabled` is False on a deployment with no account store, where
+    a signed-in caller is a bare `user:<sub>` principal as before accounts
+    existed."""
+
+    @property
+    def enabled(self) -> bool: ...
+
+    async def resolve_account(self, external_id: str, email: str | None = None) -> Account:
+        """The account for an identity-provider subject, created (with its
+        default workspace) on first sight. Keeps `email` current."""
+        ...
+
+    async def get_workspace(self, workspace_id: str) -> Optional[Workspace]: ...
+
+    async def get_account(self, account_id: str) -> Optional[Account]:
+        """The account by its own id (an API key's workspace owner), or None.
+        Never creates anything."""
+        ...
+
+    async def member_role(self, workspace_id: str, account_id: str) -> Optional[str]: ...
+
+    async def close(self) -> None: ...
+
+
+class ApiKeyRepository(Protocol):
+    """A workspace's API keys. Stores a hash of each secret, never the
+    secret, so a database read never yields a usable credential."""
+
+    async def issue(
+        self, workspace_id: str, name: str, scopes: list[str], *, max_active: int
+    ) -> ApiKeyCreated:
+        """Mint a key. Raises `ApiKeyLimitError` when the workspace already
+        holds `max_active` live keys (checked in the same transaction)."""
+        ...
+
+    async def authenticate(self, secret: str) -> Optional[ApiKey]:
+        """The live key this secret belongs to, or None. Records
+        `last_used_at`, at most once a minute per key."""
+        ...
+
+    async def list_for_workspace(self, workspace_id: str) -> list[ApiKey]: ...
+
+    async def revoke(self, workspace_id: str, key_id: str) -> bool:
+        """True when a live key in that workspace was revoked."""
+        ...
+
+    async def close(self) -> None: ...
+
+
+class IdentityProviderUsers(Protocol):
+    """Whether the identity provider still has a user for a subject.
+
+    An access token outlives its user: after `DELETE /api/me` it still
+    verifies for up to an hour. Without this check that token would re-create
+    the account on its next request and could mint an API key bound to a
+    subject nobody can sign in as again, so nobody could ever list or revoke
+    it. Asked only where rows would be created (first sight of a subject,
+    key creation), never on ordinary reads.
+
+    Stores with no identity provider to ask (SQLite, in-memory) answer True."""
+
+    async def exists(self, external_id: str) -> bool: ...
+
+
+class AccountDeleter(Protocol):
+    """Account deletion as a 30-day hold (docs/backend/saved-history.md;
+    owner decision 2026-11-14). `DELETE /api/me` only schedules it: the rows
+    and the identity-provider user stay, hidden, so the person can sign in
+    again and restore. The cleanup job later removes them for good: the
+    identity-provider user first, then every row, so a failure between the
+    two is retried from the still-present account row.
+
+    `enabled` matches the account directory's: False on a deployment with no
+    account store, where there is nothing to delete."""
+
+    @property
+    def enabled(self) -> bool: ...
+
+    async def schedule_deletion(self, external_id: str, *, now: datetime, purge_at: datetime) -> Optional[datetime]:
+        """Put the account in the hold. Returns the purge time in effect (an
+        account already in the hold keeps its first one), or None when there
+        is no such account."""
+        ...
+
+    async def restore(self, external_id: str, *, now: datetime) -> Optional[bool]:
+        """Lift the hold. True when this call lifted it, False when the
+        account was not in the hold, None when the hold has already ended
+        (`purge_at <= now`: too late) or there is no such account."""
+        ...
+
+    async def due_for_purge(self, now: datetime, *, limit: int) -> list[PendingAccountPurge]:
+        """Accounts whose hold ended, oldest first."""
+        ...
+
+    async def delete_account(self, external_id: str, *, due_before: Optional[datetime] = None) -> bool:
+        """Delete the account for this identity-provider subject with every
+        row it owns (workspaces, memberships, API keys, counters, billing,
+        saved runs), in one transaction. With `due_before`, only an account
+        whose hold ended by then (a restore that won the race is left
+        alone). False when nothing was deleted."""
+        ...
+
+    async def delete_identity(self, external_id: str) -> bool:
+        """Delete the identity-provider user. False when this store has no
+        provider to delete from (SQLite, in-memory) and the step was skipped;
+        raises when the provider refused."""
+        ...
+
+
+class SavedRunRepository(Protocol):
+    """Paid accounts' saved runs (`saved_runs`) and each account's
+    post-cancel expiry (`accounts.saved_runs_expire_at`). Every read and
+    write is scoped by `account_id`: one account can never see or touch
+    another's rows. `enabled` is False without a database (and in
+    distributed mode without one): nothing is saved, lists are empty."""
+
+    @property
+    def enabled(self) -> bool: ...
+
+    async def save(self, run: SavedRun) -> bool:
+        """Insert once per (account, run id). False when it was already saved
+        (a retry or a duplicate completion): never a second row."""
+        ...
+
+    async def list_page(
+        self, account_id: str, *, limit: int, before: Optional[SavedRunCursor] = None
+    ) -> SavedRunPage:
+        """Newest first, light fields only (`SavedRunSummary`)."""
+        ...
+
+    async def get(self, account_id: str, run_id: str) -> Optional[SavedRun]: ...
+
+    async def delete(self, account_id: str, run_id: str) -> bool: ...
+
+    async def delete_all(self, account_id: str) -> int: ...
+
+    async def expiry(self, account_id: str) -> Optional[datetime]: ...
+
+    async def arm_expiry(self, account_id: str, expire_at: datetime, *, replace: bool = False) -> Optional[datetime]:
+        """Set the post-cancel expiry if none is set (or always, `replace`).
+        Returns the expiry in effect."""
+        ...
+
+    async def clear_expiry(self, account_id: str) -> None: ...
+
+    async def accounts_to_arm(self, now: datetime, *, limit: int) -> list[str]:
+        """Accounts with saved runs, no expiry, not in the deletion hold, and
+        no billing row granting the paid plan now (candidates; the caller
+        applies `subscription_has_ended`)."""
+        ...
+
+    async def expired_accounts(self, now: datetime, *, limit: int) -> list[str]:
+        """Accounts whose expiry has passed and that are not in the deletion
+        hold (a held account's saved runs wait for the restore or the purge)."""
+        ...
+
+    async def purge_expired(self, account_id: str, now: datetime) -> int:
+        """Remove the account's saved runs and its expiry, only if the expiry
+        is still set and has passed (a resubscribe that cleared it wins).
+        Returns how many runs were removed."""
+        ...
 
 
 class CapabilityProbe(Protocol):
@@ -249,3 +563,149 @@ class ReleaseCatalog(Protocol):
     """
 
     async def fetch(self) -> ReleaseIndex: ...
+
+
+class BillingGateway(Protocol):
+    """The payment provider (Stripe). Every call is a network call; the
+    application never sees a Stripe object, only the domain records.
+    `enabled` is False when a required setting is blank, and every other
+    method then raises `BillingNotConfiguredError`."""
+
+    @property
+    def enabled(self) -> bool: ...
+
+    @property
+    def yearly_available(self) -> bool: ...
+
+    async def create_customer(self, account_id: str, email: str | None) -> str:
+        """A new customer id. Idempotent per account for a day (Stripe
+        idempotency key), so two racing checkouts make one customer."""
+        ...
+
+    async def create_checkout_session(self, *, customer_id: str, account_id: str, interval: str) -> str:
+        """The hosted Checkout URL for the plan at `interval`. The session
+        expires after a short, fixed time (not Stripe's 24-hour default)."""
+        ...
+
+    async def expire_open_checkout_sessions(self, customer_id: str) -> int:
+        """Expire every open Checkout Session of this customer, so only the
+        one about to be created can still be paid. How many it expired."""
+        ...
+
+    async def live_subscription_ids(self, customer_id: str) -> list[str]:
+        """Every subscription of this customer that has not ended (whatever
+        the stored row says)."""
+        ...
+
+    async def create_portal_session(self, customer_id: str) -> str: ...
+
+    async def prices(self) -> BillingPrices:
+        """Cached; never raises (an unreadable price is None)."""
+        ...
+
+    def parse_webhook(self, payload: bytes, signature: str) -> BillingWebhookEvent:
+        """Verify the signature and reduce the event. Raises
+        `WebhookSignatureError` when it does not verify. No network."""
+        ...
+
+    async def get_subscription(self, subscription_id: str) -> SubscriptionSnapshot: ...
+
+    async def cancel_subscription(self, subscription_id: str) -> None:
+        """Cancel now, no proration credit, outstanding usage invoiced now.
+        An already-cancelled subscription is not an error."""
+        ...
+
+    async def cancel_duplicate_subscription(self, subscription_id: str) -> None:
+        """Cancel now a second subscription of a customer who already pays
+        through another: unused time credited (proration), no final invoice
+        (its metered usage is the kept subscription's). An already-cancelled
+        subscription is not an error."""
+        ...
+
+    async def report_extra_run(self, charge: ExtraRunCharge) -> None:
+        """One meter event (value 1) with the run id as its identifier, so a
+        resend inside Stripe's dedup window cannot bill twice."""
+        ...
+
+
+class BillingAccounts(Protocol):
+    """Which Stripe customer and subscription belong to which account
+    (`billing_accounts`, or memory locally), plus webhook idempotency."""
+
+    @property
+    def enabled(self) -> bool: ...
+
+    async def get(self, account_id: str) -> Optional[BillingAccount]: ...
+
+    async def by_customer(self, customer_id: str) -> Optional[BillingAccount]: ...
+
+    async def link_customer(self, account_id: str, customer_id: str) -> BillingAccount:
+        """Record the account's customer, unless it already has one: the
+        stored one wins and is returned."""
+        ...
+
+    async def apply_subscription(self, account_id: str, snapshot: SubscriptionSnapshot) -> bool:
+        """Store the subscription's state on the account. False (nothing
+        written) when the account has no billing row, or holds a different
+        live subscription and this one is not live."""
+        ...
+
+    async def event_seen(self, event_id: str) -> bool: ...
+
+    async def mark_event(self, event_id: str, event_type: str) -> None:
+        """Record a processed event (idempotent)."""
+        ...
+
+    async def close(self) -> None: ...
+
+
+class ExtraRunLedger(Protocol):
+    """Runs a paid account started past its included runs, from admission
+    to the Stripe report. States: held (admitted) -> due (completed) ->
+    reported; held -> void (failed, refunded, rejected). Only `due` rows are
+    ever reported, and each transition happens at most once."""
+
+    async def hold(self, run_id: str, *, account_id: str, customer_id: str, period: str, cap: int = 0) -> bool:
+        """A held row for this run. With `cap` > 0 only while the account
+        has fewer than `cap` rows not voided this period, checked and
+        written atomically (concurrent admissions at the cap cannot all
+        pass). False, nothing written, when the cap is reached."""
+        ...
+
+    async def count(self, account_id: str, period: str) -> int:
+        """Extra runs not voided this period (the monthly safety cap)."""
+        ...
+
+    async def complete(self, run_id: str) -> Optional[ExtraRunCharge]:
+        """held -> due. The charge when this call moved it, else None (not
+        an extra run, or already settled)."""
+        ...
+
+    async def void(self, run_id: str) -> bool:
+        """held -> void. True when this call voided it."""
+        ...
+
+    async def due(self, *, limit: int = 50, account_id: str | None = None) -> list[ExtraRunCharge]:
+        """Due rows still young enough for Stripe's meter, oldest first;
+        only this account's when `account_id` is given."""
+        ...
+
+    async def held(self, *, before: datetime, limit: int = 100) -> list[HeldExtraRun]:
+        """Rows still held that were admitted before `before`, oldest first."""
+        ...
+
+    async def expire_due(self, *, limit: int = 100) -> list[ExtraRunCharge]:
+        """due -> void for rows too old for Stripe's meter to accept; the
+        rows this call moved."""
+        ...
+
+    async def mark_reported(self, run_id: str) -> None: ...
+
+
+class SchemaRevisionReader(Protocol):
+    """Reads the revision Alembic recorded in the database
+    (`alembic_version`), without comparing it with anything. Only consulted
+    when a database is configured. Never raises: a failed query is a
+    reading with `reachable=False`."""
+
+    async def read(self) -> SchemaReading: ...

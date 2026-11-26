@@ -48,21 +48,30 @@ function find(report: CapabilityReport | null, name: string): Capability | null 
 
 export function useCapabilities() {
   const [report, setReport] = useState<CapabilityReport | null>(null);
+  /* The first read has answered, success or failure (2026-11-14). The
+     Account panel shows "Loading" until then instead of the "sign-in is not
+     available" card, which used to flash on every load. */
+  const [settled, setSettled] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     let have = false;
     let pending = false;
+    /* Every report that arrives, this hook's own read or a re-read the
+       transport asked for while sign-in was unconfirmed (2026-11-21), so a
+       recovered `auth` row shows here without a reload. */
+    const stopListening = capabilitiesGateway.subscribe((next) => {
+      noteReadResult("capabilities");
+      have = true;
+      if (cancelled) return;
+      setReport(next);
+      setSettled(true);
+    });
     const load = () => {
       if (have || pending) return;
       pending = true;
       capabilitiesGateway
         .fetchReport()
-        .then((next) => {
-          noteReadResult("capabilities");
-          have = true;
-          if (!cancelled) setReport(next);
-        })
         .catch((err: unknown) => {
           /* Still silent here — see (1) above. What it does report is
              whether the server could be reached at all, which Analyze says
@@ -71,6 +80,7 @@ export function useCapabilities() {
         })
         .finally(() => {
           pending = false;
+          if (!cancelled) setSettled(true);
         });
     };
     load();
@@ -80,12 +90,15 @@ export function useCapabilities() {
     return () => {
       cancelled = true;
       stop();
+      stopListening();
     };
   }, []);
 
   return {
     /** The whole report, or `null` when it has not arrived or never will. */
     report,
+    /** The first read has answered (a failure counts). */
+    settled,
     /** The report *only when it is worth surfacing*. `null` covers healthy,
      *  not-yet-loaded and never-loaded alike, so a component can render this
      *  without re-deciding what counts as a problem. */
@@ -95,5 +108,12 @@ export function useCapabilities() {
     /** Wired to the API-key panel: unavailable here means the shared budget is
      *  spent and a bring-your-own key is the way through. */
     dailyBudget: find(report, "daily_budget"),
+    /** Wired to the Account tab (auth phase 2): the tab shows only when this
+     *  is `ok`, meaning the server verifies sign-in tokens. */
+    auth: find(report, "auth"),
+    /** Wired to the Account tab's Plan group (2026-11-13): drawn only when
+     *  this is `ok` and `GET /api/billing` says enabled. Missing (a server
+     *  without billing) means no Plan group and no billing request. */
+    billing: find(report, "billing"),
   };
 }

@@ -101,7 +101,7 @@ Source of truth: `design/shots/HistoryA.png`, `HistoryADark.png`,
 `HistoryMobile.png` (installed app), `HistoryWeb.png` (phone browser).
 
 - **Header**: `h1.history-title` "History" in Newsreader (36→48px; shares the `.view-title` rule with API key, Releases and the legal pages since Phase 4), lede
-  "Your recent analyses. Open one to read its notes again."
+  "Your last {HISTORY_LIMIT} runs, saved in this browser. Not synced." (since 2026-11-14, UX fix spec batch d)
 - **Controls** (populated state only): filter pills All / Instagram / TikTok /
   YouTube / Files (`button[aria-pressed]` in a `role="group"`; active = filled
   ink pill), search (`input[type=search].field.field-pill`, matches title +
@@ -111,15 +111,9 @@ Source of truth: `design/shots/HistoryA.png`, `HistoryADark.png`,
   row, then the pill row, which scrolls sideways and bleeds off the right
   edge; **sort is hidden** (`HistoryWeb.png`, `HistoryMobile.png`). A visually hidden polite
   status announces "N runs shown" only once something has narrowed the list.
-- **Sort hidden ⇒ Newest.** `HistoryGrid` reads
-  `useMediaQuery("(min-width: 48rem)")` (`components/useMediaQuery.ts`, a
-  `useSyncExternalStore` wrapper — no set-state-in-effect) and orders by
-  `sortVisible ? sort : "newest"`. The CSS breakpoint that hides
-  `.history-sort` is the same 48rem, so the list can never be ordered by a
-  control the user cannot see. The desktop choice is kept in state, not reset:
-  narrow to a phone width and back, and "Oldest" returns (verified 1366 →
-  390 → 1366). The server snapshot is `false` (Newest), which is also the
-  default, so the static export hydrates without a mismatch.
+- **Sort hidden ⇒ Newest** (superseded by "Sort on every width" below):
+  sort is now drawn on every width and `HistoryGrid` orders by the `sort`
+  state directly, with no width check.
 - **Groups**: `h2.history-group-label` eyebrows TODAY / EARLIER THIS WEEK /
   EARLIER (+ UNDATED for an unparseable `created_at`, always last). "This
   week" = the previous six calendar days, the window where a bare weekday
@@ -287,8 +281,7 @@ different controls by rotation. `.history-sort` is no longer `display: none`
 below 48rem: the phone grid is `minmax(0, 1fr) auto` with areas
 `search sort / filters filters`, so the select shares the search row and no
 row is added. `HistoryGrid` dropped the `useMediaQuery` gate and orders by the
-`sort` state directly (`components/useMediaQuery.ts` is now unused; left in
-place). Measured with four seeded IndexedDB runs (today, 1, 3, 10 days ago) at
+`sort` state directly (the `useMediaQuery` hook was later deleted). Measured with four seeded IndexedDB runs (today, 1, 3, 10 days ago) at
 360x640, 390x844 light/dark, 844x390 dark, 1280x800: Newest = Alpha, Bravo,
 Charlie, Delta with groups Today / Earlier this week / Earlier; Oldest =
 reversed, groups reversed; YouTube + Oldest = Alpha only; no page or section
@@ -361,6 +354,198 @@ rule the same emulation clips at 360/2.0 and is 1.4px from clipping at
 320/1.3. The exact device case (sort beside a clipped field at 1.5) did not
 reproduce in desktop Chromium, so it needs a device recheck.
 
+## Back to History (UX fix spec, 2026-11-14)
+
+`HomeScreen` keeps `fromHistory`: true in `handleOpenRun`, false in
+`startOver`, `analyzeAgain` and every new submit (`submitFresh` wraps
+`submit`). The shared-link reset does not clear it: that effect returns to the
+intake, where the flag shows nothing, and the next submit clears it (a
+setter in that effect would be a new lint finding). While true, the result view and the expired
+view offer "Back to History", which is `goToMainTab("history")`.
+
+## UX fix spec, batch d (2026-11-14)
+
+- Lede: "Your last 20 runs, saved in this browser. Not synced." (`HISTORY_LIMIT`), on every state.
+- The empty state and the storage state's "Analyze a video" is the filled `btn btn-primary` (the one way forward); "Show all runs" and the read-failure "Try again" stay outline.
+- Measured: below the lede the populated grid is unchanged at 320, 412 and 1280 (every control, label and poster at the same offset from the lede's bottom); at 412 the lede is now one line, so the grid starts 24px higher.
+
+## Paid saved history (2026-11-14)
+
+While the signed-in account saves its runs (`saving`) or its plan ended and
+they are kept until a date (`window`), this page lists the account's runs
+instead, a page at a time with "Load more runs", and moves what only this
+browser has into a quieter "Only in this browser" group. Filters, search and
+sort are not drawn there. Every other case (anonymous, free, an older
+backend, sign-in or billing off) is this page exactly as described above.
+The whole design is in `saved-history.md`.
+
+## Leaving this device (review fix, 2026-11-20)
+
+A run made signed in used to stay in this browser's History after sign-out,
+so a borrowed device kept someone's results. Now:
+
+- **What goes, and when.** Whenever this device ends up signed out, every
+  row whose `owner` is `user:<id>` (any id) is removed: an explicit Sign
+  out, account deletion (which signs out), "Continue signed out" on an
+  unconfirmed session, "Sign out everywhere", and a sign-out seen from
+  another tab or ended by the provider (`useHistoryBoot` sees the user go to
+  null with no session stored). Rows owned `anonymous`, and rows with no
+  owner (written before accounts existed), stay: they were never an
+  account's. "Any id" rather than "the one who just left" because nobody is
+  signed in here afterwards, a stuck session may not know its id, and it
+  also sweeps rows an older build left behind. The first settle of a load
+  with nobody signed in and no session stored runs the same sweep. A session
+  that is stored but could not be recovered (an outage) is **not** a
+  sign-out and removes nothing.
+- **Consequence worth knowing.** A free signed-in person's own runs leave
+  this device's History when they sign out (they exist nowhere else); a
+  Plus person's saved copies stay on the account. The Account page's "On
+  this device" note and the Privacy page say so.
+- **Mechanics.** `historySync.forgetAccountHistory()` waits for an identity
+  import in flight, records the ids it is about to remove in an in-memory
+  `forgotten` set (so a poll or import already in flight cannot file the row
+  again during this page load), then calls
+  `HistoryStore.removeOwnedBy(owner => owner.startsWith("user:"))`.
+  `useAuthSession.signOut()` runs the provider sign-out and this side by
+  side and awaits both (`Promise.allSettled`): the removal is local and runs
+  even when the provider's network call fails. A sign-out in another tab is
+  covered twice: that tab's removal broadcasts on `videolens-history`, and
+  this tab's own `useHistoryBoot` runs the sweep.
+- **Remove from this device.** Every browser-only History card (the plain
+  grid, and the "Only in this browser" group on the saved view) has a cross
+  button, aria "Remove {title} from this device", in the `poster-delete`
+  slot saved cards use for their bin. It opens `ConfirmDialog`: title
+  "Remove from this device?", confirm "Remove from this device", busy
+  "Removing…", body "“{title}” is removed from this browser’s
+  History. Nothing saved anywhere else changes." (on the saved view: "Runs
+  saved to your account are not touched."). A failure says "That run could
+  not be removed from this browser. Nothing changed." The saved card keeps
+  its bin and "Delete from your account"; the cross never appears on it.
+- **Port.** `HistoryStore.remove(runId)` and `removeOwnedBy(match)` resolve
+  (a no-op, 0) when IndexedDB is missing or blocked; a real transaction error
+  still rejects. Both notify and broadcast. Cap and ordering are unchanged.
+- **Owner from the request.** `recordSubmitted` and the server import now
+  take the owner the request itself went out as (`ApiClient.sendAs`,
+  `AsOwner<...>` from `RunsGateway`), not `callerIdentity.lastOwner()`,
+  which another request may have moved on since.
+
+## Re-review fixes (2026-11-20): nothing outlives the sweep
+
+The sign-out sweep (`forgetAccountHistory`) removes an account's rows, but
+answers still on the network, and other tabs, used to write them back with
+`upsert`, sometimes with no owner, which no later sweep could remove. Now
+there are two kinds of History write (`application/historySync.ts`):
+
+- **Create** (`HistoryStore.upsert`): only a run's first filing, on submit
+  (`recordSubmitted`) and when an import meets a run this browser has no
+  row for. It always carries an owner. An account's row (`user:<id>`) is
+  created only while that same account is signed in on this device, read
+  right before the write (`mayCreate`). A null owner is never created.
+- **Update** (`HistoryStore.update`, new on the port): every later write
+  (`recordRunResponse` from any tab, `recordExpired`/`recordGone`, the
+  `reconcileUnfinished` refresh, the import's detail fetch). It merges into
+  a row that is still there and never creates one. The check and the write
+  share one IndexedDB readwrite transaction, so a row the sweep removed,
+  in this tab or another, stays removed.
+
+Cross-tab: `AuthSession` now listens for the `storage` event, so a sign-out
+in another tab clears this tab's session in memory too. That tab's
+`mayCreate` then refuses its own late creates, and its `useHistoryBoot`
+runs its own sweep. `signOut()` sweeps twice: at once, and again once the
+provider's sign-out has settled, for a submit filed in between.
+
+Remaining gap: the "Remove from this device" tombstones (`forgotten`) are
+per tab. Another tab still open on History can re-import a run the person
+removed here, while the server still holds it (up to an hour, or for as
+long as it is saved on Plus).
+
+`forgetRun` now clears its tombstone and rethrows when the removal fails,
+so the row keeps updating and the dialog shows the failure.
+
+On Plus, a run saved to the account is drawn as its saved card, so this
+browser's own copy had no control of its own. The saved view's foot now has
+"Remove this browser's copies" (shown only when such copies exist). It opens
+a confirm dialog ("Remove this browser's copies?", confirm "Remove from this
+device") and removes only the local copies; the saved runs stay. A partial
+failure says "Some copies could not be removed from this browser. The ones
+still here are unchanged; try again."
+
+## Second re-review fixes (2026-11-21)
+
+- **A failed submit create is retried by its own tab.** When
+  `recordSubmitted`'s `upsert` rejects (quota, a transient IndexedDB error),
+  the patch is kept in memory in that tab only (`unfiledCreates`). The next
+  status that tab observes (`recordRunResponse`) creates the row, merged
+  with that status, as the owner it was submitted as and only if
+  `mayCreate` still allows it; a sign-out since drops it for good, and a
+  run removed in this tab (`forgotten`) is skipped. Every other follow-up
+  write stays update-only. Residual, narrow: if another tab imported the
+  same run in the seconds between the failed create and this tab's next
+  poll, and the person removed it there, this tab's retry would file it
+  again.
+- **"Remove this browser's copies" covers the saved runs listed.** A local
+  row whose saved run is on a page not loaded yet cannot be told, from the
+  row alone, from a run made before Plus (nothing on the row says it was
+  saved), so removing it would risk deleting a run kept nowhere else. The
+  control keeps covering copies of the loaded saved runs; Load more extends
+  it. Privacy now says "this browser's copies of the saved runs listed
+  there, all at once".
+- `ANONYMOUS_OWNER` moved to `domain/entities.ts` (was
+  `infrastructure/apiClient.ts`), so `historySync` no longer imports an
+  adapter module.
+
+## Sign-out hides, it does not delete (owner decision, 2026-11-21)
+
+Replaces "Leaving this device" and the sweep parts of the two 2026-11-20
+sections above. Free accounts have no server copy, so removing their rows
+at sign-out lost those runs for good.
+
+- **Nothing stored changes at sign-out.** Every path (Sign out, "Continue
+  signed out", "Sign out everywhere", another tab via `storage`, a failed
+  refresh, a different account signing in) leaves the rows in IndexedDB with
+  their `owner`. `forgetAccountHistory` and both its callers in
+  `useHistoryBoot` and the double sweep in `signOut()` are gone.
+- **Who sees what** (`isVisibleOwner(owner, viewer)` in
+  `domain/entities.ts`; `historyViewer()` / `isVisibleNow()` in
+  `historySync.ts`). `viewer` is `user:<id>` of the account signed in here,
+  or null (also while a stored session is unconfirmed). Rows owned
+  `anonymous`, and legacy rows with no owner, are visible to everyone, as
+  before (they were never swept either); `user:<id>` rows only to that
+  account. Signed out: anonymous + legacy. Account B: those plus B's, never
+  A's.
+- **List.** `useRunHistory` filters by viewer, keeps the newest
+  `HISTORY_LIMIT`, and re-reads when the viewer changes (an
+  `authSession.subscribe` that skips token refreshes). Counts, filters,
+  search and the Plus "Remove this browser's copies" all read this list, so
+  they see only visible rows. Per-row Remove and copies removal work as
+  before, on the signed-in account's own rows.
+- **Open.** `openRun` resets Analyze to the intake, fetching and writing
+  nothing, when History's record is hidden from the viewer (stale list, a
+  resumed tab after a sign-out elsewhere).
+- **Writes.** Creates are unchanged (`mayCreate`: anonymous, or the account
+  signed in now). Every update goes through `updateVisible`, i.e.
+  `HistoryStore.update(patch, when)` with `when` checked inside the write's
+  transaction: a late poll, reconcile, import detail or expiry for a hidden
+  row writes nothing. No write sets or changes `owner` except an import
+  claiming a legacy row, as before. The boot reconcile waits for
+  `authSession.load()` and asks only about visible rows.
+- **Coming back.** When an account signs in, `importServerRuns` imports what
+  the server holds for it and then reconciles that account's own
+  still-unfinished rows (hidden while it was away, so never updated).
+- **Cap.** Per viewer (`historyStore.write`): the cap counts the rows the
+  written row's owner can see and drops the oldest of those, so another
+  person's runs never push a hidden account's runs out. Total storage is up
+  to 20 visible rows per viewer.
+- **Removal happens only when the account cannot come back here.**
+  `signOutAndForgetRuns()` (`useAuthSession.ts`) removes `user:<id>` rows of
+  the account signed in now (`forgetAccountRuns`, `removeOwnedBy` with an
+  exact match), twice like the old sweep. Used by account deletion and by
+  Sign out on the held card once the restore window has closed. Held but
+  restorable: plain sign-out (it can be restored). Residual: an account
+  deleted from another device, or purged later, leaves its rows hidden here
+  until the site data is cleared; copy tells people on a shared computer to
+  remove runs under History while signed in.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported HistoryPanel to day-grouped rows with status dots; fixed duplicate React keys on non-adjacent "Undated" groups
@@ -376,3 +561,12 @@ reproduce in desktop Chromium, so it needs a device recheck.
 - 2026-11-02 · frontend agent (refinement 9) · platform chip uses the shared domain/platforms.ts names; link runs that failed before metadata show a platform from the URL host and a title like "Instagram link" or the host
 - 2026-11-02 · frontend agent (refinement 11) · History placeholder "Search runs"; phone toolbar wraps the sort under the search when large text leaves no room (device QA)
 - 2026-11-02 · frontend agent (refinement 12) · search field floor is now `calc(12ch + 2rem)` (the placeholder's own width) instead of 8.5rem, so the sort wraps under the field before "Search runs" can clip at large text (device QA, 320 / font scale 1.5)
+- 2026-11-14 · frontend agent · storage-blocked body: "This browser isn't letting VideoLens save anything, which private browsing often does. You can still analyze videos; their results just won't be kept here afterwards." (UX fix spec batch a)
+- 2026-11-14 · frontend agent · UX fix spec batch c: "Back to History" on a result or expired run opened from History (`fromHistory` in HomeScreen)
+- 2026-11-14 · frontend agent · UX fix spec batch d: lede names the limit and this browser; empty and storage states get the filled "Analyze a video"
+- 2026-11-14 · frontend agent · UX fix spec follow-up: the shared-link effect no longer clears `fromHistory` (lint: setter used before its declaration); the next submit clears it
+2026-11-14 · frontend agent · paid saved history: while the account saves runs (or the plan ended) History lists the account's runs with Load more, browser-only runs in a quieter second group, no filters/search/sort; free and anonymous unchanged (see saved-history.md)
+- 2026-11-20 · Claude (frontend agent) · History: account-owned rows (`owner` `user:*`) leave this device on every sign-out path; anonymous and legacy rows stay; "Remove from this device" on browser-only cards; `HistoryStore.remove`/`removeOwnedBy`; owner taken from the request (`sendAs`); stale useMediaQuery reference marked superseded
+- 2026-11-20 · Claude (frontend agent) · update-only follow-up writes (`HistoryStore.update`), creates only for the signed-in account (`mayCreate`), cross-tab sign-out heard via `storage`, double sweep on sign-out, `forgetRun` failure clears the tombstone, Plus "Remove this browser's copies"; remaining gap: per-tab tombstones
+- 2026-11-21 · Claude (frontend agent) · submitting tab retries its own failed create (in-memory `unfiledCreates`, `mayCreate`-checked); copies removal scope stated (listed saved runs) and Privacy softened; `ANONYMOUS_OWNER` moved to domain
+- 2026-11-21 · Claude (frontend agent) · sign-out hides account rows instead of deleting them (viewer filter on list and open, guarded updates, per-viewer cap, reconcile on sign-in); only account deletion and a closed-hold sign-out remove that account's rows

@@ -16,11 +16,14 @@ Every new feature or component should get (or update) a doc here. Scope is stric
 | `media-validation.md` | FFmpeg validation, the resolver chain, yt-dlp, the SSRF guard, cookies |
 | `gemini-analysis.md` | The Gemini engine: prompts, structured output, retries, fallback model, caption-only analysis, source context |
 | `job-queue.md` | arq vs the in-process runner |
+| `startup-checks.md` | What the API and the worker check at startup, the `alembic_version` check, worker logging and shutdown |
 | `object-storage.md` | S3-compatible temporary storage |
 | `cost-abuse-protection.md` | Rate limit, daily cap, BYOK asymmetry, `Retry-After` |
 | `free-runs.md` | The per-device daily free-run allowance: device tokens, `GET /api/free-runs`, the 401/402 codes, refunds, how easy it is to bypass |
 | `byok.md` | Bring-your-own-key and the single-use key vault |
-| `auth.md` | `get_principal`, OIDC bearer tokens, `X-Client-ID` |
+| `billing.md` | The paid plan: Stripe Checkout/Portal, `/api/billing*`, the webhook, paid admission and extra runs (billed once, on success), migration 0004, the owner's Stripe setup |
+| `saved-history.md` | A paid account's results saved on the server (`/api/history*`), the 30-day post-cancel window, the 30-day account deletion hold with `POST /api/me/restore`, the hourly cleanup cron, migration 0006 |
+| `auth.md` | Caller identity (API key, Supabase bearer token, `X-Client-ID`), accounts and workspaces, API keys, `/api/me`, `/api/keys`, the identity database and its migration |
 | `cors.md` | `ALLOWED_ORIGINS` and the native WebView origins |
 | `capabilities.md` | `GET /api/capabilities` and the probes |
 | `releases.md` | `GET /api/releases`, read from GitHub server-side |
@@ -40,8 +43,11 @@ Every new feature or component should get (or update) a doc here. Scope is stric
 | `results-view.md` | The finished result: notes, transcript, screen text, export |
 | `run-analysis-hook.md` | `useAnalysisRun`: submit/poll/open/reset, the active-run store |
 | `run-history.md` | History in IndexedDB, the poster grid, filters and sort |
+| `saved-history.md` | Paid saved history (the account's runs on History, load more, delete, opening a saved run) and the 30-day account deletion hold (held state, restore) |
 | `free-runs.md` | The client half of free runs: device token, banner, 401 retry and 402 handling |
 | `byok-api-key.md` | The API key tab |
+| `auth-sign-in.md` | Optional sign-in (emailed code), the Account tab, VideoLens API keys, the bearer on every request |
+| `billing.md` | The paid plan's client half: `/api/billing`, the Account Plan group, Stripe Checkout/Portal by redirect (system browser in the app), checkout return, paid strip and limits, the CSP finding, the legal drafts |
 | `capability-reporting.md` | The capability notice and callouts |
 | `release-notes.md` | The Releases tab |
 | `android-update-check.md` | The native update check and `UpdatePrompt` |
@@ -49,6 +55,7 @@ Every new feature or component should get (or update) a doc here. Scope is stric
 | `legal-offline-routes.md` | `/privacy`, `/terms`, `/offline` |
 | `web-manifest.md` | `manifest.ts` |
 | `security-headers.md` | The CSP (web header, hash-based meta in both builds), the other security headers, Android backup rules |
+| `seo-and-discovery.md` | Per-page metadata, canonicals, sitemap.xml, robots.txt, the social preview image, favicon.ico, the noindex switch, and the 2026-11-12 launch-checklist audit |
 
 ### Cross-cutting
 
@@ -69,6 +76,11 @@ Every new feature or component should get (or update) a doc here. Scope is stric
 - `images/` — the README screenshots. Regenerate with
   `scripts/readme-screenshots.js` (mocked API, fixture data) after a visual
   change, so the README never shows a design the app no longer has.
+- `auth-plan.md` — the design for Supabase-backed sign-in, API keys for
+  agents, and the authorization seam the paid tier will use. A plan, not a
+  reference: phase 1 (backend identity) is implemented, and its reference is
+  `backend/auth.md`. Read before touching
+  `backend/auth.md` or starting any account work.
 - `engineering-standards.md` — cross-cutting, not a per-feature reference. A
   repo-wide engineering-hygiene register audited 2026-08-15, with resolution
   notes where work has landed. Also records the decision to keep the MCP
@@ -116,3 +128,10 @@ someone else's entry.
 - 2026-11-07 · main session · replaced the quick-links sections with a full index of every backend and frontend doc
 - 2026-11-07 · frontend agent · indexed `frontend/security-headers.md`
 - 2026-11-07 · main session · added `images/` (README screenshots) and the script that regenerates them; indexed both `security-headers.md` docs
+- 2026-11-07 · main session · indexed `auth-plan.md`
+- 2026-11-08 · backend subagent (auth phase 1) · widened the `auth.md` row to cover accounts, API keys and the identity database
+- 2026-11-08 · frontend subagent (auth phase 2) · indexed `frontend/auth-sign-in.md`
+- 2026-11-13 · backend agent · indexed `backend/billing.md`
+- 2026-11-14 · backend agent · indexed `backend/saved-history.md`
+2026-11-14 · frontend agent · indexed `frontend/saved-history.md`
+- 2026-11-20 · Claude (backend agent) · indexed `backend/startup-checks.md`

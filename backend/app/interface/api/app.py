@@ -12,10 +12,12 @@ from starlette.requests import Request
 from ...container import container
 from ...domain.errors import RateLimitedError
 from ...infrastructure.logging_config import configure_logging
+from .body_limit import BodySizeLimitMiddleware
 from .error_handlers import register_error_handlers, retry_after_headers
 from .rate_limiter import limiter, retry_after_seconds
 from .routes import router
 from .security_headers import SecurityHeadersMiddleware
+from ..startup import API, validate_startup
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -23,22 +25,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    container.media.validate_tools()
-    # Creates the directory too, so this replaces the bare `os.makedirs` that
-    # used to run at import. That call is what made a bad TEMP_DIR invisible:
-    # it succeeded on any string Linux accepts as a directory name.
-    container.media.validate_temp_dir()
-    settings = container.settings
-    container.device_tokens.validate_configuration()
-    if settings.queue_enabled:
-        await container.run_repository.ping()
-        if not container.object_store.enabled:
-            raise RuntimeError("S3-compatible object storage is required when Redis queueing is enabled.")
-        origin_error = settings.distributed_origin_error()
-        if origin_error:
-            # Refused, not warned: a deployed API with a CORS wildcard is open
-            # to every website, and a warning in a platform log reaches nobody.
-            raise RuntimeError(origin_error)
+    await validate_startup(container, API)
     try:
         yield
     finally:
@@ -65,11 +52,25 @@ app = FastAPI(title="VideoLens AI", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limited)
 app.add_middleware(SlowAPIMiddleware)
+# Inside CORS (added before it), so a 413 carries the CORS headers the
+# frontend needs to read it; outside everything that reads the body.
+app.add_middleware(BodySizeLimitMiddleware, upload_max_bytes=container.entitlements.largest_file_size_bytes)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=container.settings.allowed_origin_list,
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Client-ID", "X-Gemini-Api-Key", "X-Device-Token"],
+    # DELETE for `DELETE /api/keys/{id}` and `DELETE /api/me`.
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    # Listed explicitly, never "*": `Authorization` (a Supabase session token
+    # or a `vl_live_` key) and `X-Api-Key` are credentials, and a wildcard
+    # would not cover `Authorization` under the CORS spec anyway.
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "X-Api-Key",
+        "X-Client-ID",
+        "X-Gemini-Api-Key",
+        "X-Device-Token",
+    ],
     # Not a CORS-safelisted response header: without this a cross-origin
     # fetch (the web app and the Android WebView both are) reads it as null.
     expose_headers=["Retry-After"],

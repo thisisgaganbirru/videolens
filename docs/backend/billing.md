@@ -1,0 +1,648 @@
+# Billing: the paid plan (Stripe)
+
+User-facing name: the paid plan is called **Plus** everywhere a user reads it (owner, 2026-11-14). "Paid plan" / "paid tier" stays the technical term in these docs and in code, settings and API values (`plan: "paid"`, `PAID_RUNS_PER_DAY`); do not write "VideoLens Plus".
+
+One paid plan. It costs $12 a month (a yearly price is optional; the owner
+has not settled the yearly amount) and includes 30 runs a day (UTC day) on
+the shared Gemini key. Runs past those 30 in a day are billed as extra runs,
+one at a time, and only when a run completes. (Until 2026-11-14 it was 100
+runs a month, which was less than the free account's 10 a day.) A paid account also gets the bigger
+media limits (10 min / 500 MB by default) without its own key. Payment goes
+through Stripe-hosted Checkout and the Stripe Customer Portal. The server
+never sees a card and the frontend does not load Stripe.js. Amounts are
+configured in Stripe as Prices, referenced by ID in settings, and read back
+from Stripe for display. No amount is written in the code.
+
+If any required `STRIPE_*` setting is blank, billing is off. Every account
+then follows the free rules exactly as it did before billing existed, and
+the `billing` capability row reads `disabled`. The one exception is
+**complimentary Plus** (since 2026-11-14, see that section below): an
+account whose `accounts.complimentary_plus` the owner set by hand in SQL is
+on the paid plan with or without Stripe, and is never billed.
+
+History stays in the browser. Billing adds three small tables next to the
+identity tables: who is subscribed, which webhooks were handled, and which
+extra runs are owed. It stores no run content and no result.
+
+## Files
+
+| Layer | File | What |
+|---|---|---|
+| domain | `domain/entities.py` | `Price`, `BillingPrices`, `SubscriptionSnapshot`, `BillingAccount`, `BillingWebhookEvent`, `ExtraRunCharge` |
+| domain | `domain/entitlements.py` | `Plan.PAID` (metered), `MediaTier.PAID`, `MediaTier.long_job` |
+| domain | `domain/policies.py` | `subscription_grants_paid` (active/trialing plus a 3-day renewal grace), `subscription_is_live` |
+| domain | `domain/ports.py` | `BillingGateway`, `BillingAccounts`, `ExtraRunLedger`; `AccountFreeRunAllowance.status/try_consume(limit=)` |
+| domain | `domain/errors.py` | `Billing*Error` (each has a `code`), `WebhookSignatureError`, `ExtraRunsCapReachedError`, `SubscriptionCancelFailedError` |
+| domain | `domain/entities.py` | `PlanStanding` (`subscription`, `complimentary`, `paid`, `billable`), `Account.complimentary_plus` |
+| application | `application/billing.py` | `BillingPlans` (decides whether an account is paid right now: `standing`, `paid_account`, `is_complimentary`, `offered`), `ExtraRunBilling` (complete, void, flush) |
+| application | `get_billing.py`, `start_checkout.py`, `open_billing_portal.py`, `handle_billing_webhook.py` | the four endpoints |
+| application | `create_run.py` | paid admission: included runs, then an extra-run hold, the monthly safety cap, DAILY_RUN_CAP exemption |
+| application | `process_run.py`, `get_run.py` | bill on a successful `set_result`; void on every other ending (including the stale-run sweep) |
+| application | `get_free_runs.py`, `get_account.py`, `entitlements.py` | `plan`/`overage`, `Plan.PAID`, the paid media tier |
+| application | `delete_account.py` | cancels the subscription before anything is deleted |
+| infrastructure | `billing/stripe_gateway.py` | `StripeBillingGateway(settings)`: stripe-python `StripeClient`, calls run in a thread, every Stripe object reduced to a domain record |
+| infrastructure | `persistence/billing_store.py` | SQL and in-memory `BillingAccounts` / `ExtraRunLedger` |
+| infrastructure | `persistence/schema.py`, `migrations/versions/0004_billing.py` | the three tables |
+| infrastructure | `migrations/versions/0010_complimentary_plus.py`, `persistence/account_directory.py` | `accounts.complimentary_plus`, read into `Account` |
+| infrastructure | `health/probes.py` | `BillingProbe` |
+| infrastructure | `config.py` | `STRIPE_*`, `PAID_*`, `BILLING_RETURN_ORIGIN`, `billing_configured`, `distributed_billing_error()` |
+| interface | `api/routes.py`, `api/schemas.py`, `api/error_handlers.py` | the endpoints, DTOs, `{detail, code}` errors |
+| interface | `worker/settings.py` | cron `flush_extra_runs` every 10 minutes |
+| wiring | `container.py` | SQL stores with `DATABASE_URL`, in-memory without it (local only) |
+
+## API contract
+
+The frontend builds against these field names. Treat them as fixed.
+
+### `GET /api/billing`
+
+The caller must be authenticated, by a person's session or an API key. An
+anonymous caller (`X-Client-ID`) gets 401, and a request with no credential
+at all gets 400, the same as `/api/me`. With billing off, or with no
+account store, the response is exactly `{"enabled": false}`. Otherwise:
+
+```json
+{
+  "enabled": true,
+  "plan": "free" | "paid",
+  "status": "active" | "past_due" | "canceled" | ... | null,
+  "interval": "month" | "year" | null,
+  "current_period_end": "2026-12-13T00:00:00Z" | null,
+  "cancel_at_period_end": false,
+  "runs": {"limit": 30, "used": 12, "period": "day"},
+  "extra_runs": {"used": 4, "limit": 200, "period": "month", "resets_at": "2026-12-01T00:00:00Z"} | null,
+  "prices": {
+    "month": {"amount": 1200, "currency": "usd"} | null,
+    "year": {"amount": 12000, "currency": "usd"} | null,
+    "extra_run": {"amount": 15, "currency": "usd"} | null
+  }
+}
+```
+
+- `status` is Stripe's subscription status as last synced. It is `null` for
+  an account that has never subscribed.
+- `plan` is `"paid"` only when the status is active or trialing and the
+  current period (plus 3 days of grace) has not ended. `past_due`,
+  `unpaid`, `canceled` and every other status read as `"free"`.
+- `runs` is the plan's own counter for today, and `period` is always sent:
+  on the paid plan `"day"` with limit `PAID_RUNS_PER_DAY` (30; since
+  2026-11-14, it was `"month"` with `PAID_RUNS_PER_MONTH`); on the free plan
+  `"day"` with limit `FREE_RUNS_PER_ACCOUNT_DAILY`. Both read the same daily
+  row; only the limit differs.
+- `extra_runs` (since 2026-11-14) is the paid plan's billed extra runs this
+  UTC month, a sibling of `runs` because it counts over a different period
+  (the month, not the day). It is `null` on the free plan (including
+  `past_due` and the other statuses that read as free) and absent with
+  billing off. `used` is exactly what the `PAID_EXTRA_RUNS_MONTHLY_CAP`
+  check counts (`BillingPlans.extra_runs_used`, one definition for both):
+  every ledger row for this month that is not `void`, so `held` (a run past
+  the included ones still in flight), `due` (completed, report pending) and
+  `reported`. A held run that then fails is voided and drops out of `used`.
+  `limit` is the cap, or `null` when the cap is off (0). `resets_at` is
+  00:00 UTC on the first of next month, when `used` starts over. It is not
+  Stripe's invoice period: a subscription renewing on the 13th still counts
+  extra runs per calendar month. Read-only: reading it never bills.
+- `amount` is in the currency's smallest unit (cents). A price is `null`
+  when it is not configured (yearly is optional), when Stripe could not be
+  read just now, or when the Price is tiered.
+- `complimentary` (bool, since 2026-11-14) is `true` only when the account
+  is on the paid plan through complimentary Plus and not through a paying
+  subscription; hide checkout and "Manage billing" then. `false` for
+  everyone else, including a complimentary account that also has a paying
+  subscription (the subscription wins). A complimentary account gets this
+  full body even with billing off, with `enabled: false` (still "Stripe
+  billing is on here"), `plan: "paid"`, `status`/`interval`/
+  `current_period_end` null, `extra_runs` null and every price null. See
+  "Complimentary Plus".
+
+### `POST /api/billing/checkout`
+
+The body is `{"interval": "month" | "year"}`. The response is `{"url":
+"https://checkout.stripe.com/..."}`; send the browser there. Only a
+signed-in person may call it: anonymous gets 401 and an API key gets 403.
+
+| Status | Body | When |
+|---|---|---|
+| 200 | `{"url"}` | |
+| 400 | `{"detail","code":"invalid_interval"}` | `year` with no yearly price configured |
+| 409 | `{"detail","code":"already_subscribed"}` | the stored subscription is live (active, trialing, past_due, unpaid, incomplete or paused); open the portal instead |
+| 409 | `{"detail","code":"complimentary_plan"}` | complimentary Plus with no paying subscription, Stripe on or off (since 2026-11-14); nothing is created in Stripe |
+| 422 | FastAPI validation | `interval` is not `month` or `year` |
+| 503 | `{"detail","code":"billing_disabled"}` | billing off |
+| 503 | `{"detail","code":"billing_unavailable"}` | Stripe refused or could not be reached |
+
+Before creating the session it expires every session still open for the
+customer, and the new session expires 35 minutes after creation
+(`stripe_gateway.CHECKOUT_SESSION_TTL_SECONDS`; Stripe's minimum is 30
+minutes, its default 24 hours). A tab left open on an earlier Checkout page
+can therefore not start a second subscription. If the expiry fails the
+request is 503 `billing_unavailable` and no new session is created.
+
+Checkout returns to `{BILLING_RETURN_ORIGIN}/app?view=account&billing=success`
+or `...&billing=cancel`. The page must not treat `success` as proof of
+payment. The webhook makes the account paid, so poll `GET /api/billing`
+after returning.
+
+### `POST /api/billing/portal`
+
+No body. The response is `{"url"}`, a Stripe Customer Portal session that
+returns to `/app?view=account`. Only a signed-in person may call it. An
+account that never started a checkout gets 404 `{"detail","code":"no_billing_account"}`.
+The 503 codes are the same as for checkout. A complimentary Plus account
+gets 409 `{"detail","code":"complimentary_plan"}` instead of the 404 (no
+Stripe customer) and instead of 503 `billing_disabled` (Stripe off).
+
+### `POST /api/billing/webhook`
+
+This is Stripe's endpoint. It reads the raw body and requires the
+`Stripe-Signature` header. It is exempt from auth and from rate limits,
+because the signature is the authentication.
+
+| Status | When |
+|---|---|
+| 200 `{"received": true}` | handled, duplicate, or a type this app ignores |
+| 400 `{"detail","code":"invalid_signature"}` | the signature does not verify, or the body is over 1 MB; nothing is read |
+| 503 `billing_disabled` / `billing_unavailable` | billing off, or Stripe failed while re-fetching the subscription. Stripe retries it. |
+
+The endpoint handles `checkout.session.completed`,
+`customer.subscription.created`, `customer.subscription.updated`,
+`customer.subscription.deleted`, `customer.subscription.paused`,
+`customer.subscription.resumed`, `invoice.paid` and `invoice.payment_failed`.
+It does not trust the event body for state. It re-fetches the subscription
+from Stripe and stores what Stripe says now, so the order in which events
+arrive never matters.
+
+Handling is idempotent per event id. The event is marked as seen only after
+the change is stored, so a failed handling is retried by Stripe and a
+repeated one is a no-op. An event for an unknown customer, or for a
+subscription belonging to a different customer, is acknowledged and
+ignored. An old cancelled subscription never overwrites a live one. The log
+gets ids only: event, customer, subscription and account.
+
+**Two live subscriptions** (`HandleBillingWebhookUseCase._one_subscription`,
+2026-11-20). When an event brings a live subscription other than the one on
+file, the stored one is re-read from Stripe. If it is still live and belongs
+to the same customer, the customer has two, and one is cancelled at once:
+
+- The **newer** one (the one the event brought) is cancelled, unless only it
+  grants the paid plan (for example the stored one is `past_due` or
+  `incomplete` and the new one is `active`); then the stored one is.
+  So a paying account is never moved off the plan by this, and the
+  subscription the customer has been billed on longest is kept.
+- The duplicate is cancelled with `prorate=true, invoice_now=false`: its
+  unused time goes to the customer's Stripe balance and is taken off the
+  kept subscription's next invoice, and no final invoice is raised (the
+  metered extra runs are billed per customer, so a final invoice on the
+  duplicate could bill them twice).
+- It is logged at ERROR with the account, customer and both subscription
+  ids (no email). If the cancel fails the event answers 503 and Stripe
+  retries it; the event is not marked as seen.
+
+A stored subscription that has already ended is not a duplicate: the new
+one simply replaces it (a resubscribe whose `deleted` event was missed).
+
+### Changes to existing endpoints
+
+- `GET /api/free-runs`, signed in: gains `"plan": "free" | "paid"` and
+  `"overage": bool`, which is true on the paid plan, where runs past
+  `limit` are billed instead of refused. On the paid plan, `limit`,
+  `used` and `remaining` are the plan's included runs today and `period`
+  is `"day"` (it was `"month"` before 2026-11-14; every response carries
+  `period`, and the frontend assumes month for a paid response without
+  it, so it is always sent). Anonymous callers
+  never get `plan` or `overage`.
+- `GET /api/limits` gains `"paid": {"max_duration_seconds", "max_file_size_mb"}`,
+  listed whether or not billing is on.
+- `GET /api/me`: `entitlement.plan` is `"paid"` (with `metered: true`) for
+  a paid account, with the paid media limits. Since 2026-11-14
+  `entitlement.complimentary` (bool): `true` with `plan: "paid"` and
+  `metered: false` for complimentary Plus.
+- `GET /api/free-runs`, signed in, since 2026-11-14: `"complimentary": bool`;
+  complimentary Plus reads `plan: "paid"`, `overage: false`.
+- `POST /api/runs`: a paid account past its included runs and at
+  `PAID_EXTRA_RUNS_MONTHLY_CAP` gets 402 `{"detail","code":"extra_runs_cap","limit"}`.
+  This is a new code; the frontend shows "add your own key or wait for next month".
+- `DELETE /api/me`: 503 `{"detail","code":"subscription_cancel_failed"}`
+  when the subscription could not be cancelled. Nothing was deleted, so
+  the client can retry. Since 2026-11-14 a successful call starts a 30-day
+  hold rather than removing the account (`saved-history.md`); the
+  subscription is still cancelled at once, and the cleanup cancels again
+  before the final removal if one is somehow live.
+- `GET /api/me` gains `saved_history {saving, expires_at}`: a paid
+  account's results are saved on the server (`saved-history.md`).
+- `GET /api/capabilities` gains a `billing` row (see below).
+
+## Rules
+
+### Paid admission (`CreateRunUseCase._admit_paid`)
+
+1. A run with the caller's own Gemini key is admitted first, as always. It
+   is never counted against the included runs and never billed.
+2. A paid account takes a run from its per-account **daily** counter in
+   `account_free_runs` (key `"YYYY-MM-DD"`, UTC day), with the limit
+   `PAID_RUNS_PER_DAY` (default 30; owner decision 2026-11-14, it was
+   `PAID_RUNS_PER_MONTH`=100 on a `"YYYY-MM"` row). It is the same row the
+   free plan counts on, so a run is counted once whichever plan took it:
+   upgrading mid-day, the day's free runs count toward the 30; downgrading
+   mid-day, the day's paid runs count toward the free 10 (an account that
+   used 10 or more paid runs today has no free runs left until midnight
+   UTC). Monthly rows from before the switch stay in the table and are no
+   longer read. The period lives in one place,
+   `BillingPlans.PAID_RUNS_PERIOD` (`FreeRunPeriod.DAY`), and the limit in
+   `PAID_RUNS_PER_DAY`. No migration: 0005 already widened `period` to
+   varchar(10).
+3. Past the limit, the run is admitted and an extra-run row is held in the
+   ledger. The run is never refused for running past the included runs.
+4. The one refusal is the safety cap: when this UTC month already has
+   `PAID_EXTRA_RUNS_MONTHLY_CAP` extra runs (the ledger keys on the month,
+   `"YYYY-MM"`, while the included runs key on the day) (default 200; 0 turns the cap
+   off), the run gets 402 `extra_runs_cap`. The cap guards against a
+   runaway bill and is not a price point.
+5. Paid runs are exempt from `DAILY_RUN_CAP`. The per-IP rate limit still
+   applies (see Decisions).
+6. Media limits: the paid tier is `PAID_MAX_*`, which default to the
+   signed-in BYOK values. It applies with or without a key; with a key the
+   larger of the two sets wins. Paid runs use the long job
+   (`process_long_run`) and the one-long-run-per-account guard, exactly
+   like signed-in BYOK runs.
+
+`past_due`, `unpaid`, `canceled`, `incomplete` and `paused` all read as the
+free plan: the free counter, the free limit, standard media limits and the
+daily cap.
+
+### Extra runs: billed once, only on success
+
+Each ledger row moves through these states: `held`, then `due`, then
+`reported`; or `held`, then `void`. Two conditional UPDATEs make every move
+happen exactly once:
+
+- `complete(run_id)` moves `held` to `due` only if the row is still held.
+  `ProcessRunUseCase` calls it right after the result is stored, on the
+  captions path and the full path, and then sends the Stripe meter event.
+- `void(run_id)` moves `held` to `void` only if the row is still held. It
+  runs on every other ending: an intake failure, the worker's `finally`, a
+  run dropped before it started, and the stale-run sweep in `GetRunUseCase`.
+  Of a late worker and the sweep, only one wins. A run that did not
+  complete can never become due.
+- The meter event's `identifier` is the run id, so Stripe drops a resend
+  (`duplicate_meter_event`, which is treated as success). A crash between
+  "sent" and "marked reported" therefore cannot bill twice.
+- A failed report leaves the row due and never fails the run. The worker
+  cron `flush_extra_runs` retries due rows every 10 minutes, and account
+  deletion and the purge flush **all** of the account's due rows (paged,
+  `ExtraRunBilling.flush_account`) before cancelling, so the final invoice
+  carries them; a row that still cannot be reported is logged and left due.
+  `flush_account` tries each row once per call: a row Stripe took but the
+  ledger could not mark `reported` stays due and would come back on every
+  page, so `_report` counts it as not reported and the pass stops (it used
+  to loop, calling Stripe for ever, while `mark_reported` kept failing). The
+  resend on the next pass is deduplicated by the meter on the run id.
+- Rows due for more than 34 days are moved to `void` by the same cron
+  (`ledger.expire_due`), with a WARNING naming the run and the account (no
+  email), because Stripe refuses meter events older than 35 days. They are
+  never billed.
+- The worker settles a run's row from the run's stored outcome
+  (`ProcessRunUseCase._settle_extra_run`, 2026-11-20): when the run is
+  complete (its worker was cancelled between storing the result and
+  billing, or an arq retry finds it finished) the row is completed and
+  reported; otherwise it is voided. Exactly once, by the conditional
+  UPDATEs above.
+- Reconciliation (`ExtraRunBilling.reconcile`, in `flush_extra_runs` before
+  the flush): a row still held 10 minutes after it was taken is settled
+  from the run record: complete means due (WARNING, then reported), failed
+  means void, still running is left alone. A record that is gone (the run
+  TTL is one hour) is voided after 2 hours, and any held row older than
+  2 days is voided. A hold no longer voids older rows itself.
+- The monthly cap is checked by the write that holds the row
+  (`ledger.hold(..., cap=)`, 2026-11-20): on Postgres the account's
+  `billing_accounts` row is locked (`FOR UPDATE`) and the row is inserted by
+  `INSERT ... SELECT ... WHERE (this month's held + due + reported) < cap`
+  in the same transaction, so concurrent intakes at the cap cannot all pass.
+  No migration. On SQLite (local and tests only) the database lock
+  serialises writers.
+
+A refunded run (a link run rejected before analysis) is a failed run, so
+it is voided and never billed.
+
+### Subscription state
+
+`billing_accounts` is a cache of Stripe and never the source of truth. The
+webhook overwrites it from a fresh read. Checkout checks it for a live
+subscription (409). Admission and the views read it through
+`BillingPlans.paid_account`.
+
+### Check constraints (`0008_value_checks`, 2026-11-14)
+
+- `billing_extra_runs.state`: `ck_billing_extra_runs_state`, one of
+  `held`, `due`, `reported`, `void` (`billing_store.HELD, DUE, REPORTED,
+  VOID`).
+- `billing_extra_runs.period`: `ck_billing_extra_runs_period`,
+  `^[0-9]{4}-[0-9]{2}$` (the UTC month, `BillingPlans.extra_runs_period`).
+- `billing_accounts.status` and `billing_accounts.interval`: **no
+  constraint, on purpose.** Both are copied verbatim from Stripe by the
+  webhook (`StripeBillingGateway._snapshot`; `status` can even be `""`,
+  and a price edited in the dashboard can carry `day` or `week`). A value
+  the code does not list would make the database reject the webhook's
+  write, leave the account on stale state and have Stripe retry for days.
+  The readers already treat unknown values safely (`subscription_is_live`,
+  and the API's `month`/`year` filter on `interval`).
+
+Postgres only (the `~` regex); the SQLite test schema in `schema.py`
+declares the `state` check and skips the `period` one.
+
+## Decisions
+
+### Yearly plus overage: one meter, flexible billing mode
+
+Stripe requires every price on a classic subscription to share one billing
+interval. A yearly base price and a monthly metered extra-run price would
+break that rule. The options:
+
+1. **Flexible billing mode (chosen).** `billing_mode=flexible` (API
+   2025-06-30.basil and later; mixed intervals from 2025-07-30.basil)
+   allows prices with different intervals on one subscription. Checkout
+   sends `subscription_data.billing_mode.type=flexible` for every plan, so
+   a yearly subscription is [yearly base, monthly metered] and extra runs
+   are invoiced every month in arrears, the same as on the monthly plan.
+   stripe-python 17 pins API 2026-10-28.endive, which is well past both
+   versions. **Not verified**: whether hosted Checkout accepts mixed
+   intervals in your account. Confirm it in test mode (setup step 6).
+2. **Fallback: a yearly metered price.** Set `STRIPE_PRICE_EXTRA_RUN_YEARLY`
+   to a yearly metered price on the same meter. Yearly subscriptions then
+   carry [yearly base, yearly metered], which is a single interval and
+   works on any API version. The trade-off: a year of extra runs is billed
+   once, at the end of the year, which is a large surprise invoice. The
+   monthly cap still bounds it.
+3. Rejected: a second subscription for overage (two invoices, and the
+   portal shows two plans), or invoice items created by the server (the
+   server would need to keep a monthly tally).
+
+A Billing Meter, rather than legacy usage records, is used because meters
+are Stripe's current usage API, and the meter event `identifier` gives
+idempotency per run for free.
+
+### DAILY_RUN_CAP: paid runs are exempt
+
+`DAILY_RUN_CAP` bounds free spend on the shared key per day. Paid runs are
+paid for: included runs by the subscription, extra runs per run. Letting
+free traffic use up the cap and then refuse a paying customer with 503 is
+the wrong way round. Paid runs therefore skip it. The per-IP rate limit
+(`RATE_LIMIT_PER_HOUR`) still applies to everyone, and the extra-run cap
+bounds a single account.
+
+### Deletion cancels first, with no refund
+
+`DELETE /api/me` and the purge after the 30-day hold cancel the Stripe
+subscriptions before deleting anything (`delete_account.cancel_account_subscription`):
+
+1. If it cannot read the billing row, it refuses.
+2. With no row, deletion proceeds as before.
+3. With billing off (the Stripe keys removed) nothing can be cancelled.
+   `DELETE /api/me` still starts the hold, with a WARNING naming the account
+   and a still-live stored subscription (the purge will wait for billing).
+   **The purge does not remove an account whose stored subscription is
+   live** (re-review 2026-11-20): removing it would delete the billing row
+   and leave Stripe charging a customer the app no longer knows. It logs a
+   WARNING ("not removed after its deletion hold ... retried every hour"),
+   skips the account and retries each hourly tick; it is removed on the
+   first tick after the worker has the `STRIPE_*` variables again, which
+   then cancels the subscription as in step 4. An ended
+   subscription, or none, does not hold the purge back. The skipped account
+   still counts in `due_for_purge`'s 25 per tick, so more than 25 such
+   accounts would hold back the rest until billing is back.
+4. Otherwise it reports all of the account's due extra runs first (paged),
+   so the final invoice carries them, then cancels the stored subscription
+   and every other live subscription of the customer that Stripe lists
+   (`live_subscription_ids`), each at once (`invoice_now=true,
+   prorate=false`: no credit for the unused part of the period).
+5. With billing on, a failure to list or cancel gives 503
+   `subscription_cancel_failed` and nothing is deleted (the purge skips the
+   account and retries next hour).
+
+The Stripe Customer record, with its email, invoices and payment method,
+stays in Stripe after deletion. The app cannot delete it, because Stripe
+keeps invoices for tax records. The owner deletes it from the dashboard if
+asked.
+
+### Saved history follows the plan
+
+Since 2026-11-14 a paid account's results are saved on success, right
+after the extra run is billed (`saved-history.md`); a save failure never
+fails or un-bills the run. The webhook (`HandleBillingWebhookUseCase`)
+calls `SavedHistory.sync_expiry` after each subscription change: an ended
+plan (`policies.subscription_has_ended`: not paid, and not `past_due` /
+`incomplete`) starts the 30-day post-cancel window, a resubscribe clears
+it. The cleanup cron arms any window the webhook missed.
+
+### Complimentary Plus (`accounts.complimentary_plus`, 2026-11-14)
+
+Owner decision: the owner's own account is on Plus permanently, without
+Stripe, to test it and use the product. Migration `0010_complimentary_plus`
+adds `accounts.complimentary_plus BOOLEAN NOT NULL DEFAULT false`. It is set
+and cleared **only by hand in SQL** by the owner; no route, setting or job
+writes it, and none may be added.
+
+```sql
+-- set (by email; the account must have signed in once)
+UPDATE accounts SET complimentary_plus = true  WHERE lower(email) = lower('owner@example.com');
+-- unset
+UPDATE accounts SET complimentary_plus = false WHERE lower(email) = lower('owner@example.com');
+-- check
+SELECT id, email, complimentary_plus FROM accounts WHERE complimentary_plus;
+```
+
+`BillingPlans.standing(account_id)` returns a `PlanStanding`, the one
+answer every caller uses: a paying subscription (`paid_account`, Stripe on)
+wins and sets `subscription`; otherwise the flag sets `complimentary`;
+otherwise the free plan. `paid` = either; `billable` = subscription only.
+The flag is read with `AccountDirectory.get_account`, and the container
+passes the directory only with `DATABASE_URL` set, so without a database
+nobody is complimentary and everything is as before.
+
+With the flag (and no paying subscription), Stripe on or off:
+
+- Paid media limits (`MediaTier.PAID`, the long job), `PAID_RUNS_PER_DAY`
+  included runs on the same daily row, `DAILY_RUN_CAP` exempt (like every
+  paid run; bounded by the included runs).
+- Past the included runs: 402 `free_runs_used` (scope `account`, period
+  `day`, limit = `PAID_RUNS_PER_DAY`), "You have used today's Plus runs...".
+  Never an extra run: no `billing_extra_runs` row, no meter event, no
+  Stripe customer (`CreateRunUseCase._admit_complimentary`). BYOK stays
+  exempt, as for everyone.
+- `plan: "paid"` and `complimentary: true` on `GET /api/billing`,
+  `GET /api/me` (`entitlement`, with `metered: false`) and
+  `GET /api/free-runs` (`overage: false`).
+- Saved history saves its runs and reports `saving: true`; it never gets a
+  post-cancel window (`saved-history.md`).
+- `POST /api/billing/checkout`: 409 `complimentary_plan`, before anything
+  touches Stripe. `POST /api/billing/portal`: 409 `complimentary_plan` when
+  Stripe is off or the account has no Stripe customer; one with a customer
+  (an old or past_due subscription) opens the portal as anyone does.
+
+With a real paying subscription as well, billing follows the subscription
+exactly as before (extras admitted and billed, portal, `already_subscribed`),
+and `complimentary` reads false. If that subscription ends, the account
+falls back to complimentary Plus.
+
+## Settings
+
+| Variable | Default | |
+|---|---|---|
+| `STRIPE_SECRET_KEY` | blank | `sk_test_...` (test mode) or a restricted key. Required. |
+| `STRIPE_WEBHOOK_SECRET` | blank | `whsec_...` from the webhook endpoint (or from `stripe listen`). Required. |
+| `STRIPE_PRICE_MONTHLY` | blank | monthly licensed Price ID. Required. |
+| `STRIPE_PRICE_YEARLY` | blank | yearly licensed Price ID. Optional; blank means checkout refuses `year` with 400. |
+| `STRIPE_PRICE_EXTRA_RUN` | blank | monthly metered Price ID on the meter. Required. |
+| `STRIPE_PRICE_EXTRA_RUN_YEARLY` | blank | optional yearly metered price for yearly plans (fallback 2 above) |
+| `STRIPE_METER_EVENT_NAME` | `videolens_extra_run` | the meter's event name. Required (it has a default). |
+| `BILLING_RETURN_ORIGIN` | blank | where Checkout and the portal return. Blank means the first non-`*` `ALLOWED_ORIGINS` entry, else `http://localhost:3005`. |
+| `PAID_RUNS_PER_DAY` | 30 | included runs per UTC day (replaces `PAID_RUNS_PER_MONTH`, 2026-11-14, no longer read) |
+| `PAID_EXTRA_RUNS_MONTHLY_CAP` | 200 | extra runs per account per month before 402 `extra_runs_cap`; 0 turns the cap off |
+| `PAID_MAX_DURATION_SECONDS` | 0 | 0 or less means `SIGNED_IN_BYOK_MAX_DURATION_SECONDS` |
+| `PAID_MAX_FILE_SIZE_MB` | 0 | 0 or less means `SIGNED_IN_BYOK_MAX_FILE_SIZE_MB` |
+
+In distributed mode (`REDIS_URL` set), billing configured without
+`DATABASE_URL` refuses to start (`Settings.distributed_billing_error`).
+Locally, without a database, the in-memory stores let you try the whole
+flow against Stripe test mode. They are lost on restart.
+
+## Capability row
+
+The `billing` row is `disabled` when Stripe is not configured or there is
+no account store (it is not probed). It is `ok` when the plan's Price
+objects can be read (`probed=true`, read through the gateway's one-hour
+cache; a read never charges anything). It is `degraded` when the monthly
+price cannot be read. `log_detail` says whether the key is in test or live
+mode.
+
+## Owner setup (Stripe test mode)
+
+Everything here is done in the Stripe dashboard with **Test mode** on.
+Nothing in this repository creates Stripe objects.
+
+1. **Product.** Create a product named "VideoLens Paid".
+2. **Prices on it.**
+   - Monthly: recurring, licensed, $12.00 every month. Copy the ID into
+     `STRIPE_PRICE_MONTHLY`.
+   - Yearly (optional; amount pending, about $120): recurring, licensed,
+     every year. Copy the ID into `STRIPE_PRICE_YEARLY`.
+3. **Meter.** Billing, then Meters, then Create:
+   - event name `videolens_extra_run` (or set `STRIPE_METER_EVENT_NAME`)
+   - aggregation **Sum** of the payload key `value`
+   - customer mapping from the payload key `stripe_customer_id`
+4. **Extra-run price.** On the same product, add a recurring **usage-based**
+   price on that meter, billed monthly, at your per-run amount. Copy the ID
+   into `STRIPE_PRICE_EXTRA_RUN`. Optionally add a yearly one for the
+   fallback and copy it into `STRIPE_PRICE_EXTRA_RUN_YEARLY`.
+5. **Customer Portal.** Settings, then Billing, then Customer portal:
+   - allow cancelling (at period end is fine; deletion cancels immediately
+     through the API)
+   - allow updating the payment method and viewing invoices
+   - leave "switch plans" off, because the portal cannot update usage-based
+     subscriptions.
+6. **Check mixed intervals.** With the keys set locally, run one yearly
+   checkout with the test card `4242 4242 4242 4242`. If Checkout rejects
+   the line items, set `STRIPE_PRICE_EXTRA_RUN_YEARLY` (fallback 2).
+7. **Webhook.**
+   - Locally, run `stripe listen --forward-to localhost:8000/api/billing/webhook`
+     and put the `whsec_...` it prints into `STRIPE_WEBHOOK_SECRET`. Trigger
+     events with `stripe trigger customer.subscription.updated`. A trigger
+     for a customer this app did not create is acknowledged and ignored.
+   - Deployed, use Developers, then Webhooks, then Add endpoint, with
+     `https://<api>/api/billing/webhook` and the eight events listed above.
+     Copy its signing secret.
+8. **Secret key.** Use `sk_test_...` from Developers, then API keys, or a
+   restricted key with write access to Customers, Checkout Sessions,
+   Customer portal, Subscriptions, Billing meter events, and read access to
+   Prices. Put it in the platform's variables only, never in the repo.
+
+## Deploy order
+
+Complimentary Plus: apply `0010_complimentary_plus` **before** deploying
+the code that reads it. Every `select(accounts)` names the new column, so
+code ahead of the migration fails every signed-in request on Postgres.
+The column has a constant default, so the `ADD COLUMN` is catalog-only
+(no rewrite) on Postgres 11+; the existing RLS policy and grants on
+`accounts` cover it.
+
+Billing:
+
+1. Apply migration `0004_billing` (`alembic upgrade head`) to the
+   database. With billing off nothing reads these tables, so applying it
+   early is harmless. **Not applied to any remote database by this
+   change.**
+2. Deploy the worker and API code with the `STRIPE_*` variables still
+   blank. Behaviour is unchanged.
+3. Create the Stripe objects (above), then set the variables on both the
+   API and the worker (the worker reports extra runs), then add the webhook
+   endpoint.
+4. Check that `GET /api/capabilities` shows `billing: ok`, then do one test
+   checkout.
+
+## Known issues
+
+- The cap's row lock is on the account's `billing_accounts` row. An
+  account with a ledger row but no billing row cannot exist (extra runs
+  need a live subscription), so this always locks something; were it ever
+  missing, the guarded INSERT alone still bounds the overshoot to the
+  number of concurrent intakes.
+- Android: Checkout and the portal return to the web origin
+  (`BILLING_RETURN_ORIGIN`), not into the installed APK. The app needs to
+  open them in the system browser and refetch `GET /api/billing` on resume.
+  This is frontend work.
+- Mixed-interval Checkout is unverified (setup step 6).
+- A local API without `REDIS_URL` has no worker cron. Due extra runs whose
+  report failed are retried only by account deletion, or are lost on
+  restart (in-memory). This affects local testing only.
+- The Stripe Customer record outlives account deletion (see Decisions).
+- `incomplete` (a first payment that needs authentication) blocks a new
+  checkout with 409 until Stripe expires it (about 23 hours). The portal
+  is the way out.
+
+## Tests
+
+- `tests/application/test_complimentary_plus.py`, `tests/infrastructure/persistence/test_complimentary_plus.py`,
+  and the complimentary classes in `tests/interface/api/test_billing_routes.py`:
+  complimentary Plus with Stripe off and on (limits, included runs, the
+  402, no ledger row or meter call, saved and listed, no window, restore,
+  checkout/portal 409, the exact `GET /api/billing` bodies), a real
+  subscription winning, ordinary accounts unchanged, migration 0010.
+
+- `tests/application/test_billing.py`: checkout, portal and view; webhook
+  signature, idempotency, transitions and ordering; paid admission within
+  and over the limit; the cap; BYOK not counted; the view's `extra_runs`
+  (held + due + reported counted, void and other months not; cap off is
+  `limit: null`; free, past_due and billing off have none); past_due treated as free;
+  billed once and only on success (including retries, failures and the
+  stale sweep); deletion cancels, or refuses on a Stripe failure;
+  billing-off parity. Since 2026-11-20 also: earlier Checkout sessions
+  expired; the duplicate-subscription rules; deletion with billing off,
+  every live subscription cancelled, all due rows flushed; the cap under
+  concurrent intakes; reconciliation and the 34-day void; the worker
+  settling from the stored outcome (cancellation, retries).
+- `tests/infrastructure/persistence/test_billing_store.py`: the SQL
+  (SQLite) and in-memory stores share one suite; deletion cascade;
+  Alembic 0004 up and down; the Postgres branch with Alembic mocked.
+- `tests/infrastructure/billing/test_stripe_gateway.py`: the Stripe calls
+  against a mocked `StripeClient`, and real signature verification with a
+  locally signed payload.
+- `tests/interface/api/test_billing_routes.py`: the exact JSON contract,
+  status codes, billing off, `free-runs` fields, and deletion; a second live
+  subscription through the webhook route (cancel failing is a 503 so Stripe
+  retries, the retry cancels it with `invoice_now: False, prorate: True`,
+  the stored subscription and the paid plan stay).
+- `tests/infrastructure/health/test_billing_probe.py`: the capability row
+  and the settings.
+
+## Changelog
+- 2026-11-13 · backend agent · created: paid plan through Stripe-hosted Checkout and Portal; `GET /api/billing`, `POST /api/billing/checkout|portal|webhook`; paid admission on the account counter (`PAID_RUNS_PER_MONTH`), extra runs through a held/due/reported ledger and a Billing Meter (identifier = run id), billed only on success; paid media tier; DAILY_RUN_CAP exemption; `extra_runs_cap` 402; deletion cancels the subscription first; migration 0004; `billing` capability row
+- 2026-11-14 · backend agent · the paid counter is still monthly (100/month, metered overage unchanged); the free plan moved to daily rows, so free and paid no longer share a row; `runs.period` on `GET /api/billing`; paid period in `BillingPlans.PAID_RUNS_PERIOD`
+- 2026-11-14 · backend agent · paid included runs are daily: `PAID_RUNS_PER_DAY` (30) replaces `PAID_RUNS_PER_MONTH` (100, no alias); `BillingPlans.PAID_RUNS_PERIOD` is day, on the same daily row as the free plan; `runs.period` and `/api/free-runs` `period` are "day" for paid; extra runs and `PAID_EXTRA_RUNS_MONTHLY_CAP` unchanged (ledger still keyed on the month); no migration
+- 2026-11-14 · backend agent · `GET /api/billing` gains `extra_runs` `{used, limit, period: "month", resets_at}` on the paid plan (null otherwise): this month's extra runs counted by the cap's own definition (`BillingPlans.extra_runs_used`, held + due + reported, not void), shared with admission; no migration, no new setting
+- 2026-11-14 · backend agent · saved history follows the plan: paid results saved after billing, the webhook starts or clears the 30-day post-cancel window (`saved-history.md`); deletion is a 30-day hold, the subscription still cancelled at once
+- 2026-11-14 · backend agent · migration `0008_value_checks`: check constraints on `billing_extra_runs.state` and `.period` (`YYYY-MM`); none on `billing_accounts.status`/`interval`, which come from Stripe verbatim
+- 2026-11-14 · frontend agent · paid plan is named Plus in the UI
+- 2026-11-14 · backend agent · complimentary Plus: migration `0010_complimentary_plus` (`accounts.complimentary_plus`, set only by hand in SQL); `BillingPlans.standing` / `PlanStanding`; paid plan with or without Stripe, never billed (402 `free_runs_used` past `PAID_RUNS_PER_DAY`, no ledger, no meter); `complimentary` on `GET /api/billing` (full body even with billing off), `GET /api/me` `entitlement`, `GET /api/free-runs`; checkout/portal 409 `complimentary_plan`; a paying subscription wins
+- 2026-11-20 · Claude (backend agent) · duplicate subscriptions: Checkout expires the customer's open sessions and lives 35 min; the webhook cancels a second live subscription (the newer one unless only it pays; prorated credit, no final invoice; ERROR log); deletion and purge flush all due rows and cancel every live subscription, and go ahead with a WARNING when billing is off; the extra-run cap is checked in the hold's INSERT under a row lock; held rows of completed runs are settled by the worker and by `reconcile`; due rows older than 34 days are voided with a WARNING; no migration
+- 2026-11-20 · Claude (backend agent) · tests: two live subscriptions through the webhook route, including the 503 and the retry
+- 2026-11-20 · Claude (backend agent) · re-review: the purge with billing off holds back an account with a live stored subscription (WARNING, retried hourly) instead of removing it; `flush_account` stops after one pass when `mark_reported` keeps failing

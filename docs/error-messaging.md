@@ -105,6 +105,36 @@ classification, retry/backoff/fallback), `backend/tests/application/test_process
 never reaches the run). No frontend test runner exists — see
 `frontend/run-analysis-hook.md`.
 
+## Review fixes (2026-11-20)
+
+- 429 on run creation: a detail that is not the rate limit's "You're going a
+  bit fast." sentence (the failed-credential limiter's "Too many sign-in
+  attempts that didn't work from this network. Wait a few minutes and try
+  again.") is shown as sent instead of being replaced by the rate-limit
+  wording.
+- 413 shows "That upload is too large."; a file upload with no response at
+  all says it was cut off and that the size limit is the likely cause.
+- 503 with `Retry-After` on `/api/me` (sign-in keys unavailable): a calm,
+  temporary "can't confirm your sign-in right now" with Try again, never a
+  sign-out prompt.
+- A poll refused with 401/403/410 stops and says why (sign-in no longer
+  accepted / account scheduled for deletion) instead of reconnecting.
+- Run failures "This link took too long to download…" and "Analysis was
+  interrupted before it finished…" get advice to try the same source again
+  (or upload the file, for the slow link), not "try a different link".
+
+### Re-review additions (2026-11-20)
+
+- Run creation while the server's sign-in status is unknown (or, since
+  2026-11-21, `degraded`) after up to 8 s, or the token cannot be read: "Your sign-in could not be confirmed just now,
+  so the run was not sent. Check your connection and try again." The run is
+  never sent anonymously instead. A poll in the same state gets the
+  general sign-in-unconfirmed message and reconnects on its own.
+- "Remove this browser's copies" partial failure: "Some copies could not be
+  removed from this browser. The ones still here are unchanged; try again."
+- A failed "Remove from this device" is now reported (the dialog's error)
+  rather than appearing to succeed.
+
 ## Changelog
 
 - 2026-08-21 · main session · introduced UserFacingError's message/log_detail split, rewrote every leaking message, added AnalysisUnavailableError for Gemini 429/5xx, gave rate limiting a `detail`-shaped response, keyed recovery advice on the failed stage, and removed the dead `data-error-kind` attribute
@@ -114,3 +144,6 @@ never reaches the run). No frontend test runner exists — see
 - 2026-11-02 · backend agent (720p download cap) · `_download_failure`: 403/429 blocks get their own cause-only sentence (no upload advice, `recoveryAdvice` supplies it); see `backend/media-validation.md`
 - 2026-11-02 · backend agent (geo-block message) · `_download_failure`: real geo-blocks (yt-dlp wording or `GeoRestrictedError`) get the region sentence, even alongside a 403; see `backend/media-validation.md`
 - 2026-11-02 · frontend agent (refinement 9) · `recoveryAdvice` now takes the run's error: a link run whose message contains "site blocked this download" (backend `_BLOCKED_DOWNLOAD`, 796d71e) is told to try the same link later or upload the file, not to try a different link. Text match only, because no reason code reaches the client. See the Known issues entry on reason codes, which would retire it
+- 2026-11-20 · Claude (frontend agent) · credential 429 detail, 413 and upload cut-off, keys-unavailable 503, poll 401/403/410, slow-download and interrupted advice
+- 2026-11-20 · Claude (frontend agent) · create with unconfirmed sign-in gets its own message (never sent anonymous); copies-removal and remove-from-device failures surfaced
+- 2026-11-21 · Claude (frontend agent) · the sign-in-unconfirmed message now also covers a `degraded` auth capability; wording unchanged

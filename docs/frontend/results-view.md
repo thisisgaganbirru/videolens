@@ -484,6 +484,39 @@ mid-scroll and the end; chevrons page both ways; Transcript, On-screen (End)
 and TL;DR (Home) clear of the fades where geometry allows; no chevrons at
 360/390/1280 at 100%; 1px threshold sweep 320–400.
 
+## UX fix spec, batch c (2026-11-14)
+
+- The title is now `<h1 className="result-title" dir="auto">`: the result view
+  had no h1 at all. `.result-title` in `globals.css` selects the class only,
+  so nothing moved (same box at 320, 412 and 1280 as before).
+- Under the card, in `HomeScreen`: `.result-saved` "History keeps your last
+  20 runs in this browser. Not synced." (`HISTORY_LIMIT`). Margin 0: the
+  column's gap (`var(--space-sm)`) is the space above it. Always shown; the
+  History storage error is known only to the History panel's own read.
+- Opened from History, an outline "Back to History" sits before each "Analyze
+  another" (`reset-wide` and `reset-narrow`, so CSS still shows one pair).
+- The tab title is the result title (`useDocumentTitle`, see
+  app-shell-layout.md).
+
+## Saved to the account (2026-11-14)
+
+`.result-saved` has two texts. A run just finished while the account saves
+runs, or one opened from the account's saved runs, says "Saved to your
+account. Open it from History on any device where you sign in." Everything
+else (free, anonymous, this browser's own copy) keeps "History keeps your
+last 20 runs in this browser. Not synced." HomeScreen decides with
+`openedSaved` (set by `handleOpenSaved`) and `savedHistory.mode`. A saved run
+that is gone (404) shows the expired view with `expiredReason="saved"`. See
+`saved-history.md`.
+
+## Selectable result text (review fix, 2026-11-20)
+
+The body is `select-none` (app chrome). The four panels (notes, summary,
+transcript, on-screen text) now carry `select-text`, so their text can be
+selected and copied by hand, as the legal pages' article can. The
+transcript's toolbar (search, timestamps switch) stays `select-none`; tabs,
+buttons and the rest of the card are unchanged.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported ResultsView + SourceCard; de-boxed the source card, wired .disclosure and role=tabpanel, rebuilt SourceCard.preview with six states
@@ -505,3 +538,6 @@ and TL;DR (Home) clear of the fades where geometry allows; no chevrons at
 - 2026-11-02 · frontend agent (refinement 12) · tab-row fades/chevrons now start at the list's outer edge (`--tab-bleed`), so no tab text peeks past them; fade and chevron fixed px (44px/18px) instead of rem; corrected "nothing shows at normal size" to the measured threshold (chevron below 360 CSS px at 100%)
 - 2026-11-02 · frontend agent (refinement 13) · corrected the R12 "geometric limit at 320/200%": it appears only in desktop Chromium's root-font emulation (~182px list); on the Android device the list is 254px and Transcript (101–239) and On-screen (143–283) both land clear. Doc only
 - 2026-11-07 · security-check · `source_url`/`uploader_url` (yt-dlp strings) go through `components/safeUrl.ts` `safeHttpUrl` before becoming an `href` or an export link: only http(s) is linked, anything else is plain text. Android `res/xml/file_paths.xml` narrowed to `cache-path exports/` (the only folder `documentExporter.ts` shares); the template's whole-cache and external-storage mappings are gone. Needs one device pass of Save notes (`docs/qa/android-app-test-cases.md`).
+- 2026-11-14 · frontend agent · UX fix spec batch c: result title is the page h1; "History keeps your last 20 runs…" line under the card; "Back to History" before "Analyze another" for a run opened from History
+2026-11-14 · frontend agent · the line under the card says "Saved to your account. Open it from History on any device where you sign in." for a run this account saved; the expired view gains `expiredReason: "saved"` (Unavailable, "This run is no longer saved") for a saved run that answers 404 (see saved-history.md)
+- 2026-11-20 · Claude (frontend agent) · the four result panels are `select-text`; the transcript toolbar stays `select-none`

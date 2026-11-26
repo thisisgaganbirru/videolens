@@ -34,7 +34,9 @@ Nothing about the user is stored — only facts about the media.
 - `width`/`height`: passed through on both responses. `thumbnail` is on `GET /api/runs/{id}` **only** — never on the list (20 inline JPEGs would be ~0.5 MB per poll).
 - `summary_snippet` (list only, never stored): `result.summary` whitespace-collapsed, cut at a word boundary to ≤160 chars including a trailing `…`.
 
-**Known behavior worth knowing**: `_update` silently no-ops if the run doesn't exist (`if run is None: return`) rather than raising — a status/stage/result update for an expired or already-cleaned-up run just does nothing, no error surfaces anywhere.
+**Known behavior worth knowing**: `_update` silently no-ops if the run doesn't exist rather than raising — a status/stage/result update for an expired or already-cleaned-up run just does nothing, no error surfaces anywhere.
+
+**An ended run is final (2026-11-13)**: `_update` also skips every write to a run that is already `complete` or `failed`. Whichever of the worker's result and the stale-run check's failure lands first is the outcome every later read sees. In Redis the check and the write are one Lua script (`_WRITE_UNLESS_SETTLED`: GET, `cjson.decode`, refuse on `complete`/`failed`, else `SET ... EX`), so a write that read the run as live cannot overwrite an ending that landed in between; in memory the whole read-modify-write runs under the lock. `set_result` and `set_error` return True when they wrote and False when the run was gone or had already ended (`RunRepository` port); `GetRunUseCase` and `ProcessRunUseCase` use that to report the outcome that stands. `create` still writes with a plain `SET`.
 
 **Tests**: `backend/tests/domain/test_run_facts.py` (derivations), `backend/tests/interface/api/test_run_routes.py` (list/status response shape incl. a legacy run), `backend/tests/infrastructure/persistence/test_run_repository.py` (mostly local-mode; `RetentionTests` swaps in an `AsyncMock` Redis client to assert the `ex=3600` re-arm and the owner-index `EXPIRE` on complete/failed, plus the in-memory prune; `VisualsTests` covers `set_visuals` and a legacy payload).
 
@@ -43,3 +45,4 @@ Nothing about the user is stored — only facts about the media.
 ## Changelog
 - 2026-11-01 · backend agent (Phase 3) · added `source_kind`/`platform`/`duration_seconds` to `Run`, `set_duration` on the repository, and `domain/run_facts.py` read-time derivations for the history poster grid (`RunSummary` gains `source_kind`, `platform`, `duration_seconds`, `summary_snippet`, `orientation`)
 - 2026-11-01 · backend agent (Phase 5a) · `RUN_TTL_SECONDS` default 7 days → 1 hour (browser keeps History); TTL + owner index re-armed on complete/failed; in-memory prune; `Run.thumbnail`/`width`/`height` + `set_visuals`; orientation prefers measured dims; noted that MCP `list_recent_runs` now only sees the last hour
+- 2026-11-13 · backend agent · writes to a `complete`/`failed` run are skipped (atomic Lua check in Redis, lock in memory); `set_result`/`set_error` return whether they wrote

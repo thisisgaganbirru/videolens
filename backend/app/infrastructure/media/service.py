@@ -2,9 +2,11 @@ import asyncio
 import logging
 
 from ...domain.entities import CaptionTrack, MediaVisuals, SavedUpload
+from ...domain.entitlements import MediaLimits
 from ...domain.ports import UploadedFile
 from ..config import Settings
 from . import captions, ffmpeg, thumbnails, uploads
+from .deadline import start_run_budget
 from .resolvers import DirectHttpResolver, ResolverChain, YtDlpResolver
 
 logger = logging.getLogger("videolens")
@@ -40,17 +42,23 @@ class MediaService:
     def cleanup_run_dir(self, run_id: str) -> None:
         uploads.cleanup_run_dir(self._settings, run_id)
 
-    async def save_upload(self, run_id: str, upload: UploadedFile) -> SavedUpload:
-        return await uploads.save_upload(self._settings, run_id, upload)
+    async def save_upload(
+        self, run_id: str, upload: UploadedFile, limits: MediaLimits | None = None
+    ) -> SavedUpload:
+        return await uploads.save_upload(self._settings, run_id, upload, limits)
 
-    async def enforce_duration_cap(self, run_id: str, path: str) -> float:
-        return await ffmpeg.enforce_duration_cap(self._settings, run_id, path)
+    async def enforce_duration_cap(self, run_id: str, path: str, limits: MediaLimits | None = None) -> float:
+        return await ffmpeg.enforce_duration_cap(self._settings, run_id, path, limits)
 
-    async def download_url(self, run_id: str, url: str) -> SavedUpload:
-        return await self._resolvers.fetch(run_id, url)
+    async def download_url(self, run_id: str, url: str, limits: MediaLimits | None = None) -> SavedUpload:
+        # One DOWNLOAD_DEADLINE_SECONDS for the whole run: every route the
+        # chain tries, and the caption fallback after them, share it
+        # (deadline.py), so together they stay inside the job timeout.
+        start_run_budget(self._settings.download_deadline_seconds)
+        return await self._resolvers.fetch(run_id, url, limits)
 
-    async def fetch_captions(self, url: str) -> CaptionTrack | None:
-        return await captions.fetch_captions(self._settings, url)
+    async def fetch_captions(self, url: str, limits: MediaLimits | None = None) -> CaptionTrack | None:
+        return await captions.fetch_captions(self._settings, url, limits)
 
     async def normalize_media(self, src_path: str, run_dir: str) -> str:
         return await ffmpeg.normalize_media(self._settings, src_path, run_dir)

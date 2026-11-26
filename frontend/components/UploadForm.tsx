@@ -1,13 +1,15 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
-import type { Capability, MediaSource } from "@/domain/entities";
+import type { Capability, MediaLimits, MediaSource, FreeRunsPeriod } from "@/domain/entities";
 import type { SharedUrl } from "@/application/useSharedUrl";
 import { ArrowUpFromLine } from "lucide-react";
 import { CapabilityCallout } from "@/components/CapabilityNotice";
 import { isNoticeable } from "@/application/useCapabilities";
 import { revealField } from "@/application/useSoftKeyboard";
 import { goToMainTab, mainTabHref } from "@/application/useMainTab";
+import { FALLBACK_LIMITS, durationLabel } from "@/application/useMediaLimits";
+import { ACCOUNT_FREE_RUNS_PER_DAY, PAID_RUNS_PER_DAY } from "@/application/accountAllowance";
 import { isPlainLeftClick } from "@/components/navClick";
 import { MEDIA_FILE_ACCEPT, readTermsAccepted, writeTermsAccepted } from "@/components/mediaTerms";
 
@@ -18,8 +20,6 @@ import { MEDIA_FILE_ACCEPT, readTermsAccepted, writeTermsAccepted } from "@/comp
 export type IntakeHandoff = { kind: "file"; file: File } | { kind: "terms" };
 
 const ACCEPTED_EXTENSIONS = [".mp3", ".mp4", ".mov"];
-const MAX_FILE_SIZE_MB = 200;
-const MAX_DURATION_SECONDS = 180;
 interface UploadFormProps {
   onSubmit: (source: MediaSource) => void;
   disabled?: boolean;
@@ -28,11 +28,23 @@ interface UploadFormProps {
    *  request (so a rejection does not wipe the typed URL), which means it is
    *  the form that has to show the wait. */
   submitting?: boolean;
-  /** Out of free runs and no key saved (Phase 5b): the free-run banner above
-   *  the card says so and offers "Add key". Analyze, Browse files and drop are
+  /** Out of runs and no key saved (Phase 5b): the strip above the card says
+   *  so, and the card offers the way out (`blockedOffer`). Analyze, Browse files and drop are
    *  all refused — none of them could succeed — but the link field stays
    *  editable, so a typed link survives saving a key and coming back. */
   blocked?: boolean;
+  /** The period of the allowance that is spent when `blocked`: `day`
+   *  (default; a device or, since 2026-11-14, a free account) or `month`.
+   *  Kept for callers; since 2026-11-14 the blocked note no longer names it. */
+  blockedPeriod?: FreeRunsPeriod;
+  /** What to offer when `blocked`. */
+  blockedOffer?: "sign-in" | "upgrade" | "key"; // default "key"
+  /** Not blocked yet, but it may be once the allowance answers
+   *  (2026-11-14): an unseen, inert copy of the block holds its space when
+   *  the pre-paint `data-runs-spent` stamp says this device was out of runs
+   *  last time (CSS picks the copy for the stamped offer; otherwise it takes
+   *  no space). */
+  blockedHeld?: boolean;
   /** The most recent link shared into the app, or null. A new object per
    *  arrival, so re-sharing the same link still fills the field. `HomeScreen`
    *  owns the listener and has already returned the shell to a fresh intake by
@@ -51,6 +63,14 @@ interface UploadFormProps {
    *  it, so a later remount of the form cannot replay it. */
   handoff?: IntakeHandoff | null;
   onHandoffTaken?: () => void;
+  /** The upload limits for this person (`useMediaLimits`, 2026-11-13): the
+   *  hint under the drop title and the pre-upload checks both use them. The
+   *  server re-checks every upload. Defaults to the standard limits. */
+  limits?: MediaLimits;
+  /** Set (to the larger tier's minutes) only where sign-in is offered and a
+   *  key is saved but nobody is signed in: one quiet line under the limits
+   *  says signing in allows longer videos. */
+  signInForMinutes?: number | null;
 }
 
 type ErrorField = "url" | "file" | "terms";
@@ -59,7 +79,7 @@ type FieldErrors = Partial<Record<ErrorField, string>>;
 const FIELD_ORDER: ErrorField[] = ["url", "file", "terms"];
 const TERMS_MESSAGE = "Accept the media-use terms before analysis.";
 
-function validateFile(file: File): string | null {
+function validateFile(file: File, maxFileSizeMb: number): string | null {
   const dot = file.name.lastIndexOf(".");
   const ext = dot >= 0 ? file.name.slice(dot).toLowerCase() : "";
   if (!ACCEPTED_EXTENSIONS.includes(ext)) {
@@ -70,8 +90,8 @@ function validateFile(file: File): string | null {
   if (file.size === 0) {
     return "This file is empty. Choose another one.";
   }
-  if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
-    return `File is larger than the ${MAX_FILE_SIZE_MB}MB limit.`;
+  if (file.size > maxFileSizeMb * 1024 * 1024) {
+    return `File is larger than the ${maxFileSizeMb}MB limit.`;
   }
   return null;
 }
@@ -86,19 +106,35 @@ function validateUrl(value: string): string | null {
   }
 }
 
-function readMediaDuration(file: File): Promise<number> {
-  return new Promise((resolve, reject) => {
+/* How long the length check may hold the submit. A file the browser cannot
+   decode (or a WebView that never fires either event) is not refused: the
+   backend's check is the authoritative one. */
+const DURATION_READ_MS = 5000;
+
+/** The file's length in seconds, or null when the browser cannot say: no
+ *  metadata in time, a decode error, or a duration that is not a finite
+ *  number (a stream reports Infinity; some containers NaN). Never rejects. */
+function readMediaDuration(file: File): Promise<number | null> {
+  return new Promise((resolve) => {
     const media = document.createElement(file.name.toLowerCase().endsWith(".mp3") ? "audio" : "video");
+    const url = URL.createObjectURL(file);
+    let settled = false;
+    const finish = (value: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      media.onloadedmetadata = null;
+      media.onerror = null;
+      media.removeAttribute("src");
+      media.load();
+      URL.revokeObjectURL(url);
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(null), DURATION_READ_MS);
     media.preload = "metadata";
-    media.onloadedmetadata = () => {
-      URL.revokeObjectURL(media.src);
-      resolve(media.duration);
-    };
-    media.onerror = () => {
-      URL.revokeObjectURL(media.src);
-      reject(new Error("Could not read media metadata."));
-    };
-    media.src = URL.createObjectURL(file);
+    media.onloadedmetadata = () => finish(Number.isFinite(media.duration) && media.duration > 0 ? media.duration : null);
+    media.onerror = () => finish(null);
+    media.src = url;
   });
 }
 
@@ -107,12 +143,17 @@ export default function UploadForm({
   disabled,
   submitting,
   blocked,
+  blockedOffer = "key",
+  blockedHeld = false,
   sharedUrl,
   urlCapability,
   submitError,
   handoff,
   onHandoffTaken,
+  limits = FALLBACK_LIMITS.standard,
+  signInForMinutes = null,
 }: UploadFormProps) {
+  const { maxDurationSeconds, maxFileSizeMb } = limits;
   const busy = disabled || submitting;
   /* Every way of starting a run. `busy` alone still governs the link field and
      the terms box, which stay usable while blocked. */
@@ -201,7 +242,7 @@ export default function UploadForm({
 
   const handleFile = useCallback(
     async (file: File) => {
-      const validationError = validateFile(file);
+      const validationError = validateFile(file, maxFileSizeMb);
       if (validationError) {
         showError(validationError, "file");
         return;
@@ -211,9 +252,9 @@ export default function UploadForm({
       setChecking(true);
       try {
         const duration = await readMediaDuration(file);
-        if (duration > MAX_DURATION_SECONDS) {
+        if (duration !== null && duration > maxDurationSeconds) {
           showError(
-            `Media is ${Math.round(duration)}s long, which exceeds the ${MAX_DURATION_SECONDS}s limit.`,
+            `Media is ${Math.round(duration)}s long, which exceeds the ${durationLabel(maxDurationSeconds)} limit.`,
             "file"
           );
           return;
@@ -227,7 +268,7 @@ export default function UploadForm({
       setPendingKind("file");
       onSubmit({ file });
     },
-    [clearError, onSubmit, showError]
+    [clearError, maxDurationSeconds, maxFileSizeMb, onSubmit, showError]
   );
 
   const submitUrl = (event: FormEvent) => {
@@ -314,11 +355,17 @@ export default function UploadForm({
     event.preventDefault();
     goToMainTab("api-key");
   };
+  const openAccount = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (!isPlainLeftClick(event)) return;
+    event.preventDefault();
+    goToMainTab("account");
+  };
 
   /* The intake card: one white surface holding both entry points and the
      terms row, drawn on design/shots/Main.png. HomeScreen owns everything
-     around it (eyebrow, headline, lede, the "What you get" panel), so this
-     component stays the form and nothing else. */
+     around it (the allowance strip, the "New analysis" title, the retention
+     line under the card), so this component stays the form and nothing
+     else. */
   return (
     <div className="intake-card">
       {/* The owner wanted the submit error inside the card, above "Paste a
@@ -330,20 +377,24 @@ export default function UploadForm({
         </p>
       ) : null}
       {blocked ? (
-        <p id="intake-blocked" className="intake-blocked">
-          No free runs left today, so analyzing is paused.{" "}
-          <a className="text-link" href={mainTabHref("api-key")} onClick={openApiKey}>
-            Add key
-          </a>{" "}
-          to keep going.
-        </p>
+        /* UX fix spec (2026-11-14): the one way out, in the order the
+           business wants it offered: sign in (signed out, where sign-in
+           works), upgrade (a free account where the plan is sold), else the
+           Gemini key. One green button at most; Analyze link is disabled, so
+           this is the screen's one enabled filled button. */
+        <BlockedBlock id="intake-blocked" offer={blockedOffer} onApiKey={openApiKey} onAccount={openAccount} />
+      ) : blockedHeld ? (
+        <div className="intake-blocked-ghost" aria-hidden="true" inert>
+          <BlockedBlock offer="key" />
+          <BlockedBlock offer="sign-in" />
+        </div>
       ) : null}
       {/* noValidate: the field is type="url" for the keyboard and autofill,
           but the browser's own "Please enter a URL." bubble would pre-empt
           the app's messages below (refinement 2, #4). submitUrl validates. */}
       <form onSubmit={submitUrl} className="link-form" noValidate data-reveal-group>
         <label htmlFor="media-url" className="intake-card__label">
-          Paste a link
+          Paste a public link
         </label>
         <div className="link-row">
           <input
@@ -436,8 +487,19 @@ export default function UploadForm({
             <span className="only-touch">Add an audio or video file</span>
           </p>
           <p className="hint">
-            MP3, MP4, or MOV. Up to {MAX_FILE_SIZE_MB} MB and {MAX_DURATION_SECONDS / 60} minutes.
+            MP3, MP4, or MOV. Up to {maxFileSizeMb}{" "}MB and {durationLabel(maxDurationSeconds)}.
           </p>
+          {/* 2026-11-13: a key is saved but nobody is signed in, and signing
+              in would lift the limits. One quiet line in the same hint
+              voice; HomeScreen decides when it applies. */}
+          {signInForMinutes ? (
+            <p className="hint">
+              <a className="text-link" href={mainTabHref("account")} onClick={openAccount}>
+                Sign in
+              </a>{" "}
+              for videos up to {signInForMinutes} minutes.
+            </p>
+          ) : null}
         </div>
         <button
           ref={browseRef}
@@ -517,6 +579,44 @@ export default function UploadForm({
           {errors.terms}
         </p>
       )}
+      </div>
+    </div>
+  );
+}
+
+/* The out-of-runs block. Rendered for real when blocked, and as an unseen
+   stand-in (no id, no handlers, inside an inert wrapper) while it may be. */
+function BlockedBlock({
+  id,
+  offer,
+  onApiKey,
+  onAccount,
+}: {
+  id?: string;
+  offer: "sign-in" | "upgrade" | "key";
+  onApiKey?: (event: MouseEvent<HTMLAnchorElement>) => void;
+  onAccount?: (event: MouseEvent<HTMLAnchorElement>) => void;
+}) {
+  return (
+    <div id={id} className="intake-blocked" data-offer={offer === "key" ? "key" : "pair"}>
+      <p className="intake-blocked__text">Analyzing is paused until your runs reset.</p>
+      <div className="intake-blocked__actions">
+        {offer === "key" ? (
+          <a className="btn btn-secondary btn-pill" href={mainTabHref("api-key")} onClick={onApiKey}>
+            Use your own Gemini key
+          </a>
+        ) : (
+          <>
+            <a className="btn btn-primary btn-pill" href={mainTabHref("account")} onClick={onAccount}>
+              {offer === "sign-in"
+                ? `Sign in for ${ACCOUNT_FREE_RUNS_PER_DAY} runs a day`
+                : `Upgrade to Plus for ${PAID_RUNS_PER_DAY} runs a day`}
+            </a>
+            <a className="text-link" href={mainTabHref("api-key")} onClick={onApiKey}>
+              Use your own Gemini key
+            </a>
+          </>
+        )}
       </div>
     </div>
   );

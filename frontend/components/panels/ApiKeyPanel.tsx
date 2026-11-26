@@ -1,11 +1,21 @@
 "use client";
 
-import { useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type FormEvent,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import { Check, Eye, EyeOff } from "lucide-react";
 import { useGeminiApiKey } from "@/application/useGeminiApiKey";
 import { isNoticeable } from "@/application/useCapabilities";
 import { CapabilityCallout } from "@/components/CapabilityNotice";
 import AppBackLink from "@/components/AppBackLink";
+import { isPlainLeftClick } from "@/components/navClick";
+import { goToMainTab, mainTabHref } from "@/application/useMainTab";
 import type { Capability } from "@/domain/entities";
 
 /* Hallmark · theme: editorial · page: API key
@@ -20,10 +30,9 @@ import type { Capability } from "@/domain/entities";
  *
  * The lede is the boards' verbatim since Phase 5b, when the per-device daily
  * free-run allowance (GET /api/free-runs) made "You get a few free runs" true.
- * Copy departs from the boards in one place, for truth: the transport sentence
- * is the phone boards' version on every size, because the desktop board's "We
- * never store it on a server" is not quite true — in distributed mode the key
- * waits in a single-use Redis entry until the worker picks the run up.
+ * The help line under the field is the owner-approved consent wording
+ * (2026-11-13), with links to Terms and Privacy; it replaced the phone
+ * boards' "held briefly on the server" sentence.
  *
  * `budgetCapability` is the deployment's `daily_budget` row, passed down from
  * `HomeScreen` (one /api/capabilities fetch per app load). It is surfaced here
@@ -33,12 +42,49 @@ import type { Capability } from "@/domain/entities";
 
 const AI_STUDIO_URL = "https://aistudio.google.com/apikey";
 
+/* 2026-11-20: a `type="password"` field makes browsers and password managers
+   offer to save the key as a site password. Where the engine can mask a text
+   field (`-webkit-text-security`: Chromium, WebKit, the Android WebView) the
+   hidden key is a masked text field instead, which none of them treat as a
+   password. Elsewhere it stays a password field, still masked, with the
+   managers' own opt-out attributes. Read after hydration (false on the
+   server), so the prerendered field is the password field. */
+const noSubscribe = () => () => {};
+const canMaskText = () => {
+  try {
+    return typeof CSS !== "undefined" && CSS.supports("-webkit-text-security", "disc");
+  } catch {
+    return false;
+  }
+};
+const serverCannotMask = () => false;
+
+function openAccount(event: MouseEvent<HTMLAnchorElement>) {
+  if (!isPlainLeftClick(event)) return;
+  event.preventDefault();
+  goToMainTab("account");
+}
+
 export default function ApiKeyPanel({
   budgetCapability,
+  signInForMinutes = null,
+  signInPending = false,
+  signInStandInMinutes = 10,
 }: {
   budgetCapability?: Capability | null;
+  /** Minutes a signed-in person on their own key may send, offered only
+   *  where sign-in works and nobody is signed in, and only when the server
+   *  reports a larger tier (HomeScreen decides). Null hides the line. */
+  signInForMinutes?: number | null;
+  /** Whether the sign-in line applies is not known yet (session, the
+   *  capabilities report or `/api/limits` still on its way). Its space is
+   *  then held so the actions and the guide do not drop when it lands. */
+  signInPending?: boolean;
+  /** Minutes the held line is sized with; never seen. */
+  signInStandInMinutes?: number;
 }) {
   const { value, stored, saved, update, save, clear } = useGeminiApiKey();
+  const maskAsText = useSyncExternalStore(noSubscribe, canMaskText, serverCannotMask);
   const [revealed, setRevealed] = useState(false);
   const [emptyError, setEmptyError] = useState(false);
   const fieldRef = useRef<HTMLInputElement>(null);
@@ -81,11 +127,11 @@ export default function ApiKeyPanel({
     status = (
       <span className="key-status" data-tone="saved">
         <Check aria-hidden="true" />
-        Saved on this device
+        Saved in this browser
       </span>
     );
   } else if (!hasStored && saved) {
-    status = <span className="key-status">Removed from this device</span>;
+    status = <span className="key-status">Removed from this browser</span>;
   } else if (dirty && value.trim()) {
     status = <span className="key-status">Not saved yet</span>;
   }
@@ -94,10 +140,10 @@ export default function ApiKeyPanel({
     <div className="key-page">
       <AppBackLink />
       <header className="view-head">
-        <h1 className="view-title">API key</h1>
+        <h1 className="view-title">Gemini key</h1>
         <p className="view-lede">
-          Optional. You get a few free runs. Add your own Gemini key to keep going. It is stored in
-          this browser only.
+          Optional. VideoLens works without a key. Runs on your own Gemini key don&apos;t count
+          toward your daily runs. The key is saved in this browser only.
         </p>
       </header>
 
@@ -109,13 +155,14 @@ export default function ApiKeyPanel({
 
       <form className="key-card" onSubmit={handleSubmit} noValidate>
         <label htmlFor={fieldId} className="key-label">
-          Gemini API key
+          Gemini key
         </label>
         <div className="key-row">
           <input
             ref={fieldRef}
             id={fieldId}
-            type={revealed ? "text" : "password"}
+            type={revealed || maskAsText ? "text" : "password"}
+            data-masked={!revealed && maskAsText ? "" : undefined}
             value={value}
             onChange={(event) => {
               setEmptyError(false);
@@ -126,6 +173,11 @@ export default function ApiKeyPanel({
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
+            /* 1Password, LastPass, Bitwarden, Dashlane: not a login field. */
+            data-1p-ignore=""
+            data-lpignore="true"
+            data-bwignore=""
+            data-form-type="other"
             className="field key-field"
             aria-describedby={emptyError ? `${errorId} ${helpId}` : helpId}
             aria-invalid={emptyError || undefined}
@@ -146,14 +198,44 @@ export default function ApiKeyPanel({
             Paste your key first, then save it.
           </p>
         )}
-        {/* The transport statement is the point of this page, not filler: it
-            is what makes pasting a key here a reasonable thing to do. True as
-            written since 2026-11-01, when runsGateway stopped attaching the key
-            to polls and history — it travels only with POST /api/runs. */}
+        {/* The transport and consent statement is the point of this page,
+            not filler: it is what makes pasting a key here a reasonable thing
+            to do. Owner-approved wording (2026-11-13), replacing the earlier
+            "held briefly on the server" line; the key travels only with
+            POST /api/runs (runsGateway, since 2026-11-01). Saving is the
+            agreement: no checkbox, by the owner's choice. */}
         <p id={helpId} className="key-help">
-          Your key is stored in this browser. It is sent with your own runs and held briefly on the
-          server while a run is processed.
+          Your key is saved only on this device. VideoLens passes it to Google for your own runs
+          and never stores it. You&apos;re responsible for your key and any usage on your Google
+          account. By saving a key you agree to the{" "}
+          <a className="text-link" href="/terms">
+            Terms
+          </a>{" "}
+          and{" "}
+          <a className="text-link" href="/privacy">
+            Privacy Policy
+          </a>
+          .
         </p>
+        {/* Same rule as the nav's Account tab: only where sign-in works and
+            nobody is signed in. States what the longer tier is, never that
+            signing in makes the key safer. */}
+        {signInForMinutes ? (
+          <p className="key-help key-signin">
+            Signed in with your own key, you can analyze videos up to {signInForMinutes} minutes.{" "}
+            <a className="text-link" href={mainTabHref("account")} onClick={openAccount}>
+              Sign in
+            </a>
+          </p>
+        ) : signInPending ? (
+          /* Same sentence, same box, held unseen while it is not known
+             whether the line applies (UX fix follow-up: it used to arrive
+             late and push Save and the guide down). Not a link, not read. */
+          <p className="key-help key-signin key-signin-ghost" aria-hidden="true" inert>
+            Signed in with your own key, you can analyze videos up to {signInStandInMinutes} minutes.{" "}
+            <span className="text-link">Sign in</span>
+          </p>
+        ) : null}
         <div className="key-actions">
           <button type="submit" className="btn btn-primary btn-pill">
             Save key

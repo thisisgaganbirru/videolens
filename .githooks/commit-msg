@@ -1,0 +1,4 @@
+#!/bin/sh
+# Enabled with: git config core.hooksPath .githooks
+# (cloud sessions get this from .claude/hooks/session-start.sh)
+exec "$(git rev-parse --show-toplevel)/scripts/commit-hygiene.sh" msg "$1"

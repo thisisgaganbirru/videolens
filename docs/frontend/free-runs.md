@@ -53,12 +53,11 @@ hydration agree.
 
 ## UI (IntakeFreeApp.png, IntakeLimitApp.png, IntakeWeb.png)
 
-- One white strip above the "New analysis" eyebrow on **every** shell (installed app, phone web, desktop web; in the left column on desktop). The sentence is on the left and the near-black `btn btn-ink btn-pill` "Add key" is on the right.
-- Copy: "**3 free runs left.** Add your own key for more." The singular is "**1 free run left.**". When spent: "**You have used your free runs.**" with "Add your own key to keep going." on its own line, and the strip gets a `--color-danger-border` hairline. Nothing else turns red.
-- "Add key" is a real link to `/app?view=api-key` (was `/?view=api-key` before Phase 5c moved the tool) (plain click goes through `goToMainTab`; middle-click opens a new tab).
+- One white strip of text above the "New analysis" eyebrow on **every** shell (installed app, phone web, desktop web; in the left column on desktop). Since 2026-11-14 (UX fix spec) it has **no button**: the "Add key" pill is gone from every branch, and the way out of a spent allowance is offered in the intake card (see "Strip and out-of-runs offer (UX fix spec)" below).
+- Copy: see the table in that section. The words are "runs", "today" and the local reset time; never "free runs", "tomorrow" or "midnight". When spent the strip gets a `--color-danger-border` hairline. Nothing else turns red.
 - Blocked: Analyze link uses the existing `.btn-primary:disabled` grey. **Browse files is disabled too, and drop is refused** (`dropEffect = "none"`, no highlight). The board draws Browse looking normal, but a control that cannot succeed should not look pressable. The link field and the terms box stay usable, so a typed link survives saving a key and coming back.
 - Accessibility: the `.free-runs-slot` wrapper is always rendered with `role="status"` (implicitly polite), so the count and the switch to "used" are announced without moving focus. It is `display: none` while empty.
-- Large text (refinement 15): the "Add key" pill scales with the text, so at 200% it left the sentence one word a line. `.free-runs-slot` is now a size container (`free-runs`, font-size pinned to 1rem; the strip is all rem). Below **17em** of slot width the strip stacks: sentence on top at full width, pill underneath, left-aligned with it. 17em is where the sentence would get under ~9em of its own text beside the pill (5.68rem; padding, border and gap ~2.85rem). 320px at 100% has 18em and keeps the row, pixel-identical to before.
+- Large text (refinement 15): the size container that stacked the "Add key" pill under the sentence went with the pill (2026-11-14). The slot's font-size stays pinned to 1rem; the strip is all rem and wraps like any paragraph.
 - Short desktop windows (`min-width: 60rem` and `max-height: 50rem`): while the banner is shown (`.intake-layout:has(.free-runs)`), the top padding drops to 1rem, the headline margin to 1rem, the banner's block padding to 0.5rem and its line-height to 1.35. Measured: 1366×768 fits with no scroll in all six states (3 left, spent, none × light/dark).
 
 ## Known issues
@@ -99,7 +98,7 @@ healthy reply on the next window `focus` clears it and the pill appears.
   `NativeShell.onResume`, throttled to 1.5s), from `useFreeRuns`;
 - whenever a run completes or fails (`useAnalysisRun.settleFreeRuns`);
 - whenever the intake comes back (`status === "idle"` in HomeScreen), so
-  "Analyze another file" after a refunded run shows the refunded count.
+  "Analyze another" after a refunded run shows the refunded count.
 `refreshFreeRuns` already dedupes in-flight reads.
 
 **Refund line, only with proof.** On submit, `useAnalysisRun` keeps the
@@ -138,6 +137,256 @@ free-runs 503 alone, capabilities 503 alone and both 503 all show the notice
 (18/18); a refocus with one read still failing keeps it; a fully healthy
 refocus clears it and the pill appears; 400 on either or both shows nothing.
 
+## Account allowance (2026-11-13)
+
+Owner decision: a signed-in account gets **10 free shared-key runs per UTC
+calendar month**, tied to the account across devices, used *instead of* the
+device's 3 per day while signed in. A saved Gemini key is still exempt.
+Backend contract: `GET /api/free-runs` gains `"scope": "device" | "account"`
+(account: `limit` 10, `resets_at` the first of next month 00:00Z); the 402
+`free_runs_used` body gains `scope` too.
+
+- **Bearer.** Nothing new in the gateway: `FetchFreeRunsGateway` already goes
+  through the shared `ApiClient`, which adds `Authorization: Bearer` when
+  someone is signed in and the server's `auth` capability is `ok` (the same
+  path `/api/me` and run creation use). Verified in Chrome that the read
+  carries it when signed in.
+- **Scope.** `FreeRunsStatus.scope` (`domain/entities.ts`, `FreeRunsScope`).
+  The gateway reads only a literal `"account"` as account; missing (an older
+  server) or anything else is `device`. `ApiError.scope` carries the 402's,
+  and `markFreeRunsUsed(limit, used, scope)` uses it (falling back to the last
+  read's scope, then device).
+- **Re-read on sign-in / sign-out.** `useFreeRuns(identity)` takes
+  `authUser.ready ? (user?.id ?? "") : null` from `HomeScreen`. A change after
+  the first known value calls `noteIdentityChanged()`: bumps an
+  `identityEpoch`, clears the cached count and any 402 limit state, publishes
+  `null` (the strip goes quiet rather than showing the other identity's
+  number), and re-reads unless a key is saved. A read that was in flight under
+  the old identity is not published; `refreshFreeRuns` notices the epoch moved
+  and reads again. The first known value does not re-read: the launch read
+  already waits for a stored session (`ApiClient`).
+- **Refund proof** (`provesRefund`) now also requires the same `scope` before
+  and after, so a sign-in between the two reads cannot pose as a refund.
+- **Spent timer.** Unchanged code; for an account the reset is weeks out, so
+  the 24h cap simply re-reads once a day.
+
+**Copy** (only the scope changes the words; layout unchanged):
+
+| Where | device (unchanged unless noted) | account |
+|---|---|---|
+| Analyze strip, runs left | "**3 free runs left today.** Add your own key for more." Signed out where sign-in is offered (`showAccount`, 2026-11-14): "**3 free runs left today.** [Sign in] for 10 a day, or add your own key." | "**7 free runs left this month.** Add your own key for more." |
+| Analyze strip, spent | "**You have used your free runs.** Add your own key to keep going." | "**You have used this month's free runs.** Add your own Gemini key to keep going." (the server's 402 `detail`, word for word) |
+| Analyze strip, spent, signed out where sign-in is offered (`showAccount`) | "**You have used your free runs.** Add your own key, or [sign in] for 10 free runs a day." (new; inline `.text-link` to `/app?view=account`, ink + 600 like the blocked note's link) | n/a |
+| Blocked note in the intake card | "No free runs left today, so analyzing is paused." | "No free runs left this month, so analyzing is paused." (`UploadForm` `blockedScope`) |
+| Account panel, Plan and usage card (2026-11-14; was the identity line) | "Runs left today" → "N of L on this device" | "Runs left today" → "N of L" (`limit` from the server; "this month" only if `period` says so), and "Resets at" → `resets_at` as a local clock time. See `auth-sign-in.md`, "Account refinement (2026-11-14)" |
+
+The sign-in nudge is only on the spent device strip: that is where signing in
+actually unblocks someone, and it adds no chrome. The "10" there is a
+constant (`ACCOUNT_FREE_RUNS_PER_MONTH` in `FreeRunsBanner.tsx`) because a
+signed-out caller has no account read to take it from; change it with the
+backend's limit. No reset date is shown in the Account panel (kept short).
+With a key saved, a 402 still shows the server's sentence verbatim as the
+intake error (unchanged path).
+
+Not verified in a browser: the signed-out spent strip with the sign-in link
+(it needs signing the owner out, which was off limits); typecheck and build
+cover it.
+
+## Daily account allowance (2026-11-14)
+
+Owner decision: a signed-in **free** account gets **10 runs per UTC day**,
+not 10 a month (3 a day anonymous against 10 a month signed in made signing
+in look like a downgrade). Anonymous devices stay at 3 a day; the paid plan
+is unchanged (100 a month, extra runs billed).
+
+- **Contract.** `GET /api/free-runs` gains `period: "day" | "month"` on
+  every response: device `day`, free account `day` (`limit: 10`,
+  `resets_at` next UTC midnight), paid `month`. `FreeRunsStatus.period` and
+  `FreeRunsBanner.period` (`domain/entities.ts` `FreeRunsPeriod`). A server
+  that does not send it yet is read by plan in `freeRunsGateway.normalise`:
+  paid `month`, anything else `day`. A 402 `free_runs_used` is only ever the
+  free plan, so `markFreeRunsUsed` publishes `day`.
+- **Copy follows `period`, not `scope`.** The strip, the blocked note
+  (`UploadForm` prop renamed `blockedScope` -> `blockedPeriod`), the Account
+  identity line and the landing allowance line say "today" / "a day" for
+  `day` and "this month" / "a month" for `month`.
+- **Constant.** `ACCOUNT_FREE_RUNS_PER_MONTH` -> `ACCOUNT_FREE_RUNS_PER_DAY`
+  (10) in `application/accountAllowance.ts`; importers: `FreeRunsBanner`,
+  `LandingAllowance`, `LandingScreen`, `AccountPanel`.
+
+| Where | free account (supersedes the "account" column above) |
+|---|---|
+| Analyze strip, runs left | "**7 free runs left today.** Add your own key for more." |
+| Analyze strip, spent | "**You have used today's 10 free runs.** They reset tomorrow. Add your own Gemini key to keep going[, or upgrade]." (`limit` from the server; "today's free runs" if a 402 carried no limit) |
+| Signed-out hints | "[Sign in] for 10 a day, or add your own key." / "...or [sign in] for 10 free runs a day." |
+| Blocked note | "No free runs left today, so analyzing is paused." |
+| Account identity line | "Free runs left today: N of 10" |
+| Paid strip / identity | superseded the same day: see "Paid daily allowance" below |
+
+The spent account sentence is the frontend's own, not the 402 `detail`: the
+strip only renders from a status read or a 402, and "They reset tomorrow" is
+a fixed fact of the daily period. The "account reset is weeks out" note on
+the spent timer no longer applies to free accounts; their reset is hours
+out, the same path as the device.
+
+## Paid daily allowance (2026-11-14, owner)
+
+The paid plan's included runs are **30 per UTC day** (was 100 a month).
+Tiers: anonymous 3 a day, free account 10 a day, paid 30 a day with videos
+up to 10 minutes and no Gemini key needed; extra runs past the 30 are billed
+per run with a hard cap of 200 extra runs a calendar month.
+
+- **Contract.** `GET /api/free-runs` and `GET /api/billing` `runs.period`
+  answer `day` (limit 30) for paid. Both adapters now read a missing
+  `period` as `day` for every plan (`freeRunsGateway.normalise`,
+  `billingGateway.normalise`); only a literal `"month"` reads as a month.
+  `BillingDetails.runs.period` is new.
+- **Constants.** `PAID_RUNS_PER_DAY` (30) and `PAID_EXTRA_RUNS_PER_MONTH`
+  (200) next to `ACCOUNT_FREE_RUNS_PER_DAY` in
+  `application/accountAllowance.ts`. Quoted only where no paid read exists
+  (the free plan's pitch, the "upgrade" hint, the extra-run cap, which no
+  status body carries). `PAID_RUNS_PER_MONTH` in `AccountPanel` is gone.
+
+| Where | Paid copy |
+|---|---|
+| Analyze strip, runs left | "**N of 30 runs left today.**" (no pill) |
+| Analyze strip, past the 30 (`overage`) | "**You have used today's 30 runs.** Extra runs are billed at $X each, up to 200 a month." (no price known: "Extra runs are billed per run, up to 200 a month.") |
+| Free account spent, billing on | "...Add your own Gemini key to keep going, or [upgrade] for 30 a day." |
+| Account identity line | "Runs left today: N of 30" |
+| 402 `extra_runs_cap` | "You’ve reached this month’s limit of N extra runs. Your included runs come back tomorrow." (was "Runs reset next month.", wrong once the included runs are daily) |
+
+## Strip and out-of-runs offer (UX fix spec, 2026-11-14)
+
+The tables in the dated sections above are history; this is the current copy.
+`FreeRunsBanner` reads `banner.resetsAt` and formats it with the Account
+formatters (`formatClockTime` for a day, `formatDay` for a month). When the
+time is unknown the reset sentence is left out. The first sentence is
+`<strong>`; "run" when the limit is 1.
+
+| State | Text |
+|---|---|
+| Free, runs left, signed out, sign-in offered | **3 of 3 runs left today.** Resets at 7:00 PM. [Sign in] for 10 a day. |
+| Free, runs left, otherwise | **7 of 10 runs left today.** Resets at 7:00 PM. |
+| Free, spent | **You've used today's 3 runs.** They reset at 7:00 PM. ("today's runs" when the limit is unknown; "this month's" / "They reset on Dec 1, 2026." for a monthly period) |
+| Paid, runs left | **12 of 30 runs left today.** Resets at 7:00 PM. |
+| Paid, past the 30 (`overage`) | **You've used today's 30 runs.** Extra runs are billed at $X each, up to 200 a month. |
+| Paid, spent, no overage | **You've used today's 30 runs.** They reset at 7:00 PM. |
+
+The spent headline sits on its own line below 32rem only (as on the phone
+board); from 32rem it flows, so the spent strip is the stand-in's height at
+desktop widths and nothing above the card moves when the count lands.
+
+**Out-of-runs block** (`UploadForm` `blockedOffer`, computed in
+`HomeScreen`): `#intake-blocked` is a `div` with "Analyzing is paused until
+your runs reset." and one way out:
+
+| `blockedOffer` | When | Actions |
+|---|---|---|
+| `sign-in` | sign-in offered, nobody signed in | green pill "Sign in for 10 runs a day" (`/app?view=account`), then text link "Use your own Gemini key" |
+| `upgrade` | billing read says the free plan | green pill "Upgrade for 30 runs a day" (`/app?view=account`), then the same text link |
+| `key` | otherwise | outline pill "Use your own Gemini key", the only action |
+
+Both links switch tabs in place on a plain left click and keep a real href.
+Every link and button in the block is 44px tall (measured); below 32rem the
+button is full width.
+
+**Waiting for the sign-in answer.** The strip and the block both depend on
+whether sign-in is offered, known only once the capabilities read has
+settled and the session is ready. Until then (`stripKnown` in `HomeScreen`)
+the slot keeps its stand-in and `blocked` stays false, so the strip never
+lands short and then grows a "Sign in" sentence (measured 0.037 at 412 before
+this). The stand-in now carries a valid `resetsAt`, so it is as long as the
+real strip.
+
+Measured (Playwright, mocked `/api/`, CLS from `layout-shift` entries):
+runs left, signed out: 0 at 320 and 412 (web and app shell), 0.0016 at 1280
+(the nav's account pill, not the strip). Spent: one shift inside the card
+(0.08 to 0.11 on phones, 0.019 at 1280); nothing above the card moves.
+
+## Reserved strip height (2026-11-14, Android QA run 22)
+
+The strip used to be inserted when the read landed, with no space reserved,
+pushing the eyebrow, title, lede and intake card down ~93 css px at 412 and
+~115 at 320 (CLS 0.079-0.118). Now, like `LandingAllowance`:
+
+- `useFreeRuns` returns `pending`: no key saved and no read has answered for
+  the current identity yet (`Snapshot.settled`, set by a successful read, a
+  failed read or a 402; cleared on launch and by `noteIdentityChanged`).
+- While `pending`, `HomeScreen` renders an invisible, `inert`, `aria-hidden`
+  stand-in `FreeRunsBanner` (`FREE_RUNS_GHOST`: device, 3 of 3 left, sign-in
+  offered: the first-visit sentence and the longest "runs left" one) inside
+  the slot (`data-pending`). `.free-runs-ghost { visibility: hidden }`, so no
+  skeleton text is ever seen and the slot is sized by the real strip markup
+  at every width and font scale. The live region does not announce it.
+- A saved key never shows the strip, but the prerender cannot know that, so
+  a new pre-paint script (`BYOK_INIT_SCRIPT` in
+  `infrastructure/apiKeyStore.ts`, last in `PRE_PAINT_SCRIPT`) stamps
+  `<html data-byok>` when the key exists (presence only), and
+  `:root[data-byok] .free-runs-slot[data-pending] { display: none }`.
+  `useFreeRuns` keeps the stamp in step after hydration (never on the first
+  render, which always reads "no key"). Its CSP hash is computed by
+  `inject-csp.mjs` like the others (checked in `out/app.html`).
+
+Measured (Playwright, chromium-1217, dev server, `/api/free-runs` mocked with
+a 1.5 s delay, CLS summed from `layout-shift` entries):
+
+| Case | 412 web / app | 320 web / app |
+|---|---|---|
+| Device, runs left (first visit) | 0.0000 / 0.0021 | 0.0000 / 0.0015 |
+| Free account, runs left | 0.0000 / 0.0021 | 0.0179 / 0.0163 |
+| Paid, runs left (one line, shorter) | 0.0194 / 0.0185 | 0.0566 / 0.0489 |
+| Paid, past the 30 | 0.0000 / 0.0021 | 0.0179 / 0.0163 |
+| Key saved | 0.0034 / 0.0074 | 0.0041 / 0.0027 |
+| Free account spent (taller) | 0.1062 / 0.0912 | 0.1317 / 0.1099 |
+| Read failed (reservation collapses) | 0.0842 / 0.0738 | 0.1223 / 0.1045 |
+
+Known residue: a spent strip is taller than the stand-in, and a failed read
+gives the reserved space back. Both are rarer than the runs-left states and
+no worse than before; keeping a blank band up after a failure, or guessing a
+spent state before the read, would each be wrong more often than it helps.
+Not yet re-measured on the device (the QA run's own numbers were on Android).
+
+## Remembered spent state (2026-11-14)
+
+The out-of-runs block appears inside the card only once the allowance is
+read, which pushed the card's contents down (0.094 at 412, 0.025 at 1280).
+The prerender cannot know, so the last answer is remembered:
+
+- `useRememberRunsSpent` (HomeScreen) writes `videolens-runs-spent` =
+  `"<reset ms> <offer>"` when the block is shown (`resetsAt`, or the next
+  UTC midnight when unknown; offer `sign-in` / `upgrade` / `key`), and
+  removes it as soon as a read says runs can be started (runs left, billed
+  overage, or a saved key). A failed read leaves it to expire.
+- `LAYOUT_HINTS_INIT_SCRIPT` (last in the pre-paint script) stamps
+  `<html data-runs-spent="<offer>">` while the reset is in the future; an
+  expired or malformed value is removed instead. A `sign-in` hint with a
+  stored session (`data-session`), or an `upgrade` one without, was written
+  by the other identity and is dropped the same way.
+- While the block may still appear (`pending`, or blocked but `stripKnown`
+  not yet), `UploadForm` gets `blockedHeld` and renders an inert, unseen
+  copy of the block in each shape (one outline button / button + link);
+  CSS shows the stamped one and nothing without a stamp. The strip slot
+  renders three stand-ins (signed out two-line, signed in one-line, spent)
+  and CSS shows one: spent when stamped, else signed in when
+  `data-session`, else signed out. `:root[data-byok]` never reserves.
+
+Measured (mocked `/api/`, light web, CLS on load):
+
+| Case | 412 | 1280 |
+|---|---|---|
+| First spent visit (no hint; the old behaviour) | 0.0938 | 0.0254 |
+| Returning spent visit | 0.0000 | 0.0016 (nav pill) |
+| Stale hint, runs available (unexpired) | 0.0938, one collapse | 0.0254 |
+| Expired hint | 0.0000 | 0.0016 |
+| `sign-in` hint, now signed in | 0.0000 | 0.0009 |
+| Key saved with a hint | 0.0041 (key effect, pre-existing) | 0.0027 |
+| Signed in, runs left: before / after | 0.0164 / 0.0000 | 0.0022 / 0.0009 |
+
+Still shifts: the first spent visit on a device (no hint yet); a hint whose
+offer differs from the one shown (for example `key` stamped, sign-in shown:
+0.027 at 412); an unexpired hint after runs came back early. Each happens
+once, then the hint is rewritten or removed.
+
 ## Changelog
 
 - 2026-11-01 · frontend agent (Phase 5b) · created: device token store, free-runs gateway/port, `useFreeRuns` store, 401 retry-once and 402 limit state in `useAnalysisRun`, `FreeRunsBanner` on all shells, `UploadForm` `blocked`, API key lede and Privacy sentence
@@ -147,3 +396,14 @@ refocus clears it and the pill appears; 400 on either or both shows nothing.
 - 2026-11-02 · frontend agent (refinement 10) · 5xx from the free-runs (and capabilities) read now counts as unreachable, so a Railway 502/503 shows the "Can't reach the server" notice; 4xx unchanged
 - 2026-11-02 · frontend agent (refinement 11) · per-read reachability (`noteReadResult(source, err)`, `forgetReadResult`, `isReadFailing`): the notice shows when ANY launch read is unreachable and clears only once every read is healthy again, so a partial 5xx outage is no longer hidden by the other read's success; 4xx and copy unchanged (D-R10-1)
 - 2026-11-02 · frontend (refinement 15) · `.free-runs-slot` is an em size container; below 17em the strip stacks (pill under the sentence), so the sentence is never one word a line at large text; 320/100% unchanged
+- 2026-11-13 · frontend agent · account allowance: `scope` on `FreeRunsStatus`/`ApiError` (missing = device), re-read on sign-in/sign-out with an identity epoch so a stale read is never published, scope-aware copy on the strip, blocked note and Account panel, and a quiet "sign in for 10 free runs a month" link on the spent device strip where sign-in is offered
+- 2026-11-13 · frontend agent · `plan`/`overage` on `FreeRunsStatus`; paid strip "N of L runs left this month." (no pill), past the allowance with overage "Extra runs are billed at $X each." (not blocked); a spent free account adds ", or upgrade." (link to Account) when billing is on. See `billing.md`
+- 2026-11-14 · frontend agent · device strip says "today"; signed out where sign-in is offered it adds one inline "Sign in for 10 a month, or add your own key." so the device and account tiers read as two tiers (Android QA); `ACCOUNT_FREE_RUNS_PER_MONTH` moved to `application/accountAllowance.ts`
+- 2026-11-14 · frontend agent · free account allowance is daily (10/day): `period` (`day`|`month`) on `FreeRunsStatus`/`FreeRunsBanner`, inferred by plan when the server omits it; copy keyed on period ("N free runs left today", spent "You have used today's 10 free runs. They reset tomorrow.", hints "Sign in for 10 a day"); `blockedScope` -> `blockedPeriod`; `ACCOUNT_FREE_RUNS_PER_MONTH` -> `ACCOUNT_FREE_RUNS_PER_DAY`
+- 2026-11-14 · frontend agent · paid plan is 30 runs a day: missing `period` reads as `day` for every plan; paid strip "N of 30 runs left today.", past the 30 "Extra runs are billed at $X each, up to 200 a month."; spent free account "...or upgrade for 30 a day."; 402 `extra_runs_cap` "Your included runs come back tomorrow."; `PAID_RUNS_PER_DAY` / `PAID_EXTRA_RUNS_PER_MONTH` in `accountAllowance.ts`
+- 2026-11-14 · frontend agent · Android QA run 22: strip height reserved before the first read (invisible inert stand-in, `useFreeRuns().pending`, `Snapshot.settled`) and dropped pre-paint for key holders (`BYOK_INIT_SCRIPT` stamps `data-byok`); CLS at 412/320 ~0 for runs-left states, numbers and residue under "Reserved strip height"
+- 2026-11-14 · frontend agent · copy table corrected to the code: the signed-out strip says "10 a day" and "10 free runs a day" (the table still said a month); `FreeRunsBanner.resetsAt` added for the Account panel's Plan and usage card, which replaces the identity line's count
+- 2026-11-14 · frontend agent · refund line reads "This didn't use one of your runs." (UX fix spec batch a)
+- 2026-11-14 · frontend agent · UX fix spec batch b: strip is text only (no "Add key" pill, container query removed), "N of L runs left today. Resets at <local time>." with the inline Sign in where offered, spent "You've used today's L runs. They reset at <time>."; out-of-runs offer moved into the intake card (`blockedOffer`: sign-in / upgrade / key); strip and block wait for `stripKnown`; ghost has a valid `resetsAt`; 402 `extra_runs_cap` no longer says "tomorrow"
+- 2026-11-14 · frontend agent · desktop (60rem up): the strip sits at the right end of the "New analysis" row (`.intake-head` grid, `justify-self: end`, max 26rem, 0.875rem/1.35 with 8px block padding so two lines stay shorter than the h1 and the card never moves); ghost stand-in and `data-byok` rule unchanged; below 60rem the stacked strip is as before
+- 2026-11-14 · frontend agent · out-of-runs and signed-in strip shifts: `data-runs-spent` pre-paint hint (`infrastructure/layoutHints.ts`, `application/useLayoutHints.ts`) reserves the spent strip and the out-of-runs block (`UploadForm` `blockedHeld`) for a returning spent visitor; three strip stand-ins chosen by `data-session` / `data-runs-spent`. Numbers under "Remembered spent state"

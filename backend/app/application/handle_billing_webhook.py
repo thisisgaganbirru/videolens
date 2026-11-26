@@ -1,0 +1,130 @@
+"""`POST /api/billing/webhook`: Stripe tells us a subscription changed.
+
+The event is only a nudge. Whatever it says, the subscription is read fresh
+from Stripe and stored as Stripe has it now, so events arriving out of
+order, twice, or late all converge on the same row. An event id is recorded
+only after it was handled: a failure answers 500 and Stripe sends it again
+(its retries run for days); a repeat of a handled one is a no-op. Only ids
+are logged, never an email, an address or a card.
+"""
+
+import logging
+
+from ..domain.entities import BillingAccount, BillingWebhookEvent, SubscriptionSnapshot
+from ..domain.errors import BillingNotConfiguredError
+from ..domain.policies import subscription_grants_paid, subscription_is_live
+from .billing import BillingPlans
+from .saved_history import SavedHistory
+
+logger = logging.getLogger("videolens")
+
+# The events the plan listens to. The Stripe webhook endpoint should send
+# these; anything else it sends is acknowledged and ignored.
+HANDLED_EVENTS = frozenset(
+    {
+        "checkout.session.completed",
+        "customer.subscription.created",
+        "customer.subscription.updated",
+        "customer.subscription.deleted",
+        "customer.subscription.paused",
+        "customer.subscription.resumed",
+        "invoice.paid",
+        "invoice.payment_failed",
+    }
+)
+
+
+class HandleBillingWebhookUseCase:
+    def __init__(self, *, plans: BillingPlans, history: SavedHistory | None = None) -> None:
+        self._plans = plans
+        # Starts or clears the saved-history window as the plan ends or
+        # comes back (docs/backend/saved-history.md). None = not tracked.
+        self._history = history
+
+    async def execute(self, payload: bytes, signature: str) -> str:
+        """What happened ("handled" | "duplicate" | "ignored"), for tests and
+        the log. Raises `WebhookSignatureError` (400) before reading anything
+        when the signature does not verify."""
+        if not self._plans.enabled:
+            raise BillingNotConfiguredError()
+        event = self._plans.gateway.parse_webhook(payload, signature)
+        accounts = self._plans.accounts
+        if await accounts.event_seen(event.event_id):
+            return "duplicate"
+        outcome = "ignored"
+        if event.type in HANDLED_EVENTS:
+            outcome = await self._sync(event)
+        await accounts.mark_event(event.event_id, event.type)
+        logger.info("Stripe event %s (%s): %s", event.event_id, event.type, outcome)
+        return outcome
+
+    async def _sync(self, event: BillingWebhookEvent) -> str:
+        accounts = self._plans.accounts
+        account = await accounts.by_customer(event.customer_id) if event.customer_id else None
+        if account is None and event.account_id:
+            candidate = await accounts.get(event.account_id)
+            # Only for the same customer: a metadata id alone must never move
+            # a subscription onto another account.
+            if candidate is not None and (not event.customer_id or candidate.stripe_customer_id == event.customer_id):
+                account = candidate
+        if account is None:
+            # A deleted account, or a customer this app did not create.
+            logger.warning("Stripe event %s names no known account (customer %s)", event.event_id, event.customer_id)
+            return "ignored"
+        if not event.subscription_id:
+            return "ignored"
+        snapshot = await self._plans.gateway.get_subscription(event.subscription_id)
+        if snapshot.customer_id != account.stripe_customer_id:
+            logger.warning(
+                "Stripe event %s: subscription %s belongs to another customer",
+                event.event_id,
+                snapshot.subscription_id,
+            )
+            return "ignored"
+        snapshot = await self._one_subscription(account, snapshot)
+        applied = await accounts.apply_subscription(account.account_id, snapshot)
+        if self._history is not None:
+            # From the stored row, applied or not; never raises.
+            await self._history.sync_expiry(account.account_id)
+        if applied:
+            logger.info("Account %s subscription %s is %s", account.account_id, snapshot.subscription_id, snapshot.status)
+        return "handled" if applied else "ignored"
+
+    async def _one_subscription(self, account: BillingAccount, snapshot: SubscriptionSnapshot) -> SubscriptionSnapshot:
+        """One customer, one live subscription. A second one (an old Checkout
+        tab paid after another checkout already subscribed) would bill the
+        plan twice and every extra run twice (the meter is the customer's),
+        so it is cancelled here, on whichever of its events arrives first.
+
+        Kept: the stored one, unless only the new one grants the plan (the
+        stored one is incomplete, past_due or unpaid and the new one is
+        paid), so a second subscription stuck in `incomplete` can never
+        make a paying account read as free. The other is cancelled now with
+        its unused time credited to the customer and no final invoice
+        (`cancel_duplicate_subscription`). Returns the snapshot to store. A
+        Stripe failure raises: the event answers 500 and Stripe sends it
+        again."""
+        stored_id = account.stripe_subscription_id
+        if not stored_id or stored_id == snapshot.subscription_id or not subscription_is_live(snapshot.status):
+            return snapshot
+        gateway = self._plans.gateway
+        # Fresh, not the stored status: a missed "deleted" event must not
+        # make an ordinary resubscribe look like a duplicate.
+        stored = await gateway.get_subscription(stored_id)
+        if not subscription_is_live(stored.status) or stored.customer_id != account.stripe_customer_id:
+            return snapshot
+        now = self._plans.now()
+        new_pays = subscription_grants_paid(snapshot.status, snapshot.current_period_end, now)
+        stored_pays = subscription_grants_paid(stored.status, stored.current_period_end, now)
+        keep, drop = (snapshot, stored) if new_pays and not stored_pays else (stored, snapshot)
+        logger.error(
+            "Account %s has two live subscriptions (customer %s): keeping %s (%s), cancelling %s (%s) with its unused time credited",
+            account.account_id,
+            account.stripe_customer_id,
+            keep.subscription_id,
+            keep.status,
+            drop.subscription_id,
+            drop.status,
+        )
+        await gateway.cancel_duplicate_subscription(drop.subscription_id)
+        return keep

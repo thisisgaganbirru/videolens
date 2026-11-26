@@ -115,6 +115,37 @@ Complete these items before making the application publicly available.
       backend and worker services, so the healthy 2026-11-06 production
       deploy implies it is set; confirm from the Railway dashboard rather
       than from this checkbox.
+- [ ] Signed-in free runs (`FREE_RUNS_PER_ACCOUNT_DAILY`, default 10 per
+      UTC day per account; added 2026-11-13 as 10 per month, daily since
+      2026-11-14). Apply Alembic `0003_account_free_runs` and
+      `0005_account_daily_free_runs` (which needs `0004_billing` before it)
+      to the environment's database **before** deploying the code: without
+      the tables, or with `period` still varchar(7), every signed-in run
+      without a key fails at admission. Remove any
+      `FREE_RUNS_PER_ACCOUNT_MONTHLY` variable (no longer read); if it was
+      set to 0 to turn the allowance off, set `FREE_RUNS_PER_ACCOUNT_DAILY=0`.
+- [ ] Paid plan (Stripe, added 2026-11-13, `docs/backend/billing.md`). Off
+      until the `STRIPE_*` variables are set. Order: apply Alembic
+      `0004_billing`, deploy the code with `STRIPE_*` blank, create the
+      Stripe test-mode Product, Prices and Meter, set the variables on the
+      backend **and** worker, add the webhook endpoint
+      `https://<api>/api/billing/webhook`, then check `billing: ok` in
+      `GET /api/capabilities` and run one test checkout. Not yet applied
+      or configured in any environment. Since 2026-11-14 the paid plan's
+      included runs are `PAID_RUNS_PER_DAY` (default 30 per UTC day);
+      `PAID_RUNS_PER_MONTH` is no longer read. If an environment has
+      `PAID_RUNS_PER_MONTH` set, delete it and set `PAID_RUNS_PER_DAY`
+      instead (or leave it unset for 30), on the backend **and** worker.
+      No migration: 0005 already widened `period`.
+- [ ] Paid saved history and the 30-day deletion hold (added 2026-11-14,
+      `docs/backend/saved-history.md`). Apply Alembic `0006_saved_history`
+      to the environment's database **before** deploying the code: the
+      code reads the new `accounts` columns on every signed-in request.
+      Deploy backend and worker together (the worker saves results and
+      runs the hourly `account_cleanup` cron). Optional variables:
+      `PAID_SAVED_RUNS_GRACE_DAYS`, `PAID_SAVED_RUN_MAX_BYTES`,
+      `ACCOUNT_DELETION_HOLD_DAYS` (defaults 30 / 2097152 / 30). Not yet
+      applied or deployed in any environment.
 - [x] Abandoned runs are reported as failed instead of polling forever
       (`GetRunUseCase` staleness backstop, arq cancellation handling).
 - [x] `GET /api/capabilities` reports which dependencies work, and the app
@@ -178,7 +209,20 @@ environment variables, not one process:
 The worker service must set the *same* `GEMINI_API_KEY`, `REDIS_URL`,
 `S3_*`, `DEVICE_TOKEN_SECRET`, and media-processing variables as the backend
 service — it's the process that actually downloads, normalizes, and analyzes
-the video.
+the video. It must also share **`DATABASE_URL`** and every **`STRIPE_*`**
+variable with the API whenever the API has them. A worker without them still
+starts and processes runs, but silently: extra runs are never billed (their
+held ledger rows are voided after two days), paid results are never saved to
+history, signed-in free-run holds are never settled, and the hourly purge
+removes nobody, which breaks the 30-day deletion promise. Since 2026-11-20 the
+worker refuses the same misconfigurations as the API (billing without a
+database, SQLite when distributed, a schema older than the code), and both
+services log one `Startup mode {...}` line (role, mode, database dialect,
+schema state, billing, auth, object storage; switches only, no values):
+compare the two lines after any variable change
+(`docs/backend/startup-checks.md`). A worker with `DATABASE_URL` blank while
+the API has it is not refused (nothing in the worker can see the API's
+variables); the two lines are how to spot it.
 
 Railway supports separate root directories for isolated monorepo services and
 uses a service Dockerfile when present:
@@ -274,8 +318,15 @@ READ_RATE_LIMIT_PER_MINUTE=120
 # "<client>, <edge hop>" and the edge hop varies per request, so 1 keys every
 # request differently and no per-IP limit trips. 0 = use the socket peer.
 TRUSTED_PROXY_HOPS=2
+# Failed credentials per client IP per 15 minutes before 429 (<= 0 = off).
+AUTH_FAILURE_LIMIT_PER_IP=30
 MAX_FILE_SIZE_MB=200
 MAX_DURATION_SECONDS=180
+# Signed in (JWT or account API key) AND own Gemini key on the run: the bigger
+# set. Same values on backend and worker. At or below the standard value =
+# the standard value. The client reads both sets from GET /api/limits.
+SIGNED_IN_BYOK_MAX_DURATION_SECONDS=600
+SIGNED_IN_BYOK_MAX_FILE_SIZE_MB=500
 # Tallest video yt-dlp fetches for a URL run; FFmpeg re-encodes anyway.
 YTDLP_MAX_HEIGHT=720
 # Global daily backstop across ALL callers, UTC day. 0 disables it.
@@ -283,6 +334,11 @@ DAILY_RUN_CAP=200
 # Anonymous free runs per device / per IP, per UTC day (BYOK runs exempt).
 FREE_RUNS_PER_DEVICE=3
 FREE_RUNS_PER_IP=10
+# Signed-in accounts (no own key): free runs per UTC day, counted per
+# account instead of per device. Needs migrations 0003 and 0005 applied first
+# wherever DATABASE_URL is set. <= 0 = off (signed-in callers fall back to the
+# device rule). Replaces FREE_RUNS_PER_ACCOUNT_MONTHLY (no longer read).
+FREE_RUNS_PER_ACCOUNT_DAILY=10
 # REQUIRED while REDIS_URL is set and FREE_RUNS_PER_DEVICE > 0 (the API
 # refuses to start without it). Same value on backend and worker. Generate
 # with: python -c "import secrets; print(secrets.token_urlsafe(32))"
@@ -295,6 +351,23 @@ RUN_TTL_SECONDS=3600
 # Worker-only in effect, but harmless to set on both:
 WORKER_MAX_JOBS=2
 WORKER_JOB_TIMEOUT_SECONDS=600
+# Timeout of the process_long_run job (signed-in + BYOK runs, up to 10 min
+# of media). Set on BOTH services: the API uses it for the stale-run check
+# (+120 s) and the long-run slot expiry, the worker for the arq timeout.
+WORKER_LONG_JOB_TIMEOUT_SECONDS=1800
+# Wall-clock limit on a run's link downloading, in the worker: yt-dlp, the
+# plain-file fallback and the caption fallback share it. Under the job timeout.
+DOWNLOAD_DEADLINE_SECONDS=300
+# Worker: on SIGTERM (a deploy) keep running in-flight jobs this long before
+# cancelling them; a cancelled job is re-queued and resumes on the next
+# worker. 0 (default) = cancel at once. Keep it several seconds UNDER the
+# worker service's stop grace period on Railway (its draining time; check the
+# service settings, not assumed here). A worker killed mid-wait leaves its
+# jobs locked for the job timeout and the stale-run check fails them first.
+WORKER_JOB_COMPLETION_WAIT_SECONDS=0
+# Postgres pool per process (see "Database connections" below). Same on both.
+DATABASE_POOL_SIZE=5
+DATABASE_MAX_OVERFLOW=10
 TEMP_DIR=/tmp/videolens
 ALLOWED_ORIGINS=https://app.example.com
 REDIS_URL=<Railway Redis URL>
@@ -320,6 +393,33 @@ AUTH_JWKS_URL=<OIDC JWKS URL>
 AUTH_ISSUER=<OIDC issuer>
 AUTH_AUDIENCE=<OIDC audience>
 ALLOW_ANONYMOUS=true
+# Paid plan (docs/backend/billing.md). Leave STRIPE_SECRET_KEY blank and
+# billing is off (the free rules, exactly as before). Set on BOTH services:
+# the worker reports extra runs to Stripe. Needs DATABASE_URL in
+# distributed mode (the API refuses to start otherwise) and migration
+# 0004_billing applied first. Test-mode keys until the owner switches.
+STRIPE_SECRET_KEY=<secret, sk_test_...>
+STRIPE_WEBHOOK_SECRET=<secret, whsec_...>
+STRIPE_PRICE_MONTHLY=<price_...>
+STRIPE_PRICE_YEARLY=<price_... or blank>
+STRIPE_PRICE_EXTRA_RUN=<price_... (metered, monthly)>
+STRIPE_PRICE_EXTRA_RUN_YEARLY=
+STRIPE_METER_EVENT_NAME=videolens_extra_run
+BILLING_RETURN_ORIGIN=https://app.example.com
+# Included runs per UTC day (replaces PAID_RUNS_PER_MONTH, no longer read).
+PAID_RUNS_PER_DAY=30
+# Extra runs per account per UTC month; stays monthly.
+PAID_EXTRA_RUNS_MONTHLY_CAP=200
+PAID_MAX_DURATION_SECONDS=0
+PAID_MAX_FILE_SIZE_MB=0
+# Saved history (paid) and the deletion hold, docs/backend/saved-history.md.
+# Needs migration 0006_saved_history applied first. Same values on both.
+# Days a paid account's saved runs stay after the plan ends.
+PAID_SAVED_RUNS_GRACE_DAYS=30
+# Largest result saved (JSON bytes); segments are dropped first, then skipped.
+PAID_SAVED_RUN_MAX_BYTES=2097152
+# Days a deleted account can be restored before the worker removes it.
+ACCOUNT_DELETION_HOLD_DAYS=30
 ```
 
 Do not set the local Windows `FFMPEG_LOCATION` value in production. The
@@ -342,11 +442,28 @@ Do not configure `YTDLP_COOKIES_FROM_BROWSER` on a hosted server.
 
 ```env
 NEXT_PUBLIC_API_BASE_URL=https://api.example.com
+# Optional. The site's own public origin, for canonical links, sitemap.xml,
+# robots.txt and the social preview image. Defaults to the production
+# Railway domain; set it when a custom domain lands.
+NEXT_PUBLIC_SITE_URL=https://app.example.com
+# Optional. Set to 1 on the dev frontend service only: robots.txt becomes
+# Disallow: /, every page gets a noindex meta and an X-Robots-Tag header.
+NEXT_PUBLIC_NOINDEX=1
+# Optional sign-in (auth phase 2). Blank either one to disable sign-in.
+NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 ```
 
-Because this value is inlined into the browser bundle at build time, configure
-it before building the frontend image. A frontend image or APK is therefore
-bound to one backend and cannot be promoted between environments.
+The two Supabase values are public (the publishable key is meant for the
+browser) and are also inlined at build time; the URL's origin is added to the
+CSP `connect-src`. The Account tab appears only when both are set *and* the
+backend reports the `auth` capability as `ok`. See
+`docs/frontend/auth-sign-in.md`.
+
+Because these values are inlined into the browser bundle at build time,
+configure them before building the frontend image. A frontend image or APK is
+therefore bound to one backend and cannot be promoted between environments.
+See `docs/frontend/seo-and-discovery.md`.
 
 ### Domains
 
@@ -372,6 +489,18 @@ currently provides 0.5 GB RAM and 1 GB ephemeral storage per service, so
 production testing may require a paid plan or lower file limits — and now
 that the worker is its own service, this budget applies separately to the
 worker, not shared with the API service.
+
+**Signed-in + BYOK runs (up to 500 MB / 10 min)** need more of that budget.
+An upload is held twice on the API service while it is handled (Starlette's
+spooled temp file, then the saved copy), so one 500 MB upload needs about
+1 GB of temporary disk on the API and, on the worker, the source plus the
+normalized re-encode. At most one such run is in flight per account
+(`code: long_run_in_progress`), but different accounts can overlap, up to
+`WORKER_MAX_JOBS` on a worker. Check the plan's ephemeral storage before
+relying on the 500 MB value; lower `SIGNED_IN_BYOK_MAX_FILE_SIZE_MB` if it
+does not fit. Nothing in the app caps the request body below this today:
+the size check runs while the saved copy is written, after the body has been
+received (same as the 200 MB check always did).
 
 - [Railway pricing and resource limits](https://docs.railway.com/pricing/plans)
 - [Railway ephemeral storage](https://docs.railway.com/services#ephemeral-storage)
@@ -405,10 +534,160 @@ worker, not shared with the API service.
       subject to `RATE_LIMIT_PER_HOUR`.
 - [ ] A BYOK key never appears in run records, logs, or the `GET
       /api/runs/{run_id}` response.
+- [ ] `GET /api/limits` returns both limit sets; signed in with a BYOK key,
+      a 4-9 minute video completes; signed out or without a key, it is
+      refused with the 3:00 message and the hint. A second long run on the
+      same account while one is processing gets 429
+      `code: long_run_in_progress`; a short run alongside is accepted.
 - [ ] `GET /api/releases` returns the release index (not empty), and the
       Releases tab lists it.
 - [ ] No API keys, cookies, local paths, or terminal color codes appear in
       responses.
+
+### Account database migrations (release step)
+
+Only for an environment with `DATABASE_URL` set (accounts on). Alembic is
+not run at startup and the Dockerfile does not copy `migrations/`, so run it
+from a checkout, **as `postgres`** (the project owner). Full detail, including
+the offline `--sql` path through the SQL editor or connector:
+`docs/backend/auth.md`, "Migrations".
+
+**Order: migrations first, then the code.** Apply every pending revision to
+the target database *before* the promotion merge deploys the new code. The
+code reads the newest schema from its first request: `0010_complimentary_plus`
+adds `accounts.complimentary_plus`, and every `select(accounts)` names it, so
+code at 0010 against a database at 0009 or older fails every signed-in
+request ("column does not exist") while anonymous use and `/api/health` look
+fine. The revisions are additive, so applying them early under the old code
+is safe. Since 2026-11-20 the API and the worker check this themselves: on
+Postgres each refuses to start when `alembic_version` is older than the code's
+expected revision (`EXPECTED_SCHEMA_REVISION` in
+`backend/app/domain/schema_revision.py`, today `0010_complimentary_plus`) or
+missing, naming both revisions; a revision the code does not know (a rollback
+to older code) is logged and allowed. See `docs/backend/startup-checks.md`.
+
+**Before the first deploy with that check**, let the backend role read the
+version table, or the check can only log an ERROR ("cannot protect this
+deployment") and let the process start. Until the grant is applied the check
+protects nothing: a schema that *is* behind is reported `unreadable`, not
+refused, and the code starts against it exactly as before the check existed. `docs/backend/auth.md` records that
+on `videolens-dev` the role was refused `alembic_version` and that Supabase
+turned RLS on for it, so a policy is needed besides the grant. As `postgres`,
+with the real role name if `DATABASE_APP_ROLE` is not the default:
+
+```sql
+GRANT SELECT ON public.alembic_version TO videolens_api;
+CREATE POLICY videolens_api_read_version ON public.alembic_version
+  FOR SELECT TO videolens_api USING (true);
+```
+
+(Skip the policy if `SELECT relrowsecurity FROM pg_class WHERE oid =
+'public.alembic_version'::regclass` returns false.) After deploying,
+`GET /api/readiness` reports `"schema": "ok"`; `unreadable` means the grant or
+policy is missing. That value is the result of the check the process ran at
+startup, not a live reading: it does not change until the process restarts
+(`docs/backend/startup-checks.md`).
+
+**The worker has no health check** (`railway.worker.json` sets none; the API's
+is `/api/health`). A worker whose schema check refuses (behind or missing)
+logs the refusal and exits during arq startup, before it takes a job; Railway
+restarts it up to 3 times (`ON_FAILURE`) and then leaves it crashed. Nothing
+gates that deploy, so as far as Railway's documented behaviour goes the new
+worker deployment replaces the old one even though it never runs (not checked
+here). Runs submitted meanwhile wait `queued` in Redis and expire with the run
+TTL if nobody fixes it. After a worker deploy, read its `Startup mode` line
+(or its crash log) rather than trusting the deploy's green status.
+
+Production state is not recorded here: read `SELECT version_num FROM
+alembic_version` on the production project before promoting, and apply from
+that revision to head.
+
+- [ ] `0001_identity`: the `videolens_api` role exists first; then the four
+      identity tables, RLS, policies and grants.
+- [ ] `0002_auth_user_deleter` (account deletion, `DELETE /api/me`): applied
+      as `postgres`, because the two `SECURITY DEFINER` functions it creates
+      (`videolens_private.delete_auth_user(uuid)` and
+      `videolens_private.auth_user_exists(uuid)`) must be owned by a role that
+      can read and delete `auth.users`. Afterwards `has_function_privilege`
+      for `videolens_api` and `EXECUTE` is true for both, and `videolens_private` is **not** in the project's exposed
+      schemas (Supabase dashboard, API settings). Without it, deletion
+      removes the rows and then returns 500 on the Supabase user step, and
+      every first sign-in fails (the existence check cannot run).
+- [ ] `0003_account_free_runs` (signed-in free runs) before the code that
+      uses it.
+- [ ] `0004_billing` (paid plan: `billing_accounts`, `billing_events`,
+      `billing_extra_runs`, with RLS, the `videolens_api` policy and grants;
+      fails if `DATABASE_APP_ROLE` is missing) before any `STRIPE_*`
+      variable is set. Harmless to apply early. Offline SQL:
+      `alembic upgrade 0003_account_free_runs:0004_billing --sql`.
+- [ ] `0005_account_daily_free_runs` (signed-in free runs per UTC day:
+      widens `period` to varchar(10) on `account_free_runs` and
+      `account_free_run_holds`; catalog-only on Postgres, RLS, policies and
+      grants untouched) **before** the code that writes daily keys, or every
+      signed-in free run fails at admission. Needs `0004_billing` first.
+      Offline SQL: `alembic upgrade 0004_billing:0005_account_daily_free_runs --sql`
+      (or `0003_account_free_runs:0005_account_daily_free_runs` from 0003).
+- [ ] `0006_saved_history` (paid saved history and the deletion hold:
+      `saved_runs` with RLS, the `videolens_api` policy and grants, plus
+      `accounts.deleted_at`, `purge_at`, `saved_runs_expire_at`, nullable,
+      catalog-only on Postgres; fails if `DATABASE_APP_ROLE` is missing)
+      **before** the code, or every signed-in request fails (column does
+      not exist). Offline SQL:
+      `alembic upgrade 0005_account_daily_free_runs:0006_saved_history --sql`.
+- [ ] `0007_identity_cascades` (Postgres only: the four identity foreign keys
+      re-added `ON DELETE CASCADE` under their existing names). Check the
+      constraint names first with the query in the migration's docstring.
+      Offline SQL: `alembic upgrade 0006_saved_history:0007_identity_cascades --sql`.
+- [ ] `0008_value_checks` (named check constraints on the fixed-value text
+      columns; fails if an existing row breaks one, so check the rows against
+      the lists in the migration's docstring first). Offline SQL:
+      `alembic upgrade 0007_identity_cascades:0008_value_checks --sql`.
+- [ ] `0009_default_workspace_fk` (Postgres only: `accounts.default_workspace_id`
+      references `workspaces(id)` `ON DELETE SET NULL`). The pre-check query
+      in `docs/backend/auth.md` must return 0 first. Offline SQL:
+      `alembic upgrade 0008_value_checks:0009_default_workspace_fk --sql`.
+- [ ] `0010_complimentary_plus` (`accounts.complimentary_plus BOOLEAN NOT NULL
+      DEFAULT false`, catalog-only on Postgres 11+) **before** the code, or
+      every signed-in request fails. This is the head the code expects.
+      Offline SQL: `alembic upgrade 0009_default_workspace_fk:0010_complimentary_plus --sql`.
+- [ ] `alembic_version` readable by the backend role (SQL above).
+- [ ] `GET /api/capabilities` shows `database: ok` (and `auth: ok`), and
+      `GET /api/readiness` shows `"schema": "ok"` on the API. The worker's
+      `Startup mode` log line shows `"schema": "ok"` too.
+
+### Database connections
+
+- **Pooler.** On Supabase use the Supavisor **session** pooler (port 5432),
+  not the transaction pooler (6543): asyncpg's prepared statements do not
+  survive transaction pooling, and every signed-in route failed on dev with
+  "prepared statement ... does not exist" (`docs/backend/auth.md`, "Pooler").
+- **TLS.** The production `DATABASE_URL` must end in `?sslmode=require` (or
+  `ssl=require`). Without it asyncpg's default `prefer` applies: a silent
+  plaintext fallback. `require` encrypts but does **not** verify the server's
+  certificate, so it stops passive eavesdropping and not an active
+  man-in-the-middle. To verify, download the project's CA certificate
+  (Supabase: Database settings, SSL), ship it with the service and use
+  `?sslmode=verify-full&sslrootcert=/path/to/ca.crt` (`verify-ca` checks the
+  chain but not the host name); the app turns `sslrootcert` into an SSL
+  context trusting only that CA. Not set up on any environment today. The app
+  renames `sslmode=` to asyncpg's `ssl=` and keeps the value. Any other
+  parameter asyncpg cannot take (`options`, `application_name`,
+  `connect_timeout`, `sslcert`/`sslkey`, ...) makes the API and the worker
+  refuse to start, naming it (the name only, never a value or any other part
+  of the URL); before 2026-11-20 it failed every query instead. A password
+  may hold `?`, `&`, `=` or `#` as written; percent-encode an `@` as `%40`.
+  Local Postgres without TLS needs nothing.
+- **Pool size.** On the session pooler every open pooled connection is a real
+  server connection. Each process opens up to `DATABASE_POOL_SIZE` +
+  `DATABASE_MAX_OVERFLOW` (5 + 10 by default), so API + worker can hold about
+  30, plus one while Alembic runs and anything else using the project. During
+  a deploy the old and new deployment of a service run side by side until the
+  old one stops, so the figure briefly doubles (about 60 when both services
+  deploy together). Read the pooler's session limit for the project's plan on
+  the Supabase dashboard (not recorded here, not checked) and, if that peak
+  does not fit with room to spare, lower the two settings on both services. Too small a pool makes
+  signed-in requests wait for a connection; too large hits "max clients"
+  errors under load.
 
 ## Phase 3: Installable PWA
 
@@ -555,9 +834,43 @@ gh secret set ANDROID_KEY_PASSWORD
 `frontend/android/app/build.gradle` reads `ANDROID_KEYSTORE_PATH`,
 `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`
 from the environment and configures release signing only when all four are
-present; the workflow decodes the secret to `$RUNNER_TEMP/release.keystore`
-and sets them for the Gradle step. Locally, export the same four variables
-and run:
+present. **CI never sets them for Gradle** (since 2026-11-20): the Gradle
+build runs `npm ci` and builds Capacitor from `node_modules`, so the key is
+kept off that runner. `reusable-android-checks.yml` instead runs three jobs:
+
+1. `signing` (no checkout) checks the four secrets for emptiness and that
+   the keystore decodes, and picks `release`.
+2. `android` builds `assembleRelease` with no signing variables, i.e. an
+   **unsigned** release APK, and uploads it with `version.json` as the
+   artifact `videolens-ai-v<version>-code<code>-<sha>-release-unsigned`
+   (kept one day).
+3. `sign` (no checkout, no npm, no Gradle) installs build-tools 36.0.0,
+   decodes the keystore to `$RUNNER_TEMP`, runs `zipalign -P 16 -f 4`, then
+   `apksigner sign` (passwords via `env:`), `apksigner verify
+   --print-certs`, fails if the certificate is `CN=Android Debug`, and
+   uploads `videolens-ai-v<version>-code<code>-<sha>-release` (the name the
+   `release` job downloads) with the APK renamed to that name plus `.apk`.
+
+This path has never run; it cannot until the secrets exist. **On the first
+`main` push with all four secrets set**, check the run before announcing the
+release:
+
+- The `android / Android signing mode` job logs no debug-signing warning.
+- `android / Android release signing` is green, and its step summary shows
+  `Signer #1 certificate DN` and `SHA-256 digest`. Compare the digest with
+  the key you created:
+  `keytool -list -v -keystore videolens-release.jks -alias videolens`
+  (the `SHA256:` line, same value without colons).
+- The release has one `...-release.apk` and `version.json`. Locally,
+  `apksigner verify --print-certs <apk>` on the downloaded asset prints the
+  same digest.
+- If `sign` fails (for example a wrong alias or password), the `release`
+  job does not run and no release is published; the commit's workflow is
+  red, so Railway's Wait for CI skips that production deploy too (a new
+  commit is needed, see `docs/railway-environments.md`). Fix the secret and
+  push again.
+
+Locally, export the same four variables and run:
 
 ```powershell
 cd frontend
@@ -636,10 +949,27 @@ The release is complete when:
 - Uploaded and downloaded media is deleted according to the published
   policy; BYOK keys are never persisted beyond their single use.
 - Run history is scoped correctly per caller, expires per
-  `RUN_TTL_SECONDS` on the server, and persists in the browser.
+  `RUN_TTL_SECONDS` on the server, and persists in the browser; a paid
+  account's results are also saved on the server until 30 days after the
+  plan ends.
 - The PWA is installable and usable across supported mobile and desktop
   browsers.
 - The Android application passes physical-device testing and Play
   pre-launch reports.
 - The Play Store production release is approved and points to the same
   stable backend.
+
+## Changelog
+
+- 2026-11-09 · backend subagent (auth phase 3) · added the account database migrations release step (apply `0002_auth_user_deleter` as `postgres`, verify `has_function_privilege`, keep `videolens_private` unexposed, check `database: ok`)
+- 2026-11-09 · backend subagent (auth phase 3, review fix) · 0002 now also creates `auth_user_exists`; the verify step checks both functions
+- 2026-11-13 · backend agent · `SIGNED_IN_BYOK_MAX_DURATION_SECONDS` / `SIGNED_IN_BYOK_MAX_FILE_SIZE_MB` and `WORKER_LONG_JOB_TIMEOUT_SECONDS` variables; capacity note for 500 MB uploads; release check for `GET /api/limits` and the long-run guard. Deploy the worker before (or with) the API: an old worker does not know `process_long_run` or the `limits` job argument
+- 2026-11-13 · backend agent · paid plan: `STRIPE_*`, `BILLING_RETURN_ORIGIN` and `PAID_*` variables (both services); release checklist item and migration step for `0004_billing`; deploy order (migration, code with billing off, Stripe objects, variables, webhook)
+- 2026-11-14 · backend agent · `FREE_RUNS_PER_ACCOUNT_DAILY` replaces `FREE_RUNS_PER_ACCOUNT_MONTHLY` (remove the old variable); migration step for `0005_account_daily_free_runs` before the daily code
+- 2026-11-14 · backend agent · `PAID_RUNS_PER_DAY` (30/UTC day) replaces `PAID_RUNS_PER_MONTH` (100/month, no longer read): rename the variable on both services if set; no migration
+- 2026-11-14 · backend agent · paid saved history and the 30-day deletion hold: migration `0006_saved_history` (release checklist and migration step, before the code), `PAID_SAVED_RUNS_GRACE_DAYS`, `PAID_SAVED_RUN_MAX_BYTES`, `ACCOUNT_DELETION_HOLD_DAYS` (both services), backend and worker deployed together
+- 2026-11-20 · Claude (backend agent) · `AUTH_FAILURE_LIMIT_PER_IP` (failed credentials per IP, 429) and `DOWNLOAD_DEADLINE_SECONDS` (wall-clock link download limit) variables; requests over the body ceiling now get 413 before they are read
+- 2026-11-20 · Claude (backend agent) · release checklist through 0010 with "migrations before code" and the `alembic_version` grant for the new startup schema check; worker must share `DATABASE_URL` and `STRIPE_*` (what breaks otherwise); "Database connections" (session pooler 5432, `sslmode=require`, pool sizing); `WORKER_JOB_COMPLETION_WAIT_SECONDS`, `DATABASE_POOL_SIZE`, `DATABASE_MAX_OVERFLOW`
+- 2026-11-20 · Claude (backend agent) · re-review: one download budget per run (`DOWNLOAD_DEADLINE_SECONDS`); connection figure doubles during deploy overlap; the schema check protects nothing until the `alembic_version` grant; worker has no health check and what a schema-behind worker does; readiness `schema` is a startup snapshot; `sslmode=require` does not verify the certificate, `sslrootcert` with `verify-full` does; unsupported URL parameters refuse startup
+- 2026-11-20 · Claude (CI agent) · Android release signing: CI signs in a separate `sign` job with apksigner on an unsigned Gradle build, never passing the key to Gradle; documented what the first run with secrets does and how to verify it
+- 2026-11-21 · Claude (backend agent) · Database connections: a password with `?`, `&`, `=` or `#` works as written again; a refused parameter is named without its value or any other part of the URL

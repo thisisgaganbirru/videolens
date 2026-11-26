@@ -1,0 +1,108 @@
+name: Reusable commit hygiene
+
+# Fails a pull request whose commits, title or description carry AI-tool
+# attribution: AI co-author trailers, Claude-Session trailers and session
+# URLs, the "Generated with Claude Code" footer, model identifiers, or an
+# author/committer at anthropic.com (the cloud default identity is Claude
+# <noreply@anthropic.com>). All of it was
+# scrubbed from the history on 2026-11-20 (docs/engineering-standards.md,
+# "Commit hygiene"). The rules live in scripts/commit-hygiene.sh, shared with
+# the local commit-msg hook.
+#
+# The script that runs is the BASE branch's copy, not the pull request's, so
+# a pull request cannot weaken the rules that judge it. A change to the rules
+# therefore takes effect on the pull requests opened after it merges. That
+# protection covers the script only: on `pull_request` this workflow file
+# (and its callers) run from the PR's merge ref, so a PR that edits them can
+# change or drop the step above. Changes under .github/ need the owner's
+# review (docs/engineering-standards.md, "Commit hygiene").
+#
+# Called from both lanes (fed into their `required` job) and from
+# commit-hygiene.yml, which re-runs it when a title or description is edited.
+# Only that copy re-runs on `edited`: after a lane's copy failed on the title
+# or description, fixing the text turns `pr-hygiene` green, but the lane's
+# `required` stays red until a push or a manual re-run of the lane.
+# It needs no path filter and finishes in seconds.
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  hygiene:
+    name: Commit hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # Untrusted text (title, body, branch names) never passes through
+      # ${{ }} in a run block: only SHAs and the PR number reach the shell,
+      # via env.
+      - name: Use the base branch's rules
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          script="${RUNNER_TEMP}/commit-hygiene.sh"
+          git cat-file -e "${BASE_SHA}^{commit}" || {
+            echo "::error::Base commit ${BASE_SHA} is not in the checkout; cannot load the base branch's hygiene rules."
+            exit 1
+          }
+          if git cat-file -e "${BASE_SHA}:scripts/commit-hygiene.sh" 2>/dev/null; then
+            git show "${BASE_SHA}:scripts/commit-hygiene.sh" > "$script"
+            echo "Using scripts/commit-hygiene.sh from the base commit ${BASE_SHA}."
+          else
+            # A base that predates the script gets here, and the PR's copy
+            # is the only one there is. dev has the script; main does not
+            # until the first dev -> main promotion that carries it merges,
+            # so that promotion PR runs its own copy, with this warning.
+            cp scripts/commit-hygiene.sh "$script"
+            echo "::warning::The base branch has no scripts/commit-hygiene.sh; using this pull request's copy."
+          fi
+          echo "HYGIENE_SCRIPT=${script}" >> "$GITHUB_ENV"
+      - name: Commits in this pull request
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: sh "$HYGIENE_SCRIPT" range "$BASE_SHA" "$HEAD_SHA"
+      # Title and description are read live, not from the event payload: a
+      # re-run reuses the payload of the original event, so after the text is
+      # fixed it would still check the old one. commit-hygiene.yml re-runs
+      # this job on `edited`. The title becomes the squash commit's subject
+      # and is part of every merge commit's message.
+      #
+      # Fail closed: the text is fetched into a variable first, so a failed
+      # `gh api` call stops the step (set -e) instead of piping empty input
+      # into the check, which would pass. A title is never empty on GitHub,
+      # so an empty one is an error too; an empty description is legitimate.
+      - name: Pull request title
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          title="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.title // ""')"
+          if [ -z "$title" ]; then
+            echo "::error::Could not read the title of pull request #${PR_NUMBER}."
+            exit 1
+          fi
+          printf '%s\n' "$title" | sh "$HYGIENE_SCRIPT" body "pull request title"
+      - name: Pull request description
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          body="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.body // ""')"
+          printf '%s\n' "$body" | sh "$HYGIENE_SCRIPT" body "pull request description"

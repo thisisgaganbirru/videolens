@@ -10,7 +10,7 @@
 # fails the build if they drift (reusable-application-checks.yml). The digest
 # cannot move into .nvmrc: it is a content hash, not something derivable from
 # a version string.
-FROM node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85 AS base
+FROM node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS base
 
 FROM base AS deps
 WORKDIR /app
@@ -23,7 +23,22 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ARG NEXT_PUBLIC_API_BASE_URL
+# Optional, both inlined at build time (infrastructure/siteOrigin.ts): the
+# site's own public origin, and the dev deployment's noindex switch. Declared
+# as ARGs so Railway's service variables reach the build stage.
+ARG NEXT_PUBLIC_SITE_URL
+ARG NEXT_PUBLIC_NOINDEX
+# Optional, both inlined at build time (infrastructure/authSession.ts):
+# sign-in is on only when both are set. Public values, never a secret.
+# Without these ARGs the service variables never reach the build and every
+# sign-in entry stays hidden.
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL \
+    NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL \
+    NEXT_PUBLIC_NOINDEX=$NEXT_PUBLIC_NOINDEX \
+    NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=$NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY \
     NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 

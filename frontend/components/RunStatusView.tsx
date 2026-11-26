@@ -86,6 +86,20 @@ function isBlockedDownload(error: string | null | undefined): boolean {
   return !!error && error.toLowerCase().includes(BLOCKED_DOWNLOAD_PHRASE);
 }
 
+/* 2026-11-20, the same kind of match for two newer backend sentences:
+   "This link took too long to download. Try again, or upload the file
+   instead." and "Analysis was interrupted before it finished. Please try
+   again." Neither is the source's fault, so "try a different link/file" was
+   wrong for both. Each sentence already says what to do; the advice line
+   only must not contradict it. If the wording changes, the stage advice
+   below still applies. */
+const SLOW_DOWNLOAD_PHRASE = "took too long to download";
+const INTERRUPTED_PHRASE = "was interrupted before it finished";
+
+function mentions(error: string | null | undefined, phrase: string): boolean {
+  return !!error && error.toLowerCase().includes(phrase);
+}
+
 function recoveryAdvice(
   stage: string | null | undefined,
   sourceKind: SourceKind,
@@ -97,6 +111,12 @@ function recoveryAdvice(
      minutes"), so this line adds the other way through, not a second timing. */
   if (sourceKind === "url" && isBlockedDownload(error)) {
     return "You can try the same link again later, or download the video and upload the file instead.";
+  }
+  if (sourceKind === "url" && mentions(error, SLOW_DOWNLOAD_PHRASE)) {
+    return "You can try the same link again, or download the video and upload the file instead.";
+  }
+  if (mentions(error, INTERRUPTED_PHRASE)) {
+    return `You can try the same ${sourceKind === "url" ? "link" : "file"} again.`;
   }
   if (key === "uploading_to_gemini" || key === "analyzing") {
     /* ProgressFailed.png's copy. The server's own message ("Your file is
@@ -232,10 +252,17 @@ interface RunStatusViewProps {
    *  "try a different link" advice and no stage strip — we never learned
    *  where it got to. */
   expired?: boolean;
+  /** Expired only: why (2026-11-14). `server` (the default): the server
+   *  forgot a live run. `saved`: a run listed as saved to the account is no
+   *  longer there. */
+  expiredReason?: "server" | "saved";
   /** Expired only: whether the link can be put back in the field. */
   canRefill?: boolean;
   /** Expired only: back to the intake (with the link filled, when stored). */
   onAnalyzeAgain?: () => void;
+  /** Expired only: set when the run was opened from History (UX fix spec
+   *  4.4); draws a "Back to History" button after the main one. */
+  onBackToHistory?: () => void;
   /** Audio or video, when known (refinement 9): the progress copy names it. */
   mediaKind?: MediaKind | null;
   /** Failed only: the server's count proves this run did not use a free run
@@ -259,13 +286,23 @@ export default function RunStatusView({
   onRetryNow,
   lostCause = "network",
   expired = false,
+  expiredReason = "server",
   canRefill = false,
   onAnalyzeAgain,
+  onBackToHistory,
   mediaKind = null,
   freeRunRefunded = false,
 }: RunStatusViewProps) {
   if (status === "failed" && expired) {
-    return <ExpiredRunView sourceKind={sourceKind} canRefill={canRefill} onAnalyzeAgain={onAnalyzeAgain ?? onReset} />;
+    return (
+      <ExpiredRunView
+        reason={expiredReason}
+        sourceKind={sourceKind}
+        canRefill={canRefill}
+        onAnalyzeAgain={onAnalyzeAgain ?? onReset}
+        onBackToHistory={onBackToHistory}
+      />
+    );
   }
 
   const steps = stepsFor(sourceKind);
@@ -349,70 +386,55 @@ export default function RunStatusView({
       ? `Trying again in ${retryInSeconds} ${retryInSeconds === 1 ? "second" : "seconds"}.`
       : "";
 
-  return (
-    <>
-      <span className="status" data-tone={mode}>
-        <span className="pip" aria-hidden="true" />
-        {serverTrouble ? SERVER_TROUBLE_PILL : PILL[mode]}
-      </span>
+  /* The four-frame strip. Its own constant because a failed run draws it
+     under the reason and the buttons (UX fix spec 4.2) and every other mode
+     above them. */
+  const filmstrip = (
+    <div className="filmstrip" data-mode={mode}>
+      <ol className="filmstrip-frames" aria-label="Analysis steps">
+        {steps.map((step, index) => {
+          const state = frameState(step, index);
+          return (
+            <li
+              key={step.stage}
+              className="frame"
+              data-state={state}
+              aria-current={state === "active" ? "step" : undefined}
+            >
+              {state === "active" ? <span className="frame-scan" aria-hidden="true" /> : null}
+              <span className="frame-num" aria-hidden="true">
+                {String(index + 1).padStart(2, "0")}
+              </span>
+              <span className="frame-text">
+                <span className="frame-label">{step.label}</span>
+                <span className="frame-caption">
+                {state === "lost" && serverTrouble ? SERVER_TROUBLE_CAPTION : FRAME_CAPTION[state]}
+              </span>
+              </span>
+              <span className="frame-icon" aria-hidden="true">
+                {state === "done" ? (
+                  <Check size={18} strokeWidth={2.5} />
+                ) : state === "failed" || state === "missed" ? (
+                  <X size={18} strokeWidth={2.5} />
+                ) : state === "lost" ? (
+                  serverTrouble ? (
+                    <ServerOff size={18} strokeWidth={2} />
+                  ) : (
+                    <WifiOff size={18} strokeWidth={2} />
+                  )
+                ) : null}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
 
-      <h1 className="run-title">{title}</h1>
-      <p className="run-lede">{lede}</p>
-
-      <p className="sr-only" aria-live="polite" aria-atomic="true">
-        {liveMessage}
-      </p>
-
-      <div className="filmstrip" data-mode={mode}>
-        <ol className="filmstrip-frames" aria-label="Analysis steps">
-          {steps.map((step, index) => {
-            const state = frameState(step, index);
-            return (
-              <li
-                key={step.stage}
-                className="frame"
-                data-state={state}
-                aria-current={state === "active" ? "step" : undefined}
-              >
-                {state === "active" ? <span className="frame-scan" aria-hidden="true" /> : null}
-                <span className="frame-num" aria-hidden="true">
-                  {String(index + 1).padStart(2, "0")}
-                </span>
-                <span className="frame-text">
-                  <span className="frame-label">{step.label}</span>
-                  <span className="frame-caption">
-                  {state === "lost" && serverTrouble ? SERVER_TROUBLE_CAPTION : FRAME_CAPTION[state]}
-                </span>
-                </span>
-                <span className="frame-icon" aria-hidden="true">
-                  {state === "done" ? (
-                    <Check size={18} strokeWidth={2.5} />
-                  ) : state === "failed" || state === "missed" ? (
-                    <X size={18} strokeWidth={2.5} />
-                  ) : state === "lost" ? (
-                    serverTrouble ? (
-                      <ServerOff size={18} strokeWidth={2} />
-                    ) : (
-                      <WifiOff size={18} strokeWidth={2} />
-                    )
-                  ) : null}
-                </span>
-              </li>
-            );
-          })}
-        </ol>
-      </div>
-
-      {/* No chip once the run has stopped or gone quiet: ProgressFailed and
-          ProgressLostWeb put the message card straight under the strip. */}
-      {sourceLabel && mode !== "failed" && mode !== "lost" ? (
-        <p className="source-chip">
-          <span className="source-chip__kind">{sourceKind === "url" ? "Link" : "File"}</span>
-          <span className="source-chip__name">{sourceLabel}</span>
-        </p>
-      ) : null}
-
-      {mode === "failed" || mode === "lost" ? (
+  /* Failed or connection lost: the message card, the refund line and the
+     actions. */
+  const stopBlock =
+    mode === "failed" || mode === "lost" ? (
         /* ProgressFailed.png / ProgressLostWeb.png: the message in its own
            card, the actions centred under it (full width on a phone). */
         <>
@@ -429,7 +451,7 @@ export default function RunStatusView({
               finishes a moment after the failure is shown). */}
           {mode === "failed" ? (
             <p className="run-refund" aria-live="polite">
-              {freeRunRefunded ? "This didn't use one of your free runs." : null}
+              {freeRunRefunded ? "This didn't use one of your runs." : null}
             </p>
           ) : null}
           <div className="run-actions">
@@ -460,19 +482,61 @@ export default function RunStatusView({
                  stops this page watching it (ProgressLostWeb's own label).
                  Failed: there is nothing left to watch. */
               <button type="button" className="btn btn-secondary" onClick={onReset}>
-                {mode === "lost" ? "Stop watching" : "Analyze another file"}
+                {mode === "lost" ? "Stop watching" : "Analyze another"}
               </button>
             ) : null}
           </div>
         </>
-      ) : mode !== "complete" && onReset ? (
-        /* "Cancel" on the boards, but reset only stops this page watching —
-           the server finishes the run regardless, and it still lands in
-           History. The label says what the button actually does. */
-        <button type="button" className="reset-link" onClick={onReset}>
-          Stop watching and analyze another file
-        </button>
-      ) : null}
+    ) : null;
+
+  return (
+    <>
+      <span className="status" data-tone={mode}>
+        <span className="pip" aria-hidden="true" />
+        {serverTrouble ? SERVER_TROUBLE_PILL : PILL[mode]}
+      </span>
+
+      <h1 className="run-title">{title}</h1>
+      <p className="run-lede">{lede}</p>
+
+      <p className="sr-only" aria-live="polite" aria-atomic="true">
+        {liveMessage}
+      </p>
+
+      {mode === "failed" ? (
+        /* UX fix spec 4.2 (2026-11-14; departs from ProgressFailed.png, an
+           owner decision): the reason and the way on come first, so both
+           are in the first screen on a phone; the strip below still shows
+           where the run stopped. */
+        <>
+          {stopBlock}
+          {filmstrip}
+        </>
+      ) : (
+        <>
+          {filmstrip}
+
+          {/* No chip once the run has stopped or gone quiet: ProgressFailed and
+              ProgressLostWeb put the message card straight under the strip. */}
+          {sourceLabel && mode !== "lost" ? (
+            <p className="source-chip">
+              <span className="source-chip__kind">{sourceKind === "url" ? "Link" : "File"}</span>
+              <span className="source-chip__name">{sourceLabel}</span>
+            </p>
+          ) : null}
+
+          {stopBlock ??
+            (mode !== "complete" && onReset ? (
+              /* "Cancel" on the boards, but reset only stops this page
+                 watching — the server finishes the run regardless, and it
+                 still lands in History. The label says what the button
+                 actually does. */
+              <button type="button" className="reset-link" onClick={onReset}>
+                Stop watching and start another
+              </button>
+            ) : null)}
+        </>
+      )}
     </>
   );
 }
@@ -483,19 +547,61 @@ export default function RunStatusView({
    and the stages it drew were guesses. Pill, title, one honest sentence, the
    one action. */
 function ExpiredRunView({
+  reason,
   sourceKind,
   canRefill,
   onAnalyzeAgain,
+  onBackToHistory,
 }: {
+  reason: "server" | "saved";
   sourceKind: SourceKind;
   canRefill: boolean;
   onAnalyzeAgain?: () => void;
+  onBackToHistory?: () => void;
 }) {
   const what = sourceKind === "url" ? "link" : "file";
   /* Refinement 9: "the server keeps a run for an hour" was only half the
      story — a server restart loses runs too, well inside the hour. This says
      what is true either way, without naming a cause we cannot know. */
-  const gone = "The server no longer has this run, and its result never reached this device.";
+  /* Saved history (2026-11-14): a saved run that answers 404 was deleted
+     (perhaps on another device) or removed when the plan's 30 days ended.
+     Either way it is not on the account any more; say that, not a cause. */
+  if (reason === "saved") {
+    const savedLede =
+      sourceKind === "url" && canRefill
+        ? "It may have been deleted on another device. The link is ready to analyze again."
+        : sourceKind === "url"
+          ? "It may have been deleted on another device. Paste the link again to start over."
+          : "It may have been deleted on another device. Choose the file again to start over.";
+    return (
+      <>
+        <span className="status" data-tone="failed">
+          <span className="pip" aria-hidden="true" />
+          Unavailable
+        </span>
+        <h1 className="run-title">This run is no longer saved</h1>
+        <p className="run-lede">{savedLede}</p>
+        <p className="sr-only" aria-live="polite" aria-atomic="true">
+          This run is no longer saved to your account.
+        </p>
+        {onAnalyzeAgain || onBackToHistory ? (
+          <div className="run-actions">
+            {onAnalyzeAgain ? (
+              <button type="button" className="btn btn-ink" onClick={onAnalyzeAgain}>
+                {sourceKind === "url" || canRefill ? "Analyze it again" : `Choose the ${what} again`}
+              </button>
+            ) : null}
+            {onBackToHistory ? (
+              <button type="button" className="btn btn-secondary" onClick={onBackToHistory}>
+                Back to History
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </>
+    );
+  }
+  const gone = "The server no longer has this run, and its result never reached this browser.";
   const lede =
     sourceKind === "url"
       ? canRefill
@@ -511,13 +617,20 @@ function ExpiredRunView({
       <h1 className="run-title">This run expired</h1>
       <p className="run-lede">{lede}</p>
       <p className="sr-only" aria-live="polite" aria-atomic="true">
-        This run is no longer on the server, and its result never reached this device.
+        This run is no longer on the server, and its result never reached this browser.
       </p>
-      {onAnalyzeAgain ? (
+      {onAnalyzeAgain || onBackToHistory ? (
         <div className="run-actions">
-          <button type="button" className="btn btn-ink" onClick={onAnalyzeAgain}>
-            {sourceKind === "url" || canRefill ? "Analyze it again" : `Choose the ${what} again`}
-          </button>
+          {onAnalyzeAgain ? (
+            <button type="button" className="btn btn-ink" onClick={onAnalyzeAgain}>
+              {sourceKind === "url" || canRefill ? "Analyze it again" : `Choose the ${what} again`}
+            </button>
+          ) : null}
+          {onBackToHistory ? (
+            <button type="button" className="btn btn-secondary" onClick={onBackToHistory}>
+              Back to History
+            </button>
+          ) : null}
         </div>
       ) : null}
     </>

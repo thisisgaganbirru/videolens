@@ -1,4 +1,5 @@
 from ....domain.entities import SavedUpload
+from ....domain.entitlements import MediaLimits
 from ...config import Settings
 from .. import ytdlp_downloader
 
@@ -21,5 +22,5 @@ class YtDlpResolver:
     def can_handle(self, url: str) -> bool:
         return True
 
-    async def fetch(self, run_id: str, url: str) -> SavedUpload:
-        return await ytdlp_downloader.download_url(self._settings, run_id, url)
+    async def fetch(self, run_id: str, url: str, limits: MediaLimits | None = None) -> SavedUpload:
+        return await ytdlp_downloader.download_url(self._settings, run_id, url, limits)

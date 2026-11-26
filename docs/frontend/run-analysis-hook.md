@@ -45,7 +45,7 @@ them.
 or the URL minus scheme and `www.`) and `retrySource` (the original
 `MediaSource`). `retry()` resubmits it as a brand-new run; `canRetry` is true
 only when there is a source to resubmit — a run reopened from History has none,
-so its failed view shows only "Analyze another file". While the resubmission is
+so its failed view shows only "Analyze another". While the resubmission is
 in flight the failed view stays up with its button reading "Starting…".
 
 **Free runs (Phase 5b).** In `submit`, a 401 with `ApiError.code === "device_token_invalid"` calls `refreshFreeRuns()` (which stores the fresh token) and sends the same `createRun` once more. A 402 `free_runs_used` calls `markFreeRunsUsed(limit, used)`, sets no error (the limit banner says it), and returns the screen to idle if the submit came from the failed view's retry. An accepted run calls `noteRunAccepted()` to re-read the count. See `free-runs.md`.
@@ -138,6 +138,92 @@ found." behaviour. Network errors and 5xx keep the reconnect countdown.
   expired path. Backoff, countdown and Retry now are unchanged; only
   `RunStatusView`'s words differ.
 
+## Review fixes (2026-11-20)
+
+- **Cancel aborts the upload.** `submit` gives `createRun(source, signal)`
+  an `AbortController` (`uploadRef`); `reset` and unmount abort it.
+  `ApiClient.sendAs` rethrows the `AbortError` itself instead of calling it
+  a network failure; the generation check drops it.
+- **Owner from the request.** `createRun` returns `AsOwner<RunCreateResponse>`
+  and `recordSubmitted(runId, status, source, owner)` files the run under
+  the identity that create request went out as.
+- **Polling stops on 401/403/410.** `accessEnded(err)` in the poll, a
+  reconnect and `openRun`: the run is refused for who is asking, which
+  retrying cannot change. Timers stop, no reconnect, nothing is written to
+  History, no "Try again" (retrySource cleared), and the failed view says
+  either "This server no longer accepts your sign-in, so this run can’t be
+  followed here. Sign in again from Account, then open it from History."
+  (401/403) or "Your account is scheduled for deletion, so this run can’t
+  be shown. Restore your account from Account to see it." (410; the
+  deletion-hold listener in `ApiClient` also fires as before).
+- **Saved open.** See saved-history.md, "Review fixes (2026-11-20)".
+- **Run failure advice.** `recoveryAdvice` (RunStatusView) matches two new
+  backend sentences: "took too long to download" (link) says to try the
+  same link again or upload the file; "was interrupted before it finished"
+  (BYOK) says to try the same link or file again. Neither says "try a
+  different link".
+
+## Re-review fixes (2026-11-20)
+
+- **Sign-out clears the screen.** A subscription to the session (not an
+  effect body, so no `set-state-in-effect`) calls `reset()` when the person
+  signs out by any path or another person signs in, but only if the run on
+  screen may be an account's (`accountScreenRef`: true from submit until
+  the create answers with an anonymous owner, from History's record on
+  open, true for a saved run) and only after an account was seen during
+  this mount. A stored session that could not be recovered is not a
+  sign-out.
+- **One 401 retry.** A poll or reopen refused with 401 waits about a second
+  and tries once more through the reconnect path (`retryUnauthorized`), so
+  a just-refreshed token is used; a second 401 ends the run as before. The
+  allowance resets on every successful poll and every new run.
+- **Create errors.** Only a failure of fetch itself (`FetchFailedError`)
+  becomes the file upload's cut-off message; `SignInUnconfirmedError`
+  becomes its own message (error-messaging.md).
+
+## Sign-out hides History rows (2026-11-21)
+
+- **Screen rule unchanged.** Signing out still clears an account's run from
+  Analyze (`accountScreenRef`); an anonymous run stays. Only History changed:
+  the row is hidden, not removed (run-history.md).
+- **Hidden rows are never opened.** `openRun` reads History's record and, if
+  it is hidden from the account signed in now (`isVisibleNow`), resets to
+  the intake without fetching or writing.
+- **`holdsSignIn`.** Returned by the hook; HomeScreen passes it to the
+  Account panel as `runInProgress`. True while `submitting`, or while the
+  status is queued/processing with no `error` and the server has answered
+  for the run on screen (`live`: set on an accepted submit and in
+  `applyRun`; cleared by submit start, `openRun`, `reset` and a saved
+  open). So the connection-lost screen, a reconnect and a reopen still
+  reading History or waiting for its first answer never hold sign-in or
+  sign-out.
+
+## Sign-out held after the run finished (2026-11-22)
+
+- **Symptom.** Owner, signed in, on Account: Sign out stayed held with the
+  RUN_GUARD note after a link run had finished server-side; the backend saw
+  no `GET /api/runs/{id}` after the run settled.
+- **What the code rules out.** Polling is not tied to the view: tabs are a
+  `pushState` query param and HomeScreen is never unmounted by a tab switch,
+  and the 3 s interval has no view or visibility check. A view change cannot
+  stop it.
+- **The defect.** `live` was set once (accepted submit, `applyRun`) and never
+  expired, so `holdsSignIn` trusted the last queued/processing reading for as
+  long as nothing replaced it. Anything that left the screen without new
+  answers and without an error held sign-out forever. Paths that do that:
+  a tick that never reaches `fetch` (it awaits `ApiClient.bearer`, which
+  awaits supabase-js `getSession()` with no bound,
+  `infrastructure/authSession.ts`), the 401 quiet retry stuck the same way
+  (`reconnecting` true, no error), or a browser-frozen background tab.
+  Which one the owner hit was not confirmed (no access to that tab).
+- **Fix.** `markAnswered()` sets `live` and (re)arms a `HOLD_FRESH_MS`
+  (15 s, five polls) timer that clears it. Called from `applyRun` and the
+  accepted submit. `stopTimers` leaves that timer alone on purpose, so the
+  hold lapses whatever stopped the poll; unmount clears it. Healthy runs:
+  every 3 s answer re-arms it, so the hold is unchanged. A long-hidden tab
+  whose timers Chrome throttles to once a minute may release and re-take
+  the hold between answers; nobody can press anything in a hidden tab.
+
 ## Changelog
 
 - 2026-08-21 · main session · made reset() clear the poll interval, and added the generation counter that drops a superseded submit/openRun response
@@ -152,3 +238,9 @@ found." behaviour. Network errors and 5xx keep the reconnect countdown.
 - 2026-11-01 · frontend agent (refinement 1) · `expired` / `againUrl` for runs the server forgot; `source_url` stored on submit (IndexedDB only)
 - 2026-11-02 · frontend agent (refinement 3) · a 404 on the live poll, a reconnect or openRun's server fallback now expires the run (History row failed + EXPIRED_MESSAGE, expired view) instead of "Connection lost" / "Run not found."; `liveUrlRef` for the link
 - 2026-11-02 · frontend agent (refinement 6) · RUN-06 web resume via sessionStorage ActiveRunStore; RUN-08 lostCause (network vs server) exposed for the lost screen
+- 2026-11-14 · frontend agent · button label "Analyze another" (UX fix spec batch a)
+- 2026-11-20 · Claude (frontend agent) · upload aborted on reset/unmount (`createRun(source, signal)`); owner returned with the create response; poll stops on 401/403/410 with its own message; saved open keeps the live run; recovery advice for slow-download and interrupted runs
+- 2026-11-20 · Claude (frontend agent) · Analyze reset on sign-out via session subscription (account-owned runs only); one 401 retry; create errors split by cause
+- 2026-11-21 · Claude (frontend agent) · `openRun`: a sign-out (or another person signing in) during the History read is deferred until the record's owner is known (`ownerPendingRef`/`deferredLeaveRef`), so a resumed anonymous run is not cleared on the provisional guess
+- 2026-11-21 · Claude (frontend agent) · `holdsSignIn` (submit in flight, or a server-confirmed run with no error) replaces HomeScreen's `runInProgress` expression; `openRun` refuses a History row hidden from the viewer
+- 2026-11-22 · frontend agent · `live` lapses 15 s (`HOLD_FRESH_MS`) after the last server answer (`markAnswered`), so `holdsSignIn` never rests on a stale queued/processing reading

@@ -9,6 +9,18 @@ version: 2
 # Language and Actions updates are grouped into one weekly PR per ecosystem,
 # so a week of bumps costs one CI run, not one per package. Majors stay
 # ungrouped (npm and pip) so a breaking upgrade arrives as its own reviewable PR.
+#
+# Every entry has a 7-day cooldown: a version (or digest) must have been out
+# for a week before Dependabot proposes it. Non-major updates auto-merge into
+# dev (dependabot-auto-merge.yml) and dev deploys itself, so without it a
+# freshly hijacked release could be running on dev within days. Cooldown only
+# delays version updates; Dependabot security updates are not held back.
+#
+# There is no `gradle` entry for frontend/android yet, on purpose: its
+# settings.gradle includes Capacitor projects from ../node_modules, which do
+# not exist in Dependabot's checkout, and a failing Dependabot job blocks
+# Railway deploys (see the docker-compose note below). See
+# docs/container-workflows.md, "Dependabot coverage".
 
 updates:
   # Dependabot's Dockerfile parser matches literal `FROM image:tag@sha256:...`
@@ -28,6 +40,8 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     ignore:
       # Runtime majors are a deliberate, manual upgrade (see "Runtime versions"
       # in docs/container-workflows.md): /.python-version pins the major, the
@@ -46,6 +60,8 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     ignore:
       # Same policy as the backend entry: newest LTS major only, pinned in
       # /.nvmrc. Node's odd majors (25, 27, ...) are never LTS, and even an LTS
@@ -67,6 +83,8 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     ignore:
       # minio/minio and minio/mc are no longer publicly pullable from Docker
       # Hub (anonymous token -> 401 on tags/list, checked 2026-11-07), so every
@@ -81,6 +99,8 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       github-actions:
         patterns: ["*"]
@@ -89,6 +109,8 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       npm-minor-and-patch:
         update-types: ["minor", "patch"]
@@ -103,6 +125,8 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       pip-minor-and-patch:
         update-types: ["minor", "patch"]

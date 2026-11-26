@@ -33,7 +33,7 @@ export default function VersionLogPanel() {
       <header className="view-head">
         <h1 className="view-title">Releases</h1>
         <p className="view-lede">
-          What changed in each version.
+          Each version and its date. Release notes open on GitHub.
           {APP_VERSION ? ` You are on version ${APP_VERSION}.` : null}
         </p>
       </header>

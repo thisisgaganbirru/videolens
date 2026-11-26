@@ -22,3 +22,12 @@ def configure_logging() -> None:
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(logging.INFO)
+
+
+def configure_worker_logging() -> None:
+    """`configure_logging` for the arq worker. arq's CLI has already given
+    the `arq` logger its own plain-text handler, which would print each of
+    its lines a second time once the root logger has one; dropping it sends
+    arq's lines through the same JSON handler, once."""
+    configure_logging()
+    logging.getLogger("arq").handlers = []

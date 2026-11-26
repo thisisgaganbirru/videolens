@@ -1,6 +1,6 @@
 import type { Capability, CapabilityReport } from "@/domain/entities";
 import { ApiError, NetworkError } from "@/domain/errors";
-import type { CapabilitiesGateway } from "@/domain/ports";
+import type { CapabilitiesGateway, ServerAuthState, ServerAuthStatus } from "@/domain/ports";
 import { API_BASE_URL } from "./apiBase";
 
 /* `GET /api/capabilities` — the deployment describing itself. See
@@ -55,8 +55,56 @@ function normaliseReport(raw: unknown): CapabilityReport {
   };
 }
 
+/** The `auth` row as the transport needs it. `degraded` (the server verifies
+ *  tokens but could not reach the sign-in keys just now) stays its own state
+ *  (2026-11-21): mapping it to `off` sent a signed-in person anonymous for
+ *  the rest of the page load. Anything else that is not `ok` (`disabled`, a
+ *  missing row on an older backend, a state this build does not know) is
+ *  `off`, as before. */
+function serverAuthStateOf(row: Capability | undefined): Exclude<ServerAuthState, "unknown"> {
+  if (row?.state === "ok") return "ok";
+  if (row?.state === "degraded") return "degraded";
+  return "off";
+}
+
 export class FetchCapabilitiesGateway implements CapabilitiesGateway {
-  async fetchReport(): Promise<CapabilityReport> {
+  private inFlight: Promise<CapabilityReport> | null = null;
+  private readonly listeners = new Set<(report: CapabilityReport) => void>();
+
+  /** `serverAuth` hears the `auth` row of every report (auth phase 2): the
+   *  API client sends the bearer only when it is `ok`. */
+  constructor(private readonly serverAuth?: ServerAuthStatus) {}
+
+  fetchReport(): Promise<CapabilityReport> {
+    if (!this.inFlight) {
+      this.inFlight = this.read()
+        .then((report) => {
+          const auth = report.capabilities.find((row) => row.name === "auth");
+          this.serverAuth?.report(serverAuthStateOf(auth));
+          this.listeners.forEach((listener) => {
+            try {
+              listener(report);
+            } catch {
+              /* a listener's failure is not this read's */
+            }
+          });
+          return report;
+        })
+        .finally(() => {
+          this.inFlight = null;
+        });
+    }
+    return this.inFlight;
+  }
+
+  subscribe(listener: (report: CapabilityReport) => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  private async read(): Promise<CapabilityReport> {
     let res: Response;
     try {
       res = await fetch(`${API_BASE_URL}/api/capabilities`);

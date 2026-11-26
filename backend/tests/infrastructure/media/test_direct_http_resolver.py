@@ -22,6 +22,7 @@ def _response(body: bytes, headers: dict | None = None) -> MagicMock:
     stream = io.BytesIO(body)
     response = MagicMock()
     response.read.side_effect = stream.read
+    response.read1.side_effect = stream.read
     response.headers = headers or {}
     response.__enter__.return_value = response
     response.__exit__.return_value = False

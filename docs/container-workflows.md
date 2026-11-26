@@ -12,7 +12,7 @@ is never reused as a hosted deployment manifest.
 | Local workspace | `scripts/workspace.ps1` and `docker-compose.yml` | Hardened frontend, API, worker, Redis, and MinIO on loopback/private networks | Nothing external |
 | Dev | `.github/workflows/development-environment.yml`, PRs into `dev` only | Only what the PR touches: backend and/or frontend checks, the Android build when `frontend/` changed, and an **advisory** security scan | Nothing. Railway deploys `dev` from the push |
 | Production | `.github/workflows/production-environment.yml`, PRs into `main` and pushes to `main` | PR: full application checks and an **enforced** security scan. Push: build once, scan that image (enforced), promote; Android build | amd64/arm64 images tagged `sha-<commit>` then `latest` in GHCR, plus the APK (release-signed, or debug-signed until the key exists) as a GitHub Release |
-| Security | `.github/workflows/security-nightly-scan.yml`, nightly on `main` | Advisory scan of both images | A tracking issue while findings exist, closed after a clean run |
+| Security | `.github/workflows/security-nightly-scan.yml`, nightly on `main` | Advisory scan of both images | A tracking issue while findings exist, closed after a clean run; a second one while an image could not be scanned, closed after a complete run |
 
 Workflow filenames use lowercase kebab-case. Call-only building blocks follow
 `reusable-<responsibility>.yml`; event-driven entry points follow
@@ -31,9 +31,10 @@ promotion PR, push to `main`), built its images three times, and published a
 
 | Event | Runs | Does not run, and why |
 |---|---|---|
-| PR into `dev` | `changes`, then only the touched parts: backend and/or frontend checks, Android if `frontend/` changed (the APK is kept as a 14-day artifact, built against the dev backend with the `.dev` application id; `dev_artifact` input), advisory scan of the touched images, `lint-workflows` (actionlint) if `.github/` changed; `required` aggregates | — |
+| PR into `dev` | `changes`, then only the touched parts: backend and/or frontend checks, Android if `frontend/` changed (the APK is kept as a 14-day artifact, built against the dev backend with the `.dev` application id; `dev_artifact` input), advisory scan of the touched images, `lint-workflows` (actionlint) if `.github/` changed, `hygiene` (no AI-tool attribution in the PR's commits or description) always; `required` aggregates | — |
+| Any PR event into `dev` or `main`, including `edited` | `commit-hygiene.yml`: the same hygiene job, reported as `pr-hygiene / Commit hygiene` (the lanes' copy is `hygiene / Commit hygiene`) | The lanes cannot listen for `edited` (see engineering-standards.md, "Commit hygiene"), so fixing a bad title or description re-runs only this copy; the lane's `required` stays red until a push or a manual re-run. CI runs the base branch's script; `main` has none until the first promotion carrying it merges, so that promotion PR runs its own copy with a `::warning::`. |
 | Push to `dev` | nothing | The PR just tested this exact tree (requires "up to date before merging"). Railway deploys. |
-| PR into `main` (promotion, Dependabot) | full application checks, **enforced** scan of both images; `required` aggregates | Android: `dev`'s PRs built this tree, and the push builds it again with the production URL. |
+| PR into `main` (promotion, Dependabot) | full application checks, **enforced** scan of both images, `hygiene`; `required` aggregates | Android: `dev`'s PRs built this tree, and the push builds it again with the production URL. |
 | Push to `main` | `publish` (build once, scan, promote), `android` (APK with the production URL), `release` | Application checks: the promotion PR tested this tree. |
 | Nightly 06:17 UTC | advisory scan of `main`, tracking issue | — |
 
@@ -42,7 +43,16 @@ promotion PR, push to `main`), built its images three times, and published a
 passes `true` on the promotion PR, and `reusable-container-publish.yml`
 scans the pushed image with the same hard gate. `dev` and the nightly run pass
 `false`: findings appear as a warning, a job-summary note and a
-`security-findings-<service>` artifact, and the job stays **green**.
+`security-findings-<service>` artifact, and the job stays **green**. The
+nightly run also passes `build_failure_is_warning: true`: a failed Dockerfile
+check or image build (a base-image pull, a package mirror) is a warning and a
+green job, the scan is skipped, and a `<service>.incomplete` marker tells the
+nightly `issue` job not to treat the run as clean. So that a build that keeps
+failing is not just a nightly warning, the `issue` job also opens (or comments
+on) a "the nightly scan of main could not run" issue for every incomplete or
+failed scan and closes it after the next complete one. The dev lane leaves that
+off, because its scan build is the only pre-merge proof that a Dockerfile
+still builds.
 
 That green matters more than it looks. Railway's Wait for CI skips a deploy
 while *any* workflow on the commit is red, so an advisory scan that failed would
@@ -104,19 +114,34 @@ of the old 60-65.
 ### Android gating
 
 The Android build exists in exactly one place,
-`.github/workflows/reusable-android-checks.yml` (Capacitor sync, then `gradlew
-assembleDebug testDebugUnitTest`, or `assembleRelease testDebugUnitTest` when
-`upload_apk` is true and the release key is configured). It is capped at
-`contents: read` and never creates a tag or a release. With `upload_apk`, a
-`Prepare release signing` step (id `signing`) checks the
-`ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` /
-`ANDROID_KEY_PASSWORD` secrets, which `production-environment.yml` passes
-through explicitly, for emptiness only and outputs the variant:
-all four set → `release` (`assembleRelease`, signed with that keystore);
-none set → `debug` (`assembleDebug` with the checked-in debug keystore and no
-`-PdevBuild`, i.e. what production shipped before 2026-11-07, plus a
-`::warning::` and a step-summary line); some set → the job fails before
-Gradle. The variant drives the Gradle task, the `apk/<variant>/` output
+`.github/workflows/reusable-android-checks.yml` (Gradle wrapper validation,
+Capacitor sync, then `gradlew assembleDebug testDebugUnitTest`, or
+`assembleRelease testDebugUnitTest` when `upload_apk` is true and the release
+key is configured). It is capped at `contents: read` and never creates a tag
+or a release. Since 2026-11-20 it has three jobs, so the signing key never
+shares a runner with npm or Gradle dependency code:
+
+- `signing` (no checkout): with `upload_apk`, its `Prepare release signing`
+  step checks the `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` /
+  `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` secrets, which
+  `production-environment.yml` passes through explicitly, for emptiness
+  (and that the keystore decodes, without writing it) and outputs the variant.
+- `android`: checkout, `gradle/actions/wrapper-validation`, `npm ci`, sync,
+  Gradle. It receives no secret. For `release` it builds an **unsigned**
+  `assembleRelease` and uploads it as `<artifact>-unsigned` (1 day).
+- `sign` (release only; no checkout, no npm, no Gradle): JDK, Android SDK
+  build-tools 36.0.0, downloads the unsigned APK, `zipalign`, `apksigner sign`
+  with the passwords read from the environment, `apksigner verify`, rejects a
+  debug certificate, and uploads `<artifact>` (the name the release job
+  downloads) with `version.json`.
+
+All four set → `release`; none set → `debug` (`assembleDebug` with the
+checked-in debug keystore and no `-PdevBuild`, i.e. what production shipped
+before 2026-11-07, plus a `::warning::` and a step-summary line, built and
+uploaded by `android` exactly as before, `sign` skipped); some set → the
+`signing` job fails before Gradle. The release path has never run: it waits
+for the release key (`DEPLOYMENT.md`, "Android release signing", says what
+the first run does and how to check it). The variant drives the Gradle task, the `apk/<variant>/` output
 directory, the artifact name suffix and the upload path; the tag,
 `version.json`, `versionCode` and the release job are the same either way.
 The debug fallback is temporary, to be removed once the key exists and the
@@ -313,7 +338,13 @@ console has a loopback host port.
   records build arguments and full build-step metadata into that attestation, so
   never pass a secret via `build-args` — use the `secrets` input instead. Today
   the only build arg is `NEXT_PUBLIC_API_BASE_URL`, which is compiled into
-  client-side JS and therefore public by construction.
+  client-side JS and therefore public by construction. The publish passes the
+  production URL; the security scan passes the placeholder
+  `https://scan-placeholder.invalid` (reserved TLD, never resolves) because
+  `frontend/next.config.mjs` refuses a production build with a blank URL
+  unless `CI=true`, and a Docker build does not inherit the runner's `CI`.
+  The scanned image is discarded, so the placeholder never ships; see
+  `railway-environments.md`, "Blank `NEXT_PUBLIC_API_BASE_URL` fails the build".
 - Third-party GitHub Actions are pinned to commit SHAs. Dependabot monitors
   Docker, Actions, npm, and Python dependency sources. Every entry sets
   `target-branch: dev`, so bumps go through the dev lane like any other change
@@ -551,6 +582,25 @@ arrives as a weekly PR instead.
 The `/` docker-compose entry still covers `docker-compose.yml` (`redis`,
 `minio/minio`, `minio/mc`); `github-actions`, `npm` and `pip` are untouched.
 
+Since 2026-11-20 every entry has `cooldown: default-days: 7`: Dependabot
+proposes a version or digest only once it has been out for a week, so a
+freshly hijacked release is not auto-merged into `dev` (which deploys itself)
+within days. Cooldown applies to version updates only; GitHub's docs say
+security updates are not delayed by it.
+
+**No `gradle` entry yet (open).** `frontend/android` (AGP, androidx,
+google-services, the versions in `variables.gradle`) is not covered.
+It was left out deliberately: `settings.gradle` includes the Capacitor
+projects from `../node_modules/@capacitor/...`, which do not exist in
+Dependabot's checkout, and whether Dependabot's Gradle parser tolerates that
+is unverified. A failing Dependabot job is a red workflow that skips Railway
+deploys (the docker-compose history above). To add it, append
+`{package-ecosystem: gradle, directory: /frontend/android, target-branch: dev,
+schedule: {interval: weekly}, cooldown: {default-days: 7}}` on a branch, watch
+the first Dependabot run in the Insights > Dependency graph > Dependabot tab,
+and remove it again if it errors. `gradle-wrapper.properties` also carries no
+`distributionSha256Sum`; the wrapper jar itself is validated in CI.
+
 ## Dev and production hosting
 
 Railway project `videolens` already has a populated `dev` environment. Its API,
@@ -721,11 +771,16 @@ jobs.
   `containers / backend` log should show `[runtime 2/8] RUN apt-get update`
   executing rather than `CACHED`.
 - Railway's source integration can begin a dev deploy independently of the
-  GitHub validation lane. If strict pre-deploy gating is required, configure
-  Railway check-suite waiting after these workflow names exist on the remote.
-  This is not hypothetical: PR #12 merging to `dev` triggered an immediate
-  Railway build of `backend/Dockerfile` and `frontend/Dockerfile` before any
-  GitHub workflow had run against them, and that build failed — see below.
+  GitHub validation lane. This was observed on PR #12 (2026-08), when merging
+  to `dev` triggered an immediate Railway build of `backend/Dockerfile` and
+  `frontend/Dockerfile` before any GitHub workflow had run against them, and
+  that build failed (see below). Since the 2026-10-29 redesign a push to
+  `dev` runs no workflow at all, so Wait for CI would have nothing to wait
+  on there; the gate for `dev` is branch protection on the PR. Per
+  `docs/railway-environments.md` ("Deploy triggers"), Wait for CI was off for
+  `dev` and on for production when last read (2026-11-06). It is set in the
+  Railway dashboard, which this repository cannot show, so re-check it there
+  rather than trusting either doc.
 - **Railway cache mount IDs must embed the real Railway service ID of the
   service actually building, and that ID cannot be templated** — this took
   four `dev` deploy failures in a row after PR #12 to fully characterize:
@@ -809,3 +864,8 @@ jobs.
 - 2026-11-07 · claude (session 01FVkcsidCXWo1CtwAtdwVHV) · added the Dependabot overseer: a daily scheduled task wakes a standing Claude session that merges green, up-to-date Dependabot PRs into `dev`, updates behind ones one at a time, and holds the rest with a diagnosis
 - 2026-11-07 · claude (session 01FVkcsidCXWo1CtwAtdwVHV) · added `dependabot-auto-merge.yml` (GitHub auto-merge for non-major Dependabot PRs into `dev`, fetch-metadata v3.1.0 pinned by SHA); the overseer now updates behind branches and reviews majors. Second `contents: write` job, by owner decision
 - 2026-11-18 · claude (session 01FVkcsidCXWo1CtwAtdwVHV) · cleared the held Dependabot PRs: Python docker ignore now covers semver-minor too (3.13 -> 3.15 is a semver minor; #134 slipped through and auto-merge had queued it); fastapi 0.162.5, boto3 1.44.1 (#136) and google-genai 3.4.0 (#137) taken in one hand-regenerated, marker-preserving `requirements.txt`. Dependabot dropping the uv `--universal` markers is now three-for-three on pip PRs (#95, #136, #137); the CI guard catches it every time
+- 2026-11-20 · claude (session 01FVkcsj3gS4EwsMRTnzy1pr) · added `reusable-commit-hygiene.yml` (`contents: read`, `pull-requests: read` to read the description live so a re-run sees an edited one), called by both lanes as `hygiene` and fed into `required`; rules in `scripts/commit-hygiene.sh`, shared with `.githooks/commit-msg`. See engineering-standards.md, "Commit hygiene"
+- 2026-11-20 · Claude (CI agent) · Android signing split into `signing` / `android` (unsigned, no secrets, Gradle wrapper validation) / `sign` (apksigner, no checkout); nightly scan `build_failure_is_warning`; Dependabot 7-day cooldown and the open gradle entry; corrected the stale dev check-suite-waiting note against railway-environments.md
+- 2026-11-20 · Claude (CI agent) · the security scan's frontend build passes `NEXT_PUBLIC_API_BASE_URL=https://scan-placeholder.invalid`; the new blank-URL guard in `next.config.mjs` failed it (Docker builds do not see `CI=true`)
+- 2026-11-20 · Claude (CI agent) · hygiene check names made distinct (`pr-hygiene / Commit hygiene` from `commit-hygiene.yml`, `hygiene / Commit hygiene` in the lanes); the nightly `issue` job tracks scans that could not run in their own issue
+- 2026-11-21 · Claude (CI agent) · hygiene row: fixing a title re-runs only `pr-hygiene` (the lane's `required` stays red until a push or re-run), and `main` has no `scripts/commit-hygiene.sh` until the first promotion carrying it merges, so that PR runs its own copy

@@ -1,0 +1,466 @@
+"""`/api/billing*` end to end through FastAPI: the exact contract the
+frontend builds against, who may call what, the webhook's signature check
+and idempotency, and billing-off parity. The real StripeBillingGateway runs
+over a mocked StripeClient (never the network); webhooks are signed locally
+with the test secret."""
+
+import asyncio
+import hashlib
+import hmac
+import json
+import time
+import unittest
+from datetime import datetime, timedelta, timezone
+from unittest import mock
+from unittest.mock import patch
+
+import stripe
+from starlette.testclient import TestClient
+
+from app.application.billing import BillingPlans
+from app.application.delete_account import DeleteAccountUseCase
+from app.application.get_account import GetAccountUseCase
+from app.application.get_billing import GetBillingUseCase
+from app.application.get_free_runs import GetFreeRunsUseCase
+from app.application.handle_billing_webhook import HandleBillingWebhookUseCase
+from app.application.identify_caller import IdentifyCallerUseCase
+from app.application.open_billing_portal import OpenBillingPortalUseCase
+from app.application.start_checkout import StartCheckoutUseCase
+from app.container import container
+from app.infrastructure.billing.stripe_gateway import StripeBillingGateway
+from app.infrastructure.config import Settings
+from app.infrastructure.persistence.account_deleter import InMemoryAccountDeleter
+from app.infrastructure.persistence.account_directory import InMemoryAccountDirectory
+from app.infrastructure.persistence.account_free_runs import InMemoryAccountFreeRuns
+from app.infrastructure.persistence.api_key_repository import InMemoryApiKeyRepository
+from app.infrastructure.persistence.billing_store import InMemoryBillingAccounts, InMemoryExtraRunLedger
+from app.infrastructure.persistence.run_repository import RunStore
+from app.interface.api.app import app
+
+SECRET = "whsec_test_secret"
+TOKEN = {"Authorization": "Bearer eyJhbGciOi.payload.signature"}
+ANON = {"X-Client-ID": "test-client-0123456789"}
+
+
+def _settings(enabled: bool = True) -> Settings:
+    return Settings(
+        _env_file=None,
+        gemini_api_key="k",
+        stripe_secret_key="sk_test_123" if enabled else "",
+        stripe_webhook_secret=SECRET,
+        stripe_price_monthly="price_month",
+        stripe_price_yearly="price_year",
+        stripe_price_extra_run="price_extra",
+        allowed_origins="https://videolens.test",
+        free_runs_per_account_daily=10,
+    )
+
+
+def _signed(payload: bytes) -> str:
+    timestamp = int(time.time())
+    signature = hmac.new(SECRET.encode(), f"{timestamp}.".encode() + payload, hashlib.sha256).hexdigest()
+    return f"t={timestamp},v1={signature}"
+
+
+class _Verifier:
+    def __init__(self, claims: dict) -> None:
+        self.claims = claims
+
+    def decode(self, token: str) -> dict:
+        return dict(self.claims)
+
+
+class BillingRoutesTests(unittest.TestCase):
+    enabled = True
+
+    def setUp(self) -> None:
+        settings = _settings(self.enabled)
+        self.stripe = mock.MagicMock()
+        amounts = {"price_month": 1200, "price_year": 12000, "price_extra": 15}
+        self.stripe.v1.prices.retrieve.side_effect = lambda price_id: {"unit_amount": amounts[price_id], "currency": "usd"}
+        self.stripe.v1.customers.create.return_value = {"id": "cus_1"}
+        self.stripe.v1.checkout.sessions.create.return_value = {"url": "https://checkout.stripe.com/c/1"}
+        self.stripe.v1.billing_portal.sessions.create.return_value = {"url": "https://billing.stripe.com/p/1"}
+        self.gateway = StripeBillingGateway(settings, client=self.stripe)
+        self.directory = InMemoryAccountDirectory()
+        keys = InMemoryApiKeyRepository()
+        self.billing_accounts = InMemoryBillingAccounts(settings)
+        ledger = InMemoryExtraRunLedger(settings)
+        self.ledger = ledger
+        self.account_runs = InMemoryAccountFreeRuns(settings)
+        plans = BillingPlans(
+            gateway=self.gateway, accounts=self.billing_accounts, ledger=ledger, paid_runs_per_day=30,
+            extra_runs_monthly_cap=settings.paid_extra_runs_monthly_cap,
+            # Complimentary Plus is read here; nobody has it unless a test sets it.
+            directory=self.directory,
+        )
+        self.plans = plans
+        replacements = {
+            "identify_caller_use_case": IdentifyCallerUseCase(
+                accounts=self.directory,
+                api_keys=keys,
+                verifier=_Verifier({"sub": "user-123", "email": "a@b.test", "role": "authenticated"}),
+                allow_anonymous=True,
+            ),
+            "get_billing_use_case": GetBillingUseCase(plans=plans, account_free_runs=self.account_runs),
+            "get_account_use_case": GetAccountUseCase(
+                accounts=self.directory, entitlements=container.entitlements, billing=plans
+            ),
+            "start_checkout_use_case": StartCheckoutUseCase(plans=plans),
+            "open_billing_portal_use_case": OpenBillingPortalUseCase(plans=plans),
+            "handle_billing_webhook_use_case": HandleBillingWebhookUseCase(plans=plans),
+            "get_free_runs_use_case": GetFreeRunsUseCase(
+                free_runs=container.free_runs,
+                device_tokens=container.device_tokens,
+                account_free_runs=self.account_runs,
+                billing=plans,
+            ),
+            "delete_account_use_case": DeleteAccountUseCase(
+                accounts=self.directory,
+                deleter=InMemoryAccountDeleter(
+                    settings,
+                    accounts=self.directory,
+                    api_keys=keys,
+                    billing_accounts=self.billing_accounts,
+                    extra_runs=ledger,
+                ),
+                api_keys=keys,
+                runs=RunStore(Settings(_env_file=None)),
+                billing=plans,
+            ),
+        }
+        for name, value in replacements.items():
+            patcher = patch.object(container, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.client = TestClient(app)
+
+    def _account_id(self) -> str:
+        self.client.get("/api/billing", headers=TOKEN)  # first sight creates the account
+        return next(iter(self.directory._accounts.values())).account_id
+
+    def _subscription(self, status: str = "active", subscription_id: str = "sub_1") -> dict:
+        end = int((datetime.now(timezone.utc) + timedelta(days=20)).timestamp())
+        return {
+            "id": subscription_id,
+            "customer": "cus_1",
+            "status": status,
+            "cancel_at_period_end": False,
+            "metadata": {},
+            "items": {"data": [{"price": {"id": "price_month", "recurring": {"interval": "month"}}, "current_period_end": end}]},
+        }
+
+    def _webhook(
+        self,
+        event_id: str,
+        kind: str = "customer.subscription.updated",
+        signature: str | None = None,
+        subscription_id: str = "sub_1",
+    ):
+        payload = json.dumps(
+            {
+                "id": event_id,
+                "object": "event",
+                "type": kind,
+                "data": {"object": {"object": "subscription", "id": subscription_id, "customer": "cus_1"}},
+            }
+        ).encode()
+        return self.client.post(
+            "/api/billing/webhook",
+            content=payload,
+            headers={"Stripe-Signature": signature if signature is not None else _signed(payload)},
+        )
+
+
+class EnabledBillingRoutesTests(BillingRoutesTests):
+    def test_anonymous_is_401(self) -> None:
+        # Exactly like /api/me: an anonymous caller (X-Client-ID) is 401.
+        self.assertEqual(self.client.get("/api/billing", headers=ANON).status_code, 401)
+        self.assertEqual(
+            self.client.get("/api/billing").status_code, self.client.get("/api/me").status_code
+        )
+
+    def test_free_account_contract(self) -> None:
+        response = self.client.get("/api/billing", headers=TOKEN)
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(
+            body,
+            {
+                "enabled": True,
+                "plan": "free",
+                "status": None,
+                "interval": None,
+                "current_period_end": None,
+                "cancel_at_period_end": False,
+                "runs": {"limit": 10, "used": 0, "period": "day"},
+                "extra_runs": None,
+                "prices": {
+                    "month": {"amount": 1200, "currency": "usd"},
+                    "year": {"amount": 12000, "currency": "usd"},
+                    "extra_run": {"amount": 15, "currency": "usd"},
+                },
+                # Added 2026-11-14 (complimentary Plus); false for everyone else.
+                "complimentary": False,
+            },
+        )
+
+    def test_checkout_then_409_once_subscribed(self) -> None:
+        response = self.client.post("/api/billing/checkout", headers=TOKEN, json={"interval": "month"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"url": "https://checkout.stripe.com/c/1"})
+
+        self.stripe.v1.subscriptions.retrieve.return_value = self._subscription()
+        self.assertEqual(self._webhook("evt_1", "checkout.session.completed").status_code, 200)
+
+        again = self.client.post("/api/billing/checkout", headers=TOKEN, json={"interval": "year"})
+        self.assertEqual(again.status_code, 409)
+        self.assertEqual(again.json()["code"], "already_subscribed")
+        self.assertTrue(again.json()["detail"])
+
+        body = self.client.get("/api/billing", headers=TOKEN).json()
+        self.assertEqual((body["plan"], body["status"], body["interval"]), ("paid", "active", "month"))
+        self.assertEqual(body["runs"], {"limit": 30, "used": 0, "period": "day"})
+        self.assertEqual(body["extra_runs"]["used"], 0)
+        self.assertEqual((body["extra_runs"]["limit"], body["extra_runs"]["period"]), (200, "month"))
+
+    def test_paid_account_extra_runs_this_month(self) -> None:
+        self.client.post("/api/billing/checkout", headers=TOKEN, json={"interval": "month"})
+        self.stripe.v1.subscriptions.retrieve.return_value = self._subscription()
+        self.assertEqual(self._webhook("evt_1", "checkout.session.completed").status_code, 200)
+        account_id = self._account_id()
+        month = self.plans.extra_runs_period()
+        for run_id in ("r1", "r2", "r3"):
+            asyncio.run(self.ledger.hold(run_id, account_id=account_id, customer_id="cus_1", period=month))
+        asyncio.run(self.ledger.complete("r1"))  # due
+        asyncio.run(self.ledger.void("r3"))  # voided: not counted
+        body = self.client.get("/api/billing", headers=TOKEN).json()
+        now = datetime.now(timezone.utc)
+        next_month = datetime(now.year + (now.month == 12), now.month % 12 + 1, 1, tzinfo=timezone.utc)
+        extra = dict(body["extra_runs"])
+        resets_at = datetime.fromisoformat(extra.pop("resets_at").replace("Z", "+00:00"))
+        self.assertEqual(extra, {"used": 2, "limit": 200, "period": "month"})
+        self.assertEqual(resets_at, next_month)
+
+    def test_an_invalid_interval_is_422(self) -> None:
+        response = self.client.post("/api/billing/checkout", headers=TOKEN, json={"interval": "week"})
+        self.assertEqual(response.status_code, 422)
+
+    def test_portal_404_then_url(self) -> None:
+        response = self.client.post("/api/billing/portal", headers=TOKEN)
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["code"], "no_billing_account")
+        self.client.post("/api/billing/checkout", headers=TOKEN, json={"interval": "month"})
+        response = self.client.post("/api/billing/portal", headers=TOKEN)
+        self.assertEqual(response.json(), {"url": "https://billing.stripe.com/p/1"})
+
+    def test_checkout_and_portal_need_a_person(self) -> None:
+        for path in ("/api/billing/checkout", "/api/billing/portal"):
+            response = self.client.post(path, headers=ANON, json={"interval": "month"})
+            self.assertEqual(response.status_code, 401, path)
+
+    def test_stripe_down_is_503_with_a_code(self) -> None:
+        self.stripe.v1.customers.create.side_effect = stripe.APIConnectionError("down")
+        response = self.client.post("/api/billing/checkout", headers=TOKEN, json={"interval": "month"})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["code"], "billing_unavailable")
+
+    def test_webhook_signature_failure_is_400(self) -> None:
+        response = self._webhook("evt_1", signature="t=1,v1=forged")
+        self.assertEqual(response.status_code, 400)
+        self.stripe.v1.subscriptions.retrieve.assert_not_called()
+
+    def test_webhook_is_idempotent(self) -> None:
+        self.client.post("/api/billing/checkout", headers=TOKEN, json={"interval": "month"})
+        self.stripe.v1.subscriptions.retrieve.return_value = self._subscription()
+        self.assertEqual(self._webhook("evt_1").json(), {"received": True})
+        self.assertEqual(self._webhook("evt_1").json(), {"received": True})
+        self.assertEqual(self.stripe.v1.subscriptions.retrieve.call_count, 1)
+
+    def test_a_second_live_subscription_is_cancelled_through_the_webhook(self) -> None:
+        # An old Checkout tab paid after another checkout already subscribed:
+        # Stripe now has two live subscriptions for one customer.
+        self.client.post("/api/billing/checkout", headers=TOKEN, json={"interval": "month"})
+        subscriptions = {"sub_1": self._subscription(), "sub_2": self._subscription(subscription_id="sub_2")}
+        self.stripe.v1.subscriptions.retrieve.side_effect = lambda subscription_id: subscriptions[subscription_id]
+        self.assertEqual(self._webhook("evt_1", "customer.subscription.created").status_code, 200)
+
+        # The duplicate's cancel fails once: a 5xx, so Stripe sends it again.
+        self.stripe.v1.subscriptions.cancel.side_effect = stripe.APIConnectionError("down")
+        with self.assertLogs("videolens", level="ERROR"):
+            failed = self._webhook("evt_2", "customer.subscription.created", subscription_id="sub_2")
+        self.assertEqual(failed.status_code, 503)
+
+        self.stripe.v1.subscriptions.cancel.side_effect = None
+        with self.assertLogs("videolens", level="ERROR") as logs:
+            retried = self._webhook("evt_2", "customer.subscription.created", subscription_id="sub_2")
+        self.assertEqual(retried.json(), {"received": True})
+        self.assertTrue(any("two live subscriptions" in line for line in logs.output))
+        # Credited, not invoiced: the extra-run meter is the customer's.
+        self.stripe.v1.subscriptions.cancel.assert_called_with("sub_2", params={"invoice_now": False, "prorate": True})
+        row = asyncio.run(self.billing_accounts.get(self._account_id()))
+        self.assertEqual((row.stripe_subscription_id, row.status), ("sub_1", "active"))
+        self.assertEqual(self.client.get("/api/billing", headers=TOKEN).json()["plan"], "paid")
+
+    def test_free_runs_gains_plan_and_overage(self) -> None:
+        body = self.client.get("/api/free-runs", headers=TOKEN).json()
+        self.assertEqual((body["plan"], body["overage"], body["limit"], body["period"]), ("free", False, 10, "day"))
+        self.assertRegex(body["resets_at"], r"T00:00:00(Z|\+00:00)$")
+        self.client.post("/api/billing/checkout", headers=TOKEN, json={"interval": "month"})
+        self.stripe.v1.subscriptions.retrieve.return_value = self._subscription()
+        self._webhook("evt_1")
+        body = self.client.get("/api/free-runs", headers=TOKEN).json()
+        self.assertEqual((body["plan"], body["overage"], body["limit"], body["remaining"]), ("paid", True, 30, 30))
+        # The paid plan's included runs are daily since 2026-11-14, and
+        # `period` is always sent (the frontend assumes month without it).
+        self.assertEqual(body["period"], "day")
+        self.assertRegex(body["resets_at"], r"T00:00:00(Z|\+00:00)$")
+        # Anonymous: the fields it always had, nothing more.
+        anonymous = self.client.get("/api/free-runs").json()
+        self.assertNotIn("plan", anonymous)
+        self.assertNotIn("overage", anonymous)
+
+    def test_deleting_the_account_cancels_the_subscription(self) -> None:
+        self.client.post("/api/billing/checkout", headers=TOKEN, json={"interval": "month"})
+        self.stripe.v1.subscriptions.retrieve.return_value = self._subscription()
+        self._webhook("evt_1")
+        self.stripe.v1.subscriptions.cancel.side_effect = stripe.APIConnectionError("down")
+        refused = self.client.delete("/api/me", headers=TOKEN)
+        self.assertEqual(refused.status_code, 503)
+        self.assertEqual(refused.json()["code"], "subscription_cancel_failed")
+        self.assertTrue(self.directory._accounts)
+
+        self.stripe.v1.subscriptions.cancel.side_effect = None
+        self.assertEqual(self.client.delete("/api/me", headers=TOKEN).status_code, 200)
+        self.stripe.v1.subscriptions.cancel.assert_called_with("sub_1", params={"invoice_now": True, "prorate": False})
+
+
+class DisabledBillingRoutesTests(BillingRoutesTests):
+    enabled = False
+
+    def test_billing_is_just_disabled(self) -> None:
+        response = self.client.get("/api/billing", headers=TOKEN)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"enabled": False})
+        self.assertEqual(self.client.get("/api/billing", headers=ANON).status_code, 401)
+
+    def test_checkout_portal_and_webhook_are_503(self) -> None:
+        for path in ("/api/billing/checkout", "/api/billing/portal"):
+            response = self.client.post(path, headers=TOKEN, json={"interval": "month"})
+            self.assertEqual(response.status_code, 503, path)
+            self.assertEqual(response.json()["code"], "billing_disabled")
+        self.assertEqual(self._webhook("evt_1").status_code, 503)
+        self.stripe.v1.customers.create.assert_not_called()
+
+    def test_free_runs_is_the_free_plan(self) -> None:
+        body = self.client.get("/api/free-runs", headers=TOKEN).json()
+        self.assertEqual((body["plan"], body["overage"], body["limit"]), ("free", False, 10))
+
+
+_NO_PRICES = {"month": None, "year": None, "extra_run": None}
+_PRICES = {
+    "month": {"amount": 1200, "currency": "usd"},
+    "year": {"amount": 12000, "currency": "usd"},
+    "extra_run": {"amount": 15, "currency": "usd"},
+}
+
+
+class _ComplimentaryCases:
+    """Complimentary Plus (`accounts.complimentary_plus`, set by hand in SQL;
+    here the in-memory stand-in): the contract the frontend builds against,
+    with Stripe off and on."""
+
+    def _complimentary(self) -> str:
+        account_id = self._account_id()
+        self.assertTrue(self.directory.set_complimentary_plus(account_id))
+        return account_id
+
+    def test_billing_contract(self) -> None:
+        self._complimentary()
+        response = self.client.get("/api/billing", headers=TOKEN)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(
+            response.json(),
+            {
+                # Still "is Stripe billing on here", so checkout is offered or not.
+                "enabled": self.enabled,
+                "plan": "paid",
+                "status": None,
+                "interval": None,
+                "current_period_end": None,
+                "cancel_at_period_end": False,
+                "runs": {"limit": 30, "used": 0, "period": "day"},
+                "extra_runs": None,
+                "prices": _PRICES if self.enabled else _NO_PRICES,
+                "complimentary": True,
+            },
+        )
+
+    def test_me_and_free_runs_say_paid_and_complimentary(self) -> None:
+        self._complimentary()
+        entitlement = self.client.get("/api/me", headers=TOKEN).json()["entitlement"]
+        self.assertEqual((entitlement["plan"], entitlement["complimentary"]), ("paid", True))
+        # Never billed per run.
+        self.assertFalse(entitlement["metered"])
+        paid = container.entitlements.paid
+        self.assertEqual(
+            (entitlement["max_duration_seconds"], entitlement["max_file_size_mb"]),
+            (paid.max_duration_seconds, paid.max_file_size_mb),
+        )
+        body = self.client.get("/api/free-runs", headers=TOKEN).json()
+        self.assertEqual(
+            (body["plan"], body["overage"], body["complimentary"], body["limit"], body["period"]),
+            ("paid", False, True, 30, "day"),
+        )
+
+    def test_checkout_and_portal_are_409_complimentary_plan(self) -> None:
+        self._complimentary()
+        for path in ("/api/billing/checkout", "/api/billing/portal"):
+            response = self.client.post(path, headers=TOKEN, json={"interval": "month"})
+            self.assertEqual(response.status_code, 409, path)
+            self.assertEqual(response.json()["code"], "complimentary_plan", path)
+        self.stripe.v1.customers.create.assert_not_called()
+        self.stripe.v1.checkout.sessions.create.assert_not_called()
+        self.stripe.v1.billing_portal.sessions.create.assert_not_called()
+
+
+class ComplimentaryStripeOffRoutesTests(_ComplimentaryCases, BillingRoutesTests):
+    enabled = False
+
+    def test_an_ordinary_account_is_unchanged(self) -> None:
+        self.assertEqual(self.client.get("/api/billing", headers=TOKEN).json(), {"enabled": False})
+        entitlement = self.client.get("/api/me", headers=TOKEN).json()["entitlement"]
+        self.assertEqual((entitlement["plan"], entitlement["complimentary"]), ("free", False))
+
+
+class ComplimentaryStripeOnRoutesTests(_ComplimentaryCases, BillingRoutesTests):
+    enabled = True
+
+    def test_a_real_subscription_wins(self) -> None:
+        self.client.post("/api/billing/checkout", headers=TOKEN, json={"interval": "month"})
+        self.stripe.v1.subscriptions.retrieve.return_value = self._subscription()
+        self._webhook("evt_1")
+        self._complimentary()
+        body = self.client.get("/api/billing", headers=TOKEN).json()
+        self.assertEqual((body["plan"], body["complimentary"], body["status"]), ("paid", False, "active"))
+        self.assertIsNotNone(body["extra_runs"])
+        free_runs = self.client.get("/api/free-runs", headers=TOKEN).json()
+        self.assertEqual((free_runs["overage"], free_runs["complimentary"]), (True, False))
+        # Manage billing works as for any subscriber; checkout is already_subscribed.
+        self.assertEqual(self.client.post("/api/billing/portal", headers=TOKEN).status_code, 200)
+        again = self.client.post("/api/billing/checkout", headers=TOKEN, json={"interval": "month"})
+        self.assertEqual((again.status_code, again.json()["code"]), (409, "already_subscribed"))
+
+
+class CapabilityRowTests(unittest.TestCase):
+    def test_the_billing_row_exists(self) -> None:
+        body = TestClient(app).get("/api/capabilities").json()
+        rows = {row["name"]: row for row in body["capabilities"]}
+        self.assertIn("billing", rows)
+        self.assertIn(rows["billing"]["state"], ("ok", "disabled", "degraded"))
+
+
+del BillingRoutesTests
+
+if __name__ == "__main__":
+    unittest.main()

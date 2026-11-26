@@ -10,7 +10,7 @@ shells").
 - `frontend/components/HomeScreen.tsx` — the shell for one tab: nav band, active view, footer band. Takes the tab as a prop; `RoutedHomeScreen` (same file) is the variant that reads it from the URL. Also the single caller of `useCapabilities()` — see `capability-reporting.md`.
 - `frontend/components/AppNav.tsx` — the top bar as one component: brand, the four tab links (desktop, web shell), theme toggle, phone hamburger + full-screen menu panel. Exports `TAB_LABEL`. Rendered by `HomeScreen`, `LegalShell` and `/offline`.
 - `frontend/components/SiteFooter.tsx` — the web shell's footer (one copy; was three).
-- `frontend/components/BottomTabBar.tsx` — the installed-app dock: Analyze, History, More. Owns the More sheet's open state.
+- `frontend/components/BottomTabBar.tsx` — the installed-app dock: Analyze, History, Account (only when sign-in is available, 2026-11-14), More. Owns the More sheet's open state.
 - `frontend/components/MoreSheet.tsx` — the More `<dialog>`; contents are `MORE_SHEET_GROUPS` (data).
 - `frontend/components/shell.ts` — `ShellMode`, `SHELL_STORAGE_KEY`; `navClick.ts` — `isPlainLeftClick` shared by every nav.
 - `frontend/application/useMainTab.ts` — the tab as a property of the URL: `MAIN_TABS`, `mainTabHref`, `goToMainTab`, `useMainTab`.
@@ -19,7 +19,6 @@ shells").
 - `frontend/app/layout.tsx` — `<html>`/`<body>`, the pre-paint theme script, and the `.viewport` flex column the shell sits in.
 - `frontend/app/tokens.css` — palette, type, space, shape, motion tokens.
 - `frontend/app/globals.css` — the shared class vocabulary (`.shell`, `.nav`, `.nav-tab`, `.view-scroll`, `.view-head`/`.view-title`, …).
-- `frontend/components/useMediaQuery.ts` — `useSyncExternalStore` wrapper over `matchMedia` (server snapshot `false`); for the rare case where React, not just CSS, must know the width (History's hidden sort).
 - `frontend/components/AppBackLink.tsx` + `frontend/application/backNavigation.ts` — the installed app's "‹ Back" link above the title of API key, Releases, Privacy and Terms, and the "is the previous entry in-app?" check behind it. See "App-shell Back link".
 
 ## Structure
@@ -99,7 +98,7 @@ renders **both** chromes; CSS shows one.
 
 | | web (browser tab) | app (installed PWA / Capacitor) |
 |---|---|---|
-| Top bar | brand · tab links (≥ 48rem) · theme · hamburger (< 48rem) | ≤ 37.5rem: brand · theme only. Wider: same as web (links ≥ 48rem, hamburger between) |
+| Top bar | brand · tab links (≥ 48rem) · theme · Account button (≥ 48rem, when sign-in is offered) · hamburger (< 48rem) | ≤ 37.5rem: brand · theme only. Wider: same as web (links ≥ 48rem, hamburger between) |
 | Phone menu | `.menu-panel`, sibling of `.nav-wrap`, full-width 60px cards; hides the content section while open | none at ≤ 37.5rem |
 | Bottom | `SiteFooter` | ≤ 37.5rem: `BottomTabBar` (fixed dock, inset by `--page-gutter`/safe areas), no footer. Wider: `SiteFooter`, same as web |
 | Privacy / Terms | footer | ≤ 37.5rem: More sheet rows. Wider: the footer (owner decision 2026-11-01; not added to the top-bar menu) |
@@ -336,7 +335,7 @@ intake and on the result view. It is now `position: sticky; bottom:
 max(var(--space-sm), var(--safe-bottom))` with `margin: auto auto <same>`, the
 last flex item of `.shell`. Measured at 390×844 app shell, light and dark:
 dock 764–828 before and after scrolling the intake, the progress view and the
-result to the bottom; the terms checkbox, Retry and "Analyze another file" are
+result to the bottom; the terms checkbox, Retry and "Analyze another" are
 all hit-testable (nothing over them).
 
 **Keyboard (#2).** `application/useSoftKeyboard.ts` (mounted once in
@@ -927,7 +926,63 @@ dark. `verify_reach.py` covers the reachability notice (32/32).
   the coarse-pointer `2.75rem` floor. Sheet rows still keep their `3.5rem`
   min-height. Both are outside this pass.
 
+## Document titles (UX fix spec, 2026-11-14)
+
+`application/useDocumentTitle.ts` sets `document.title` in an effect to
+`<label> · <suffix>`; the suffix is the prerendered title's last " · " part
+(the site name), read once. `HomeScreen` labels: Analyze idle "Analyze a
+video", queued/processing/lost "Analyzing", failed "Run failed", expired "Run
+expired", result the result title (or "Result"); "History", "Gemini key",
+"Releases", "Account". No render-time DOM read, no localStorage.
+
+## Phone menu order (UX fix spec 6.1, 2026-11-14)
+
+- `.menu-panel` rows are picked from `navTabs(showAccount)` in the order
+  Analyze, History, Account (when offered), Gemini key, Releases (`menuTabs` in
+  `AppNav`). `MAIN_TABS`, `navTabs`, the desktop inline tabs (Analyze,
+  History, Gemini key, Releases), the dock and the More sheet are unchanged.
+- The Gemini key row carries `.menu-item--minor-first` (`margin-top:
+  var(--space-md)`, declared after `.menu-item` because of its `all: unset`),
+  so the menu reads as two groups.
+- Signed out, the Account row reads "Sign in for 10 runs a day"
+  (`ACCOUNT_FREE_RUNS_PER_DAY`) on every route, the landing included. The bar
+  pill still uses `signedOutLabel` ("Sign in"; "Get 10 free runs" on `/`).
+- Measured at 320 and 412 on `/`, `/app`, every tab, the legal pages and
+  404: the same five rows, each 60px; `/offline` has no Account row (its
+  plain `AppNav`, by design). The variant that drops Gemini key and Releases
+  when Account exists was not built (needs the owner's yes).
+
+## Simplified idle Analyze column (2026-11-14)
+
+The idle Analyze view now uses one centred column capped at 46rem at all
+widths (38.75rem in Codex's first pass; widened the same day so the intake's
+lines do not wrap on desktop, see `upload-form.md`). The service-notice slot precedes it; within it the allowance strip
+(including its existing pending reservation) precedes the single h1 "New
+analysis", the intake card and the exact retention sentence below it. The
+old desktop marketing header and companion output panel are removed. Shell
+scrolling/dock clearance, landing, run, result and failed layouts are unchanged.
+This supersedes earlier descriptions of the two-column idle intake.
+Verified in Playwright (frontend agent review, 2026-11-14) at 320, 412,
+1024, 1280 and 1440, light and dark, web shell and (320/412) app shell: one
+h1, no horizontal overflow, the Account tab is in the DOM, the idle page does
+not scroll at 1280x800, and in the app shell "Analyze link" sits above the
+dock (bottom 434 vs dock top 560 at 320x640; 374 vs 835 at 412x915).
+
+## Tab title kept (review fix, 2026-11-20)
+
+`useDocumentTitle` used to set `document.title` once per label, and Next
+writes the route's metadata title back on its own schedule (a query-only
+navigation such as `?view=history`), which undid it. While mounted it now
+watches `<head>` with a `MutationObserver` (child list, subtree, character
+data) and puts the view's title back whenever it differs; the equality
+check ends the loop its own write starts. Plain DOM in an effect: the same
+in the web build and the static export, and no inline script, so nothing
+for the CSP. The disconnect on unmount drops any pending record, so another
+route's title is left alone.
+
 ## Changelog
+
+- 2026-11-14 · Codex · idle Analyze now uses one centred 38.75rem column at every width with a New analysis h1, allowance above and retention below the card; removed the idle companion panel while retaining shared landing styles and existing run/result/failed layouts
 
 - 2026-08-15 · frontend agent (foundation) · rebuilt the shell to the Terminal direction: one-viewport flex chain, pill nav, mobile drawer, 4 tabs, theme toggle
 - 2026-08-15 · main session · added the tab-alignment margin so History/API key/Releases match .workspace; verified nav + drawer geometry with Playwright
@@ -958,3 +1013,13 @@ dark. `verify_reach.py` covers the reachability notice (32/32).
 - 2026-11-02 · frontend agent (refinement 13) · D-R12-1: top bar capped with `min(rem, px)` (44px icon buttons, 22px wordmark cap, 68px bar), fits at 320/360 × 100–200% on every route, normal scale identical; footer still wraps at 320/150% but its gaps/heights are capped (146 → 100px); More sheet theme control re-lays via em container queries (indent dropped, then stacked) with padded labels
 - 2026-11-02 · frontend agent (refinement 14) · no CSS change: Android now sets the system font scale as the root font-size (text zoom pinned to 100, see android-update-check.md), so the R13 caps and theme-control container queries work in the app; measured wordmark ≤ 22px, landscape bar 56px and the theme tiers at 320/360/390 × 1.0–2.0; repaired the mangled R13 harness path
 - 2026-11-02 · frontend (refinement 15) · dock capped with min(rem, px) (64px portrait / 52px sideways at every scale, labels ≤ 14/15px, 44px items); More-sheet icon tile, gap and chevron capped so labels never reach their chevrons (320/200% "Releases" −39 → +33px), theme indent follows; theme tiers and header unchanged; intake cards stack (see capability-reporting.md, free-runs.md)
+- 2026-11-08 · frontend subagent (auth phase 2) · new `account` tab (`MAIN_TABS`, `TAB_LABEL`, a More-sheet row with `CircleUserRound`), shown only when sign-in is configured and the `auth` capability is `ok` (`navTabs(showAccount)`); `/app?view=account` still renders the panel. See auth-sign-in.md
+- 2026-11-13 · frontend agent · top bar gains `.nav-account` (round Account link after the theme toggle, ≥ 48rem only, same visibility rules as `.nav-links`); Account leaves the inline text tabs. See auth-sign-in.md
+- 2026-11-14 · frontend agent · dock gains an Account item (4 items when `showAccount`, 62px each at 320, 52px tall, labels unclipped); the More sheet drops its Account row. See auth-sign-in.md
+- 2026-11-14 · frontend agent · top bar: `.nav-account--signin` modifier, a "Sign in" pill (auto width, 44px) in the `.nav-account` slot when signed out; same display rules (≥48rem, hidden in the sideways app shell); nothing in the slot until auth state is ready. See auth-sign-in.md
+- 2026-11-14 · frontend agent · landing, legal and 404 render `RouteNav`/`RouteTabBar` (AppNav/BottomTabBar plus the Account entry from `useAccountEntry`); `/offline` keeps plain AppNav/BottomTabBar. See auth-sign-in.md
+- 2026-11-14 · frontend agent · the `api-key` tab is labelled "Gemini key" in the top bar, phone menu and More sheet; id and URL unchanged (UX fix spec batch a)
+- 2026-11-14 · frontend agent · UX fix spec batch c: per-view document titles via `useDocumentTitle`
+- 2026-11-14 · frontend agent · UX fix spec batch e: phone menu order Analyze, History, Account, Gemini key, Releases with a gap before the minor pair; signed-out menu row "Sign in for 10 runs a day" on every route
+- 2026-11-14 · frontend agent · idle Analyze column widened to 46rem (one line per intake line on desktop); Codex's single-column layout verified in the browser at 320-1440, both shells, both themes
+- 2026-11-20 · Claude (frontend agent) · `useDocumentTitle` re-asserts the view's title when something overwrites it (MutationObserver on head); removed the deleted `components/useMediaQuery.ts` from the file list

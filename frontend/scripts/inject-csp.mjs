@@ -28,6 +28,7 @@ import { fileURLToPath } from "node:url";
 import nextEnv from "@next/env";
 import {
   apiOriginFrom,
+  authOriginFrom,
   exportMetaPolicy,
   inlineScriptHashes,
   webMetaPolicy,
@@ -41,6 +42,8 @@ const isExport = process.argv.includes("--export");
    is the one the bundle was built against. */
 nextEnv.loadEnvConfig(frontendDir, false, { info: () => {}, error: console.error });
 const apiOrigin = apiOriginFrom(process.env.NEXT_PUBLIC_API_BASE_URL);
+/* The identity provider (auth phase 2): null when sign-in is off in this build. */
+const authOrigin = authOriginFrom(process.env.NEXT_PUBLIC_SUPABASE_URL);
 
 function die(message) {
   console.error(`inject-csp: ${message}`);
@@ -99,7 +102,7 @@ for (const root of roots) {
     const html = await readFile(file, "utf8");
     const scriptHashes = inlineScriptHashes(html);
     const policy = isExport
-      ? exportMetaPolicy({ apiOrigin, scriptHashes })
+      ? exportMetaPolicy({ apiOrigin, authOrigin, scriptHashes })
       : webMetaPolicy({ scriptHashes });
     try {
       await writeFile(file, withMetaPolicy(html, policy), "utf8");
@@ -112,4 +115,6 @@ for (const root of roots) {
     );
   }
 }
-console.log(`inject-csp: ${total} document(s) · connect-src backend ${apiOrigin}`);
+console.log(
+  `inject-csp: ${total} document(s) · connect-src backend ${apiOrigin} · auth ${authOrigin ?? "off"}`,
+);

@@ -67,14 +67,23 @@ with CI installing via `--require-hashes`. Blast radius: 1 file, ~60 lines.
 
 Root `CLAUDE.md` and `backend/ARCHITECTURE.md:14-16` both state that
 `interface/` and `infrastructure/` never depend on each other directly and are
-wired together only in `container.py`. Three verified violations:
+wired together only in `container.py`. Three verified violations (the first fixed 2026-11-08, two remain):
 
-- `backend/app/interface/api/dependencies.py:8` — imports
-  `AuthNotConfiguredError` from `infrastructure.auth.jwt_verifier`
-- `backend/app/interface/api/app.py:13` — imports `configure_logging` from
-  `infrastructure.logging_config`
-- `backend/app/interface/api/rate_limiter.py:5` — imports `settings` from
-  `infrastructure.config`
+- ~~`backend/app/interface/api/dependencies.py:8` — imports
+  `AuthNotConfiguredError` from `infrastructure.auth.jwt_verifier`~~ FIXED
+  2026-11-08 (auth phase 1): the error lives in `domain/errors.py` and is
+  mapped to 503 in `error_handlers.py`; `dependencies.py` only calls the
+  container's `IdentifyCallerUseCase`
+- `backend/app/interface/api/app.py` — `from ..infrastructure.logging_config
+  import configure_logging`
+- `backend/app/interface/api/rate_limiter.py` — `from ..infrastructure.config
+  import settings`
+
+Named by import rather than line number, which drifted twice. Re-measured
+2026-11-20 with an `ast` walk of `backend/app`: these two are still the only
+imports between `interface/` and `infrastructure/` in either direction
+(`interface/startup.py` and `interface/api/body_limit.py`, added that day,
+import neither way).
 
 The first is the substantive one. `dependencies.py` catches an exception
 **defined inside an adapter** in order to choose an HTTP status. That means
@@ -97,15 +106,16 @@ an `import-linter` contract, running in CI.
 
 ### The rate limiter is built at import time from a module-level global
 
-`backend/app/interface/api/rate_limiter.py:24`:
+`backend/app/interface/api/rate_limiter.py` (the module-level `limiter`):
 
 ```python
 limiter = Limiter(key_func=quota_key, storage_uri=settings.redis_url or "memory://", default_limits=[])
 ```
 
 `backend/ARCHITECTURE.md:48-50` claims every adapter takes `Settings` in its
-constructor rather than importing a global, and all 13 non-`__init__`
-`infrastructure/` modules genuinely do. This is the sole exception, and it
+constructor rather than importing a global, and every other
+`infrastructure/` adapter genuinely does (41 non-`__init__` modules on
+2026-11-20). This is the sole exception, and it
 imports the lowercase module-level instance.
 
 It matters more than a style nit because the rate limiter is one of only two
@@ -218,7 +228,7 @@ is a large mechanical diff.**
 
 ### No type checking on the Python side
 
-`backend/app/domain/ports.py` defines 9 structural `Protocol` interfaces,
+`backend/app/domain/ports.py` defines 26 structural `Protocol` interfaces (counted 2026-11-20),
 satisfied purely by duck-typing. Nothing anywhere verifies that `GeminiEngine`
 actually satisfies `AnalysisEngine`, or that any other adapter still matches
 its port after a signature edit.
@@ -226,7 +236,8 @@ its port after a signature edit.
 Drift is invisible until runtime — and `process_run.py` executes inside the arq
 worker, where a `TypeError` from a mismatched signature is swallowed by the
 broad handler and surfaces to the user as the generic
-`"Media analysis failed. Please try again."` at `process_run.py:74`. Nobody
+`"The analysis didn't finish. Please try again."` (the catch-all at the end of
+`ProcessRunUseCase.execute`). Nobody
 sees a stack trace unless they go looking in worker logs.
 
 This is the highest-value missing gate in the backend. Fix: `mypy --strict`
@@ -610,6 +621,120 @@ is a decision rather than an oversight.
 
 ---
 
+## Commit hygiene
+
+Since 2026-11-20 no commit, tag or PR description in this repository carries
+AI-tool attribution. Earlier history leaked it in two ways: message trailers
+(`Claude-Session:` with a private session URL, `Co-Authored-By: Claude ...`,
+PR footers) and the author identity `Claude <noreply@anthropic.com>`, which
+cloud sessions use by default. The owner had the whole history rewritten
+(`git filter-repo`: trailers stripped, that identity mapped to `gaganbirru`),
+every branch and tag force-pushed, the PR descriptions edited, and GitHub
+Support asked to drop the old PR refs and cached commits (ticket 5034146).
+
+Four layers keep it out, from source to gate:
+
+- `.claude/settings.json` sets `attribution` (`commit: ""`, `pr: ""`,
+  `sessionUrl: false`), so Claude Code does not write the trailers or footer.
+- `.claude/hooks/session-start.sh` (cloud sessions only) points git at
+  `.githooks/` and replaces the default Claude identity with the owner's.
+- `.githooks/commit-msg` runs `scripts/commit-hygiene.sh msg`, rejecting a
+  message that carries attribution (list below) or is made with the Claude
+  identity. Local clones turn it on once with
+  `git config core.hooksPath .githooks`.
+- `reusable-commit-hygiene.yml` runs the script over every commit in a PR,
+  its title (the squash subject) and its description, on both lanes, and
+  feeds `required`; that copy reports as `hygiene / Commit hygiene`.
+  `commit-hygiene.yml` calls it again on every PR event including `edited`,
+  so a title or description changed after a green run is re-checked; that
+  copy reports as **`pr-hygiene / Commit hygiene`**. Mark exactly
+  `pr-hygiene / Commit hygiene` required in branch protection on `dev` and
+  `main`, next to `required` (an owner setting, not verifiable from the
+  repository; on 2026-11-20 only `required` was required on PR #147). Until
+  then a red run there is visible but does not block. Before 2026-11-20 both
+  copies reported the same name, `hygiene / Commit hygiene`; that name now
+  belongs to the lanes' copy only. The separate workflow covers every event
+  the lanes do (`opened`, `synchronize`, `reopened`, plus `edited`), so the
+  lanes' copy is redundant for blocking; it stays because `required` needs
+  it, and removing it is a separate change. Only `pr-hygiene` re-runs on
+  `edited`: when a lane's copy failed on the title or description, fixing
+  the text turns `pr-hygiene` green, but that lane's `required` stays red
+  until a push or a manual re-run of the lane.
+- The title and description are fetched with `gh api` into a variable first:
+  a failed call or an empty title fails the job instead of checking empty
+  text (an empty description is fine).
+- CI runs the **base branch's** copy of the script, so a PR cannot weaken the
+  rules that judge it; a rule change applies to PRs after it merges. A base
+  without the script falls back to the PR's copy with a `::warning::`. `dev`
+  has it; `main` does not until the first promotion that carries it merges,
+  so that first `dev` -> `main` promotion PR is judged by its own copy. That
+  covers the script only. On `pull_request` the workflow files
+  (`commit-hygiene.yml`, the lanes, `reusable-commit-hygiene.yml`) run from
+  the PR's merge ref, so a PR that edits them can change or drop the check,
+  including the step that loads the base copy. Changes under `.github/`
+  therefore need the owner's review. A `CODEOWNERS` entry for `.github/`
+  with "Require review from Code Owners" would enforce that; it is
+  recommended and not adopted.
+
+What the script rejects (case-insensitive; since 2026-11-20, tightened the
+same day after a re-review):
+
+- a co-author trailer (`Co-authored-by:`, also `Co Authored By`,
+  `Coauthored-by`) for an AI tool, matched on whole words and the tools'
+  known names and bot addresses: the word Anthropic, Copilot, ChatGPT, OpenAI
+  or Codex anywhere in the trailer; the name `Claude` alone or with model
+  words (`Claude Code`, `Claude Opus 5.5`); `Cursor Agent`, `Gemini`,
+  `Gemini Code Assist`, `Devin AI`, `aider`, a `(aider)` suffix; addresses at
+  `anthropic.com` / `openai.com` (any subdomain), `aider.chat`,
+  `cursoragent@`, and the `devin-ai-integration`, `gemini-code-assist`,
+  `copilot-swe-agent` bots. People named Haider, Devin Smith, Gemini Patel or
+  Claude Monet pass.
+- a `Claude-Session:` trailer and any `claude.ai/code/session...` URL
+- the footer `Generated with/by Claude (Code)` when it starts a line (after
+  any emoji or bullet, not after a quote mark), and the link form
+  `Generated with [Claude Code](` anywhere
+- Claude model identifiers anywhere: `claude-opus-…`, `claude-sonnet-…`,
+  `claude-haiku-…`, `claude-fable-…`, `claude-instant-…`, `claude-<digit>…`
+  (`_` counts as `-`), and display names such as `Claude Opus 5.5` or
+  `Claude 3.5 Sonnet`. In a PR description or title only (body mode, not
+  commit messages), the lines strictly between a line that opens with
+  `<details` and its matching line that opens with `</details>` are exempt
+  from this one rule: Dependabot puts upstream release notes and commit
+  lists there, which can name a model and which nobody here wrote. The tag
+  lines themselves are checked, nesting counts, and an unclosed block or a
+  `<details>` anywhere but the start of a line exempts nothing. Trailers and
+  footers inside `<details>` are still rejected.
+- an author or committer at any `anthropic.com` address (any local part or
+  subdomain, any letter case), or named `Claude`, `Claude Code` or a Claude
+  model name
+
+Before matching, the text is normalised: zero-width and bidi characters are
+dropped, Unicode hyphens, spaces, curly quotes and the fullwidth colon fold to ASCII, a few
+Cyrillic letters that look Latin (а, е, о, с, р, х, у, і and capitals) fold to
+Latin, whitespace runs squeeze to one space, leading `>`, `*`, `-`, `+` and
+`<!--` markers are stripped, and a footer split after "Generated with" is
+rejoined, across blank lines too. The commit-msg hook cuts the message at
+git's scissors line (`# ------------------------ >8 ------------------------`),
+as git does, so `git commit -v` with a staged diff that names a model passes;
+CI checks the commit as made, so the cut hides nothing from it. Passing runs
+say what they checked (`Checked N commit(s) in base..head.`, `Checked the
+pull request title.`), so a green log is not silent. Still open, by choice: other homoglyphs (Greek, fullwidth Latin,
+mathematical letters), a line that opens with a quote mark (treated as
+quoting the rule), a footer reworded beyond the known forms, and a trailer
+split across lines.
+
+It reads message text only, never file contents. Trailers and footers are
+matched where they stand, so prose that names the rule, "Update CLAUDE.md",
+paths under `.claude/` or skill names such as `claude-md` still pass. A
+pattern for cloud-session branch names (`ccr-…`) in merge subjects was
+considered and not added: GitHub writes "Merge pull request #N from
+owner/branch" itself, such subjects are already in history, and a promotion
+range would then fail on commits nobody can change. The script uses the C
+locale (Git for Windows' grep otherwise misses the emoji form) and matches the
+folded characters as UTF-8 byte sequences, and strips CR, so it works on CRLF
+input; `.gitattributes` keeps it, the hooks and `frontend/android/gradlew`
+LF.
+
 ## Landing order
 
 The operationally useful part of this register. When the redesign lands, work
@@ -622,9 +747,12 @@ redesign touches no backend file, so none of these conflict with it:
 - dependency pinning
 - the three layering fixes
 - the `build_limiter` factory
-- `.gitattributes`
-- `SECURITY.md` / `CODEOWNERS` / PR + issue templates
-- CodeQL + Dependabot + gitleaks
+- `SECURITY.md` / `CODEOWNERS` / PR + issue templates (none exist yet)
+- CodeQL and gitleaks or another secret scanner (not adopted; CI does no
+  secret scanning today). Dependabot exists (`.github/dependabot.yml`).
+- `.gitattributes`: landed 2026-11-20, deliberately minimal (`*.sh`,
+  `.githooks/*` and `frontend/android/gradlew` are LF; nothing else is
+  normalised)
 - mypy scoped to `domain/` + `application/`
 - frontend tests (additive — touches no existing file)
 
@@ -638,7 +766,7 @@ review:
 **Highest value for effort, in order:**
 
 1. **Dependency pinning** — the only item with a live production failure mode.
-2. **mypy on `domain/` + `application/`** — guards 9 Protocol interfaces
+2. **mypy on `domain/` + `application/`** — guards 26 Protocol interfaces
    currently verified by nothing.
 3. **Security scanning** — 2 files, and pre-open-source is when it is
    cheapest.
@@ -669,3 +797,9 @@ Re-verify before fixing; do not treat the line numbers as authoritative.
 - 2026-08-29 · main session · merged dev: the count is 6 errors + 1 warning, not 5 + 1 — dev's PR #26 `UploadForm.tsx` share effect trips the same `set-state-in-effect` rule, and `dev` has no eslint config to have caught it
 - 2026-10-02 · ci-cache agent · marked "Container base images are past end-of-life" resolved pending this branch's CI and "The one outstanding CVE" removed: `CVE-2026-15308` ignore rule deleted from `.grype.yaml` (image on CPython 3.13.16; Grype DB range `< 3.13.15`)
 - 2026-11-06 · claude (ci-hardening session) · fixed the stale `reusable-container-checks.yml` reference and recorded that the ARG-based base image layout was reversed (Dependabot-visible `FROM ... AS base` now)
+- 2026-11-08 · backend subagent (auth phase 1) · marked layering violation #1 (`dependencies.py` importing `AuthNotConfiguredError` from the adapter) fixed; two remain (`app.py` logging, `rate_limiter.py` settings)
+- 2026-11-20 · claude (session 01FVkcsj3gS4EwsMRTnzy1pr) · added "Commit hygiene": history rewritten to remove AI-tool attribution, and the four guard layers (attribution setting, session-start identity, commit-msg hook, CI check in `required`)
+- 2026-11-20 · Claude (CI agent) · Commit hygiene: documented the widened rule set (AI co-author trailers, plain footer, model ids, session URLs, case-insensitive identity), title checking, base-branch script and the `edited` workflow, and why no `ccr-` pattern; landing-order list now says which tooling exists (`.gitattributes`, Dependabot) and which is not adopted (SECURITY.md, CODEOWNERS, templates, CodeQL, secret scanning)
+- 2026-11-20 · Claude (backend agent) · layering section names the two remaining cross-layer imports instead of stale line numbers and records the re-measurement (still exactly two); Protocol count 9 -> 26, infrastructure module count 13 -> 41, generic failure message updated to the current string
+- 2026-11-20 · Claude (CI agent) · Commit hygiene after the re-review: distinct check names (require `pr-hygiene / Commit hygiene`), title/description fetch fails closed, base-branch protection scoped to the script (workflow files need owner review; CODEOWNERS recommended), co-author patterns on whole words and known tool identities, any `anthropic.com` identity, normalisation against cheap evasions, `<details>` exempt from the model-id rule, `gradlew` LF
+- 2026-11-21 · Claude (CI agent) · Commit hygiene after the second re-review: `<details>` exemption limited to body mode and to lines strictly inside a closed block that opens and closes at line start; commit-msg hook cuts at git's scissors line; fullwidth colon folded and the footer rejoin skips blank lines; passing runs print what they checked; documented that `main` lacks the script until the first promotion and that fixing a title re-runs only `pr-hygiene`

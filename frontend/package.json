@@ -1,6 +1,6 @@
 {
   "name": "videolens-frontend",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3005",
@@ -12,34 +12,36 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "@capacitor/android": "^8.6.0",
+    "@capacitor/android": "^8.6.2",
     "@capacitor/app": "^8.1.2",
-    "@capacitor/core": "^8.5.0",
+    "@capacitor/browser": "8.0.5",
+    "@capacitor/core": "^8.6.2",
     "@capacitor/filesystem": "^8.1.5",
     "@capacitor/share": "^8.0.2",
-    "lucide-react": "^1.68.0",
-    "next": "^16.4.5",
+    "@supabase/supabase-js": "2.119.2",
+    "lucide-react": "^1.76.0",
+    "next": "^16.4.6",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
-    "@capacitor/cli": "^8.6.0",
+    "@capacitor/cli": "^8.6.2",
     "@next/env": "^16.4.4",
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "autoprefixer": "^10.6.2",
     "cross-env": "^10.1.0",
-    "eslint": "^9.39.5",
-    "eslint-config-next": "^16.4.5",
-    "postcss": "8.5.32",
+    "eslint": "^10.15.0",
+    "eslint-config-next": "^16.4.6",
+    "postcss": "8.5.33",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.7.0"
   },
   "overrides": {
-    "postcss": "8.5.32",
+    "postcss": "8.5.33",
     "sharp": "0.35.5",
     "uuid": "11.1.1",
     "@xmldom/xmldom": "0.9.12",

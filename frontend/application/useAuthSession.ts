@@ -1,0 +1,388 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import type { AuthUser } from "@/domain/entities";
+import { AuthFlowError, type AuthFailureReason } from "@/domain/errors";
+import { authSession } from "@/infrastructure/container";
+import { forgetAccountRuns } from "@/application/historySync";
+import { goToMainTab } from "@/application/useMainTab";
+
+/* The signed-in state as React sees it, and the emailed-code sign-in flow
+   (auth phase 2). See docs/frontend/auth-sign-in.md.
+
+   Two hooks, because two different places need two different things:
+   `HomeScreen` only needs to know *who* is signed in (to re-import History
+   and to keep the Account tab honest), while the Account panel also owns the
+   form state of a sign-in in progress. One provider subscription each; the
+   session object itself is the single source of truth. */
+
+/**
+ * Who is signed in. `ready` flips once the provider has loaded (or refused
+ * to), so a panel can tell "nobody is signed in" from "not known yet", which
+ * render differently. On a deployment with no provider `ready` is true from
+ * the first render and `user` is always null.
+ *
+ * `unconfirmed` (2026-11-20): loaded, nobody in memory, yet a session is
+ * still stored here. The provider could not recover it just now (it would
+ * not load, or the refresh failed on the network). Not "signed out": the
+ * Account panel offers to try again or to continue signed out.
+ *
+ * Read after hydration, never during render: the stored session lives in
+ * localStorage, and the prerendered HTML must match the first client render.
+ */
+export function useAuthUser() {
+  const [state, setState] = useState<{ ready: boolean; user: AuthUser | null; stored: boolean }>({
+    ready: !authSession.enabled,
+    user: null,
+    stored: false,
+  });
+
+  useEffect(() => {
+    if (!authSession.enabled) return;
+    let cancelled = false;
+    /* Only a change of person (or of whether a session is stored) re-renders:
+       the provider also notifies on every hourly token refresh, which changes
+       nothing anyone draws. */
+    const sync = () => {
+      if (cancelled) return;
+      const next = authSession.user();
+      const stored = authSession.hasSession();
+      setState((current) =>
+        current.ready &&
+        current.user?.id === next?.id &&
+        current.user?.email === next?.email &&
+        current.stored === stored
+          ? current
+          : { ready: true, user: next, stored }
+      );
+    };
+    const unsubscribe = authSession.subscribe(sync);
+    authSession
+      .load()
+      .catch(() => {
+        /* A provider that will not load leaves the app anonymous. The
+           Account panel says so when someone tries to sign in. */
+      })
+      .finally(sync);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+
+  return {
+    enabled: authSession.enabled,
+    ready: state.ready,
+    user: state.user,
+    unconfirmed: state.ready && !state.user && state.stored,
+  };
+}
+
+/** Asks the provider again for a stored session it could not recover. */
+export function recoverSession(): Promise<void> {
+  return authSession.recover();
+}
+
+const noSession = () => false;
+const storedSession = () => authSession.hasSession();
+const subscribeSession = (onChange: () => void) => authSession.subscribe(onChange);
+
+/**
+ * A session is stored on this device, before the provider has loaded and
+ * `useAuthUser().ready` turns true. Only a hint for holding layout (the
+ * Gemini key page's sign-in line), never for who is signed in: the stored
+ * session may yet turn out to be expired. False during prerender and
+ * hydration (localStorage is not read during render there); the client
+ * value follows right after.
+ */
+export function useStoredSessionHint(): boolean {
+  return useSyncExternalStore(subscribeSession, storedSession, noSession);
+}
+
+/** Where the emailed-code flow is. "Email entered" is `idle` with a
+ *  non-empty `email`; an error keeps the phase it happened in. */
+export type SignInPhase = "idle" | "sending" | "code-sent" | "verifying";
+
+export type SignInError = { field: "email" | "code"; message: string };
+
+/** Supabase refuses a second code for the same address inside 60 s. */
+export const RESEND_AFTER_SECONDS = 60;
+
+/** The emailed code is exactly 6 digits (owner, 2026-11-22). It is a
+ *  Supabase dashboard setting (Authentication → Email → "Email OTP Length"),
+ *  which must be 6 on every project; the field accepted 6 to 8 while
+ *  `videolens-dev` sent 8.
+ *  A project that sends another length fails at Verify, so keep the two in
+ *  step. */
+export const CODE_LENGTH = 6;
+
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const REASON_MESSAGE: Record<AuthFailureReason, string> = {
+  invalid_email: "Enter a valid email address.",
+  invalid_code: "That code is wrong or has expired. Check the latest email, or send a new code.",
+  rate_limited: "Too many attempts. Wait a minute, then try again.",
+  unreachable: "Can't reach the sign-in service. Check your connection and try again.",
+  unavailable: "Sign-in is not available on this server.",
+  cancelled: "Sign-in was cancelled. Try again.",
+  unknown: "Sign-in did not work. Try again.",
+};
+
+function messageFor(err: unknown): string {
+  return REASON_MESSAGE[err instanceof AuthFlowError ? err.reason : "unknown"];
+}
+
+/** Keeps digits only, then the first six, so a pasted "123 456" or
+ *  "Your code: 123456" works. */
+export function cleanCode(raw: string): string {
+  return raw.replace(/\D/g, "").slice(0, CODE_LENGTH);
+}
+
+/**
+ * The emailed one-time code sign-in. No redirect and no deep link, so it is
+ * the same in a browser tab and inside the installed app's WebView.
+ *
+ * Every action is guarded rather than disabled: a focused control that turns
+ * `disabled` is blurred to <body>, and a keyboard user loses their place.
+ */
+export function useEmailCodeSignIn() {
+  const [phase, setPhase] = useState<SignInPhase>("idle");
+  const [email, setEmailValue] = useState("");
+  /** The address the code was actually sent to; `email` may be edited after. */
+  const [sentTo, setSentTo] = useState<string | null>(null);
+  const [code, setCodeValue] = useState("");
+  const [error, setError] = useState<SignInError | null>(null);
+  const [sentAt, setSentAt] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  /* The resend countdown ticks only while there is something to count. */
+  useEffect(() => {
+    if (sentAt === null) return;
+    const handle = window.setInterval(() => {
+      const t = Date.now();
+      setNow(t);
+      if (t - sentAt >= RESEND_AFTER_SECONDS * 1000) window.clearInterval(handle);
+    }, 1000);
+    return () => window.clearInterval(handle);
+  }, [sentAt]);
+
+  const resendIn = sentAt === null ? 0 : Math.max(0, Math.ceil((sentAt + RESEND_AFTER_SECONDS * 1000 - now) / 1000));
+
+  const setEmail = useCallback((next: string) => {
+    setEmailValue(next);
+    setError((current) => (current?.field === "email" ? null : current));
+  }, []);
+
+  const setCode = useCallback((next: string) => {
+    setCodeValue(cleanCode(next));
+    setError((current) => (current?.field === "code" ? null : current));
+  }, []);
+
+  const send = useCallback(
+    async (target?: string) => {
+      if (phase === "sending" || phase === "verifying") return;
+      const address = (target ?? email).trim();
+      if (!EMAIL_SHAPE.test(address)) {
+        setError({ field: "email", message: REASON_MESSAGE.invalid_email });
+        return;
+      }
+      const resending = phase === "code-sent";
+      setPhase("sending");
+      setError(null);
+      try {
+        await authSession.requestEmailCode(address);
+        const t = Date.now();
+        setSentTo(address);
+        setSentAt(t);
+        setNow(t);
+        setCodeValue("");
+        setPhase("code-sent");
+      } catch (err) {
+        setPhase(resending ? "code-sent" : "idle");
+        setError({ field: resending ? "code" : "email", message: messageFor(err) });
+      }
+    },
+    [email, phase]
+  );
+
+  const resend = useCallback(() => {
+    if (resendIn > 0 || !sentTo) return;
+    void send(sentTo);
+  }, [resendIn, send, sentTo]);
+
+  const verify = useCallback(async () => {
+    if (phase !== "code-sent" || !sentTo) return;
+    if (code.length !== CODE_LENGTH) {
+      setError({ field: "code", message: `Enter the ${CODE_LENGTH}-digit code from the email.` });
+      return;
+    }
+    setPhase("verifying");
+    setError(null);
+    try {
+      await authSession.verifyEmailCode(sentTo, code);
+      /* Signed in: the session notifies `useAuthUser`, which swaps the panel
+         to the signed-in view. Reset so a later sign-out starts clean. */
+      setPhase("idle");
+      setSentTo(null);
+      setSentAt(null);
+      setCodeValue("");
+    } catch (err) {
+      setPhase("code-sent");
+      setError({ field: "code", message: messageFor(err) });
+    }
+  }, [code, phase, sentTo]);
+
+  /** Back to the email step, keeping what was typed. */
+  const changeEmail = useCallback(() => {
+    if (phase === "sending" || phase === "verifying") return;
+    setPhase("idle");
+    setSentTo(null);
+    setSentAt(null);
+    setCodeValue("");
+    setError(null);
+  }, [phase]);
+
+  return { phase, email, setEmail, sentTo, code, setCode, error, send, resend, resendIn, verify, changeEmail };
+}
+
+/* ---------------------------------------------- Google (auth phase 4) */
+
+const GOOGLE_MESSAGE: Record<AuthFailureReason, string> = {
+  cancelled: "Google sign-in was cancelled. Try again, or use your email instead.",
+  unavailable: "Google sign-in is not available on this server. Use your email instead.",
+  unreachable: "Can't reach the sign-in service. Check your connection and try again.",
+  rate_limited: "Too many attempts. Wait a minute, then try again.",
+  invalid_email: "Google sign-in did not finish. Try again, or use your email instead.",
+  invalid_code: "Google sign-in did not finish. Try again, or use your email instead.",
+  unknown: "Google sign-in did not finish. Try again, or use your email instead.",
+};
+
+const noPending = () => false;
+const googlePending = () => authSession.googlePending();
+const noResult = () => null;
+const redirectResult = () => authSession.redirectResult();
+
+/**
+ * "Continue with Google". `start` leaves for Google's consent page (this tab
+ * on the web, the system browser in the installed app); the answer comes
+ * back as a session (the panel turns signed in by itself) or as `error`.
+ *
+ * `starting` covers the settings read and building the address; `waiting`
+ * is the consent page being open in the app's browser (or this tab on its
+ * way there). `start` is guarded only while starting, so a person whose
+ * browser closed without the app hearing about it can simply press again.
+ */
+export function useGoogleSignIn() {
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+  const waiting = useSyncExternalStore(subscribeSession, googlePending, noPending);
+  const result = useSyncExternalStore(subscribeSession, redirectResult, noResult);
+
+  /* A success needs no words here: the session swaps the panel to the
+     signed-in view. Only a refusal is kept on screen. */
+  useEffect(() => {
+    if (result?.ok) authSession.dismissRedirectResult(result.id);
+  }, [result]);
+
+  const start = useCallback(async () => {
+    if (starting) return;
+    setStartError(null);
+    const shown = authSession.redirectResult();
+    if (shown) authSession.dismissRedirectResult(shown.id);
+    setStarting(true);
+    try {
+      await authSession.signInWithGoogle();
+    } catch (err) {
+      setStartError(GOOGLE_MESSAGE[err instanceof AuthFlowError ? err.reason : "unknown"]);
+    } finally {
+      setStarting(false);
+    }
+  }, [starting]);
+
+  const error = startError ?? (result && !result.ok ? GOOGLE_MESSAGE[result.error.reason] : null);
+  return { enabled: authSession.enabled, starting, waiting: waiting && !starting, error, start };
+}
+
+/**
+ * Brings the shell to the Account view when a Google answer arrives, once per
+ * answer. In the installed app the deep link can land while another tab is
+ * showing (or relaunch the app onto Analyze); on the web the return address
+ * already is the Account view and this does nothing. Mounted by HomeScreen.
+ */
+export function useGoogleReturnLanding(): void {
+  const result = useSyncExternalStore(subscribeSession, redirectResult, noResult);
+  const handled = useRef<number | null>(null);
+  useEffect(() => {
+    if (!result || handled.current === result.id) return;
+    handled.current = result.id;
+    goToMainTab("account");
+  }, [result]);
+}
+
+/** Signs out on this device. The provider's sign-out clears the stored
+ *  session even offline. Never rejects. Also what "Continue signed out" and
+ *  the held account's Sign out use.
+ *
+ *  2026-11-21 (owner decision, replacing the 2026-11-20 removal): History is
+ *  not touched. The account's runs stay in this browser with their owner,
+ *  hidden from History while it is signed out and listed again when it signs
+ *  in here (`isVisibleOwner`); the session change alone re-reads the list.
+ *  Analyze still clears an account's result (`useAnalysisRun`). */
+export async function signOut(): Promise<void> {
+  await authSession.signOut().catch(() => undefined);
+}
+
+/** Account deletion from this browser: signs out, and that account's own
+ *  runs leave this browser's History, since once the deletion completes
+ *  nobody can sign in to see them again. Only that account's rows: anonymous
+ *  rows and other accounts' hidden rows stay. Removed twice: at once, and
+ *  again once the session is gone, for a run filed in between (an account's
+ *  row is created only while it is signed in here, so nothing lands after
+ *  the second). Never rejects. */
+export async function signOutAndForgetRuns(): Promise<void> {
+  const userId = authSession.user()?.id ?? null;
+  if (!userId) return signOut();
+  await Promise.allSettled([authSession.signOut(), forgetAccountRuns(userId)]);
+  await forgetAccountRuns(userId);
+}
+
+/** Where "Sign out everywhere" is. `failed` keeps the person signed in. */
+export type SignOutEverywherePhase = "idle" | "working" | "failed";
+
+/**
+ * Ends every session of the signed-in person, this device last. On success
+ * the session listeners fire and the panel falls back to the signed-out view
+ * as after `signOut()`. On failure nothing changes here and `error` says so.
+ *
+ * Other devices are signed out at their next token refresh: the API checks
+ * tokens by signature only, so an access token already issued keeps working
+ * until it expires (up to an hour). VideoLens API keys are not revoked.
+ */
+export function useSignOutEverywhere() {
+  const [phase, setPhase] = useState<SignOutEverywherePhase>("idle");
+  const [error, setError] = useState<string | null>(null);
+
+  const run = useCallback(async () => {
+    if (phase === "working") return;
+    setPhase("working");
+    setError(null);
+    try {
+      /* Signed out here too; as with `signOut()`, History only hides this
+         account's runs. */
+      await authSession.signOutEverywhere();
+      setPhase("idle");
+    } catch (err) {
+      const reason = err instanceof AuthFlowError ? err.reason : "unknown";
+      setError(
+        reason === "unreachable"
+          ? "Can't reach the sign-in service, so nothing changed. You are still signed in. Check your connection and try again."
+          : reason === "rate_limited"
+            ? "Too many attempts. Wait a minute, then try again. You are still signed in."
+            : "Signing out everywhere did not work. You are still signed in. Try again."
+      );
+      setPhase("failed");
+    }
+  }, [phase]);
+
+  return { phase, error, run };
+}

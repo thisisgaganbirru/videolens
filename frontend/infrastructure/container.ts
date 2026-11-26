@@ -2,13 +2,22 @@
    together, mirroring the backend's container.py. Hooks in application/
    import instances from here - they never construct an adapter directly. */
 
+import type { AccountHoldSource, CallerIdentity } from "@/domain/ports";
 import { SessionStorageActiveRunStore } from "./activeRunStore";
+import { FetchAccountGateway } from "./accountGateway";
+import { FetchBillingGateway } from "./billingGateway";
+import { ApiClient } from "./apiClient";
+import { buildAuthSession } from "./authSession";
+import { SystemAuthBrowser } from "./authBrowser";
 import { LocalStorageApiKeyStore } from "./apiKeyStore";
 import { FetchCapabilitiesGateway } from "./capabilitiesGateway";
 import { LocalStorageDeviceTokenStore } from "./deviceTokenStore";
 import { FetchFreeRunsGateway } from "./freeRunsGateway";
+import { FetchLimitsGateway } from "./limitsGateway";
 import { IndexedDbHistoryStore } from "./historyStore";
 import { FetchRunsGateway } from "./runsGateway";
+import { FetchSavedHistoryGateway } from "./savedHistoryGateway";
+import { MemoryServerAuthStatus } from "./serverAuthStatus";
 import { ApiUpdateChecker } from "./updateCheck";
 import { LocalStorageUpdateDismissalStore } from "./updateDismissalStore";
 import { WebShareUrlSource } from "./sharedUrlSource";
@@ -24,9 +33,36 @@ export const apiKeyStore = new LocalStorageApiKeyStore();
    token) and run creation (which sends it), so a refreshed token is the one
    the next submit carries. */
 export const deviceTokenStore = new LocalStorageDeviceTokenStore();
-export const runsGateway = new FetchRunsGateway(apiKeyStore, deviceTokenStore);
-export const freeRunsGateway = new FetchFreeRunsGateway(deviceTokenStore);
-export const capabilitiesGateway = new FetchCapabilitiesGateway();
+/* Supabase when both NEXT_PUBLIC_SUPABASE_* variables are set, otherwise a
+   session that is never signed in (auth phase 2). Google's consent page
+   (phase 4) opens through `authBrowser`: this tab on the web, the system
+   browser and the app's deep link in the installed app. */
+export const authBrowser = new SystemAuthBrowser();
+export const authSession = buildAuthSession(authBrowser);
+/* The caller's identity on every request that speaks for them: client id,
+   device token, and the bearer token when signed in. */
+/* Whether this server verifies sign-in tokens, heard from the capability
+   report; the bearer goes out only when it does. */
+export const serverAuthStatus = new MemoryServerAuthStatus();
+export const apiClient = new ApiClient(authSession, deviceTokenStore, serverAuthStatus);
+/* The identity the last caller request went out as (History run ownership). */
+export const callerIdentity: CallerIdentity = apiClient;
+/* Every 410 `account_pending_deletion`, whichever gateway heard it (the
+   30-day deletion hold, 2026-11-14). */
+export const accountHoldSource: AccountHoldSource = apiClient;
+export const runsGateway = new FetchRunsGateway(apiClient, apiKeyStore);
+export const freeRunsGateway = new FetchFreeRunsGateway(apiClient, deviceTokenStore);
+export const accountGateway = new FetchAccountGateway(apiClient);
+/* The paid plan (2026-11-13): Stripe-hosted pages, reached by redirect. */
+export const billingGateway = new FetchBillingGateway(apiClient);
+/* A paid account's saved runs on the server (2026-11-14). */
+export const savedHistoryGateway = new FetchSavedHistoryGateway(apiClient);
+/* Upload limits per tier (2026-11-13); public, no caller identity. */
+export const limitsGateway = new FetchLimitsGateway();
+export const capabilitiesGateway = new FetchCapabilitiesGateway(serverAuthStatus);
+/* A signed-in request that meets an unknown or degraded sign-in state asks
+   for the report again through here (2026-11-21), on every route. */
+serverAuthStatus.setReader(() => capabilitiesGateway.fetchReport());
 export const versionLogGateway = new FetchVersionLogGateway();
 export const updateChecker = new ApiUpdateChecker();
 export const updateDismissalStore = new LocalStorageUpdateDismissalStore();

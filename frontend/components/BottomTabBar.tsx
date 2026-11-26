@@ -2,7 +2,7 @@
 
 import { useRef, useState, type MouseEvent } from "react";
 import Link from "next/link";
-import { CircleDot, Clock, Ellipsis } from "lucide-react";
+import { CircleDot, CircleUserRound, Clock, Ellipsis } from "lucide-react";
 import MoreSheet, { sheetOwnsLocation, type LegalRoute } from "@/components/MoreSheet";
 import { TAB_LABEL } from "@/components/AppNav";
 import { isPlainLeftClick } from "@/components/navClick";
@@ -14,12 +14,14 @@ import { useSoftKeyboard } from "@/application/useSoftKeyboard";
 /* Hallmark · theme: editorial · component: bottom tab bar (installed-app shell)
  * states: default · hover · focus · active · current · expanded (More)
  *
- * Analyze, History, More — the App boards' dock. Rendered on every route and
- * shown only when `<html data-shell="app">` (see components/shell.ts); in a
- * browser tab it is display:none, so it is not in the tab order or the
- * accessibility tree there.
+ * Analyze, History, Account, More — the App boards' dock. Account (2026-11-14)
+ * is drawn only when `showAccount` (sign-in enabled and the server's `auth`
+ * capability ok, computed in HomeScreen); otherwise the dock is three items.
+ * Rendered on every route and shown only when `<html data-shell="app">` (see
+ * components/shell.ts); in a browser tab it is display:none, so it is not in
+ * the tab order or the accessibility tree there.
  *
- * Analyze and History are the same addressable tabs the top bar uses
+ * Analyze, History and Account are the same addressable tabs the top bar uses
  * (`mainTabHref` / `goToMainTab`). More is a button, not a route: it opens the
  * sheet, and owns the sheet's open state so it can be `aria-expanded` and take
  * focus back when the sheet closes.
@@ -30,15 +32,22 @@ const DOCK_TABS: { tab: MainTab; icon: typeof Clock }[] = [
   { tab: "history", icon: Clock },
 ];
 
+/* The More sheet used the same glyph for its old Account row; it is the
+   circle-framed outline that sits with CircleDot and Clock. */
+const ACCOUNT_TAB: { tab: MainTab; icon: typeof Clock } = { tab: "account", icon: CircleUserRound };
+
 type BottomTabBarProps = {
   activeTab: MainTab | null;
   /** On a legal route, which one — marks its sheet row and lights up More. */
   currentRoute?: LegalRoute;
   /** Supplied only on `/app`, where a tab switch can update the URL in place. */
   onSelectTab?: (tab: MainTab) => void;
+  /** Draw the Account dock item (auth phase 2); off unless `/app` says
+   *  sign-in is available. */
+  showAccount?: boolean;
 };
 
-export default function BottomTabBar({ activeTab, currentRoute, onSelectTab }: BottomTabBarProps) {
+export default function BottomTabBar({ activeTab, currentRoute, onSelectTab, showAccount = false }: BottomTabBarProps) {
   const sheetRef = useRef<HTMLDialogElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -81,7 +90,7 @@ export default function BottomTabBar({ activeTab, currentRoute, onSelectTab }: B
   return (
     <>
       <nav className="tabbar" aria-label="Main">
-        {DOCK_TABS.map(({ tab, icon: Icon }) => (
+        {(showAccount ? [...DOCK_TABS, ACCOUNT_TAB] : DOCK_TABS).map(({ tab, icon: Icon }) => (
           <Link
             key={tab}
             className="tabbar-item"

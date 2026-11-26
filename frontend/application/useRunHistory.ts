@@ -1,11 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import type { HistoryRecord, RunPlatform, RunSummary } from "@/domain/entities";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { isVisibleOwner, type HistoryRecord, type RunPlatform, type RunSummary } from "@/domain/entities";
 import { knownPlatformName, linkHost, platformFromUrl } from "@/domain/platforms";
 import { StorageUnavailableError } from "@/domain/errors";
-import { EXPIRED_MESSAGE, bootHistory } from "@/application/historySync";
-import { historyStore } from "@/infrastructure/container";
+import {
+  EXPIRED_MESSAGE,
+  bootHistory,
+  forgetRun,
+  historyViewer,
+  importServerRuns,
+} from "@/application/historySync";
+import { authSession, historyStore } from "@/infrastructure/container";
+import { HISTORY_LIMIT } from "@/infrastructure/historyStore";
 
 /* History is read from this browser (IndexedDB, via `HistoryStore`), not from
    `GET /api/runs` — the server forgets a run about an hour after it is made,
@@ -77,11 +84,42 @@ function toEntry(record: HistoryRecord, thumbnailUrl: string | null): HistoryEnt
 }
 
 /** Starts the once-per-load History work (the one-time import from the
- *  server and the re-check of unfinished runs). Mount once, in the shell. */
-export function useHistoryBoot(): void {
+ *  server and the re-check of unfinished runs). Mount once, in the shell.
+ *
+ *  Auth phase 2: `auth` is who is signed in. When that changes after the
+ *  session first settled (a sign-in, or another person in another tab), the
+ *  server's run owner changed too, so History asks the server again as the
+ *  new caller (`importServerRuns`). The first settle is not a change: the
+ *  boot import already went out with whatever session was restored, because
+ *  every request waits for the provider before it is sent.
+ *
+ *  Signing out (2026-11-21, owner decision; it replaces the 2026-11-20
+ *  removal) changes nothing stored: the account's rows stay in this browser
+ *  and `useRunHistory` stops listing them until that account signs in here
+ *  again. */
+export function useHistoryBoot(auth: { ready: boolean; userId: string | null }): void {
   useEffect(() => {
     void bootHistory();
   }, []);
+
+  const lastUser = useRef<string | null | undefined>(undefined);
+  const { ready, userId } = auth;
+  useEffect(() => {
+    if (!ready) return;
+    if (lastUser.current === undefined) {
+      lastUser.current = userId;
+      return;
+    }
+    if (lastUser.current === userId) return;
+    lastUser.current = userId;
+    if (userId) void importServerRuns();
+  }, [ready, userId]);
+}
+
+/** "Remove from this device" for one History row. Rejects when the browser
+ *  refused the delete. */
+export function removeFromDevice(runId: string): Promise<void> {
+  return forgetRun(runId);
 }
 
 export function useRunHistory() {
@@ -99,14 +137,24 @@ export function useRunHistory() {
     let urls: string[] = [];
     const revoke = (list: string[]) => list.forEach((url) => URL.revokeObjectURL(url));
 
+    /* 2026-11-21: only the rows whoever is signed in here may see
+       (`isVisibleOwner`): signed out, the anonymous and pre-account ones;
+       signed in, those plus that account's own. Another account's rows stay
+       stored but are never listed, counted, searched or opened from here.
+       Newest `HISTORY_LIMIT` of them, which is what the copy promises; the
+       store's per-viewer cap trims the rest on the next write. */
+    let viewer = historyViewer();
     const load = () => {
       const mine = ++sequence;
+      viewer = historyViewer();
+      const shownFor = viewer;
       historyStore
         .list()
         .then((records) => {
           if (cancelled || mine !== sequence) return;
           const next: string[] = [];
-          const entries = records.map((record) => {
+          const visible = records.filter((record) => isVisibleOwner(record.owner, shownFor)).slice(0, HISTORY_LIMIT);
+          const entries = visible.map((record) => {
             let url: string | null = null;
             if (record.thumbnail) {
               try {
@@ -140,9 +188,16 @@ export function useRunHistory() {
 
     load();
     const unsubscribe = historyStore.subscribe(load);
+    /* A sign-in, a sign-out (here or in another tab) or another person:
+       re-read for the new viewer. Token refreshes change nothing and are
+       skipped. */
+    const unsubscribeAuth = authSession.subscribe(() => {
+      if (historyViewer() !== viewer) load();
+    });
     return () => {
       cancelled = true;
       unsubscribe();
+      unsubscribeAuth();
       revoke(urls);
       urls = [];
     };
@@ -158,3 +213,7 @@ export function useRunHistory() {
 
   return { runs, error, retrying, retry };
 }
+
+/** How many runs History keeps on this device, for copy that names the
+ *  number (the Account panel). Components do not import infrastructure. */
+export { HISTORY_LIMIT };

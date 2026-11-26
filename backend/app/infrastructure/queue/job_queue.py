@@ -4,6 +4,7 @@ from typing import Awaitable, Callable
 from arq import create_pool
 from arq.connections import RedisSettings
 
+from ...domain.entitlements import MediaLimits
 from ...domain.ports import KeyVault
 from ..config import Settings
 
@@ -40,6 +41,7 @@ class RunQueue:
         source_url: str | None = None,
         source_key: str | None = None,
         gemini_api_key: str | None = None,
+        limits: MediaLimits | None = None,
     ) -> None:
         if self._settings.queue_enabled:
             if self._pool is None:
@@ -47,11 +49,18 @@ class RunQueue:
             if gemini_api_key:
                 # Deliberately not passed as a job kwarg - see infrastructure/byok/key_vault.py.
                 await self._key_vault.store(run_id, gemini_api_key)
+            # A run admitted under the signed-in + BYOK or paid limits goes to the job
+            # function with the longer timeout (WORKER_LONG_JOB_TIMEOUT_SECONDS).
+            # Every such run does, link runs included, since a link's length
+            # is unknown until the worker has downloaded it.
+            long_run = limits is not None and limits.tier.long_job
             await self._pool.enqueue_job(
-                "process_run",
+                "process_long_run" if long_run else "process_run",
                 run_id,
                 source_url=source_url,
                 source_key=source_key,
+                # Primitives only, and never the key (it is in the vault above).
+                limits=limits.to_job_arg() if limits is not None else None,
                 _job_id=run_id,
             )
             return
@@ -64,6 +73,7 @@ class RunQueue:
                     run_dir=run_dir,
                     source_url=source_url,
                     gemini_api_key=gemini_api_key,
+                    limits=limits,
                 )
 
         task = asyncio.create_task(run_locally())

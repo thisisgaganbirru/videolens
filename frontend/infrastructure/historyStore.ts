@@ -1,4 +1,4 @@
-import type { HistoryPatch, HistoryRecord } from "@/domain/entities";
+import { ANONYMOUS_OWNER, isVisibleOwner, type HistoryPatch, type HistoryRecord } from "@/domain/entities";
 import { StorageUnavailableError } from "@/domain/errors";
 import type { HistoryStore } from "@/domain/ports";
 
@@ -18,7 +18,8 @@ const STORE = "runs";
 const BY_CREATED = "created_at";
 const CHANNEL = "videolens-history";
 
-/** How many runs History keeps. Oldest (by `created_at`) goes first. */
+/** How many runs History keeps in view for one viewer (anonymous, or one
+ *  account plus the anonymous rows). Oldest (by `created_at`) goes first. */
 export const HISTORY_LIMIT = 20;
 
 const UNAVAILABLE = "This browser is not letting VideoLens keep anything on this device.";
@@ -112,12 +113,32 @@ export class IndexedDbHistoryStore implements HistoryStore {
   }
 
   async upsert(patch: HistoryPatch): Promise<void> {
+    await this.write(patch, true);
+  }
+
+  async update(patch: HistoryPatch, when?: (existing: HistoryRecord) => boolean): Promise<boolean> {
+    return this.write(patch, false, when);
+  }
+
+  /* One readwrite transaction from the read to the put: IndexedDB runs
+     overlapping readwrite transactions one after another, so a removal in
+     this tab or another lands wholly before or wholly after, and an update
+     that finds no row writes nothing. */
+  private async write(
+    patch: HistoryPatch,
+    create: boolean,
+    when?: (existing: HistoryRecord) => boolean
+  ): Promise<boolean> {
     const db = await this.open();
     const tx = db.transaction(STORE, "readwrite");
     const store = tx.objectStore(STORE);
     const now = new Date().toISOString();
 
     const existing = (await promisify(store.get(patch.run_id))) as HistoryRecord | undefined;
+    if ((!existing && !create) || (existing && when && !when(existing))) {
+      await done(tx);
+      return false;
+    }
     const merged: HistoryRecord = { ...EMPTY, created_at: now, ...existing, updated_at: now, run_id: patch.run_id };
     for (const [key, value] of Object.entries(patch)) {
       if (value !== undefined) (merged as unknown as Record<string, unknown>)[key] = value;
@@ -125,26 +146,74 @@ export class IndexedDbHistoryStore implements HistoryStore {
     store.put(merged);
 
     /* The cap, inside the same transaction so two tabs writing at once cannot
-       both decide they are the 20th. Walk oldest-first and drop the excess. */
-    const count = await promisify(store.count());
-    let excess = count - HISTORY_LIMIT;
-    if (excess > 0) {
-      await new Promise<void>((resolve, reject) => {
-        const cursorRequest = store.index(BY_CREATED).openCursor();
-        cursorRequest.onerror = () => reject(cursorRequest.error);
-        cursorRequest.onsuccess = () => {
-          const cursor = cursorRequest.result;
-          if (!cursor || excess <= 0) return resolve();
-          cursor.delete();
-          excess -= 1;
-          cursor.continue();
-        };
-      });
-    }
+       both decide they are the 20th. Counted over the rows this row's owner
+       can see (2026-11-21): an account's runs stay here hidden while it is
+       signed out, and someone else's runs must not push them out. Walk
+       oldest-first, note what is in view, drop the oldest beyond the cap. */
+    const writer = merged.owner && merged.owner !== ANONYMOUS_OWNER ? merged.owner : null;
+    const inView: IDBValidKey[] = [];
+    await new Promise<void>((resolve, reject) => {
+      const cursorRequest = store.index(BY_CREATED).openCursor();
+      cursorRequest.onerror = () => reject(cursorRequest.error);
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) return resolve();
+        if (isVisibleOwner((cursor.value as HistoryRecord).owner, writer)) inView.push(cursor.primaryKey);
+        cursor.continue();
+      };
+    });
+    for (const key of inView.slice(0, Math.max(0, inView.length - HISTORY_LIMIT))) store.delete(key);
 
     await done(tx);
     this.askToPersist();
     this.notify(true);
+    return true;
+  }
+
+  /* The two removals resolve, never reject, when the browser keeps nothing:
+     a missing or blocked IndexedDB holds no rows, so there is nothing to
+     remove, and sign-out must not fail on it. A real transaction error still
+     rejects. */
+  private async openForRemoval(): Promise<IDBDatabase | null> {
+    try {
+      return await this.open();
+    } catch (error) {
+      if (error instanceof StorageUnavailableError) return null;
+      throw error;
+    }
+  }
+
+  async remove(runId: string): Promise<void> {
+    const db = await this.openForRemoval();
+    if (!db) return;
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).delete(runId);
+    await done(tx);
+    this.notify(true);
+  }
+
+  async removeOwnedBy(match: (owner: string) => boolean): Promise<number> {
+    const db = await this.openForRemoval();
+    if (!db) return 0;
+    const tx = db.transaction(STORE, "readwrite");
+    let removed = 0;
+    await new Promise<void>((resolve, reject) => {
+      const cursorRequest = tx.objectStore(STORE).openCursor();
+      cursorRequest.onerror = () => reject(cursorRequest.error);
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) return resolve();
+        const owner = (cursor.value as HistoryRecord).owner;
+        if (typeof owner === "string" && match(owner)) {
+          cursor.delete();
+          removed += 1;
+        }
+        cursor.continue();
+      };
+    });
+    await done(tx);
+    if (removed > 0) this.notify(true);
+    return removed;
   }
 
   subscribe(listener: () => void): () => void {

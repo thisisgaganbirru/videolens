@@ -114,9 +114,16 @@ jobs:
       - name: actionlint
         run: docker run --rm -v "${PWD}:/repo" -w /repo rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color
 
+  # No AI-tool attribution in the PR's commits or description. Always runs.
+  hygiene:
+    uses: ./.github/workflows/reusable-commit-hygiene.yml
+    permissions:
+      contents: read
+      pull-requests: read
+
   required:
     name: required
-    needs: [changes, application, android, security, lint-workflows]
+    needs: [changes, application, android, security, lint-workflows, hygiene]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

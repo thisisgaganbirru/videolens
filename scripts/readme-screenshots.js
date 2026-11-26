@@ -107,7 +107,7 @@ async function shoot(browser, { name, viewport, shell, mobile, actions, clipHeig
       localStorage.setItem("videolens_theme", "light");
       if (s) localStorage.setItem("videolens_shell", s);
       localStorage.setItem("videolens-welcome-v1", "seen");
-      localStorage.setItem("videolens-media-terms-v1", "accepted");
+      localStorage.setItem("videolens-media-terms-v3", "accepted");
       sessionStorage.setItem("videolens-splash-session", "1");
       sessionStorage.setItem("videolens-welcome-session", "1");
     } catch {}

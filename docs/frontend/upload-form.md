@@ -8,10 +8,10 @@ The "Analyze" tab's entry point: paste a public media URL, or drag/drop/browse a
 - `frontend/components/CapabilityNotice.tsx` — `CapabilityCallout`, the one-line deployment notice this form renders under the URL row. See `capability-reporting.md`.
 
 **Client-side pre-validation** (backend re-validates authoritatively regardless):
-- File: extension allowlist (`.mp3`/`.mp4`/`.mov`), `MAX_FILE_SIZE_MB` (200), and a best-effort duration check (`readMediaDuration`, via a hidden `<video>`/`<audio>` element's `loadedmetadata` event) against `MAX_DURATION_SECONDS` (180) — wrapped in try/catch since this can fail on some browsers/files, in which case it's silently skipped ("Backend performs authoritative validation").
+- File: extension allowlist (`.mp3`/`.mp4`/`.mov`), the effective `limits.maxFileSizeMb`, and a best-effort duration check (`readMediaDuration`, via a hidden `<video>`/`<audio>` element's `loadedmetadata` event) against the effective `limits.maxDurationSeconds` — wrapped in try/catch since this can fail on some browsers/files, in which case it's silently skipped ("Backend performs authoritative validation"). The limits are no longer constants in the form (2026-11-13): see "Upload limits per tier" below.
 - URL: must parse as `http:`/`https:`.
 
-**Terms acceptance**: a checkbox, persisted in `localStorage` (`videolens-media-terms-v1`) so it stays checked across sessions once accepted. Required before either submit path proceeds. Both paths explain on press rather than greying out: pressing Analyze link, pressing Browse files (click, Enter or Space) or dropping a file with the terms unticked shows "Accept the media-use terms before analysis." under the terms row (`#terms-error`, refinement 4; it used to be `#intake-error`), marks the checkbox (`aria-invalid`, danger outline), focuses it and reveals it. Browse opens no picker and the drop is not taken. Until refinement 8 Browse was simply disabled while unticked, which hid the reason and disagreed with the link path.
+**Terms acceptance**: a checkbox, persisted in `localStorage` (`videolens-media-terms-v4`; versioned, see "Terms acceptance version") so it stays checked across sessions once accepted. Required before either submit path proceeds. Both paths explain on press rather than greying out: pressing Analyze link, pressing Browse files (click, Enter or Space) or dropping a file with the terms unticked shows "Accept the media-use terms before analysis." under the terms row (`#terms-error`, refinement 4; it used to be `#intake-error`), marks the checkbox (`aria-invalid`, danger outline), focuses it and reveals it. Browse opens no picker and the drop is not taken. Until refinement 8 Browse was simply disabled while unticked, which hid the reason and disagreed with the link path.
 
 **Analyze link is enabled with an empty field (Phase 2).** It used to be
 disabled until a URL was typed; Main.png draws it as the live green primary
@@ -221,7 +221,7 @@ link is 52px tall (`.link-row .btn` min-height 3.25rem), Browse files 44px.
 - **Prefill (#7, #14).** The `sharedUrl` prop is now `HomeScreen`'s
   `formPrefill`: the newer of the live share and an expired run's "Analyze it
   again" link. A share already used is dismissed when the user starts over
-  ("Analyze another file", "Stop watching"), so the remounted form comes back
+  ("Analyze another", "Stop watching"), so the remounted form comes back
   empty instead of re-taking the old share. Terms stay ticked. Measured: share
   `/app?share-target=1&url=…` fills the field; after the run, "Analyze another
   file" shows an empty field with terms still ticked.
@@ -321,6 +321,10 @@ the section band every time (at 140: band 57-140, field 53-105, message
   the backend sends `Retry-After` (delta-seconds until the rate-limit window
   frees) on the 429 and lists it in CORS `expose_headers`, so this wording is
   live; without the header it still falls back to the backend's `detail`.
+  Exception (2026-11-13): a 429 with `code: "long_run_in_progress"` (a
+  signed-in BYOK person starting a second long run) always shows the
+  server's `detail` ("You already have a long video processing. Wait for it
+  to finish."), never the rate-limit wording, Retry-After or not.
 
 ## Refinement 8 (2026-11-02)
 
@@ -363,7 +367,149 @@ the picker and the chosen file sends exactly one POST and leaves the intake.
   nothing opens. The effect defers through `queueMicrotask`, so it does not set
   state synchronously in an effect.
 
+## Upload limits per tier (2026-11-13)
+
+Owner decision "Level 2": signed in **and** a Gemini key saved → videos up to
+10 minutes and files up to 500 MB; everyone else 3 minutes / 200 MB.
+
+- `GET /api/limits` (public, no caller identity) → `{"standard":
+  {"max_duration_seconds", "max_file_size_mb"}, "signed_in_byok": {…},
+  "paid": {…}}`. `paid` (billing, 2026-11-13) is optional: missing or
+  unreadable becomes `paid: null`.
+  Adapter `infrastructure/limitsGateway.ts` (`FetchLimitsGateway`, port
+  `LimitsGateway`, `container.limitsGateway`) normalises: a missing or
+  unreadable `standard`, or a non-2xx, rejects; a missing `signed_in_byok`
+  falls back to that body's `standard`. Types `MediaLimits` /
+  `MediaLimitsTable` in `domain/entities.ts`.
+- `application/useMediaLimits.ts`: one read per app load into a module-level
+  store (like the free-run count). Until it lands, and for good when it fails
+  (an older server answers 404), both tiers are 180 s / 200 MB
+  (`FALLBACK_LIMITS`), so an older server is never promised 10 minutes.
+  `useMediaLimits(signedIn, paid)` watches the saved key (`apiKeyStore.subscribe`)
+  and returns `{limits, extended, upgradeMinutes, paidMinutes, hasKey}` plus,
+  since 2026-11-14, `settled` (the read has answered, either way),
+  `standardSeconds` and `byokMinutes` for the Account panel. The
+  tier is `paid` when signed in on the paid plan and the server reported one,
+  else `signed_in_byok` when signed in with a key, else `standard`. Called
+  once from `HomeScreen` with `Boolean(authUser.user)` and the plan (from
+  `useBilling` or the free-runs read), so sign-in/out, the plan and saving or
+  removing the key recompute it. `paidMinutes` (null without a `paid` tier)
+  feeds the Account panel's Upgrade comparison.
+- `UploadForm` props `limits` (defaults to standard) and `signInForMinutes`.
+  The drop hint reads "MP3, MP4, or MOV. Up to 500 MB and 10 minutes." (or
+  200 MB / 3 minutes); the size and duration errors quote the same numbers
+  ("…exceeds the 10 minutes limit.").
+- Sign-in hint: a second `.hint` line under the limits, "Sign in for videos
+  up to 10 minutes." ("Sign in" links to the Account tab). Shown only when
+  `showAccount`, the auth state is ready, nobody is signed in, a key is saved,
+  and the server reports a larger tier. No new chrome.
+- Not added: the optional "Add your own Gemini key for videos up to 10
+  minutes." for signed-in people without a key. They already see the
+  free-runs strip's "Add your own key for more." and its Add key pill; a
+  second key prompt in the drop well would nag and wrap to three lines on a
+  phone.
+
+## Terms acceptance version (2026-11-13)
+
+The checkbox's flag is versioned in its storage key,
+`MEDIA_TERMS_ACCEPTANCE_KEY` in `components/mediaTerms.ts`, now
+`videolens-media-terms-v4`. **Bump the version whenever the Terms change
+materially**: a new key reads as "not accepted", so everyone sees the box
+unticked once and re-accepts the updated Terms. Put the replaced key in
+`RETIRED_KEYS`; `readTermsAccepted` and `writeTermsAccepted` remove it
+(guarded, like every storage call) so it does not linger. v1 -> v2 went with
+the November 13, 2026 Terms update; v2 -> v3 went with the Paid plan section
+added the same day (docs/frontend/billing.md), so `RETIRED_KEYS` is now v1
+and v2. No pre-paint script, service worker or
+Android code reads the key, so the CSP hashes are unaffected;
+`scripts/readme-screenshots.js` seeds it and must follow the bump.
+
+A one-line "By analyzing, you agree to the Terms." under Analyze link was
+added and removed the same day (owner decision): the required checkbox
+already records acceptance. `.link-row` is back to three grid areas.
+
+## UX fix spec, batch b (2026-11-14)
+
+- **Link label** is "Paste a public link" (placeholder unchanged).
+- **Out-of-runs block.** `#intake-blocked` is now a `div`
+  (`.intake-blocked__text` + `.intake-blocked__actions`) offering one way out
+  by the new `blockedOffer` prop (`"sign-in" | "upgrade" | "key"`, default
+  `"key"`). The `aria-describedby` wiring on Analyze link and Browse files is
+  unchanged. `blockedPeriod` stays a prop but is no longer read. Copy and
+  rules in `free-runs.md`, "Strip and out-of-runs offer".
+- **Phone header (below 32rem).** The h1 holds two spans,
+  `.intake-title__long` ("Turn any short video into clean notes.") and
+  `.intake-title__short` ("New analysis"); CSS shows one, so the h1 reads as
+  one phrase. The intake's eyebrow and lede are hidden there. Desktop is
+  untouched. Measured: at 320x640 web, Analyze link ends at y=444; at 320x640
+  app shell, the link field and Analyze link (392-444) sit above the dock
+  (560); at 412x915 both are in the first screen; at 1280x800 the idle intake
+  does not scroll (band scrollHeight = clientHeight = 666).
+
+## Simplified Analyze entry (2026-11-14)
+
+This supersedes the earlier two-column board layout. Idle Analyze now has
+one "New analysis" h1 at every width, with no eyebrow, marketing headline,
+introduction or "What you get" panel. The intake is centred with a maximum
+width of 46rem (736px; was 38.75rem in Codex's first pass, see below). The existing free-runs strip stays above the title
+with its live region, pending stand-in, wording and pre-paint saved-key gate.
+The exact former panel retention sentence appears directly below the intake
+card as 14px muted text at every width. UploadForm controls, consent wording
+and blocked state are unchanged. Removed panel and title-switch CSS; shared
+landing eyebrow, output-row and chip styles remain. Run/result/failed states
+are unchanged.
+
+### Card width: one line each on desktop (frontend agent review, 2026-11-14)
+
+Owner: "Don't wrap anything, extend the box properly." `.intake-layout`'s
+`max-width` is **46rem** at every width (phones fill the gutters anyway).
+Sized to the longest line, measured in the browser at 1280: the consent
+sentence is 625px at 14px, plus the checkbox column (32px) and the card's
+padding and border (50px) = 707px, so 736px leaves ~29px. The retention
+line under the card (688px), the file hint (304px), the allowance strip text
+(408px anonymous, 280-344px signed in or spent) and the out-of-runs block
+(274px sentence, 409-423px actions) all fit. The strip is in the same column,
+so it is the same width and left edge as the card. rem, so it scales with
+the text.
+
+Measured lines (Playwright, mocked `/api/`, light and dark):
+
+| Width | Consent | Retention | File hint | Strip | Out-of-runs sentence |
+|---|---|---|---|---|---|
+| 1024 / 1280 / 1440 | 1 | 1 | 1 | 1 | 1 |
+| 412 | 3 | 2 | 2 | 1-2 | 1 |
+| 320 | 4 | 3 | 2 | 2 | 2 |
+
+Phones: `text-wrap: pretty` on the consent text, retention line, file hint,
+strip text and blocked sentence (no lone last word); the Terms / Privacy
+Policy links are `nowrap`, and "200 MB" is joined by a no-break space in
+UploadForm, so neither splits. Button labels stay on one line at every
+width. No horizontal overflow at 320-1440. At 1280x800 the idle page does
+not scroll (runs left, signed in, out of runs). CLS on load: 0.0006-0.0027
+everywhere except the known out-of-runs in-card shift (0.017 at 1440, 0.024
+at 1280, 0.039 at 1024, 0.083-0.112 at 412/320) and signed in at 412 (0.016-
+0.018: the strip's stand-in is the two-line anonymous sentence, the signed-in
+one is one line).
+
+## Review fixes (2026-11-20)
+
+- **Length check.** `readMediaDuration` resolves `number | null` and never
+  rejects: null when no metadata arrives within 5 s, on a decode error, or
+  when the duration is not a finite positive number (a stream reports
+  Infinity, some containers NaN). Null skips the client check; the backend's
+  check is the authoritative one. The element's `src` is dropped and the
+  object URL revoked on every path.
+- **Refused uploads.** A 413 shows the backend's "That upload is too large."
+  as sent. When the server refuses the body before reading it, the browser
+  usually sees the connection close instead, so a file upload that gets no
+  answer at all now says "The upload was cut off before the server
+  answered. The file may be over the size limit; otherwise check your
+  connection and try again." A malformed link's 400 detail is shown as
+  sent, as before.
+
 ## Changelog
+
+- 2026-11-14 · Codex · simplified idle Analyze to one centred column with a single New analysis h1 at every width, removed the marketing introduction/output panel and dead CSS, retained the allowance reservation above the title, and moved the exact retention sentence below the card
 
 - 2026-08-15 · frontend agent · ported UploadForm to the unboxed .intake; returns a fragment since HomeScreen supplies the wrapper
 - 2026-08-15 · frontend agent (error block weight) · split HomeScreen's one error branch in two — idle demoted to an inline note in UploadForm's own error slot, poll-death promoted to a full .error-block with a start-over button inside it; requested an `.error-note` class
@@ -386,3 +532,15 @@ the picker and the chosen file sends exactly one POST and leaves the intake.
 - 2026-11-02 · frontend agent (refinement 7) · RUN-16 note updated: the backend now sends and exposes Retry-After on 429, so "Try again in about N minutes" is live
 - 2026-11-02 · frontend agent (refinement 8) · Browse files stays enabled with the terms unticked; pressing it (click/Enter/Space) or dropping a file shows the terms error, marks/focuses/reveals the checkbox, no picker; dropped non-files ignored; a chosen file still auto-submits
 - 2026-11-02 · frontend agent (refinement 9) · blocked-intake note tied to Analyze/Browse via aria-describedby; terms helpers moved to components/mediaTerms.ts; IntakeHandoff props so the expired view's "Choose the file again" opens the picker directly (terms gate kept)
+- 2026-11-13 · frontend agent · upload limits per tier: `GET /api/limits` via `limitsGateway` + `useMediaLimits` (fallback 3 min / 200 MB for both tiers); drop hint and pre-checks use the effective limits; quiet "Sign in for videos up to 10 minutes." line for signed-out key holders; 429 `long_run_in_progress` shows the server detail
+- 2026-11-13 · frontend agent · "By analyzing, you agree to the Terms." under Analyze link (`.link-consent`, new `consent` grid area of `.link-row`)
+- 2026-11-13 · frontend agent · removed the "By analyzing, you agree to the Terms." line and its `consent` grid area (the checkbox covers acceptance); terms key bumped to `videolens-media-terms-v2`, v1 cleared from storage; rule: bump the version whenever the Terms change materially
+- 2026-11-13 · frontend agent · terms key bumped to `videolens-media-terms-v3` for the Terms' Paid plan section, v2 added to `RETIRED_KEYS`; `useMediaLimits(signedIn, paid)` picks the `paid` tier from `GET /api/limits` when the plan is paid (docs/frontend/billing.md)
+- 2026-11-14 · frontend agent · `useMediaLimits` also returns `settled`, `standardSeconds` and `byokMinutes` (Account panel's Plan and usage card and Upgrade comparison); upload form unchanged
+- 2026-11-14 · frontend agent · "What you get" foot reads "Your video is deleted from our servers when the run finishes. The result is kept for up to an hour, then deleted." (UX fix spec batch a)
+- 2026-11-14 · frontend agent · UX fix spec batch b: "Paste a public link"; out-of-runs block with `blockedOffer` (sign-in / upgrade / key) and `.intake-blocked__*` classes; phone-only short h1 "New analysis" with eyebrow and lede hidden below 32rem
+- 2026-11-14 · frontend agent · reviewed Codex's simplified intake in the browser; card widened to 46rem so the consent, retention, hint and strip lines are one line each at 1024-1440; phone wrapping tidied (`text-wrap: pretty`, nowrap legal links, "200 MB"); stale UploadForm comment fixed
+- 2026-11-14 · frontend agent · desktop (60rem up) intake centred in the content band: `main.view-scroll:has(> .intake-layout)` is a size container and `.intake-layout` gets `margin-top: max(0px, (100cqb - 27rem) / 2)` (fixed anchor, so the out-of-runs card grows downward instead of re-centring; taller than the band starts at the top and scrolls). Allowance strip and h1 wrapped in `.intake-head`, a title-left / strip-right row on desktop; phones unchanged
+- 2026-11-14 · frontend agent · terms key bumped to `videolens-media-terms-v4` (Privacy/Terms: paid saved runs, 30-day hold), v3 added to `RETIRED_KEYS`; out-of-runs block extracted to `BlockedBlock`, with an inert `blockedHeld` stand-in (see free-runs.md "Remembered spent state")
+- 2026-11-20 · Claude (frontend agent) · `readMediaDuration` times out after 5 s and treats Infinity/NaN as unknown; upload cut-off message for a file upload with no response
+- 2026-11-20 · Claude (frontend agent) · the upload cut-off message is now used only when fetch itself fails; a sign-in that could not be confirmed has its own message (run-analysis-hook.md)
