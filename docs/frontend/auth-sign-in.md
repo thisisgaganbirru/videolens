@@ -170,15 +170,24 @@ No CSP change: the consent page is a top-level navigation (not covered by
 `connect-src` or `form-action`), and the settings read and code exchange go
 to the Supabase origin `connect-src` already allows.
 
-**Android.** Return address `ai.videolens.app://auth/callback`.
-`SystemAuthBrowser` lazily imports `@capacitor/browser` (**8.0.5**, exact)
-and `@capacitor/app`, opens the consent page in a Custom Tab, and listens
-for `appUrlOpen` (warm) plus `App.getLaunchUrl()` (cold start); both filter
-on that scheme, host and path. `browserFinished` (the person closed the tab)
-clears the waiting state. `AndroidManifest.xml` has an intent filter on
-`MainActivity` (VIEW, DEFAULT, BROWSABLE, scheme `ai.videolens.app`, host
-`auth`, path `/callback`); `launchMode="singleTask"` delivers the link to the
-running activity. The PKCE verifier and the marker live in the WebView's
+**Android.** Return address `<applicationId>://auth/callback`: production
+`ai.videolens.app://auth/callback`, the dev lane's APK (`-PdevBuild=true`,
+`.dev` suffix) `ai.videolens.app.dev://auth/callback`. Each build owns its
+own scheme so the two installed side by side never both answer the link
+(device QA, android-64 run 25: with one shared scheme Android offered a
+chooser or picked the wrong app, which has no PKCE verifier, and the
+exchange failed). `SystemAuthBrowser` lazily imports `@capacitor/browser`
+(**8.0.5**, exact) and `@capacitor/app`, reads the scheme once from
+`App.getInfo().id` (falling back to `ai.videolens.app` if the bridge fails
+or the id is not a valid lowercase scheme), opens the consent page in a
+Custom Tab, and listens for `appUrlOpen` (warm) plus `App.getLaunchUrl()`
+(cold start); both filter on that derived scheme, host and path.
+`AuthRedirectBrowser.returnUrl()` is async for this. `browserFinished` (the
+person closed the tab) clears the waiting state. `AndroidManifest.xml` has
+an intent filter on `MainActivity` (VIEW, DEFAULT, BROWSABLE, scheme
+`${applicationId}`, host `auth`, path `/callback`), the same manifest
+placeholder the FileProvider authority uses; `launchMode="singleTask"`
+delivers the link to the running activity. The PKCE verifier and the marker live in the WebView's
 Local Storage, which the backup rules already exclude, so they are
 unchanged. `npx cap update android` registered the plugin in the two tracked
 Gradle files (`capacitor.settings.gradle`, `app/capacitor.build.gradle`).
@@ -195,10 +204,10 @@ or did not reach the export JS and CSP (`docs/container-workflows.md`, "The
 APK's build-time configuration"). Up to v2.3.0-build543 CI passed neither,
 so every CI-built APK had `auth.enabled` false and no Account tab while local
 builds (reading `.env.local`) looked fine. When QA'ing sign-in on a device,
-use a CI APK, not only a local one. Both the production and the `.dev` APK
-register the same `ai.videolens.app://auth/callback` scheme; with both
-installed, Android may ask which app opens the Google return. Each Supabase
-project's Redirect URLs must list that address (dashboard, below).
+use a CI APK, not only a local one. The production and the `.dev` APK each
+register their own return scheme (see **Android** above), so with both
+installed the Google return reaches the app that started it. Each Supabase
+project's Redirect URLs must list its lane's address (dashboard, below).
 
 **Identity.** Supabase links a Google sign-in to an existing user with the
 same verified email, so the `user:<id>` owner, server-side runs, saved
@@ -212,9 +221,11 @@ made.
 - Supabase, Authentication, URL Configuration, Redirect URLs: each web
   origin **with a wildcard path** (`http://localhost:3005/**`,
   `https://<dev frontend>/**`, `https://<prod frontend>/**`); an exact
-  origin does not match `/app?view=account`. Plus
-  `ai.videolens.app://auth/callback`. A return address not on the list makes
-  Supabase fall back to the Site URL.
+  origin does not match `/app?view=account`. Plus the app's deep link, per
+  project: **production** Supabase `ai.videolens.app://auth/callback`
+  (unchanged); **dev** Supabase `ai.videolens.app.dev://auth/callback` (the
+  owner adds it; the dev APK sends this one since 2026-11-26). A return
+  address not on the list makes Supabase fall back to the Site URL.
 - Google Cloud OAuth client (Web application): authorized redirect URI
   `https://<project-ref>.supabase.co/auth/v1/callback`.
 
@@ -857,3 +868,5 @@ use it. Copy, final wording:
 - 2026-11-22 · frontend agent · OTP is exactly 6 digits (`CODE_LENGTH`, paste cut to six, placeholder `123456`); Google sign-in (auth phase 4) on web and Android: `AuthSession.signInWithGoogle` + redirect result, `AuthRedirectBrowser` port, `SystemAuthBrowser` adapter (`@capacitor/browser` 8.0.5), deep link `ai.videolens.app://auth/callback`, `detectSessionInUrl` off, button and "or" divider on the signed-out card; dashboard requirements listed
 - 2026-11-22 · frontend agent · signed-out sign-in card reworked to the owner's reference layout: full-width equal-height stack (Google, uppercase OR, email with sr-only label and "Enter your email" placeholder, primary "Continue with email" replacing Send code with the same behaviour), centred Terms/Privacy note with no marketing clause; checked light, dark and phone content width
 - 2026-11-26 · Claude (apk-supabase-config agent) · Android build configuration: CI now compiles the per-lane Supabase URL and publishable key into the APK (they were missing, so CI APKs up to v2.3.0-build543 had sign-in off) and fails a device-bound build without them; QA note on CI vs local APKs and the shared callback scheme
+- 2026-11-26 · frontend agent · Android sign-in return scheme is now the build's own applicationId (manifest `${applicationId}`, runtime `App.getInfo().id`, fallback `ai.videolens.app`): prod unchanged, dev APK `ai.videolens.app.dev://auth/callback` (fixes android-64 run 25: both apps claimed the link); `AuthRedirectBrowser.returnUrl()` async; dev Supabase redirect allowlist needs the `.dev` entry (owner)
+- 2026-11-26 · Claude (android-fixes integration agent) · merged the apk-supabase-config, return-scheme and run 25 changes; "Android build configuration" no longer says both APKs share `ai.videolens.app://auth/callback` (each lane has its own scheme and Redirect URL)

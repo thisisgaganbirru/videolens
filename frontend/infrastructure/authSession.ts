@@ -364,7 +364,7 @@ export class SupabaseAuthSession implements AuthSession {
       const response = await client.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: this.browser.returnUrl(),
+          redirectTo: await this.browser.returnUrl(),
           skipBrowserRedirect: true,
           /* Always offer the account chooser, so a shared phone or browser
              does not sign in as whoever used Google there last. */
