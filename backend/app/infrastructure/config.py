@@ -1,5 +1,6 @@
 from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # The Capacitor Android WebView serves the bundled Next.js export from the
@@ -40,6 +41,17 @@ class Settings(BaseSettings):
     # answering ~4 s sooner. Blank = leave it to the model's default. Videos
     # and single files never carry one.
     gemini_slide_image_resolution: Literal["", "low", "medium", "high", "ultra_high"] = "high"
+    # Frames per second Gemini samples from a video. 0 = Gemini's own
+    # default (1 fps). Gemini accepts (0, 24]; tokens grow with fps, so 2
+    # doubles the frame cost of a run. Audio and image files are never
+    # affected; a carousel's video slides are.
+    gemini_video_fps: float = Field(default=0.0, ge=0.0, le=24.0)
+    # Tokens per video frame: blank = Gemini's default (70 on Gemini 3),
+    # "low"/"medium" are also 70, "high" is 280 (Google's setting for
+    # reading text in video). Audio is 25 tokens/s at every level. Request
+    # wide on a single file; on a carousel, per part on its video slides
+    # only (image slides keep GEMINI_SLIDE_IMAGE_RESOLUTION).
+    gemini_media_resolution: Literal["", "low", "medium", "high"] = ""
 
     max_file_size_mb: int = 200
     max_duration_seconds: int = 180

@@ -313,6 +313,13 @@ GEMINI_FALLBACK_MODEL=
 # Optional (worker): per-part media resolution for a multi-slide post's image
 # slides; default high, blank = the model's default.
 GEMINI_SLIDE_IMAGE_RESOLUTION=high
+# Video sampling (docs/backend/gemini-analysis.md). Both off = Gemini's own
+# defaults (1 fps, 70 tokens a frame). "high" is 280 a frame, for on-screen
+# text; GEMINI_VIDEO_FPS=2 doubles frame tokens. Both also reach a carousel's
+# video slides (per part); its image slides keep the setting above. Set them
+# on the worker.
+GEMINI_VIDEO_FPS=0
+GEMINI_MEDIA_RESOLUTION=
 RATE_LIMIT_PER_HOUR=20
 # Looser per-IP limit on the read endpoints (polling, run list, free-runs).
 READ_RATE_LIMIT_PER_MINUTE=120

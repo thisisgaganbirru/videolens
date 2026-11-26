@@ -41,7 +41,12 @@ class _FakeFiles:
             if isinstance(outcome, Exception):
                 raise outcome
         name = f"files/{self.upload_calls}"
-        return SimpleNamespace(name=name, uri=f"https://files.test/{name}", mime_type="application/octet-stream")
+        # A video or audio mime for the files GEMINI_VIDEO_FPS tells apart;
+        # anything else (an image slide) keeps the generic one.
+        mime_type = {".mp3": "audio/mpeg", ".mp4": "video/mp4"}.get(
+            str(file)[-4:], "application/octet-stream"
+        )
+        return SimpleNamespace(name=name, uri=f"https://files.test/{name}", mime_type=mime_type)
 
     async def get(self, name):
         self.get_calls += 1
@@ -59,10 +64,12 @@ class _FakeModels:
         self.outcomes = list(outcomes)
         self.models_called: list[str] = []
         self.contents_seen: list[list] = []
+        self.configs_seen: list = []
 
     async def generate_content(self, model, contents, config):
         self.models_called.append(model)
         self.contents_seen.append(contents)
+        self.configs_seen.append(config)
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
@@ -98,6 +105,8 @@ def _engine(client: _FakeClient, rand: float = 1.0, **settings) -> tuple[GeminiE
         "gemini_retry_attempts": 6,
         "gemini_retry_max_delay_seconds": 20.0,
         "gemini_slide_image_resolution": "high",
+        "gemini_video_fps": 0.0,
+        "gemini_media_resolution": "",
         **settings,
     }
     engine = GeminiEngine(
@@ -467,6 +476,79 @@ class OwnKeyClientLifetimeTests(unittest.IsolatedAsyncioTestCase):
         engine, _ = _engine(_FakeClient([]))
         with patch("app.infrastructure.ai.gemini_engine.genai.Client", return_value=own):
             self.assertIs(await engine.analyze_captions(self._CAPTIONS, api_key="own-key"), _RESULT)
+
+
+class VideoSamplingTests(unittest.IsolatedAsyncioTestCase):
+    """GEMINI_VIDEO_FPS and GEMINI_MEDIA_RESOLUTION. Unset, the request is
+    exactly what it was before they existed: the bare uploaded file and no
+    media_resolution on the config."""
+
+    async def test_unset_sends_the_bare_file_and_no_resolution(self) -> None:
+        client = _FakeClient([_RESULT])
+        engine, _ = _engine(client)
+
+        await engine.analyze_with_retry("clip.mp4")
+
+        media = client.models.contents_seen[0][0]
+        self.assertIsInstance(media, SimpleNamespace)  # the upload, unwrapped
+        self.assertIsNone(client.models.configs_seen[0].media_resolution)
+
+    async def test_fps_wraps_a_video_with_video_metadata(self) -> None:
+        client = _FakeClient([_RESULT])
+        engine, _ = _engine(client, gemini_video_fps=2.0)
+
+        await engine.analyze_with_retry("clip.mp4")
+
+        media = client.models.contents_seen[0][0]
+        self.assertIsInstance(media, types.Part)
+        self.assertEqual(media.file_data.file_uri, "https://files.test/files/1")
+        self.assertEqual(media.file_data.mime_type, "video/mp4")
+        self.assertEqual(media.video_metadata.fps, 2.0)
+
+    async def test_fps_leaves_audio_alone(self) -> None:
+        client = _FakeClient([_RESULT])
+        engine, _ = _engine(client, gemini_video_fps=2.0)
+
+        await engine.analyze_with_retry("normalized.mp3")
+
+        self.assertIsInstance(client.models.contents_seen[0][0], SimpleNamespace)
+
+    async def test_resolution_is_set_on_the_request(self) -> None:
+        for value, expected in (
+            ("low", types.MediaResolution.MEDIA_RESOLUTION_LOW),
+            ("medium", types.MediaResolution.MEDIA_RESOLUTION_MEDIUM),
+            ("high", types.MediaResolution.MEDIA_RESOLUTION_HIGH),
+        ):
+            with self.subTest(value=value):
+                client = _FakeClient([_RESULT])
+                engine, _ = _engine(client, gemini_media_resolution=value)
+                await engine.analyze_with_retry("clip.mp4")
+                self.assertEqual(client.models.configs_seen[0].media_resolution, expected)
+
+    async def test_fallback_gets_the_same_media_part_and_config(self) -> None:
+        client = _FakeClient([_busy(), _RESULT])
+        engine, _ = _engine(
+            client,
+            gemini_retry_attempts=1,
+            gemini_fallback_model="fallback-model",
+            gemini_video_fps=2.0,
+            gemini_media_resolution="high",
+        )
+
+        await engine.analyze_with_retry("clip.mp4")
+
+        self.assertEqual(client.models.models_called, ["primary-model", "fallback-model"])
+        self.assertIs(client.models.contents_seen[1][0], client.models.contents_seen[0][0])
+        self.assertIs(client.models.configs_seen[1], client.models.configs_seen[0])
+
+    async def test_captions_never_carry_a_resolution(self) -> None:
+        client = _FakeClient([_RESULT])
+        engine, _ = _engine(client, gemini_media_resolution="high", gemini_video_fps=2.0)
+
+        await engine.analyze_captions(CaptionTrack(language="en", automatic=False, text="hi"))
+
+        self.assertIsNone(client.models.configs_seen[0].media_resolution)
+        self.assertEqual(client.models.contents_seen[0][0], "Caption track language: en (publisher-provided)")
 
 
 if __name__ == "__main__":

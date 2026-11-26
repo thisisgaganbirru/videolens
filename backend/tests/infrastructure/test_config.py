@@ -1,5 +1,7 @@
 import unittest
 
+from pydantic import ValidationError
+
 from app.infrastructure.config import NATIVE_APP_ORIGINS, Settings
 
 
@@ -91,6 +93,24 @@ class DistributedDatabaseTests(unittest.TestCase):
     def test_sqlite_without_redis_is_tolerated_for_local_runs(self) -> None:
         settings = Settings(_env_file=None, redis_url="", database_url="sqlite:///./ids.sqlite3")
         self.assertIsNone(settings.distributed_database_error())
+
+
+class GeminiVideoSettingsTests(unittest.TestCase):
+    def test_defaults_leave_gemini_on_its_own_defaults(self) -> None:
+        settings = Settings(_env_file=None)
+        self.assertEqual(settings.gemini_video_fps, 0.0)
+        self.assertEqual(settings.gemini_media_resolution, "")
+
+    def test_fps_outside_what_gemini_accepts_is_refused(self) -> None:
+        for fps in (-1.0, 24.5):
+            with self.subTest(fps=fps), self.assertRaises(ValidationError):
+                Settings(_env_file=None, gemini_video_fps=fps)
+        self.assertEqual(Settings(_env_file=None, gemini_video_fps=24).gemini_video_fps, 24.0)
+
+    def test_unknown_resolution_is_refused(self) -> None:
+        for value in ("ultra_high", "HIGH", "280"):
+            with self.subTest(value=value), self.assertRaises(ValidationError):
+                Settings(_env_file=None, gemini_media_resolution=value)
 
 
 if __name__ == "__main__":

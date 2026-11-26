@@ -37,6 +37,18 @@ _FALLBACK_ATTEMPTS = 2
 # own rate limits.
 _UPLOAD_CONCURRENCY = 4
 
+# GEMINI_MEDIA_RESOLUTION values for a single-file run, where it is set on
+# the whole request (the request-wide field works on every model; per-part
+# resolution is Gemini 3+ only). A multi-slide post never sends it request
+# wide: its image slides already carry their own per-part level, so there
+# it goes on each video slide's part instead (`_analyze_slides`), and one
+# request never mixes the two.
+_MEDIA_RESOLUTIONS = {
+    "low": types.MediaResolution.MEDIA_RESOLUTION_LOW,
+    "medium": types.MediaResolution.MEDIA_RESOLUTION_MEDIUM,
+    "high": types.MediaResolution.MEDIA_RESOLUTION_HIGH,
+}
+
 
 class _FileProcessingError(RuntimeError):
     """Gemini accepted the upload but could not process it (FAILED state, or
@@ -349,6 +361,8 @@ class GeminiEngine:
             on_stage=on_stage,
             api_key=api_key,
             metadata=metadata,
+            # None (blank setting) leaves the field out of the request.
+            media_resolution=_MEDIA_RESOLUTIONS.get(self._settings.gemini_media_resolution),
         )
         return _checked_slides(result, None)
 
@@ -360,7 +374,10 @@ class GeminiEngine:
         metadata: Optional[SourceMetadata] = None,
     ) -> VideoAnalysis:
         count = len(slides)
-        image_resolution = self._slide_image_resolution()
+        image_resolution = _part_level(self._settings.gemini_slide_image_resolution)
+        # GEMINI_MEDIA_RESOLUTION, per part on video slides only (see
+        # `_MEDIA_RESOLUTIONS`); blank leaves them as before.
+        video_resolution = _part_level(self._settings.gemini_media_resolution)
         result = await self._analyze_files(
             [
                 (f"Slide {index} of {count} ({slide.kind.value}):", slide.path)
@@ -372,16 +389,11 @@ class GeminiEngine:
             api_key=api_key,
             metadata=metadata,
             resolutions=[
-                image_resolution if slide.kind is SlideKind.IMAGE else None for slide in slides
+                image_resolution if slide.kind is SlideKind.IMAGE else video_resolution
+                for slide in slides
             ],
         )
         return _screen_text_from_segments(_checked_slides(result, count))
-
-    def _slide_image_resolution(self) -> Optional[types.PartMediaResolutionLevel]:
-        level = self._settings.gemini_slide_image_resolution
-        if not level:
-            return None
-        return types.PartMediaResolutionLevel(f"MEDIA_RESOLUTION_{level.upper()}")
 
     async def _analyze_files(
         self,
@@ -393,13 +405,16 @@ class GeminiEngine:
         api_key: str | None = None,
         metadata: Optional[SourceMetadata] = None,
         resolutions: Optional[list[Optional[types.PartMediaResolutionLevel]]] = None,
+        media_resolution: Optional[types.MediaResolution] = None,
     ) -> VideoAnalysis:
         """Upload every file (each after its own label, when it has one),
         analyze them in one request, and return as soon as the answer is
         parsed. Every upload is deleted however that went, in the background
         (`_schedule_cleanup`), which also releases the client afterwards.
-        `resolutions[i]`, when set, is file i's per-part media resolution; a
-        file without one goes in as the upload itself."""
+        `resolutions[i]`, when set, is file i's per-part media resolution;
+        GEMINI_VIDEO_FPS applies to every video file (`_media_part`); a file
+        with neither goes in as the upload itself. `media_resolution` is the
+        request-wide one, left out of the request when None."""
         if on_stage:
             await on_stage("uploading_to_gemini")
         client = self._get_client(api_key)
@@ -424,10 +439,12 @@ class GeminiEngine:
                 await on_stage("analyzing")
             media_parts: list[Any] = []
             levels = resolutions or [None] * len(files)
+            fps = self._settings.gemini_video_fps
             for (label, _), file, level in zip(files, uploaded, levels):
                 if label:
                     media_parts.append(label)
-                media_parts.append(file if level is None else _part_at(file, level))
+                media_parts.append(_media_part(file, level, fps))
+            # Built once, so the fallback model gets the same parts and config.
             response = await self._generate_with_retry(
                 client,
                 contents=[*media_parts, *prompt_parts],
@@ -435,6 +452,7 @@ class GeminiEngine:
                     system_instruction=system_instruction,
                     response_mime_type="application/json",
                     response_schema=VideoAnalysis,
+                    media_resolution=media_resolution,
                 ),
             )
             return self._parse(response)
@@ -663,12 +681,28 @@ class GeminiEngine:
         raise AssertionError("unreachable")  # pragma: no cover
 
 
-def _part_at(file: Any, level: types.PartMediaResolutionLevel) -> types.Part:
-    """An uploaded file as a part with its own media resolution. The SDK
-    turns a bare File into exactly this part minus the resolution."""
+def _part_level(level: str) -> Optional[types.PartMediaResolutionLevel]:
+    """A resolution setting ("", low, medium, high, ultra_high) as a
+    per-part level; blank is None (the model's default)."""
+    if not level:
+        return None
+    return types.PartMediaResolutionLevel(f"MEDIA_RESOLUTION_{level.upper()}")
+
+
+def _media_part(file: Any, level: Optional[types.PartMediaResolutionLevel], fps: float) -> Any:
+    """An uploaded file as a request part. With no per-part `level` and no
+    frame rate to apply, it is the upload itself, exactly as before either
+    existed (the SDK turns a bare File into this part minus the extras).
+    `fps` > 0 (GEMINI_VIDEO_FPS) applies only to a video, as
+    VideoMetadata(fps): an image or audio file never carries it."""
+    mime_type = getattr(file, "mime_type", None) or ""
+    sample = fps > 0 and mime_type.startswith("video/")
+    if level is None and not sample:
+        return file
     return types.Part(
-        file_data=types.FileData(file_uri=file.uri, mime_type=file.mime_type),
-        media_resolution=types.PartMediaResolution(level=level),
+        file_data=types.FileData(file_uri=file.uri, mime_type=mime_type),
+        video_metadata=types.VideoMetadata(fps=fps) if sample else None,
+        media_resolution=types.PartMediaResolution(level=level) if level is not None else None,
     )
 
 

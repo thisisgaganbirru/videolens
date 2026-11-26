@@ -180,6 +180,70 @@ class SlideImageResolutionTests(unittest.IsolatedAsyncioTestCase):
             Settings(gemini_slide_image_resolution="huge")
 
 
+class SlideVideoSamplingTests(unittest.IsolatedAsyncioTestCase):
+    """GEMINI_VIDEO_FPS and GEMINI_MEDIA_RESOLUTION on a multi-slide post:
+    both reach its video slides, per part; image slides keep only their own
+    GEMINI_SLIDE_IMAGE_RESOLUTION, and the request never carries a
+    request-wide media_resolution next to per-part ones."""
+
+    async def test_unset_leaves_the_post_exactly_as_before(self) -> None:
+        client = _FakeClient([_RESULT])
+        engine, _ = _engine(client)
+
+        await engine.analyze_slides_with_retry(_SLIDES)
+
+        media = _media(client.models.contents_seen[0])
+        self.assertNotIsInstance(media[1], types.Part)  # the video slide, unwrapped
+        self.assertIsNone(media[0].video_metadata)
+        self.assertIsNone(client.models.configs_seen[0].media_resolution)
+
+    async def test_fps_reaches_video_slides_only(self) -> None:
+        client = _FakeClient([_RESULT])
+        engine, _ = _engine(client, gemini_video_fps=2.0)
+
+        await engine.analyze_slides_with_retry(_SLIDES)
+
+        image, video, last = _media(client.models.contents_seen[0])
+        self.assertIsInstance(video, types.Part)
+        self.assertEqual(video.file_data.file_uri, "https://files.test/files/2")
+        self.assertEqual(video.file_data.mime_type, "video/mp4")
+        self.assertEqual(video.video_metadata.fps, 2.0)
+        self.assertIsNone(video.media_resolution)
+        for part in (image, last):
+            self.assertIsNone(part.video_metadata)
+            self.assertEqual(part.media_resolution.level, types.PartMediaResolutionLevel.MEDIA_RESOLUTION_HIGH)
+
+    async def test_media_resolution_goes_per_part_on_video_slides_never_request_wide(self) -> None:
+        client = _FakeClient([_RESULT])
+        engine, _ = _engine(
+            client,
+            gemini_media_resolution="low",
+            gemini_slide_image_resolution="ultra_high",
+            gemini_video_fps=2.0,
+        )
+
+        await engine.analyze_slides_with_retry(_SLIDES)
+
+        image, video, _ = _media(client.models.contents_seen[0])
+        self.assertIsNone(client.models.configs_seen[0].media_resolution)
+        # Per part wins for an image slide: its own setting, not the video one.
+        self.assertEqual(image.media_resolution.level, types.PartMediaResolutionLevel.MEDIA_RESOLUTION_ULTRA_HIGH)
+        self.assertEqual(video.media_resolution.level, types.PartMediaResolutionLevel.MEDIA_RESOLUTION_LOW)
+        self.assertEqual(video.video_metadata.fps, 2.0)
+
+    async def test_a_blank_image_level_does_not_inherit_the_video_one(self) -> None:
+        client = _FakeClient([_RESULT])
+        engine, _ = _engine(client, gemini_media_resolution="high", gemini_slide_image_resolution="")
+
+        await engine.analyze_slides_with_retry(_SLIDES)
+
+        image, video, last = _media(client.models.contents_seen[0])
+        self.assertNotIsInstance(image, types.Part)
+        self.assertNotIsInstance(last, types.Part)
+        self.assertEqual(video.media_resolution.level, types.PartMediaResolutionLevel.MEDIA_RESOLUTION_HIGH)
+        self.assertIsNone(client.models.configs_seen[0].media_resolution)
+
+
 class SlideScreenTextTests(unittest.IsolatedAsyncioTestCase):
     """The flat screen_text of a post is rebuilt from its segments, so it
     carries every slide's full text; a video keeps the model's own."""
