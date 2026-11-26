@@ -17,10 +17,14 @@ reference docs; read the one for whatever you are about to touch.
 
 ## Branches
 
-`dev` is the integration branch and `main` is production. Work on a feature
-branch, open a pull request into `dev`, and let the promotion PR from `dev`
-into `main` carry it to production. Neither `dev` nor `main` accepts direct
-pushes; each requires the `required` CI check and an up-to-date branch. A
+`dev` is the integration branch (and the default branch) and `main` is
+production. Work on a feature branch, open a pull request into `dev`, and let
+the promotion PR from `dev` into `main` carry it to production. `main` takes
+pull requests from `dev` and from `hotfix/*` branches only (a hotfix is then
+merged back from `main` into `dev`). Neither branch accepts direct pushes;
+`dev` requires the `required` CI check, `main` requires
+`production-required`, both require `pr-hygiene / Commit hygiene` and an
+up-to-date branch. A
 merge into `dev` deploys the dev environment on Railway; a merge into `main`
 publishes the images and the Android release and deploys production. See
 `docs/container-workflows.md` and `docs/railway-environments.md`.

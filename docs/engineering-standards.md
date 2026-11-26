@@ -554,15 +554,41 @@ Two things keep this open rather than resolved:
 Even once the branch merges, nothing would `tsc` or build it. The stale
 `mcp/dist/` sitting in the working tree is proof it can drift unbuilt.
 
-### Branch protection is unverified
+### Branch protection
 
-This lives in GitHub repo settings, not in the tree, and was deliberately not
-guessed at. `ci.yml` (single file, `pull_request` + push-to-`main`/`dev`
-triggers) has since been deleted and replaced by a caller/reusable workflow
-set that still runs application and container checks on pull requests into
-`dev`/`main` and on pushes to `dev`/`main` (see `docs/container-workflows.md`),
-so the checks still exist to be required — but whether they actually *block*
-a merge has to be confirmed from Settings → Branches by someone with access.
+Verified from the GitHub API on 2026-11-26 (until then this entry read
+"Branch protection is unverified"). It lives in repository settings, not in
+the tree. Until 2026-11-26 one ruleset (26660378, "protected branches")
+covered `main` and `dev` together and required `required` plus `pr-hygiene /
+Commit hygiene` on both. That shared check name let a PR retargeted from
+`dev` to `main` merge on the dev lane's green `required`
+(`docs/container-workflows.md`, "Required checks"), so on 2026-11-26 it is
+split in two, matching the production lane's rename of its aggregate job to
+`production-required`. The split is a settings change made alongside the
+workflow change, not by it; the table is the intended state, and the first
+API read after applying it is the verification:
+
+| Ruleset target | Required checks | Shared rules |
+|---|---|---|
+| `refs/heads/dev` | `required`, `pr-hygiene / Commit hygiene` | pull request required, 0 approvals, conversation resolution, merge commits only; checks strict (up to date before merging); no deletion; no force push (non-fast-forward); no bypass actors, admins included |
+| `refs/heads/main` | `production-required`, `pr-hygiene / Commit hygiene` | the same |
+
+Each check must come from the GitHub Actions app. The rulesets and the
+workflow job names must stay in step: renaming `required` in
+`development-environment.yml`, `production-required` in
+`production-environment.yml` or the `pr-hygiene` job in `commit-hygiene.yml`
+without the matching ruleset change leaves that branch waiting forever on a
+check nobody reports, and `dev`'s ruleset must never require
+`production-required` (the dev lane does not report it). There is no
+classic branch protection and no ruleset on tags (release tags `v*` are
+unprotected; a tag ruleset blocking deletion and update, not creation, is
+recommended and not adopted). With no bypass, nobody can push to either
+branch directly or use "Update branch" on a PR into `dev` that is behind
+because `main` moved: that is why the post-release `main` -> `dev` sync PR is
+a standard step. The head-branch rule for `main` (`dev` or `hotfix/*` only)
+is enforced by the production lane's `source-branch` job, not by the ruleset;
+see `docs/container-workflows.md`, "Source branch". Re-check after any
+settings change, since nothing in the tree can.
 
 No carve-out is needed for the release job. It holds `contents: write`, but
 since the release index moved server-side (`GithubReleaseCatalog`) and
@@ -644,21 +670,21 @@ Four layers keep it out, from source to gate:
   `git config core.hooksPath .githooks`.
 - `reusable-commit-hygiene.yml` runs the script over every commit in a PR,
   its title (the squash subject) and its description, on both lanes, and
-  feeds `required`; that copy reports as `hygiene / Commit hygiene`.
+  feeds the lane's aggregate (`required` on `dev`, `production-required` on
+  `main`); that copy reports as `hygiene / Commit hygiene`.
   `commit-hygiene.yml` calls it again on every PR event including `edited`,
   so a title or description changed after a green run is re-checked; that
-  copy reports as **`pr-hygiene / Commit hygiene`**. Mark exactly
-  `pr-hygiene / Commit hygiene` required in branch protection on `dev` and
-  `main`, next to `required` (an owner setting, not verifiable from the
-  repository; on 2026-11-20 only `required` was required on PR #147). Until
-  then a red run there is visible but does not block. Before 2026-11-20 both
+  copy reports as **`pr-hygiene / Commit hygiene`**. Both branch rulesets
+  require exactly `pr-hygiene / Commit hygiene`, next to the lane's
+  aggregate (verified 2026-11-26; see "Branch protection"; on 2026-11-20
+  only `required` was required on PR #147). Before 2026-11-20 both
   copies reported the same name, `hygiene / Commit hygiene`; that name now
   belongs to the lanes' copy only. The separate workflow covers every event
   the lanes do (`opened`, `synchronize`, `reopened`, plus `edited`), so the
-  lanes' copy is redundant for blocking; it stays because `required` needs
+  lanes' copy is redundant for blocking; it stays because the aggregate needs
   it, and removing it is a separate change. Only `pr-hygiene` re-runs on
   `edited`: when a lane's copy failed on the title or description, fixing
-  the text turns `pr-hygiene` green, but that lane's `required` stays red
+  the text turns `pr-hygiene` green, but that lane's aggregate stays red
   until a push or a manual re-run of the lane.
 - The title and description are fetched with `gh api` into a variable first:
   a failed call or an empty title fails the job instead of checking empty
@@ -803,3 +829,4 @@ Re-verify before fixing; do not treat the line numbers as authoritative.
 - 2026-11-20 · Claude (backend agent) · layering section names the two remaining cross-layer imports instead of stale line numbers and records the re-measurement (still exactly two); Protocol count 9 -> 26, infrastructure module count 13 -> 41, generic failure message updated to the current string
 - 2026-11-20 · Claude (CI agent) · Commit hygiene after the re-review: distinct check names (require `pr-hygiene / Commit hygiene`), title/description fetch fails closed, base-branch protection scoped to the script (workflow files need owner review; CODEOWNERS recommended), co-author patterns on whole words and known tool identities, any `anthropic.com` identity, normalisation against cheap evasions, `<details>` exempt from the model-id rule, `gradlew` LF
 - 2026-11-21 · Claude (CI agent) · Commit hygiene after the second re-review: `<details>` exemption limited to body mode and to lines strictly inside a closed block that opens and closes at line start; commit-msg hook cuts at git's scissors line; fullwidth colon folded and the footer rejoin skips blank lines; passing runs print what they checked; documented that `main` lacks the script until the first promotion and that fixing a title re-runs only `pr-hygiene`
+- 2026-11-26 · ci-separation agent · "Branch protection is unverified" replaced by "Branch protection": the verified single ruleset, its split into a `dev` ruleset (`required`) and a `main` ruleset (`production-required`), both with `pr-hygiene / Commit hygiene`, no bypass, merge commits only, kept in step with the job names; Commit hygiene now names both aggregates and records `pr-hygiene` as required

@@ -47,7 +47,8 @@ This happened on 2026-08-29: `dev` briefly ran `main`'s commit before being rest
 
 - **production**: a merge into `main` runs the publish (build, enforced scan, promote), Android build and release on that commit. Wait for CI holds the deploy until all of it is green, which is the real production gate.
 - **dev**: a merge into `dev` runs **no workflow**; the PR already tested that tree. With nothing to wait for, Wait for CI passes immediately (see *Known issues*), so `dev` deploys as soon as the merge lands. The gate for `dev` is therefore branch protection: the `required` check on the PR, "up to date before merging", and no direct pushes. Leaving Wait for CI on for `dev` costs nothing and covers a manual `workflow_dispatch` run or a future push-triggered workflow.
-- Advisory scans (PRs into `dev`, the nightly run on `main`) are built to finish green, precisely so they can never be the red workflow that skips a deploy.
+- Advisory scans (PRs into `dev`, the nightly run) are built to finish green, precisely so they can never be the red workflow that skips a deploy. Since the default branch became `dev` (2026-11-26) the scheduled nightly run attaches to `dev`'s head commit, while it still scans `main`'s tree (`ref: main`); a red nightly would now mark `dev`'s head rather than `main`'s, and production redeploys are no longer exposed to it.
+- `main`'s gate is its own ruleset requiring `production-required` (the production lane's aggregate), separate from `dev`'s `required` since 2026-11-26; see `engineering-standards.md`, "Branch protection".
 
 ## Three ways a deploy silently does not happen
 
@@ -120,3 +121,4 @@ in each environment. Check it in the dashboard before promoting.
 - 2026-11-06 · claude (session ccr-ee9ca9d3) · recorded the first production-lane promotion (#92, fb1e7b8): Wait for CI held all three production deploys until the run was green; `dev` re-checked, still `checkSuites: false`, now documented as a no-op under the redesign with branch protection as the real `dev` gate
 - 2026-11-20 · Claude (frontend agent) · documented the build-time refusal of a blank `NEXT_PUBLIC_API_BASE_URL` outside CI
 - 2026-11-20 · Claude (CI agent) · the security scan's frontend image now gets a `.invalid` placeholder URL, because Docker builds do not see `CI=true`; listed every build path and its URL source
+- 2026-11-26 · ci-separation agent · nightly scan attaches to `dev`'s head once `dev` is the default branch (scans `main` via `ref: main`); `main`'s gate is its own ruleset requiring `production-required`
