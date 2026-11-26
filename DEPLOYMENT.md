@@ -460,6 +460,14 @@ CSP `connect-src`. The Account tab appears only when both are set *and* the
 backend reports the `auth` capability as `ok`. See
 `docs/frontend/auth-sign-in.md`.
 
+The web image gets them as Railway service variables (Dockerfile `ARG`s).
+The APK does not read Railway at all: CI compiles in literal per-lane values
+from `production-environment.yml` and `development-environment.yml`
+(`api_base_url`, `supabase_url`, `supabase_publishable_key`). Moving either
+environment to another Supabase project or backend means changing those
+workflow lines as well as the Railway variables
+(`docs/container-workflows.md`, "The APK's build-time configuration").
+
 Because these values are inlined into the browser bundle at build time,
 configure them before building the frontend image. A frontend image or APK is
 therefore bound to one backend and cannot be promoted between environments.
@@ -986,3 +994,4 @@ The release is complete when:
 - 2026-11-20 · Claude (CI agent) · Android release signing: CI signs in a separate `sign` job with apksigner on an unsigned Gradle build, never passing the key to Gradle; documented what the first run with secrets does and how to verify it
 - 2026-11-21 · Claude (backend agent) · Database connections: a password with `?`, `&`, `=` or `#` works as written again; a refused parameter is named without its value or any other part of the URL
 - 2026-11-26 · ci-separation agent · Android release signing: the four `ANDROID_*` secrets go in the `production` GitHub environment (`gh secret set --env production`), not the repository; no `secrets:` passthrough; the signing jobs run in that environment and are skipped on the dev lane
+- 2026-11-26 · Claude (apk-supabase-config agent) · Frontend variables: the APK takes its backend and Supabase values from literal workflow inputs per lane, not Railway; changing an environment's Supabase project means updating both

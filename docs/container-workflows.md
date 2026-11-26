@@ -229,23 +229,59 @@ so a `package.json` version string cannot inject shell. Two callers:
 and since 2026-10-29 it also waits on `publish`, so an APK never ships for a
 commit whose images failed the enforced scan.
 
-#### The APK's backend URL
+#### The APK's build-time configuration (backend URL and sign-in)
 
-`reusable-android-checks.yml` takes an `api_base_url` input and sets it as
-`NEXT_PUBLIC_API_BASE_URL` on the `npm run android:sync` step. This is
-**build-time, not runtime**: `android:sync` runs `build:mobile`, and Next
-inlines every `NEXT_PUBLIC_*` value into the static export, so the URL is
-compiled into the APK and cannot be changed after the fact.
+`reusable-android-checks.yml` takes three string inputs and sets them on the
+`npm run android:sync` step:
 
-Only `production-environment.yml` passes it (the production Railway backend,
-matching the images that workflow publishes). The PR and `dev` callers
-deliberately omit it: those builds exist to prove the Android project still
-compiles and their APK is discarded, never installed.
+| Input | Becomes | Production lane | Dev lane |
+|---|---|---|---|
+| `api_base_url` | `NEXT_PUBLIC_API_BASE_URL` | `https://videolens-backend-production.up.railway.app` | `https://videolens-backend-dev.up.railway.app` |
+| `supabase_url` | `NEXT_PUBLIC_SUPABASE_URL` | `https://lslepkhscayqxmsnckns.supabase.co` | `https://pjekwwiaocywdbwqgtgl.supabase.co` |
+| `supabase_publishable_key` | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | that project's `sb_publishable_...` key | that project's `sb_publishable_...` key |
 
-A validation step fails the build when `upload_apk: true` and `api_base_url`
-is empty, mirroring the frontend-scoped check in
-`reusable-container-publish.yml`. That guard exists because the failure it
-prevents is **completely silent**: `infrastructure/runsGateway.ts` falls back
+This is **build-time, not runtime**: `android:sync` runs `build:mobile`, and
+Next inlines every `NEXT_PUBLIC_*` value into the static export, so the
+values are compiled into the APK and cannot be changed after the fact.
+`inject-csp.mjs --export` reads the same environment, so the Supabase origin
+lands in the export's meta CSP `connect-src` (`docs/frontend/security-headers.md`).
+
+All three are **literal values in the caller** (`production-environment.yml`,
+`development-environment.yml`), not GitHub Actions variables or secrets. They
+are public (the publishable key is meant for the bundle), they change only
+when the environment itself changes, and a literal keeps the whole lane
+readable in one file and reviewable in the PR that changes it. Each Supabase
+pair must be the project the same lane's backend trusts (`AUTH_*`), or the
+backend reports `auth` as `off`/mismatched and the Account tab stays hidden.
+Never a `sb_secret_...` or service_role key: the validation step rejects
+any key that does not start with `sb_publishable_`.
+
+The web Dockerfile also takes `NEXT_PUBLIC_SITE_URL` and
+`NEXT_PUBLIC_NOINDEX`. The APK deliberately does not: they only feed
+canonical links, `robots.txt` and the sitemap, none of which an APK serves.
+There are no other `NEXT_PUBLIC_*` values (no Stripe one: Checkout and the
+Portal are server-created redirects).
+
+The plain gate (neither `upload_apk` nor `dev_artifact`) may omit all three.
+For an APK that reaches a device (`upload_apk` or `dev_artifact`), two steps
+fail the build loudly:
+
+- **Validate build inputs** (before checkout): `api_base_url` non-empty,
+  `supabase_url` of the form `https://<ref>.supabase.co`, the key
+  `sb_publishable_...`.
+- **Check sign-in is compiled into the export** (after `android:sync`): the
+  Supabase host must appear in `out/_next/static/**/*.js` and its origin in
+  `out/index.html` (the CSP meta). This catches a value that was set in the
+  inputs but never reached the bundle.
+
+Before 2026-11-26 only `api_base_url` was passed, so every CI-built APK
+(including v2.3.0-build543) had sign-in off: no error anywhere, the
+`NullAuthSession` was built, and the Account tab never appeared. Local builds
+worked only because `.env.local` supplied the values.
+
+The `api_base_url` guard mirrors the frontend-scoped check in
+`reusable-container-publish.yml`. It exists because the failure it
+prevents is **completely silent**: `infrastructure/apiBase.ts` falls back
 to `http://localhost:8000` when the variable is unset, which is correct for
 `next dev` and wrong for a phone — on a device `localhost` is the device, so
 every request fails with "Can't reach the server", while CI stays green
@@ -949,3 +985,4 @@ require the aggregate checks (`dev-required` on `dev`, `production-required` on
 - 2026-11-26 · ci-separation agent · main/dev separation: production aggregate renamed `production-required` (one ruleset per branch, kept in step); `source-branch` job (PRs into `main` only from `dev` or `hotfix/*` of this repo); Android signing secrets moved to the `production` environment (no `secrets:` passthrough; `signing`/`sign` run in the new `environment` input and are skipped on the dev lane); hotfix flow and post-release `main` -> `dev` sync documented; default branch `dev`, so the nightly scan pins `ref: main`; replaced the stale environments/reviewers paragraph
 - 2026-11-26 · ci-separation agent · dev lane aggregate renamed `required` -> `dev-required` (owner decision); dev ruleset requires `dev-required`, main ruleset `production-required`, both with `pr-hygiene / Commit hygiene`; rulesets switched before #156 merges
 - 2026-11-26 · deps agent · took Dependabot #151's eight pip bumps (fastapi 0.165.0, python-multipart 0.0.34, pydantic 2.14.4, pydantic-settings 2.16.3, google-genai 3.6.1, boto3 1.44.6, sqlalchemy 2.1.9, stripe 17.1.0; transitive botocore 1.44.12, pydantic-core 2.50.5) in a hand-regenerated, marker-preserving `requirements.txt` (uv `--universal`, exact versions via `-P`). Dependabot dropping the markers is now four-for-four on pip PRs (#95, #136, #137, #151)
+- 2026-11-26 · Claude (apk-supabase-config agent) · APKs had sign-in off: the Android sync step passed only `NEXT_PUBLIC_API_BASE_URL`. `reusable-android-checks.yml` takes `supabase_url` and `supabase_publishable_key` (literal per lane in both callers, like `api_base_url`), validates them before checkout for `upload_apk`/`dev_artifact` (https `*.supabase.co`, `sb_publishable_` only) and checks after the sync that the host is in the export JS and the origin in `out/index.html`'s CSP; section renamed "The APK's build-time configuration"; stale "dev callers omit api_base_url" text corrected

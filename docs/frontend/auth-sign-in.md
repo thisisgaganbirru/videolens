@@ -184,6 +184,22 @@ unchanged. `npx cap update android` registered the plugin in the two tracked
 Gradle files (`capacitor.settings.gradle`, `app/capacitor.build.gradle`).
 On the web every native call is skipped and the plugins are never loaded.
 
+**Android build configuration.** The APK is a static export, so the two
+`NEXT_PUBLIC_SUPABASE_*` values must be in the environment of the
+`npm run android:sync` step that builds it; there is no runtime config. CI
+passes them per lane as the `supabase_url` / `supabase_publishable_key`
+inputs of `reusable-android-checks.yml` (production project
+`lslepkhscayqxmsnckns`, dev project `pjekwwiaocywdbwqgtgl`, publishable keys
+only) and fails the release and dev-artifact builds when either is missing
+or did not reach the export JS and CSP (`docs/container-workflows.md`, "The
+APK's build-time configuration"). Up to v2.3.0-build543 CI passed neither,
+so every CI-built APK had `auth.enabled` false and no Account tab while local
+builds (reading `.env.local`) looked fine. When QA'ing sign-in on a device,
+use a CI APK, not only a local one. Both the production and the `.dev` APK
+register the same `ai.videolens.app://auth/callback` scheme; with both
+installed, Android may ask which app opens the Google return. Each Supabase
+project's Redirect URLs must list that address (dashboard, below).
+
 **Identity.** Supabase links a Google sign-in to an existing user with the
 same verified email, so the `user:<id>` owner, server-side runs, saved
 history and the sign-out-hides-runs behaviour are identical to an emailed
@@ -840,3 +856,4 @@ use it. Copy, final wording:
 - 2026-11-22 · frontend agent · run guard needs a recent server answer (15 s, `HOLD_FRESH_MS`), so Sign out is never held on a status the screen stopped refreshing
 - 2026-11-22 · frontend agent · OTP is exactly 6 digits (`CODE_LENGTH`, paste cut to six, placeholder `123456`); Google sign-in (auth phase 4) on web and Android: `AuthSession.signInWithGoogle` + redirect result, `AuthRedirectBrowser` port, `SystemAuthBrowser` adapter (`@capacitor/browser` 8.0.5), deep link `ai.videolens.app://auth/callback`, `detectSessionInUrl` off, button and "or" divider on the signed-out card; dashboard requirements listed
 - 2026-11-22 · frontend agent · signed-out sign-in card reworked to the owner's reference layout: full-width equal-height stack (Google, uppercase OR, email with sr-only label and "Enter your email" placeholder, primary "Continue with email" replacing Send code with the same behaviour), centred Terms/Privacy note with no marketing clause; checked light, dark and phone content width
+- 2026-11-26 · Claude (apk-supabase-config agent) · Android build configuration: CI now compiles the per-lane Supabase URL and publishable key into the APK (they were missing, so CI APKs up to v2.3.0-build543 had sign-in off) and fails a device-bound build without them; QA note on CI vs local APKs and the shared callback scheme
