@@ -88,7 +88,17 @@ function tabFromLocation(): MainTab {
  * entry — which is also what makes "open a run from history, press back" land
  * on the history list instead of dropping the user out of the app.
  */
-export function goToMainTab(tab: MainTab, options: { push?: boolean } = {}): void {
+export type TabSwitchOptions = {
+  /** Push a history entry even on the Android shell, where a plain tab
+   *  switch replaces it: the move is a "go deeper" step that Back should
+   *  undo (opening a run from History; a More sheet row, 2026-11-26). */
+  push?: boolean;
+};
+
+/** The shape of `goToMainTab`, as the shells' tab callbacks take it. */
+export type SelectTab = (tab: MainTab, options?: TabSwitchOptions) => void;
+
+export function goToMainTab(tab: MainTab, options: TabSwitchOptions = {}): void {
   if (tabFromLocation() === tab) return;
   /* The marker says "the entry under this one is an app view", which is what
      the installed app's Back link asks on browsers without the Navigation API

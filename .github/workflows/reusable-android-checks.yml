@@ -60,6 +60,26 @@ on:
         required: false
         default: ""
         type: string
+      supabase_url:
+        description: >-
+          Supabase project URL compiled into the APK as
+          NEXT_PUBLIC_SUPABASE_URL (sign-in; its origin also goes into the
+          export's CSP connect-src). Required whenever upload_apk or
+          dev_artifact is true: blank turns sign-in off in that APK with no
+          error anywhere (no Account tab).
+        required: false
+        default: ""
+        type: string
+      supabase_publishable_key:
+        description: >-
+          The same project's publishable key (sb_publishable_..., public by
+          design), compiled in as NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY.
+          Required with supabase_url. Never a secret or service_role key:
+          validation rejects anything that does not start with
+          sb_publishable_.
+        required: false
+        default: ""
+        type: string
       tag_prefix:
         description: >-
           Prefix for the release tag this build will be published under. Only
@@ -203,6 +223,8 @@ jobs:
         working-directory: .
         env:
           API_BASE_URL: ${{ inputs.api_base_url }}
+          SUPABASE_URL: ${{ inputs.supabase_url }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ inputs.supabase_publishable_key }}
           UPLOAD_APK: ${{ inputs.upload_apk }}
           DEV_ARTIFACT: ${{ inputs.dev_artifact }}
           SIGNING_ENVIRONMENT: ${{ inputs.environment }}
@@ -233,6 +255,25 @@ jobs:
               echo "api_base_url is required when upload_apk or dev_artifact is true: this APK is installed on real devices and must know where the backend lives." >&2
               exit 1
             }
+            # Same class of silent failure: with either Supabase value blank
+            # the bundle builds NullAuthSession, auth.enabled is false and the
+            # Account tab never appears. v2.3.0-build543 shipped that way.
+            case "$SUPABASE_URL" in
+              https://*.supabase.co) ;;
+              *)
+                echo "::error::supabase_url must be the https://<ref>.supabase.co project URL when upload_apk or dev_artifact is true (got '${SUPABASE_URL}'): without it sign-in is off in this APK." >&2
+                exit 1
+                ;;
+            esac
+            # The key is not printed: it is public, but a wrong value pasted
+            # here could be a secret one.
+            case "$SUPABASE_PUBLISHABLE_KEY" in
+              sb_publishable_?*) ;;
+              *)
+                echo "::error::supabase_publishable_key must be the project's sb_publishable_... key when upload_apk or dev_artifact is true. Never a secret or service_role key: it is compiled into a public APK." >&2
+                exit 1
+                ;;
+            esac
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -246,12 +287,38 @@ jobs:
       - uses: ./.github/actions/setup-frontend
       - uses: ./.github/actions/setup-android
       # `android:sync` runs `build:mobile`, and Next inlines NEXT_PUBLIC_* at
-      # build time — so this value is baked into the static export the APK
-      # ships, not read at runtime. It has to be set here, or the APK is
-      # permanently pointed at whatever the fallback is.
+      # build time — so these values are baked into the static export the APK
+      # ships, not read at runtime. They have to be set here, or the APK is
+      # permanently pointed at whatever the fallback is (localhost for the
+      # backend; sign-in off for Supabase). inject-csp.mjs reads the same
+      # environment, so the Supabase origin lands in the export's CSP.
+      # NEXT_PUBLIC_SITE_URL and NEXT_PUBLIC_NOINDEX, which the web Dockerfile
+      # also takes, are deliberately absent: they only feed canonical links,
+      # robots.txt and the sitemap, none of which an APK serves.
       - run: npm run android:sync
         env:
           NEXT_PUBLIC_API_BASE_URL: ${{ inputs.api_base_url }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ inputs.supabase_url }}
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ inputs.supabase_publishable_key }}
+      # Proves the values reached the export the APK bundles, not just the
+      # step's environment: the Supabase host in the JS and its origin in the
+      # CSP meta of the entry page. Only for APKs that reach a device.
+      - name: Check sign-in is compiled into the export
+        if: inputs.upload_apk || inputs.dev_artifact
+        env:
+          SUPABASE_URL: ${{ inputs.supabase_url }}
+        run: |
+          origin="${SUPABASE_URL%/}"
+          host="${origin#https://}"
+          grep -rqF --include='*.js' "$host" out/_next/static || {
+            echo "::error::The mobile export's JS does not contain ${host}: sign-in would be off in this APK." >&2
+            exit 1
+          }
+          grep -o "connect-src[^;\"]*" out/index.html | grep -qF "$origin" || {
+            echo "::error::out/index.html's CSP does not allow ${origin}: sign-in requests would be blocked." >&2
+            exit 1
+          }
+          echo "Sign-in compiled in: ${host} in the JS, ${origin} in the CSP."
       - id: version
         env:
           TAG_PREFIX: ${{ inputs.tag_prefix }}

@@ -156,6 +156,12 @@ jobs:
       # localhost - and it must not point at dev, whose Redis, quota and stored
       # runs are a different environment entirely.
       api_base_url: https://videolens-backend-production.up.railway.app
+      # The production Supabase project, the one the production backend's
+      # AUTH_* settings trust. Public values (the publishable key is meant for
+      # the bundle). Blank either one and the APK ships with sign-in off,
+      # which v2.3.0-build543 did; the reusable now refuses to build that.
+      supabase_url: https://lslepkhscayqxmsnckns.supabase.co
+      supabase_publishable_key: sb_publishable_LOqiim2h1DKvrEea3f1QQQ_84HWMh0X
 
   release:
     name: Publish release

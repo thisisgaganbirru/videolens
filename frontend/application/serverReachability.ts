@@ -136,22 +136,30 @@ export function useServerReachability(): Reachability {
   useEffect(() => {
     if (state === "ok") return;
     let last = 0;
-    const chance = () => {
-      if (isOffline()) return;
+    const retry = () => {
       /* focus and visibilitychange often fire together; one retry, not two. */
       const now = Date.now();
       if (now - last < 1500) return;
       last = now;
       reconnectListeners.forEach((listener) => listener());
     };
+    const chance = () => {
+      if (!isOffline()) retry();
+    };
+    /* The `online` event is itself the news, so it is not gated on
+       `navigator.onLine` (2026-11-26, Android QA run 25): the WebView can
+       fire it a moment before `onLine` reads true, and the gate then
+       skipped the only retry, leaving "Can't reach the server" up beside a
+       free-runs strip that had come back. */
+    const onOnline = () => retry();
     const onVisible = () => {
       if (document.visibilityState === "visible") chance();
     };
-    window.addEventListener("online", chance);
+    window.addEventListener("online", onOnline);
     window.addEventListener("focus", chance);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
-      window.removeEventListener("online", chance);
+      window.removeEventListener("online", onOnline);
       window.removeEventListener("focus", chance);
       document.removeEventListener("visibilitychange", onVisible);
     };

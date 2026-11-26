@@ -12,15 +12,36 @@ import type { AuthRedirectBrowser } from "@/domain/ports";
 
    Installed app: Google refuses sign-in inside embedded WebViews, so the page
    opens in the system browser (`@capacitor/browser`, a Custom Tab on
-   Android) and Supabase sends it to `ai.videolens.app://auth/callback`, which
+   Android) and Supabase sends it to `<applicationId>://auth/callback`, which
    the manifest's intent filter hands to the running activity (`appUrlOpen`
    from `@capacitor/app`), or which launched the app (`getLaunchUrl`) if the
    system had closed it meanwhile. Both plugins are loaded only there, with a
-   dynamic `import()`, so the web bundle carries neither for this. */
+   dynamic `import()`, so the web bundle carries neither for this.
 
-/** The app's own return address. Must match the manifest's intent filter
- *  and an entry in the Supabase project's redirect allowlist exactly. */
-export const NATIVE_RETURN_URL = "ai.videolens.app://auth/callback";
+   The scheme is the build's own application id (`App.getInfo().id`), because
+   the manifest registers `${applicationId}`: production is
+   `ai.videolens.app`, the dev lane's APK (`-PdevBuild`, `.dev` suffix) is
+   `ai.videolens.app.dev`. With both installed each catches only its own
+   return, so the PKCE verifier is always in the app that receives the code. */
+
+/** Production's scheme, and the fallback when the id cannot be read. */
+const DEFAULT_NATIVE_SCHEME = "ai.videolens.app";
+const NATIVE_RETURN_HOST = "auth";
+const NATIVE_RETURN_PATH = "/callback";
+
+/** Production's return address. Each build's own (see `nativeReturnUrl`)
+ *  must match its manifest filter and an entry in its Supabase project's
+ *  redirect allowlist exactly. */
+export const NATIVE_RETURN_URL = nativeReturnUrl(DEFAULT_NATIVE_SCHEME);
+
+export function nativeReturnUrl(scheme: string): string {
+  return `${scheme}://${NATIVE_RETURN_HOST}${NATIVE_RETURN_PATH}`;
+}
+
+/** An application id usable as a URL scheme as it stands (a package name
+ *  may hold `_`, which a scheme may not). Lowercase only: Android matches
+ *  intent-filter schemes case-sensitively and URL parsing lowercases them. */
+const SCHEME_SHAPE = /^[a-z][a-z0-9+.-]*$/;
 
 /** The Account view, where a web return lands. Same address the tab bar
  *  uses (`mainTabHref("account")`); spelled out because infrastructure does
@@ -62,11 +83,15 @@ function isWebReturn(url: URL): boolean {
   );
 }
 
-/** The app's deep link, and only that exact address. */
-export function isNativeReturn(raw: string): boolean {
+/** The app's deep link under `scheme`, and only that exact address. */
+export function isNativeReturn(raw: string, scheme: string = DEFAULT_NATIVE_SCHEME): boolean {
   try {
     const url = new URL(raw);
-    return url.protocol === "ai.videolens.app:" && url.host === "auth" && url.pathname.replace(/\/+$/, "") === "/callback";
+    return (
+      url.protocol === `${scheme}:` &&
+      url.host === NATIVE_RETURN_HOST &&
+      url.pathname.replace(/\/+$/, "") === NATIVE_RETURN_PATH
+    );
   } catch {
     return false;
   }
@@ -97,6 +122,19 @@ type AppModule = typeof import("@capacitor/app");
 
 export class SystemAuthBrowser implements AuthRedirectBrowser {
   private plugins: Promise<[BrowserModule, AppModule]> | null = null;
+  private scheme: Promise<string> | null = null;
+
+  /** This build's deep-link scheme: its application id, read once. Never
+   *  rejects; production's scheme when the bridge or the id is unusable. */
+  private nativeScheme(): Promise<string> {
+    if (!this.scheme) {
+      this.scheme = this.native()
+        .then(([, { App }]) => App.getInfo())
+        .then(({ id }) => (typeof id === "string" && SCHEME_SHAPE.test(id) ? id : DEFAULT_NATIVE_SCHEME))
+        .catch(() => DEFAULT_NATIVE_SCHEME);
+    }
+    return this.scheme;
+  }
 
   /** The two Capacitor plugins, loaded once and only in the app. */
   private native(): Promise<[BrowserModule, AppModule]> {
@@ -109,8 +147,8 @@ export class SystemAuthBrowser implements AuthRedirectBrowser {
     return this.plugins;
   }
 
-  returnUrl(): string {
-    if (isNative()) return NATIVE_RETURN_URL;
+  async returnUrl(): Promise<string> {
+    if (isNative()) return nativeReturnUrl(await this.nativeScheme());
     return `${window.location.origin}${WEB_RETURN_PATH}?view=${WEB_RETURN_VIEW}`;
   }
 
@@ -143,8 +181,8 @@ export class SystemAuthBrowser implements AuthRedirectBrowser {
     }
     try {
       const [, { App }] = await this.native();
-      const launch = await App.getLaunchUrl();
-      return launch?.url && isNativeReturn(launch.url) ? launch.url : null;
+      const [launch, scheme] = await Promise.all([App.getLaunchUrl(), this.nativeScheme()]);
+      return launch?.url && isNativeReturn(launch.url, scheme) ? launch.url : null;
     } catch {
       return null;
     }
@@ -169,9 +207,10 @@ export class SystemAuthBrowser implements AuthRedirectBrowser {
     };
     this.native()
       .then(async ([{ Browser }, { App }]) => {
+        const scheme = await this.nativeScheme();
         keep(
           await App.addListener("appUrlOpen", ({ url }) => {
-            if (isNativeReturn(url)) handlers.onReturn(url);
+            if (isNativeReturn(url, scheme)) handlers.onReturn(url);
           })
         );
         keep(await Browser.addListener("browserFinished", () => handlers.onClosed()));

@@ -1022,6 +1022,132 @@ No runs submitted; no sign-in, key, account or checkout actions.
   - The header sits below the status bar and the dock above the gesture bar.
 - **10. Back button.** From Account (Analyze → History → Account), Back returns to Analyze and a second Back leaves the app. That is the tab-root pattern, recorded as observed. Back from a History-opened result is NOT TESTED (see item 3).
 
+### 2026-11-26 · android-66 (device QA) · run 25 (2.3.0 production APK and dev artifact: sign-in, signed-in pass, regression sweep)
+
+**Setup**
+- **Builds.**
+  - Production: GitHub release `v2.3.0-build543`, asset `videolens-ai-v2.3.0-code543-28cb9ad-debug.apk` (`ai.videolens.app`, versionCode 543, debug-signed on purpose). Installed on a clean profile: the old `ai.videolens.app` was uninstalled first.
+  - Dev: the newest dev-lane artifact, `videolens-ai-dev-v2.3.0-code549-0d51521` (`ai.videolens.app.dev`, 2.3.0-dev, code 549). It was built from `ci/main-dev-separation` at df40603. Merges to `dev` don't build an artifact, and dev a9aa52a has no frontend change after it.
+- **Device.** emulator-5554, API 36 (Android 16), WebView 133.0.6943.137, 1080x2400 at density 420 (412 css px). Software graphics.
+- **Backends.** Prod `videolens-backend-production.up.railway.app`, dev `videolens-backend-dev.up.railway.app`. Both `/api/capabilities` report `auth=ok` and `database=ok`; prod has `billing=disabled`.
+- **Evidence.** `%TEMP%\qa25\` (01–11). The unpacked APK bundles are in `apk-prod-x\` and `apk-dev-x\`.
+- **Limits kept.**
+  - No runs submitted, no keys created and no credentials entered.
+  - No Railway, Supabase or Google changes.
+  - Offline was simulated with `svc wifi/data disable` and restored afterwards.
+
+**Results**
+- **1. Install. PASS.** Both APKs install. The .dev build installs beside prod.
+- **2. Google sign-in. BLOCKED (HIGH).** Neither APK has sign-in.
+  - The dock is Analyze / History / More, with no Account tab.
+  - `?view=account` shows "Sign-in is not available on this server", which is wrong: the server's `auth` capability is ok.
+  - `showAccount` needs `auth.enabled`, which needs `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` at build time (`infrastructure/authSession.ts:561-562`). Neither APK bundle has any `*.supabase.co` URL, and prod lacks its ref `lslepkhscayqxmsnckns`. The API base URL is inlined.
+  - Cause: `.github/workflows/reusable-android-checks.yml:252-254` passes only `NEXT_PUBLIC_API_BASE_URL` to `npm run android:sync`.
+  - Local builds (runs 18–24) had sign-in only because `frontend/.env.local` supplies the values.
+  - Reported to the orchestrator. A fix PR for both lanes is in progress.
+- **2b. Return address shared by both packages. MEDIUM.**
+  - Both manifests declare scheme `ai.videolens.app`, host `auth`, path `/callback` (`AndroidManifest.xml:41`; `authBrowser.ts:23` hardcodes `NATIVE_RETURN_URL`).
+  - `pm query-activities` for `ai.videolens.app://auth/callback` resolves to both `ai.videolens.app` and `ai.videolens.app.dev`.
+  - With both apps installed, the Custom Tab's return is ambiguous: a chooser, or the app without the PKCE verifier.
+  - Sign-in itself was not exercised, see 2.
+- **3. Email code sign-in. BLOCKED** (same cause as 2). No email was sent.
+- **4. Signed-in pass. NOT TESTED** (blocked by 2). This covers:
+  - Account identity and the "10 a day" line, and API keys create/revoke;
+  - a real run through to History, then sign-out hiding the run and sign-in restoring it;
+  - a signed-in cold start, and Back or resume during the Custom Tab.
+- **5. Regression sweep, prod APK, signed out.**
+  - **Launch. PASS.**
+    - The first launch shows Welcome ("Notes from any short video.", three steps, Start analyzing / Use my own Gemini key). Start analyzing sets `videolens-welcome-v1` and opens Analyze.
+    - A cold start after force-stop goes straight to Analyze.
+    - The System UI ANR dialog appeared once at launch; it is from the emulator, and "Wait" dismissed it.
+  - **Analyze. PASS.**
+    - h1 "New analysis". The strip reads "3 of 3 runs left today. Resets at 7:00 PM." It has no sign-in hint, which is right with sign-in off.
+    - The retention line is present, and the v4 consent box starts unticked.
+    - No overflow at 412/360. Layout shift 0.0000 at both.
+    - Analyze link and Browse files can be scrolled above the dock (dock top 787).
+  - **History. PASS.** Lede "Your last 20 runs, saved in this browser. Not synced." and the empty state "No runs yet." No overflow at 412/360.
+  - **More. PASS.**
+    - Rows: Gemini key, Releases, Theme ("Following your device", System/Light/Dark), Privacy, Terms, the same at 412/360.
+    - Dark applies `data-theme=dark` (body rgb(14,16,15)). System restores light.
+  - **Titles. PASS (the run 24 MINOR is fixed on this build).** Deep-loading `/app.html?view=history` and `?view=account` sets "History · VideoLens AI" and "Account · VideoLens AI", at 360 and 412.
+  - **Update check. PASS.**
+    - `/api/releases` latest is `version_code 543`, `v2.3.0-build543`, and `App.getInfo()` gives build 543. No update prompt.
+    - Releases lists 2.3.0 build 543 as Latest, with "You are on version 2.3.0".
+  - **Offline. PASS, with one MINOR.**
+    - A reload while offline shows "You're offline right now. You can still open past runs in History." with the form intact, and History opens.
+    - MINOR: after the network returns, the runs strip stays empty while the app is in the foreground. The single `/api/free-runs` read failed at load, and nothing reads it again.
+    - Leaving the app and coming back reads it again ("3 of 3 runs left today"). Not a blocker.
+  - **Back. PASS, with one LOW.**
+    - Privacy (from More on History), then Back goes to History, then Analyze, then leaves the app.
+    - LOW: Releases opened from More on History goes Back to Analyze, not History. Privacy goes back to History.
+  - **Copy. LOW.** The Account card with sign-in off says "your own Gemini key under API key". The More row is named "Gemini key".
+- **6. Dev APK (code549). Same as 2.**
+  - Dock Analyze / History / More, while the dev backend reports `auth=ok`.
+  - The strip reads "3 of 3 runs left today." Sign-in and the signed-in pass are NOT TESTED until a build with the Supabase values exists.
+
+### 2026-11-26 · android-66 (device QA) · run 25b (PR #160 dev artifact code559: sign-in, signed-in pass, run 25 fix retest)
+
+**Setup**
+- **Build.** PR #160 (`fix/android-signin-and-run25`, head 3f8b52f), artifact `videolens-ai-dev-v2.3.0-code559-5e92f7f` (`ai.videolens.app.dev`, 2.3.0-dev, code 559).
+  - Installed over code549, beside prod build543, which was left installed and unchanged.
+  - Same emulator as run 25: API 36, WebView 133.0.6943.137, 412 css px.
+- **Evidence.** `%TEMP%\qa25\` (20–38).
+- **Real actions, approved by the owner directly in this session.**
+  - One API key created and then revoked.
+  - One file run: an 8-second generated test pattern, `qa-run25b.mp4`.
+  - One YouTube link run, which failed server-side and "didn't use one of your runs".
+  - One email-code request to the owner's address. The code was not entered.
+- **Text entry.** `adb input text` does not reach WebView fields on this emulator, so the link and email fields were filled over CDP (native value setter plus an `input` event).
+- **Owner's sign-in.** The owner did it themselves before this pass, so the method isn't known. Credentials were never seen or typed.
+
+**Results**
+- **1. Bundle and return addresses. PASS.**
+  - The bundle has the dev Supabase host `pjekwwiaocywdbwqgtgl.supabase.co` and the dev backend; the CSP allows the Supabase origin.
+  - `pm query-activities`: `ai.videolens.app.dev://auth/callback` goes to `ai.videolens.app.dev` only, and `ai.videolens.app://auth/callback` to `ai.videolens.app` only.
+  - The Account tab appears once `/api/capabilities` answers (about 5 s after a cold launch).
+  - Signed-out card: "Get 10 free runs a day", Continue with Google, OR, email field, Continue with email, Terms/Privacy note.
+- **2. Google sign-in.**
+  - **Owner's round trip. PASS** (done by the owner). The app came back signed in as the owner's Gmail, with Supabase session `sb-pjekwwiaocywdbwqgtgl-auth-token` present.
+  - **Re-sign-in by QA. BLOCKED (needs owner credentials).** The Custom Tab opened `accounts.google.com/v3/signin/identifier` "to continue to pjekwwiaocywdbwqgtgl.supabase.co", with `redirect_uri` the dev Supabase callback. Google asked for "Email or phone" rather than showing an account chooser, so I stopped there.
+  - **Custom Tab closed with X: PASS.** The app is back on Account with both buttons enabled, nothing waiting.
+  - **Hardware Back in the Custom Tab: PASS.** Same result.
+- **3. Email code.**
+  - **Request side. PASS.** "Check your email / Enter the code sent to … It expires in 10 minutes.", a 6-digit numeric field (placeholder 123456), and "Send a new code in 54s".
+  - **Verify. NOT TESTED.** The code is the owner's.
+- **4. Signed-in pass.**
+  - **Account. PASS.**
+    - The email shows, with Sign out.
+    - Plan "Plus / Complimentary. Nothing to pay.", "30 of 30 runs left today", "Resets at 7:00 PM", "Up to 10 minutes / No Gemini key needed".
+    - History reads "Saved to your account · On every device". Developer tools has "VideoLens API access". There's also Sign out everywhere and Delete account….
+    - No overflow.
+    - The free signed-in "10 a day" line can't be shown on this account (complimentary Plus). Signed out, the card and strip say 10 a day.
+  - **API keys. PASS.**
+    - Create shows the key once ("Copy it now: this is the only time it is shown"), with Copy key and Done. The list shows the prefix and the created date.
+    - Revoke asks "Revoke? Anything using it stops working." with Revoke and Keep, and then the row reads "Revoked".
+    - The key name typed over adb didn't land, so it was created as "Unnamed key". That's the tooling, not the app.
+  - **Failure screen. PASS** (NOT TESTED in run 24).
+    - A YouTube link run stopped at Downloading: "That didn't work … YouTube is blocking automated downloads from this server. This didn't use one of your runs."
+    - Try again and Analyze another, with the step list "Downloading — Stopped here". That's a server-side download limit, not the app.
+  - **Real run. PASS.**
+    - Browse files opens the system picker, and picking the file submits it.
+    - The result "VideoLens QA Test Pattern Run 25b" has TL;DR, Notes, Transcript, On-screen, Download .md and "Saved to your account". The count went to 29 of 30.
+  - **History, signed in. PASS.**
+    - Lede "Every run is saved to your account…", with TODAY holding the file run, "Delete all saved runs" and "Remove this browser's copies" (not tapped).
+    - "Only in this browser" holds the failed YouTube run.
+  - **Sign-out hides runs. PASS.**
+    - After Sign out, History shows "No runs yet." and the strip reads "3 of 3 runs left today. … Sign in for 10 a day."
+    - IndexedDB `videolens/runs` still holds 2 records, so they're hidden, not deleted.
+  - **Sign-in restores runs. BLOCKED** (re-sign-in needs owner credentials, see 2).
+  - **Signed-in cold start. NOT TESTED.** I signed out before force-stopping. It's checkable when the owner signs in again.
+- **5. Run 25 fixes.**
+  - **Offline → online strip. PASS.** After an offline load, the network returning re-read `/api/free-runs` within about 7 s while the app stayed in front ("3 of 3 runs left today").
+  - **NEW MINOR: Account tab not restored after reconnecting.** `/api/capabilities` is not read again on reconnect, so the dock stays Analyze / History / More and the strip lacks "Sign in for 10 a day".
+    - Still the same after 40 s in front. Leaving the app and coming back reads it again and restores both.
+  - **Back from More rows. PASS.** History → More → Releases → Back goes to History, then Analyze. The same holds for Gemini key (`?view=api-key`).
+  - **Copy. PASS.** Offline, `?view=account` shows "Sign-in isn't available right now" and "…your own key under Gemini key."
+- **6. Prod build543.** Still installed and unaffected. Sign-in is off there until promotion, as expected; not retested.
+- **Note.** Abandoned Google attempts leave `sb-…-flow-<id>-code-verifier` keys in Local Storage. The owner's two from their sign-in were gone after it. Informational only.
+
 ## Changelog
 
 - 2026-11-02 · android-66 (device QA) · added section 19 (update banner, UPD-01..07) and run 9 (UPD partial on the mock: UPD-01/03 PASS, UPD-04 partial, rest PAUSED) and run 10 (real runs: terms persistence, RUN-01 retry with a YouTube link, RUN-02/02b/03/04/05/07/08, ORI-02, HIS-01, FREE-01..05, RUN-06b/06c/06d/06e, LCH-06b/06c, FREE-02b PASS; FREE-02c not exercised (YouTube 403 mid-download); stale free-runs count after a refund logged as known (R9); stage timings incl. Normalizing ~60 s for a 170 s file); added FREE-02b/02c rows to section 6
@@ -1051,3 +1177,5 @@ No runs submitted; no sign-in, key, account or checkout actions.
 - 2026-11-14 · android-66 (device QA) · run 22: 10 free runs a day at c49c4bf (412/320, rebuilt APK plus emulator Chrome): landing lines, "Get 10 free runs" nav, Analyze strip and Privacy all say a day / today / each day with no free-account "month"; dock 4 items; Account checked signed out (signed-in count and paid pitch source-checked only; paid pitch still cites 100 runs a month); FAIL: FreeRunsBanner pops in after the fetch and shifts the intake content about 93-115 css px (CLS 0.08-0.12)
 - 2026-11-14 · android-66 (device QA) · run 23: reserved FreeRunsBanner space and paid plan at 30 a day (4cff3dc, 412/320, rebuilt APK plus emulator Chrome, signed out, no key saved): banner shift PASS (APK 0.0022/0.0016 from the dock only, web 0.0000, three reloads each); paid pitch, Terms "each day (UTC)" and Privacy "runs each day" PASS with no 100 or included "runs a month"; 4-item dock and landing/Analyze unchanged; saved-key case not testable
 - 2026-11-14 · android-66 (device QA) · run 24: dev at e1149f7 (PRs #127/#128), signed out, no runs submitted: "New analysis" Analyze with the strip above the title and retention line PASS (CLS ≤0.0022, dock only); simulated spent second visit reserved (CLS ≤0.0022) with the "Sign in for 10 runs a day" / "Use your own Gemini key" offer; stale-stamp edge shifts 0.095/0.102; menu/More order, 4-item dock, consent v4, keyboard, short heights, dark, font scale 1.3/2.0 PASS; MINOR app-only: deep-loaded ?view=history/account keeps the "Analyze a video" title; run states, Back to History, signed-in Account and paid History NOT TESTED
+- 2026-11-26 · android-66 (device QA) · run 25: 2.3.0 prod APK v2.3.0-build543 (code543) on a clean API 36 profile plus dev artifact code549: BLOCKER (HIGH) both CI APKs ship without NEXT_PUBLIC_SUPABASE_* (reusable-android-checks.yml passes only the API URL), so no Account tab and "Sign-in is not available on this server" although auth=ok; Google/email sign-in and the signed-in pass NOT TESTED; MEDIUM prod and .dev share the ai.videolens.app://auth/callback filter; signed-out sweep PASS (Welcome, Analyze, History, More, theme, update check finds 543 as current, offline, 412/360, CLS 0, deep-link titles now fixed) with MINOR strip not re-read after reconnect and LOW Releases Back goes to Analyze
+- 2026-11-26 · android-66 (device QA) · run 25b: PR #160 dev artifact code559 (3f8b52f): Supabase compiled in, per-build return scheme resolves to one app each, Account tab back; owner's own sign-in landed signed in (complimentary Plus 30/day); API key create+revoke, failure screen (YouTube blocked server-side, run not counted), one real file run to result and History, sign-out hides runs (IndexedDB keeps 2) PASS; email code request side PASS, verify NOT TESTED; Google re-sign-in and restore BLOCKED (owner credentials), signed-in cold start NOT TESTED; run 25 fixes PASS (strip refetch, Releases/Gemini key Back, copy); NEW MINOR capabilities not re-read on reconnect so the Account tab stays hidden until resume

@@ -89,6 +89,10 @@ jobs:
     with:
       dev_artifact: true
       api_base_url: https://videolens-backend-dev.up.railway.app
+      # The dev Supabase project (the one the dev backend's AUTH_* settings
+      # trust). Public values: the publishable key is meant for the bundle.
+      supabase_url: https://pjekwwiaocywdbwqgtgl.supabase.co
+      supabase_publishable_key: sb_publishable_cDWRVT0W3KHbqt-3oneDCA_co4Lz1X3
 
   security:
     needs: changes
