@@ -123,7 +123,10 @@ const REASON_MESSAGE: Record<AuthFailureReason, string> = {
   invalid_code: "That code is wrong or has expired. Check the latest email, or send a new code.",
   rate_limited: "Too many attempts. Wait a minute, then try again.",
   unreachable: "Can't reach the sign-in service. Check your connection and try again.",
-  unavailable: "Sign-in is not available on this server.",
+  /* Neutral on purpose (2026-11-26, Android QA run 25): this reason also
+     covers a build with no sign-in configured, so "on this server" blamed
+     the wrong side. */
+  unavailable: "Sign-in isn't available right now.",
   cancelled: "Sign-in was cancelled. Try again.",
   unknown: "Sign-in did not work. Try again.",
 };
@@ -249,7 +252,7 @@ export function useEmailCodeSignIn() {
 
 const GOOGLE_MESSAGE: Record<AuthFailureReason, string> = {
   cancelled: "Google sign-in was cancelled. Try again, or use your email instead.",
-  unavailable: "Google sign-in is not available on this server. Use your email instead.",
+  unavailable: "Google sign-in isn't available right now. Use your email instead.",
   unreachable: "Can't reach the sign-in service. Check your connection and try again.",
   rate_limited: "Too many attempts. Wait a minute, then try again.",
   invalid_email: "Google sign-in did not finish. Try again, or use your email instead.",

@@ -760,7 +760,8 @@ use it. Copy, final wording:
   new `unconfirmed` problem: "We can’t confirm your sign-in right now. The
   sign-in service is briefly unavailable; you are still signed in. Try again
   in a moment." with Try again, and nothing offers sign-out. A 503 without
-  either is still "Sign-in is not available on this server".
+  either is still the unavailable card, "Sign-in isn’t available right now"
+  (it said "…on this server" until 2026-11-26; see the Changelog).
 - **Too many failed credentials (429).** A 429 whose detail is not the rate
   limit's "You're going a bit fast." sentence is shown as sent, so the
   credential limiter's own wait reaches the person (`createRunFailureMessage`).
@@ -870,3 +871,4 @@ use it. Copy, final wording:
 - 2026-11-26 · Claude (apk-supabase-config agent) · Android build configuration: CI now compiles the per-lane Supabase URL and publishable key into the APK (they were missing, so CI APKs up to v2.3.0-build543 had sign-in off) and fails a device-bound build without them; QA note on CI vs local APKs and the shared callback scheme
 - 2026-11-26 · frontend agent · Android sign-in return scheme is now the build's own applicationId (manifest `${applicationId}`, runtime `App.getInfo().id`, fallback `ai.videolens.app`): prod unchanged, dev APK `ai.videolens.app.dev://auth/callback` (fixes android-64 run 25: both apps claimed the link); `AuthRedirectBrowser.returnUrl()` async; dev Supabase redirect allowlist needs the `.dev` entry (owner)
 - 2026-11-26 · Claude (android-fixes integration agent) · merged the apk-supabase-config, return-scheme and run 25 changes; "Android build configuration" no longer says both APKs share `ai.videolens.app://auth/callback` (each lane has its own scheme and Redirect URL)
+- 2026-11-26 · frontend agent · Android QA run 25 copy: the unavailable Account card is "Sign-in isn’t available right now" (was "…not available on this server", which blamed the server even for a build with no sign-in configured) and its body names the real label, "your own key under Gemini key" (was "under API key"); `REASON_MESSAGE.unavailable` and `GOOGLE_MESSAGE.unavailable` in `useAuthSession.ts` reworded the same way

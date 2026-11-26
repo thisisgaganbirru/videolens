@@ -292,7 +292,15 @@ export function useFreeRuns(identity: string | null = ""): {
      a stale number. Read again whenever the app comes back: the page becoming
      visible (browsers, and the Android WebView), and Capacitor's own `resume`
      event on the native shell. The two often fire together; one read, not
-     two (refreshFreeRuns also shares an in-flight request). */
+     two (refreshFreeRuns also shares an in-flight request).
+
+     And when the network comes back (2026-11-26, Android QA run 25): after
+     an offline launch the strip stayed empty until the app was left and
+     reopened. The reconnect listener above runs only while the reachability
+     notice is up (and, before this fix, only once `navigator.onLine` read
+     true, which the Android WebView does not promise at the moment it fires
+     `online`). This one is ungated, like resume, and goes through the same
+     throttle; `refreshFreeRuns` shares the request when both fire. */
   useEffect(() => {
     if (hasKey) return;
     let last = 0;
@@ -306,9 +314,11 @@ export function useFreeRuns(identity: string | null = ""): {
       if (document.visibilityState === "visible") again();
     };
     document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", again);
     const offResume = nativeShell.onResume(again);
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", again);
       offResume();
     };
   }, [hasKey]);

@@ -263,6 +263,14 @@ and the notice is up while either read's latest result is unreachable. A
 healthy capabilities reply no longer clears a free-runs 503, and the other way
 round. Details in `free-runs.md`.
 
+**`online` is not gated on `navigator.onLine` (2026-11-26, Android QA run
+25).** The retry used to check `navigator.onLine` before every reconnect
+chance, the `online` event included. If the WebView fires `online` a moment
+before `onLine` reads true, that skipped the only retry, and the notice
+stayed up next to a free-runs strip that had come back. `focus` and
+`visibilitychange` keep the check; `online` now retries straight away.
+Details and verification in `free-runs.md`, "Coming back online".
+
 ## Changelog
 
 - 2026-08-29 · frontend agent · added the capability surface: `CapabilitiesGateway` port + `FetchCapabilitiesGateway` adapter (normalising, not casting), `useCapabilities` hook fetched once in `HomeScreen`, the `CapabilityNotice` intake strip with a `probed`-aware disclosure, and `CapabilityCallout` wired to the URL field and the API-key panel; extracted `infrastructure/apiBase.ts` so two adapters share one origin
@@ -271,3 +279,4 @@ round. Details in `free-runs.md`.
 - 2026-11-02 · frontend agent (refinement 5) · LCH-06d: offline branch unreachable in the app because WebView needs ACCESS_NETWORK_STATE for navigator.onLine; permission added to the manifest (device check pending)
 - 2026-11-02 · frontend agent (refinement 11) · capabilities reports reachability under its own source name; the notice holds while any launch read is unreachable (D-R10-1)
 - 2026-11-02 · frontend (refinement 15) · `.cap-notice` is an em size container; below 15em the toggle drops under the sentence (no more 84px column split mid-word at 412/200%); sentence `overflow-wrap` anywhere → break-word; also covers the reachability notice
+- 2026-11-26 · frontend agent · Android QA run 25: the `online` event retries the launch reads without the `navigator.onLine` gate (focus and visibility keep it), so the unreachable notice clears when the network returns
