@@ -964,6 +964,64 @@ No runs submitted; no sign-in, key, account or checkout actions.
   - Landing: "3 free runs a day, no account needed." / "Sign in for 10 a day.", 67px, CLS 0, no "month".
   - Analyze strip: unchanged wording, no overflow at 320 or 412.
 
+### 2026-11-14 · android-66 (device QA) · run 24 (Analyze simplification, vocabulary, Account/History and saved history, dev at e1149f7 after PRs #127 and #128)
+
+**Setup**
+- **Build.** Clean `dev` at e1149f7. APK built (android:sync, assembleDebug) and installed on the API 36 emulator.
+- **Ports.** `adb reverse` re-added for 8000 and 3005.
+- **Where.** App checks on the installed APK; the web shell in emulator Chrome on :3005.
+- **Session.** Signed out. No Gemini key saved. No local History runs.
+- **Evidence.** In `%TEMP%\qa24\` (01–11). Probe scripts: `analyze24.js`, `menu24.js`, `account24.js`, `history24.js`, `clsall.js`, `reach.js`, `overflow.js`, `spentcheck.js`. `preload.py` with `spentpre.js` injects scripts before page load (CDP `addScriptToEvaluateOnNewDocument`).
+- **Limits kept.** No runs submitted, no sign-in or sign-out, no key changes, no deletes, no checkout.
+- **Spent state.** Simulated client-side only: the pre-paint stamp `videolens-runs-spent` plus a mocked `/api/free-runs` reply with `remaining: 0`, both set before page scripts ran. This stands in for a real second visit. The stamp was removed afterwards.
+- **Emulator note.** A System UI "isn't responding" dialog appeared once, from Software graphics plus repeated `wm size` changes, and swallowed taps until "Wait" was tapped. Taps were redone after it.
+
+**Results**
+- **1. Analyze, runs left. PASS.**
+  - h1 "New analysis". No "Turn any short video into clean notes" and no "What you get" panel.
+  - The strip (`data-state=left`), "3 of 3 runs left today. Resets at 7:00 PM. Sign in for 10 a day.", sits above the title at 412/360/320.
+  - Retention line: "Your video is deleted from our servers when the run finishes. The result is kept for up to an hour, then deleted."
+  - Link label "Paste a public link". Title "Analyze a video · VideoLens AI". No overflow.
+  - Layout shift, three reloads each: 0.0022 / 0.0019 / 0.0016 at 412 / 360 / 320, from the dock items settling only. Web at 320: 0.0000.
+- **2. Analyze, out of runs (simulated second visit). PASS.**
+  - The stamp sets `html[data-runs-spent=sign-in]`, and the reserved space holds while the read is slowed by 400 ms. Shift 0.0022 at 412 and 0.0016 at 320, the dock only, on two reloads each.
+  - Strip `data-state=spent`: "You've used today's 3 runs. They reset at …".
+  - Card `#intake-blocked[data-offer=pair]`: "Analyzing is paused until your runs reset." with the primary pill "Sign in for 10 runs a day" and the text link "Use your own Gemini key".
+  - Analyze link and Browse files are disabled.
+  - **Edge case.** With a stale stamp (stamp present but the server says runs are left), the reserved block collapses once the read lands. The form moves up 171 css px at 412 (CLS 0.095) and 193 at 320 (CLS 0.102), and the stamp is cleared.
+    - The stamp carries an expiry and is dropped before paint once it passes, so this should only happen when runs come back before the stamped time.
+    - Recorded, not failed.
+- **3. Run states. NOT TESTED.**
+  - Failure reason and Try again order, "Back to History", and the back button from a result opened from History all need a finished or failed run. There are no local History entries, and submitting runs was not allowed.
+- **4. Vocabulary and order. PASS.**
+  - Web phone menu at 320: Analyze, History, "Sign in for 10 runs a day", Gemini key (second group), Releases.
+  - App More sheet: Gemini key, Releases, Theme ("Following your device"), Privacy, Terms.
+  - Dock: Analyze / History / Account / More on every screen tested, with Account visible. The back key closes the More sheet.
+- **5. Account, signed out. PASS** (signed-in and paid views NOT TESTED).
+  - h1 "Account", card "Get 10 free runs a day".
+  - "On this device" shows "Recent history / Saved in this browser · Up to 20 runs" and "Your Gemini key (optional) / Use your own Google AI access."
+  - No usage figure, divider, Sign out or Delete account, as expected signed out.
+  - Shift 0.0022 at 412 and 0.0016 at 320. No overflow.
+  - Not reachable signed out: "N of L runs left today", loading placeholders, the upgrade comparison, the divider, and the delete form with the 30-day hold.
+- **6. History, anonymous. PASS** (paid saved-history UI NOT TESTED).
+  - Lede "Your last 20 runs, saved in this browser. Not synced." Empty state "No runs yet." with "Analyze a video".
+  - Shift 0.0016–0.0023. No overflow.
+  - Not reachable without a paid account: "Load more runs", "Delete all saved runs", "Only in this browser" and per-run delete.
+- **7. Consent v4. PASS.**
+  - The box starts unticked.
+  - Seeding `videolens-media-terms-v3=accepted` and reloading removes the v3 key and leaves the box unticked, so v4 asks again once.
+- **8. Document titles. MINOR FAIL (app only).**
+  - Dock taps set "History · VideoLens AI" and "Account · VideoLens AI", and Analyze sets "Analyze a video · VideoLens AI".
+  - Loading `/app.html?view=history` or `?view=account` directly in the APK shows the right screen but leaves the title at "Analyze a video · VideoLens AI".
+  - The same deep links on the web (`/app?view=…`) set the right title.
+- **9. Device layout. PASS.**
+  - Keyboard open on the link field: the dock hides (`data-keyboard=open`) and Analyze link stays above the keyboard. Browse files scrolls into view above the keyboard.
+  - Short heights: at 524 and 391 css px tall, both buttons can be scrolled above the dock.
+  - No horizontal overflow at 412/360/320, at font scale 1.3 (root 20.8px) and 2.0 (root 32px), or in dark mode. Font scale was restored to 1.0.
+  - Dark mode, from system night mode: Analyze, Account and History render dark, with light status-bar icons and no shift change.
+  - The header sits below the status bar and the dock above the gesture bar.
+- **10. Back button.** From Account (Analyze → History → Account), Back returns to Analyze and a second Back leaves the app. That is the tab-root pattern, recorded as observed. Back from a History-opened result is NOT TESTED (see item 3).
+
 ## Changelog
 
 - 2026-11-02 · android-66 (device QA) · added section 19 (update banner, UPD-01..07) and run 9 (UPD partial on the mock: UPD-01/03 PASS, UPD-04 partial, rest PAUSED) and run 10 (real runs: terms persistence, RUN-01 retry with a YouTube link, RUN-02/02b/03/04/05/07/08, ORI-02, HIS-01, FREE-01..05, RUN-06b/06c/06d/06e, LCH-06b/06c, FREE-02b PASS; FREE-02c not exercised (YouTube 403 mid-download); stale free-runs count after a refund logged as known (R9); stage timings incl. Normalizing ~60 s for a 170 s file); added FREE-02b/02c rows to section 6
@@ -992,3 +1050,4 @@ No runs submitted; no sign-in, key, account or checkout actions.
 - 2026-11-14 · android-66 (device QA) · run 21: landing at 2eb2bbe in emulator Chrome (412/360/320/768/784) plus rebuilt APK: allowance lines swap from the fallback with no layout shift (67px both states, offline fallback clean); Sign in link (41x18 inline) and the "Get 10 free runs" menu row open /app?view=account; Start analyzing the only green in the hero (repeated in the closing band); 768/784 pill reads "Sign up free" with a 0.007 shift; Analyze strip "3 free runs left today." plus one sign-in hint wraps cleanly at 320 in app and web; How it works and details list PASS
 - 2026-11-14 · android-66 (device QA) · run 22: 10 free runs a day at c49c4bf (412/320, rebuilt APK plus emulator Chrome): landing lines, "Get 10 free runs" nav, Analyze strip and Privacy all say a day / today / each day with no free-account "month"; dock 4 items; Account checked signed out (signed-in count and paid pitch source-checked only; paid pitch still cites 100 runs a month); FAIL: FreeRunsBanner pops in after the fetch and shifts the intake content about 93-115 css px (CLS 0.08-0.12)
 - 2026-11-14 · android-66 (device QA) · run 23: reserved FreeRunsBanner space and paid plan at 30 a day (4cff3dc, 412/320, rebuilt APK plus emulator Chrome, signed out, no key saved): banner shift PASS (APK 0.0022/0.0016 from the dock only, web 0.0000, three reloads each); paid pitch, Terms "each day (UTC)" and Privacy "runs each day" PASS with no 100 or included "runs a month"; 4-item dock and landing/Analyze unchanged; saved-key case not testable
+- 2026-11-14 · android-66 (device QA) · run 24: dev at e1149f7 (PRs #127/#128), signed out, no runs submitted: "New analysis" Analyze with the strip above the title and retention line PASS (CLS ≤0.0022, dock only); simulated spent second visit reserved (CLS ≤0.0022) with the "Sign in for 10 runs a day" / "Use your own Gemini key" offer; stale-stamp edge shifts 0.095/0.102; menu/More order, 4-item dock, consent v4, keyboard, short heights, dark, font scale 1.3/2.0 PASS; MINOR app-only: deep-loaded ?view=history/account keeps the "Analyze a video" title; run states, Back to History, signed-in Account and paid History NOT TESTED
