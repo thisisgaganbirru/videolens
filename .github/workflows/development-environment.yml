@@ -10,7 +10,7 @@ name: Development environment
 # the promotion into main instead (production-environment.yml).
 #
 # Only the parts a change touches are run. Branch protection should require
-# the single `required` job below, never the individual jobs, because a
+# the single `dev-required` job below, never the individual jobs, because a
 # skipped job would otherwise leave its check pending forever.
 
 on:
@@ -121,8 +121,8 @@ jobs:
       contents: read
       pull-requests: read
 
-  required:
-    name: required
+  dev-required:
+    name: dev-required
     needs: [changes, application, android, security, lint-workflows, hygiene]
     if: always()
     runs-on: ubuntu-latest
