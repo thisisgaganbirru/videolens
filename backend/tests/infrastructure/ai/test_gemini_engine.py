@@ -97,7 +97,7 @@ def _engine(client: _FakeClient, rand: float = 1.0, **settings) -> tuple[GeminiE
         "gemini_fallback_model": "",
         "gemini_retry_attempts": 6,
         "gemini_retry_max_delay_seconds": 20.0,
-        "gemini_slide_image_resolution": "ultra_high",
+        "gemini_slide_image_resolution": "high",
         **settings,
     }
     engine = GeminiEngine(
@@ -165,6 +165,7 @@ class AnalyzeRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.files.upload_calls, 1)
         self.assertEqual(client.models.models_called, ["primary-model", "primary-model"])
         self.assertEqual(sleeps, [2.0])
+        await engine.drain()  # the deletes run in the background
         self.assertEqual(client.files.deleted, ["files/1"])
 
     async def test_non_transient_error_raises_immediately(self) -> None:
@@ -179,6 +180,7 @@ class AnalyzeRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(client.models.models_called), 1)
         self.assertEqual(client.files.upload_calls, 1)
         self.assertEqual(sleeps, [])
+        await engine.drain()  # the deletes run in the background
         self.assertEqual(client.files.deleted, ["files/1"])
 
     async def test_exhausted_retries_raise_analysis_unavailable(self) -> None:
@@ -196,6 +198,7 @@ class AnalyzeRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.files.upload_calls, 1)
         # rand=1.0 pins each sleep to its ceiling: the ~50s worst case.
         self.assertEqual(sleeps, [2.0, 4.0, 8.0, 16.0, 20.0])
+        await engine.drain()  # the deletes run in the background
         self.assertEqual(client.files.deleted, ["files/1"])
 
     def test_default_retry_settings(self) -> None:
@@ -203,6 +206,7 @@ class AnalyzeRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fields["gemini_retry_attempts"].default, 6)
         self.assertEqual(fields["gemini_retry_max_delay_seconds"].default, 20.0)
         self.assertEqual(fields["gemini_fallback_model"].default, "")
+        self.assertEqual(fields["gemini_slide_image_resolution"].default, "high")
 
     async def test_exhausted_429_keeps_its_own_wording(self) -> None:
         quota = _api_error(genai_errors.ClientError, 429, "Quota exceeded.")
@@ -314,6 +318,7 @@ class AnalyzeRetryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(result, _RESULT)
         self.assertEqual(client.files.upload_calls, 2)
+        await engine.drain()  # the deletes run in the background
         self.assertEqual(client.files.deleted, ["files/1", "files/2"])
 
     async def test_transient_poll_error_then_active_succeeds(self) -> None:
@@ -343,6 +348,7 @@ class AnalyzeRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.files.upload_calls, 1)
         self.assertEqual(client.models.models_called, [])
         self.assertEqual(sleeps, [])
+        await engine.drain()  # the deletes run in the background
         self.assertEqual(client.files.deleted, ["files/1"])
 
     async def test_exhausted_transient_poll_errors_map_to_unavailable(self) -> None:
@@ -356,6 +362,7 @@ class AnalyzeRetryTests(unittest.IsolatedAsyncioTestCase):
         # A busy poll is not a processing failure: no re-upload.
         self.assertEqual(client.files.upload_calls, 1)
         self.assertEqual(client.models.models_called, [])
+        await engine.drain()  # the deletes run in the background
         self.assertEqual(client.files.deleted, ["files/1"])
 
     async def test_retry_logs_status_and_model_but_never_the_key(self) -> None:
@@ -440,6 +447,7 @@ class OwnKeyClientLifetimeTests(unittest.IsolatedAsyncioTestCase):
                         await call(engine)
                     except ValueError:
                         pass
+                await engine.drain()  # the release follows the background deletes
                 self.assertEqual(own.closed, ["async", "sync"])
 
     async def test_the_shared_client_stays_open(self) -> None:

@@ -149,6 +149,9 @@ class GeminiEngine:
         # Injected so tests can assert on backoff delays without waiting them out.
         self._sleep = sleep
         self._rand = rand
+        # Background upload clean-ups still running (`_schedule_cleanup`).
+        # Strong references: the event loop keeps only weak ones to a task.
+        self._cleanups: set[asyncio.Task[None]] = set()
 
     def _get_client(self, api_key: str | None = None) -> genai.Client:
         # A caller-supplied (bring-your-own) key gets its own client, never cached
@@ -392,58 +395,122 @@ class GeminiEngine:
         resolutions: Optional[list[Optional[types.PartMediaResolutionLevel]]] = None,
     ) -> VideoAnalysis:
         """Upload every file (each after its own label, when it has one),
-        analyze them in one request, and delete every upload however that
-        went. `resolutions[i]`, when set, is file i's per-part media
-        resolution; a file without one goes in as the upload itself."""
+        analyze them in one request, and return as soon as the answer is
+        parsed. Every upload is deleted however that went, in the background
+        (`_schedule_cleanup`), which also releases the client afterwards.
+        `resolutions[i]`, when set, is file i's per-part media resolution; a
+        file without one goes in as the upload itself."""
         if on_stage:
             await on_stage("uploading_to_gemini")
         client = self._get_client(api_key)
 
-        # The media parts come first so the model reads the thing it is
-        # analyzing before any publisher-supplied text about it.
-        prompt_parts: list[str] = [intro]
-        source_context = build_source_context(metadata)
-        if source_context:
-            prompt_parts.append(source_context)
-
         # Upload once. The upload is an API call too and can 503 on its own,
         # so it gets the same transient-only backoff - but a generate_content
         # failure below never sends us back here to upload the files again.
-        # `uploaded[i]` is file i once its upload returns, so the cleanup
+        # `uploaded[i]` is file i once its upload returns, so the clean-up
         # below deletes every upload that happened, whatever failed.
         uploaded: list[Any] = [None] * len(files)
         try:
-            try:
-                await self._upload_all(client, [path for _, path in files], uploaded)
+            # The media parts come first so the model reads the thing it is
+            # analyzing before any publisher-supplied text about it.
+            prompt_parts: list[str] = [intro]
+            source_context = build_source_context(metadata)
+            if source_context:
+                prompt_parts.append(source_context)
 
-                if on_stage:
-                    await on_stage("analyzing")
-                media_parts: list[Any] = []
-                levels = resolutions or [None] * len(files)
-                for (label, _), file, level in zip(files, uploaded, levels):
-                    if label:
-                        media_parts.append(label)
-                    media_parts.append(file if level is None else _part_at(file, level))
-                response = await self._generate_with_retry(
-                    client,
-                    contents=[*media_parts, *prompt_parts],
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_instruction,
-                        response_mime_type="application/json",
-                        response_schema=VideoAnalysis,
-                    ),
-                )
-                return self._parse(response)
-            finally:
-                for file in uploaded:
-                    if file is None:
-                        continue
-                    try:
-                        await client.aio.files.delete(name=file.name)
-                    except Exception:
-                        pass
+            await self._upload_all(client, [path for _, path in files], uploaded)
+
+            if on_stage:
+                await on_stage("analyzing")
+            media_parts: list[Any] = []
+            levels = resolutions or [None] * len(files)
+            for (label, _), file, level in zip(files, uploaded, levels):
+                if label:
+                    media_parts.append(label)
+                media_parts.append(file if level is None else _part_at(file, level))
+            response = await self._generate_with_retry(
+                client,
+                contents=[*media_parts, *prompt_parts],
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    response_mime_type="application/json",
+                    response_schema=VideoAnalysis,
+                ),
+            )
+            return self._parse(response)
+        finally:
+            # Off the critical path: the result (or the error) goes back to
+            # the run now, and the deletes and the client release follow in
+            # the background. Synchronous, so it also runs while a
+            # cancellation is unwinding through here.
+            self._schedule_cleanup(client, api_key, uploaded)
+
+    def _schedule_cleanup(self, client: genai.Client, api_key: str | None, uploaded: list[Any]) -> None:
+        """Start the background task that deletes this call's uploads and
+        then releases its client. It is its own task, so cancelling the run
+        does not cancel it; a strong reference is kept in `_cleanups` until
+        it finishes (asyncio holds tasks only weakly). Scheduled even with
+        nothing to delete, because a per-BYOK client still has to be closed."""
+        names = [file.name for file in uploaded if file is not None]
+        task = asyncio.get_running_loop().create_task(self._cleanup(client, api_key, names))
+        self._cleanups.add(task)
+        task.add_done_callback(self._cleanups.discard)
+
+    async def _cleanup(self, client: genai.Client, api_key: str | None, names: list[str]) -> None:
+        """Delete `names`, then release the client: never before, so a
+        per-BYOK client is not closed under a delete still in flight (the
+        shared client is never closed). Never raises."""
+        try:
+            await self._delete_all(client, names)
+        except Exception:  # noqa: BLE001 - background clean-up must not raise
+            logger.debug("Gemini upload clean-up failed")
         finally:
             await self._release(client, api_key)
+
+    @staticmethod
+    async def _delete_all(client: genai.Client, names: list[str]) -> None:
+        """Delete every upload, `_UPLOAD_CONCURRENCY` at a time (one at a
+        time was ~0.5 s a file). A failed delete is swallowed and does not
+        stop the others; the file then expires on Gemini's side after 48 h.
+        Only the count is logged, never a file name or the error text."""
+        if not names:
+            return
+        gate = asyncio.Semaphore(_UPLOAD_CONCURRENCY)
+
+        async def one(name: str) -> None:
+            async with gate:
+                await client.aio.files.delete(name=name)
+
+        outcomes = await asyncio.gather(*(one(name) for name in names), return_exceptions=True)
+        failed = [outcome for outcome in outcomes if isinstance(outcome, Exception)]
+        if failed:
+            logger.info(
+                "%d of %d Gemini uploads could not be deleted (%s); Gemini expires them after 48 h",
+                len(failed),
+                len(names),
+                ", ".join(sorted({type(outcome).__name__ for outcome in failed})),
+            )
+
+    async def drain(self, timeout: float = 5.0) -> None:
+        """Best effort at shutdown: wait up to `timeout` seconds for the
+        background clean-ups still running, then give up without raising.
+        What is left is not cancelled; an upload never deleted expires on
+        Gemini's side after 48 h."""
+        pending = set(self._cleanups)
+        if not pending:
+            return
+        try:
+            _, still_running = await asyncio.wait(pending, timeout=max(timeout, 0.0))
+        except Exception:  # noqa: BLE001 - shutdown must not fail here
+            logger.debug("Draining Gemini clean-ups failed")
+            return
+        if still_running:
+            logger.info(
+                "%d Gemini upload clean-up(s) still running after %.1fs at shutdown; "
+                "their files expire on Gemini's side after 48 h",
+                len(still_running),
+                timeout,
+            )
 
     async def _upload_all(self, client: genai.Client, paths: list[str], uploaded: list[Any]) -> None:
         """Upload every path and wait for each to be ACTIVE, at most

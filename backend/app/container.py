@@ -312,6 +312,10 @@ class Container:
 
     async def close(self) -> None:
         await self.job_queue.close()
+        # Best effort: the Gemini upload deletes still running in the
+        # background get a few seconds; anything left expires on Gemini's
+        # side after 48 h (docs/backend/gemini-analysis.md).
+        await self.analysis_engine.drain(timeout=5.0)
         await self.key_vault.close()
         await self.run_repository.close()
         await self.spend_cap.close()

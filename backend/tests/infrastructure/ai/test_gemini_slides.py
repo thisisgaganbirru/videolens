@@ -4,12 +4,13 @@ with the same fake client as test_gemini_engine.py."""
 import asyncio
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from google.genai import errors as genai_errors
 from google.genai import types
 
 from app.domain.entities import MediaSlide, ScreenTextSegment, SlideKind, TranscriptSegment, VideoAnalysis
-from app.infrastructure.ai.gemini_engine import CAROUSEL_SYSTEM_INSTRUCTION, SYSTEM_INSTRUCTION
+from app.infrastructure.ai.gemini_engine import CAROUSEL_SYSTEM_INSTRUCTION, SYSTEM_INSTRUCTION, GeminiEngine
 from app.infrastructure.config import Settings
 from tests.infrastructure.ai.test_gemini_engine import _RESULT, _FakeClient, _api_error, _engine
 
@@ -80,6 +81,7 @@ class AnalyzeSlidesTests(unittest.IsolatedAsyncioTestCase):
         # Each label sits right before its own upload, media before any prompt text.
         self.assertEqual([_file_name(part) for part in contents[1:6:2]], ["files/1", "files/2", "files/3"])
         self.assertEqual(client.configs[0].system_instruction, CAROUSEL_SYSTEM_INSTRUCTION)
+        await engine.drain()
         self.assertEqual(sorted(client.files.deleted), ["files/1", "files/2", "files/3"])
 
     async def test_slide_numbers_outside_the_post_are_cleared(self) -> None:
@@ -114,6 +116,7 @@ class AnalyzeSlidesTests(unittest.IsolatedAsyncioTestCase):
         # First attempt: slides 1 and 2 (no new upload starts after the
         # failure); second attempt: all three. Every upload is deleted.
         self.assertEqual(client.files.upload_calls, 5)
+        await engine.drain()
         self.assertEqual(len(client.files.deleted), 5)
 
     async def test_an_upload_that_fails_still_deletes_the_slides_before_it(self) -> None:
@@ -124,6 +127,7 @@ class AnalyzeSlidesTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(genai_errors.ClientError):
             await engine.analyze_slides_with_retry(_SLIDES)
 
+        await engine.drain()
         self.assertEqual(client.files.deleted, ["files/1"])
         self.assertEqual(client.models.contents_seen, [])
 
@@ -141,7 +145,7 @@ class SlideImageResolutionTests(unittest.IsolatedAsyncioTestCase):
 
         media = _media(client.models.contents_seen[0])
         self.assertIsInstance(media[0], types.Part)
-        self.assertEqual(media[0].media_resolution.level, types.PartMediaResolutionLevel.MEDIA_RESOLUTION_ULTRA_HIGH)
+        self.assertEqual(media[0].media_resolution.level, types.PartMediaResolutionLevel.MEDIA_RESOLUTION_HIGH)
         self.assertEqual(media[0].file_data.file_uri, "https://files.test/files/1")
         self.assertEqual(media[0].file_data.mime_type, "application/octet-stream")
         # The video slide is the upload itself, as before.
@@ -151,11 +155,11 @@ class SlideImageResolutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_level_follows_the_setting_and_blank_leaves_it_to_the_model(self) -> None:
         client = _FakeClient([_RESULT])
-        engine, _ = _engine(client, gemini_slide_image_resolution="high")
+        engine, _ = _engine(client, gemini_slide_image_resolution="ultra_high")
         await engine.analyze_slides_with_retry(_SLIDES)
         self.assertEqual(
             _media(client.models.contents_seen[0])[0].media_resolution.level,
-            types.PartMediaResolutionLevel.MEDIA_RESOLUTION_HIGH,
+            types.PartMediaResolutionLevel.MEDIA_RESOLUTION_ULTRA_HIGH,
         )
 
         client = _FakeClient([_RESULT])
@@ -266,7 +270,193 @@ class ParallelUploadTests(unittest.IsolatedAsyncioTestCase):
         (contents,) = client.models.contents_seen
         uploads = [_file_name(part) for part in _media(contents)]
         self.assertEqual(uploads, [f"files/{slide.path}" for slide in slides])
+        await engine.drain()
         self.assertEqual(len(client.files.deleted), 9)
+
+
+class BackgroundCleanupTests(unittest.IsolatedAsyncioTestCase):
+    """The answer goes back to the run as soon as Gemini's response is
+    parsed; the upload deletes (four at a time) and then the client release
+    follow in a background task the engine keeps a reference to."""
+
+    _NINE = tuple(MediaSlide(path=f"normalized-{n:02d}.jpg", kind=SlideKind.IMAGE) for n in range(1, 10))
+
+    def _gated_deletes(self, client: _FakeClient) -> tuple[asyncio.Event, dict]:
+        """Every delete waits on the returned event before it is recorded."""
+        gate = asyncio.Event()
+        stats = {"in_flight": 0, "peak": 0}
+        record = client.files.delete
+
+        async def gated_delete(name):
+            stats["in_flight"] += 1
+            stats["peak"] = max(stats["peak"], stats["in_flight"])
+            try:
+                await gate.wait()
+            finally:
+                stats["in_flight"] -= 1
+            await record(name)
+
+        client.files.delete = gated_delete
+        return gate, stats
+
+    def _spy_release(self, client: _FakeClient) -> list[int]:
+        """How many deletes had finished each time the client was released."""
+        seen: list[int] = []
+        original = GeminiEngine._release
+
+        async def spy(c, api_key):
+            seen.append(len(client.files.deleted))
+            await original(c, api_key)
+
+        patcher = patch.object(GeminiEngine, "_release", new=staticmethod(spy))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return seen
+
+    @staticmethod
+    async def _settle() -> None:
+        for _ in range(20):
+            await asyncio.sleep(0)
+
+    async def test_the_result_returns_before_slow_deletes_finish(self) -> None:
+        client = _FakeClient([_RESULT])
+        gate, stats = self._gated_deletes(client)
+        released = self._spy_release(client)
+        engine, _ = _engine(client)
+
+        result = await asyncio.wait_for(engine.analyze_slides_with_retry(self._NINE), timeout=5)
+
+        self.assertIs(result, _RESULT)
+        self.assertFalse(gate.is_set())
+        self.assertEqual(client.files.deleted, [])
+        self.assertEqual(released, [])
+        await self._settle()
+        self.assertEqual(stats["in_flight"], 4)
+
+        gate.set()
+        await engine.drain()
+
+        self.assertEqual(sorted(client.files.deleted), sorted(f"files/{n}" for n in range(1, 10)))
+        self.assertEqual(stats["peak"], 4)
+        # Released once, and only after every delete had finished.
+        self.assertEqual(released, [9])
+        self.assertEqual(engine._cleanups, set())
+
+    async def test_a_failed_generate_still_deletes_every_upload_then_releases(self) -> None:
+        bad = _api_error(genai_errors.ClientError, 400, "Invalid argument.")
+        client = _FakeClient([bad])
+        gate, stats = self._gated_deletes(client)
+        released = self._spy_release(client)
+        engine, _ = _engine(client)
+
+        with self.assertRaises(genai_errors.ClientError):
+            await asyncio.wait_for(engine.analyze_slides_with_retry(self._NINE), timeout=5)
+        self.assertEqual(client.files.deleted, [])
+        self.assertEqual(released, [])
+        await self._settle()
+        self.assertEqual(stats["in_flight"], 4)
+
+        gate.set()
+        await engine.drain()
+
+        self.assertEqual(len(client.files.deleted), 9)
+        self.assertEqual(stats["peak"], 4)
+        self.assertEqual(released, [9])
+
+    async def test_a_parse_failure_still_deletes_every_upload(self) -> None:
+        client = _FakeClient([None])  # parsed None and no text: "empty response"
+        released = self._spy_release(client)
+        engine, _ = _engine(client)
+
+        with self.assertRaises(RuntimeError):
+            await engine.analyze_slides_with_retry(_SLIDES)
+        await engine.drain()
+
+        self.assertEqual(sorted(client.files.deleted), ["files/1", "files/2", "files/3"])
+        self.assertEqual(released, [3])
+
+    async def test_a_cancelled_run_still_deletes_its_uploads(self) -> None:
+        client = _FakeClient([])
+        started = asyncio.Event()
+
+        async def hanging_generate(model, contents, config):
+            started.set()
+            await asyncio.Event().wait()
+
+        client.models.generate_content = hanging_generate
+        released = self._spy_release(client)
+        engine, _ = _engine(client)
+
+        run = asyncio.create_task(engine.analyze_slides_with_retry(_SLIDES))
+        await asyncio.wait_for(started.wait(), timeout=5)
+        run.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await run
+        await engine.drain()
+
+        self.assertEqual(sorted(client.files.deleted), ["files/1", "files/2", "files/3"])
+        self.assertEqual(released, [3])
+
+    async def test_drain_gives_up_after_its_timeout_without_raising(self) -> None:
+        client = _FakeClient([_RESULT])
+        gate, _ = self._gated_deletes(client)
+        engine, _ = _engine(client)
+        await engine.analyze_slides_with_retry(_SLIDES)
+
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        with self.assertLogs("app.infrastructure.ai.gemini_engine", "INFO") as logs:
+            await engine.drain(timeout=0.05)
+        self.assertLess(loop.time() - started, 2.0)
+        self.assertIn("1 Gemini upload clean-up(s) still running", "\n".join(logs.output))
+        # Not cancelled: the clean-up is still there and finishes once it can.
+        self.assertEqual(len(engine._cleanups), 1)
+
+        gate.set()
+        await engine.drain()
+        self.assertEqual(len(client.files.deleted), 3)
+        self.assertEqual(engine._cleanups, set())
+
+    async def test_drain_with_nothing_running_returns_at_once(self) -> None:
+        engine, _ = _engine(_FakeClient([]))
+        await engine.drain(timeout=0)
+
+    async def test_a_failed_delete_neither_fails_the_run_nor_stops_the_others(self) -> None:
+        client = _FakeClient([_RESULT])
+        record = client.files.delete
+
+        async def flaky_delete(name):
+            if name == "files/2":
+                raise RuntimeError("delete failed for files/2")
+            await record(name)
+
+        client.files.delete = flaky_delete
+        engine, _ = _engine(client)
+
+        result = await engine.analyze_slides_with_retry(_SLIDES)
+        with self.assertLogs("app.infrastructure.ai.gemini_engine", "INFO") as logs:
+            await engine.drain()
+
+        self.assertIs(result, _RESULT)
+        self.assertEqual(sorted(client.files.deleted), ["files/1", "files/3"])
+        output = "\n".join(logs.output)
+        self.assertIn("1 of 3 Gemini uploads could not be deleted (RuntimeError)", output)
+        self.assertNotIn("files/2", output)
+
+    async def test_an_own_key_client_is_closed_only_after_its_deletes(self) -> None:
+        own = _FakeClient([_RESULT])
+        gate, _ = self._gated_deletes(own)
+        engine, _ = _engine(_FakeClient([]))
+
+        with patch("app.infrastructure.ai.gemini_engine.genai.Client", return_value=own):
+            await engine.analyze_slides_with_retry(_SLIDES, api_key="own-key")
+        await self._settle()
+        self.assertEqual(own.closed, [])
+
+        gate.set()
+        await engine.drain()
+        self.assertEqual(len(own.files.deleted), 3)
+        self.assertEqual(own.closed, ["async", "sync"])
 
 
 if __name__ == "__main__":
