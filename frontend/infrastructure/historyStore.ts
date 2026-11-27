@@ -51,6 +51,10 @@ const EMPTY: Omit<HistoryRecord, "run_id" | "created_at" | "updated_at"> = {
   orientation: null,
   summary_snippet: null,
   thumbnail: null,
+  /* 2026-11-27, carousel slide pictures. No DB_VERSION bump: the store is
+     schemaless past its key and one index, so older records simply lack
+     the field and read as "no slides". */
+  slides: null,
   result: null,
   source_metadata: null,
   completeness: null,

@@ -4,10 +4,12 @@ import {
   type HistoryPatch,
   type HistoryRecord,
   type MediaSource,
+  type PostSlide,
   type RunStatusResponse,
   type RunSummary,
 } from "@/domain/entities";
 import { ApiError } from "@/domain/errors";
+import { readSlides } from "@/domain/slides";
 import { authSession, callerIdentity, historyStore, runsGateway } from "@/infrastructure/container";
 
 /* Everything that writes History, in one place, free of React.
@@ -133,6 +135,36 @@ export function dataUrlToBlob(dataUrl: string | null | undefined): Blob | null {
   }
 }
 
+/** Blob → `data:` URL, for showing a stored slide picture again. A data URL
+ *  rather than an object URL so nothing has to be revoked; the CSP's
+ *  `img-src` already allows `data:`. Null if the Blob cannot be read. */
+export function blobToDataUrl(blob: Blob): Promise<string | null> {
+  return new Promise((resolve) => {
+    try {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+/** A stored record's slide pictures, ready to show. Null for a record with
+ *  none (reels, uploads, records written before 2026-11-27). A picture that
+ *  cannot be read comes back null and is drawn as the placeholder. */
+export async function slidesOfRecord(record: HistoryRecord): Promise<PostSlide[] | null> {
+  if (!Array.isArray(record.slides) || record.slides.length === 0) return null;
+  return Promise.all(
+    record.slides.map(async (s) => ({
+      slide: s.slide,
+      kind: s.kind,
+      thumbnail: s.thumbnail instanceof Blob ? await blobToDataUrl(s.thumbnail) : null,
+    }))
+  );
+}
+
 /** A patch from one status response. Only what the response actually carries
  *  is written: a later response without a field never erases an earlier one. */
 export function patchFromRun(run: RunStatusResponse): HistoryPatch {
@@ -153,6 +185,13 @@ export function patchFromRun(run: RunStatusResponse): HistoryPatch {
      nothing shows a poster before the run is done. */
   const thumbnail = dataUrlToBlob(run.thumbnail);
   if (thumbnail) patch.thumbnail = thumbnail;
+  /* A carousel's slide pictures (2026-11-27), stored as Blobs like the
+     poster so `list()`'s getAll does not copy them into memory as strings.
+     They live in this browser only. The frontend never uploads a History
+     record (see HistoryRecord.slides); Copy, Share and the .md report read
+     `result`, which does not hold them. */
+  const slides = readSlides(run.slides);
+  if (slides) patch.slides = slides.map((s) => ({ ...s, thumbnail: dataUrlToBlob(s.thumbnail) }));
   if (run.status === "complete" && run.result) {
     patch.result = run.result;
     patch.completeness = run.completeness ?? "full";
@@ -229,7 +268,14 @@ const unfiledCreates = new Map<string, HistoryPatch>();
 const lastWritten = new Map<string, string>();
 
 function signature(run: RunStatusResponse): string {
-  return [run.status, run.thumbnail ? 1 : 0, run.width ?? "", run.platform ?? "", run.result ? 1 : 0].join("|");
+  return [
+    run.status,
+    run.thumbnail ? 1 : 0,
+    run.width ?? "",
+    run.platform ?? "",
+    run.result ? 1 : 0,
+    Array.isArray(run.slides) ? run.slides.length : 0,
+  ].join("|");
 }
 
 /** File one observed status response. Called for every response the analysis

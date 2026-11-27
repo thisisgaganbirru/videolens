@@ -87,6 +87,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
     freeRunRefunded,
     result,
     completeness,
+    slides,
     sourceMetadata,
     error,
     submitting,
@@ -641,6 +642,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     result={result}
                     sourceMetadata={sourceMetadata}
                     completeness={completeness}
+                    slides={slides}
                   />
                 </article>
                 {/* UX fix spec 4.4: where the result is kept. Static text, so

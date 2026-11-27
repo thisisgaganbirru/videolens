@@ -66,7 +66,7 @@ store's subscribers in other tabs re-read.
 
 `run_id`, `created_at` (ISO), `status`, `title`, `source_kind`, `platform`,
 `duration_seconds`, `width`, `height`, `orientation`, `summary_snippet`,
-`thumbnail` (JPEG `Blob`, longest side ≤320px, ~10–14 KB, or null), `result`
+`thumbnail` (JPEG `Blob`, longest side ≤320px, ~10–14 KB, or null), `slides` (optional, 2026-11-27: `[{ slide, kind, thumbnail: Blob | null }]` for a multi-slide post), `result`
 (`VideoAnalysis`), `source_metadata`, `completeness`, `error`, `updated_at`.
 Everything except `run_id`/`created_at`/`status`/`updated_at` is nullable.
 
@@ -550,6 +550,24 @@ at sign-out lost those runs for good.
 
 `slide_count` rides along like `duration_seconds`: on `RunStatusResponse` and `RunSummary` (patched into the record by `patchFromRun`/`patchFromSummary` only when present), on `HistoryRecord` (optional, so older records read as none), and on a saved run's `source` (`savedEntry`). `posterBadge` shows `formatSlides` ("7 slides", or "Photo" for one image) ahead of the duration, as a `slides` badge kind with the default badge style.
 
+## Slide pictures (2026-11-27)
+
+`patchFromRun` stores a run's `slides` (read through `readSlides`) with each
+thumbnail converted to a Blob, like the poster, so `list()`'s `getAll` keeps
+them as lazy Blob references rather than copying base64 strings. The write
+signature counts `slides`, so the response that first carries them is not
+skipped as identical. **No IndexedDB version bump**: the store is schemaless
+past its key and `created_at` index; records written earlier simply have no
+`slides` and reopen as before. `openRun` reads the Blobs back to `data:`
+URLs (`slidesOfRecord`, FileReader) before any check, so nothing is set
+across a later await and there are no object URLs to revoke.
+
+**Never sent anywhere.** The frontend uploads no History record: the
+account's saved runs are written by the server from the run itself, and the
+backend keeps only the poster there (`docs/backend/saved-history.md`). The
+comment on `HistoryRecord.slides` says so. A saved run opened on a device
+without its own copy therefore shows text only.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported HistoryPanel to day-grouped rows with status dots; fixed duplicate React keys on non-adjacent "Undated" groups
@@ -575,3 +593,4 @@ at sign-out lost those runs for good.
 - 2026-11-21 · Claude (frontend agent) · submitting tab retries its own failed create (in-memory `unfiledCreates`, `mayCreate`-checked); copies removal scope stated (listed saved runs) and Privacy softened; `ANONYMOUS_OWNER` moved to domain
 - 2026-11-21 · Claude (frontend agent) · sign-out hides account rows instead of deleting them (viewer filter on list and open, guarded updates, per-viewer cap, reconcile on sign-in); only account deletion and a closed-hold sign-out remove that account's rows
 - 2026-11-26 · Claude (session ccr-3d42b168) · `slide_count` on run, summary, record and saved source; slides badge on the poster
+- 2026-11-27 · Claude (frontend agent) · `HistoryRecord.slides` (carousel slide pictures as Blobs, browser-only, no schema bump); reopened from History as data URLs

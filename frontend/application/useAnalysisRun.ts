@@ -6,6 +6,7 @@ import type {
   FreeRunsStatus,
   HistoryRecord,
   MediaSource,
+  PostSlide,
   RunStatus,
   RunSourceKind,
   RunStatusResponse,
@@ -23,7 +24,9 @@ import {
   recordGone,
   recordRunResponse,
   recordSubmitted,
+  slidesOfRecord,
 } from "@/application/historySync";
+import { readSlides } from "@/domain/slides";
 import {
   currentFreeRuns,
   markFreeRunsUsed,
@@ -225,6 +228,13 @@ export function useAnalysisRun() {
   /* The media's length, from the run detail (or the History record), for the
      Source card of a file run (refinement 2, #6). */
   const [durationSeconds, setDurationSeconds] = useState<number | null>(null);
+  /* A carousel's slide pictures (2026-11-27), as `data:` URLs whether they
+     came from the live response or from History's Blobs. Set only alongside
+     `result`; null for anything that is not a multi-slide post, and for an
+     account's saved run opened without this browser's copy (the server
+     never keeps slide pictures). Kept beside `result`, not inside it, so
+     Copy, Share and the .md report cannot pick them up. */
+  const [slides, setSlides] = useState<PostSlide[] | null>(null);
   /* The last submitted source, kept so a failed run can be retried with one
      press instead of re-pasting or re-picking. State rather than a ref because
      the screen reads it (whether to offer "Try again") during render. Cleared
@@ -403,6 +413,7 @@ export function useAnalysisRun() {
       activeRunStore.clear();
       setResult(run.result);
       setCompleteness(run.completeness ?? "full");
+      setSlides(readSlides(run.slides));
       settleFreeRuns(false);
       return true;
     }
@@ -629,6 +640,7 @@ export function useAnalysisRun() {
       setExpired(null);
       setResult(null);
       setCompleteness("full");
+      setSlides(null);
       setSourceMetadata(null);
       setDurationSeconds(null);
       setStage(null);
@@ -723,6 +735,7 @@ export function useAnalysisRun() {
     setFreeRunRefunded(false);
     setResult(null);
     setCompleteness("full");
+    setSlides(null);
     setSourceMetadata(null);
     setSourceName(null);
     setDurationSeconds(null);
@@ -795,6 +808,7 @@ export function useAnalysisRun() {
       setError(null);
       setResult(null);
       setCompleteness("full");
+      setSlides(null);
       setSourceMetadata(null);
       setSourceName(null);
       setDurationSeconds(null);
@@ -824,8 +838,13 @@ export function useAnalysisRun() {
          one the store could not hold) falls through to the server. */
       let record: HistoryRecord | null = null;
       let readable = true;
+      /* A finished carousel's slide pictures, read back from their Blobs
+         here, before every check below, so no state is set across a later
+         await. Null for records without them. */
+      let recordSlides: PostSlide[] | null = null;
       try {
         record = (await historyStore.get(runId)) ?? null;
+        if (record?.status === "complete" && record.result) recordSlides = await slidesOfRecord(record);
       } catch {
         readable = false;
       }
@@ -881,6 +900,7 @@ export function useAnalysisRun() {
           if (record.status === "complete") {
             setResult(record.result);
             setCompleteness(record.completeness ?? "full");
+            setSlides(recordSlides);
           } else {
             setError(record.error || "The analysis failed.");
             if (record.error === EXPIRED_MESSAGE) {
@@ -1014,6 +1034,8 @@ export function useAnalysisRun() {
         setExpired(null);
         setResult(detail.result);
         setCompleteness(detail.completeness === "captions_only" ? "captions_only" : "full");
+        /* The account keeps no slide pictures; this browser had no copy. */
+        setSlides(null);
         setStatus("complete");
         return { kind: "shown" };
       } catch (err) {
@@ -1026,6 +1048,7 @@ export function useAnalysisRun() {
           setSourceMetadata(null);
           setResult(null);
           setCompleteness("full");
+          setSlides(null);
           setError(SAVED_GONE_MESSAGE);
           setExpired({ againUrl: source?.source_url ?? null, reason: "saved" });
           setStatus("failed");
@@ -1053,6 +1076,7 @@ export function useAnalysisRun() {
     freeRunRefunded,
     result,
     completeness,
+    slides,
     sourceMetadata,
     error,
     submitting,

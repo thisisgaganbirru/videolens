@@ -521,6 +521,63 @@ buttons and the rest of the card are unchanged.
 
 A carousel's segments carry `slide` and their seconds restart at 0 on every slide (both 0 on an image slide), so a column of "0:00" would be noise. `SegmentPlace` shows "Slide 3" in the accent column instead, with the time under it in muted only when the segment is timed (a video slide, `end_seconds > 0`); a list with any slide gets `data-slides="on"`, which widens the column to 4.75rem unless timestamps are switched off. The On-screen intro reads "Text found on each slide of the post." and the list is labelled "On-screen text by slide". The downloaded report heads such a segment `### Slide 3` or `### Slide 3 · 0:02–0:05`. A plain video never has `slide` (the backend clears it), so nothing changes for one. Checked at 390 px in a throwaway preview route, no horizontal scroll; no new tokens.
 
+## Slide pictures (2026-11-27)
+
+Owner-approved 2026-11-27. A multi-slide post's run response carries an
+optional top-level `slides`: `[{ slide, kind: "image" | "video", thumbnail }]`
+in slide order, `thumbnail` a `data:image/jpeg;base64,...` URI (longest side
+<= 480 px) or null. Reels, uploads and older History entries have none and
+render exactly as before (verified: a legacy record opens to the old
+"Text found in the video frames…" view, no pictures).
+
+- **Data path.** `domain/slides.ts` `readSlides` cleans the cast wire value
+  (bad items dropped, non-image thumbnails become null, one per slide,
+  sorted). `useAnalysisRun` keeps `slides` as its own state beside `result`
+  (live: from the complete response; reopened from History: Blobs read back
+  to `data:` URLs by `slidesOfRecord`; an account's saved run opened without
+  this browser's copy: none, the server keeps no slide pictures). HomeScreen
+  passes it to `ResultsView` as the `slides` prop.
+- **Never exported.** `slides` is not part of `VideoAnalysis`. Copy
+  (`result[active]`), Share and Download (`buildMarkdownReport(result, …)`)
+  read `result` only, so no image can reach the clipboard, the share sheet
+  or the .md. They stay text plus the original-post link.
+- **On-screen tab** (`SlideOnScreenView`, used when `slides` is non-empty):
+  one row per slide, never one per segment. The row is the picture plus
+  "Slide 3" (accent) and every segment found on that slide; a video slide's
+  segments each get their muted start time. A slide with a picture and no
+  segment still gets a row ("No text found on this slide."). A segment
+  naming a slide missing from `slides`, or no slide, keeps today's
+  label | text row in slide order, unnamed ones last. With only a flat
+  `screen_text` (no segments) the text shows once above and the rows carry
+  pictures alone. Checked before the empty state, so an all-photo post with
+  no text still lists its slides.
+- **Picture box** (`.slide-thumb`): fixed 4:5 so rows never jump,
+  `object-fit: contain` (never cropped) on `--color-tint` with a 1px
+  `--color-rule` inset edge, `--radius-control`. A null thumbnail is the same
+  box empty (`role="img"`, "Slide 3 of 8, no picture"), never a broken image.
+  `<img loading="lazy" decoding="async" draggable={false}>`, alt
+  "Slide 3 of 8", unselectable and not focusable, so the text beside it
+  selects and copies by hand as before. Video slides get `.slide-badge`
+  "Video" (the History poster's duration-badge recipe, bottom-left). One
+  `eslint-disable-next-line @next/next/no-img-element` with the reason
+  inline (a `data:` URI next/image cannot optimise); lint stays at the 4
+  known findings. No new tokens.
+- **Layout.** Below 40rem: picture above the text, `min(100%, 16rem)` wide
+  (256x320 at 390, 246x308 at 320). From 40rem: a 7.5rem picture column
+  beside the text; the list widens from 40 to 46rem in this mode so the
+  serif column keeps its measure (592px text column at 1280).
+- **CSP:** unchanged. `img-src 'self' data: blob:` already allowed the
+  `data:` pictures (checked in `security/csp.mjs` and the exported
+  `out/app.html`).
+
+Verified with chrome-headless-shell over CDP against the dev server, a
+seeded IndexedDB record (video slide with two timed segments, image slide,
+null-thumbnail slide, image-only slide, a stray slide-6 segment) reopened
+from History: 1280x900, 390x844, 320x640, light and dark; no horizontal
+overflow at any width, 3 pictures decoded, placeholder and Video badge
+present, no page errors. Not checked on a device or against a live backend
+response.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported ResultsView + SourceCard; de-boxed the source card, wired .disclosure and role=tabpanel, rebuilt SourceCard.preview with six states
@@ -546,3 +603,4 @@ A carousel's segments carry `slide` and their seconds restart at 0 on every slid
 2026-11-14 · frontend agent · the line under the card says "Saved to your account. Open it from History on any device where you sign in." for a run this account saved; the expired view gains `expiredReason: "saved"` (Unavailable, "This run is no longer saved") for a saved run that answers 404 (see saved-history.md)
 - 2026-11-20 · Claude (frontend agent) · the four result panels are `select-text`; the transcript toolbar stays `select-none`
 - 2026-11-26 · Claude (session ccr-3d42b168) · slide labels for multi-slide posts in the transcript, On-screen and report (`SegmentPlace`, `data-slides`, `.t-time--slide`, `.t-slide-time`)
+- 2026-11-27 · Claude (frontend agent) · slide pictures in the On-screen tab for multi-slide posts (`slides` prop, `SlideOnScreenView`, `.slide-*`); one row per slide, placeholder for a null picture, Video badge; never in Copy, Share or the .md
