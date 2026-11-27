@@ -140,8 +140,7 @@ bypass the hook with `--no-verify`, and never push from a clone made before
 
 Branch flow: feature branch → PR into `dev` → promotion PR `dev` → `main`.
 `hotfix/*` → `main` only for urgent fixes; `main` accepts PRs from nothing
-else (`source-branch` job; until the first promotion after 2026-11-26 lands,
-`main`'s tree still reports `required`, so a hotfix cannot merge). After
+else (`source-branch` job). After
 every promotion or hotfix, a `main` → `dev` sync PR. Default branch is
 `dev`. No direct pushes to either; each has its own ruleset requiring
 `dev-required` / `production-required` plus `pr-hygiene / Commit hygiene`

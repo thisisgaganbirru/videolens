@@ -1,7 +1,8 @@
 import asyncio
+import dataclasses
 import logging
 
-from ...domain.entities import CaptionTrack, MediaVisuals, SavedUpload
+from ...domain.entities import CaptionTrack, MediaSlide, MediaVisuals, SavedUpload
 from ...domain.entitlements import MediaLimits
 from ...domain.ports import UploadedFile
 from ..config import Settings
@@ -14,6 +15,10 @@ logger = logging.getLogger("videolens")
 # Upper bound on the whole poster step, on top of each fetch/ffmpeg call's own
 # timeout: it runs alongside the analysis and must never be what a run waits on.
 VISUALS_TIMEOUT_SECONDS = 45
+# A multi-slide post's per-slide pictures, after the poster and separately
+# bounded: build_slide_thumbnails stops itself at its own deadline; this is
+# the backstop over that.
+SLIDES_TIMEOUT_SECONDS = thumbnails.SLIDE_THUMBNAILS_DEADLINE_SECONDS + 5
 
 
 class MediaService:
@@ -63,6 +68,14 @@ class MediaService:
     async def normalize_media(self, src_path: str, run_dir: str) -> str:
         return await ffmpeg.normalize_media(self._settings, src_path, run_dir)
 
+    async def enforce_slides_cap(
+        self, run_id: str, slides: tuple[MediaSlide, ...], limits: MediaLimits | None = None
+    ) -> float:
+        return await ffmpeg.enforce_slides_cap(self._settings, run_id, slides, limits)
+
+    async def normalize_slides(self, slides: tuple[MediaSlide, ...], run_dir: str) -> tuple[MediaSlide, ...]:
+        return await ffmpeg.normalize_slides(self._settings, slides, run_dir)
+
     async def describe_visuals(
         self,
         *,
@@ -71,9 +84,10 @@ class MediaService:
         width: int | None = None,
         height: int | None = None,
         duration_seconds: float | None = None,
+        slides: tuple[MediaSlide, ...] = (),
     ) -> MediaVisuals:
         try:
-            return await asyncio.wait_for(
+            visuals = await asyncio.wait_for(
                 self._describe_visuals(
                     media_path=media_path,
                     thumbnail_urls=thumbnail_urls,
@@ -87,7 +101,22 @@ class MediaService:
             raise
         except Exception:  # noqa: BLE001 - cosmetic; never fail a run over it
             logger.warning("Could not describe media visuals", exc_info=True)
-            return MediaVisuals()
+            visuals = MediaVisuals()
+        if not slides:
+            return visuals
+        # After the poster and under their own timeout, so slow slides can
+        # only ever cost the slides, never the poster and size.
+        try:
+            slide_visuals = await asyncio.wait_for(
+                thumbnails.build_slide_thumbnails(self._settings, slides),
+                SLIDES_TIMEOUT_SECONDS,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - cosmetic; never fail a run over it
+            logger.warning("Could not make slide thumbnails", exc_info=True)
+            return visuals
+        return dataclasses.replace(visuals, slides=slide_visuals)
 
     async def _describe_visuals(
         self,

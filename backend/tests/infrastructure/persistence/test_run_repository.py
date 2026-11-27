@@ -3,7 +3,7 @@ import unittest
 from datetime import timedelta
 from unittest.mock import AsyncMock
 
-from app.domain.entities import MediaVisuals, Run, RunStatus, VideoAnalysis
+from app.domain.entities import MediaVisuals, Run, RunStatus, SlideKind, SlideVisual, VideoAnalysis
 from app.infrastructure.config import Settings
 from app.infrastructure.persistence.run_repository import RunStore
 
@@ -186,6 +186,30 @@ class VisualsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.thumbnail, "data:image/jpeg;base64,AA")
         self.assertEqual((saved.width, saved.height), (720, 1280))
 
+    async def test_slide_pictures_are_kept_and_survive_a_json_round_trip(self) -> None:
+        store = RunStore(Settings(_env_file=None))
+        await store.create("run-s", "client:o")
+        slides = (
+            SlideVisual(slide=1, kind=SlideKind.IMAGE, thumbnail="data:image/jpeg;base64,AA"),
+            SlideVisual(slide=2, kind=SlideKind.VIDEO, thumbnail=None),
+        )
+
+        await store.set_visuals("run-s", MediaVisuals(slides=slides))
+        await store.set_visuals("run-s", MediaVisuals(thumbnail="data:image/jpeg;base64,P"))  # kept
+
+        saved = await store.get("run-s")
+        assert saved is not None
+        self.assertEqual(saved.slides, list(slides))
+        # What the Redis store writes and reads back.
+        self.assertEqual(Run.model_validate_json(saved.model_dump_json()).slides, list(slides))
+
+    def test_a_legacy_payload_has_no_slides(self) -> None:
+        run = Run.model_validate_json(
+            '{"run_id":"old","owner_id":"client:o","status":"complete",'
+            '"created_at":"2026-10-01T00:00:00Z","updated_at":"2026-10-01T00:01:00Z"}'
+        )
+        self.assertIsNone(run.slides)
+
     async def test_set_visuals_on_a_missing_run_is_a_no_op(self) -> None:
         store = RunStore(Settings(_env_file=None))
         await store.set_visuals("nope", MediaVisuals(width=1, height=1))
@@ -327,6 +351,21 @@ class EndedRunsAreFinalTests(unittest.IsolatedAsyncioTestCase):
         script, numkeys, key, _payload, ttl = client.eval.await_args.args
         self.assertIn("cjson.decode", script)
         self.assertEqual((numkeys, key, ttl), (1, "videolens:run:run-1", 3600))
+
+    async def test_redis_keeps_the_slide_pictures_with_the_run_ttl(self) -> None:
+        store, client, data = self._redis_store()
+        await store.create("run-1", "client:o")
+        slides = (SlideVisual(slide=1, kind=SlideKind.IMAGE, thumbnail="data:image/jpeg;base64,AA"),)
+
+        await store.set_visuals("run-1", MediaVisuals(slides=slides))
+        await store.set_result("run-1", _ANALYSIS)
+
+        *_, ttl = client.eval.await_args.args
+        self.assertEqual(ttl, 3600)
+        self.assertEqual(Run.model_validate_json(data["videolens:run:run-1"]).slides, list(slides))
+        saved = await store.get("run-1")
+        assert saved is not None
+        self.assertEqual(saved.slides, list(slides))
 
     async def test_redis_result_after_the_sweep_failed_the_run_is_refused(self) -> None:
         store, client, data = self._redis_store()

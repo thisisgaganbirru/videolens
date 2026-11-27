@@ -5,12 +5,18 @@ export interface TranscriptSegment {
   end_seconds: number;
   text: string;
   speaker?: string | null;
+  /** A multi-slide post (an Instagram carousel): the 1-based slide this came
+   *  from. The seconds then restart at 0 on every slide, and are both 0 on an
+   *  image slide. Absent for one media file (the backend clears it there). */
+  slide?: number | null;
 }
 
 export interface ScreenTextSegment {
   start_seconds: number;
   end_seconds: number;
   text: string;
+  /** See `TranscriptSegment.slide`. */
+  slide?: number | null;
 }
 
 export interface VideoAnalysis {
@@ -90,6 +96,29 @@ export interface RunStatusResponse {
   width?: number | null;
   height?: number | null;
   orientation?: RunOrientation | null;
+  /** How many slides a multi-slide post (an Instagram carousel, or a post
+   *  that is one photo) was analyzed as. Absent for one media file. */
+  slide_count?: number | null;
+  /** 2026-11-27: a small picture of each slide of a multi-slide post, in
+   *  slide order. Absent for reels, uploads and older backends. Top level,
+   *  never inside `result`, on purpose: Copy, Share, the .md report and the
+   *  account's saved runs are all built from `result`, and none of them may
+   *  carry slide images (owner decision 2026-11-27). Read it through
+   *  `readSlides` (domain/slides.ts); the gateway casts. */
+  slides?: PostSlide[] | null;
+}
+
+/** What a carousel slide is. */
+export type SlideKind = "image" | "video";
+
+/** One slide's picture, as the run response sends it (`Image` = a
+ *  `data:image/jpeg;base64,...` URI, longest side <= 480px) or as History
+ *  keeps it (`Image` = Blob, like the poster). `slide` is 1-based and matches
+ *  `ScreenTextSegment.slide`. `thumbnail` is null when the server had none. */
+export interface PostSlide<Image = string> {
+  slide: number;
+  kind: SlideKind;
+  thumbnail: Image | null;
 }
 
 /** Deliberately has no `completeness`: `GET /api/runs` does not return one, and
@@ -115,6 +144,8 @@ export interface RunSummary {
   /** Display size, when the backend measured it. Wider than tall = landscape. */
   width?: number | null;
   height?: number | null;
+  /** See `RunStatusResponse.slide_count`. The poster badge shows it. */
+  slide_count?: number | null;
 }
 
 /** One run as this browser's History keeps it (IndexedDB, newest 20).
@@ -135,6 +166,8 @@ export interface HistoryRecord {
   source_kind: RunSourceKind | null;
   platform: RunPlatform | null;
   duration_seconds: number | null;
+  /** Optional: records written before carousels existed have none. */
+  slide_count?: number | null;
   width: number | null;
   height: number | null;
   orientation: RunOrientation | null;
@@ -142,6 +175,15 @@ export interface HistoryRecord {
   /** The server's JPEG poster (longest side <= 320px, <= ~20 KB), stored as
    *  a Blob. Null for audio, failed runs, and until the server has one. */
   thumbnail: Blob | null;
+  /** Each slide's picture for a multi-slide post (2026-11-27), as Blobs like
+   *  the poster. Optional: reels, uploads and records written before it
+   *  existed have none, and reopen exactly as before.
+   *  Stays in IndexedDB — never sent anywhere. Nothing in the frontend
+   *  uploads a History record (the account's saved runs are written by the
+   *  server from the run itself, and must not include these; see
+   *  docs/backend/saved-history.md), and Copy, Share and the .md report are
+   *  built from `result`, which does not hold them. */
+  slides?: PostSlide<Blob>[] | null;
   result: VideoAnalysis | null;
   source_metadata: SourceMetadata | null;
   completeness: AnalysisCompleteness | null;
@@ -452,6 +494,7 @@ export interface SavedRunSource {
   duration_seconds?: number | null;
   width?: number | null;
   height?: number | null;
+  slide_count?: number | null;
 }
 
 /** One saved run as `GET /api/history` lists it: light fields only. */

@@ -1,4 +1,6 @@
+import ntpath
 import os
+import posixpath
 import shutil
 
 from ...domain.entities import SavedUpload
@@ -7,6 +9,36 @@ from ...domain.errors import MediaValidationError
 from ...domain.ports import UploadedFile
 from ..config import Settings
 from .limits import effective_limits
+
+
+def _host_is_windows() -> bool:
+    """Its own function so tests can pick the host OS without patching
+    `os.name` for everything else in the process."""
+    return os.name == "nt"
+
+
+def _require_absolute_for_host(temp_dir: str) -> None:
+    """`TEMP_DIR` must be absolute by the rules of the OS the process runs on,
+    checked with that OS's path module explicitly. On Linux (the container)
+    a drive path like `C:/...` is relative and refused, which is the case this
+    check exists for. On native Windows a drive or UNC path is absolute, and
+    `/tmp/videolens` is not: it has no drive, so it would land on whatever
+    drive the process started from."""
+    if _host_is_windows():
+        if not ntpath.isabs(temp_dir):
+            raise RuntimeError(
+                f"TEMP_DIR must be an absolute Windows path (with a drive letter) on this host, "
+                f"got {temp_dir!r}. The /tmp/videolens default is for the Linux container; "
+                "for a native Windows run set something like C:/Users/<you>/AppData/Local/Temp/videolens "
+                "in backend/.env."
+            )
+        return
+    if not posixpath.isabs(temp_dir):
+        raise RuntimeError(
+            f"TEMP_DIR must be an absolute POSIX path on this host, got {temp_dir!r}. "
+            "A Windows path carried over from a local .env is the usual cause; "
+            "use something like /tmp/videolens."
+        )
 
 
 def validate_temp_dir(settings: Settings) -> None:
@@ -29,12 +61,7 @@ def validate_temp_dir(settings: Settings) -> None:
     """
     temp_dir = settings.temp_dir
 
-    if not os.path.isabs(temp_dir):
-        raise RuntimeError(
-            f"TEMP_DIR must be an absolute POSIX path, got {temp_dir!r}. "
-            "A Windows path carried over from a local .env is the usual cause; "
-            "this container expects something like /tmp/videolens."
-        )
+    _require_absolute_for_host(temp_dir)
 
     try:
         os.makedirs(temp_dir, exist_ok=True)

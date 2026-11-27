@@ -10,8 +10,10 @@ import { safeHttpUrl } from "./safeUrl";
 import { splitTakeaway } from "./takeaway";
 import { formatDuration } from "./history";
 import { platformKey, platformName } from "@/domain/platforms";
+import { sourceTitle } from "@/domain/slides";
 import type {
   AnalysisCompleteness,
+  PostSlide,
   ScreenTextSegment,
   SourceMetadata,
   TranscriptSegment,
@@ -78,6 +80,49 @@ function capitalise(text: string): string {
 const DEFAULT_TAB: TabKey = "summary";
 type TimelineSegment = ScreenTextSegment | TranscriptSegment;
 
+/* ---- multi-slide posts ----
+   An Instagram carousel is analyzed as one post, and each segment names the
+   slide it came from (`slide`). Its seconds restart at 0 on every slide and
+   are both 0 on an image slide, so a bare "0:00" on every row would be
+   noise: the left column says "Slide 3" instead, with the time under it
+   only for a video slide's segment. A plain video never carries `slide`
+   (the backend clears it), so nothing changes for one. */
+function onSlide(segment: TimelineSegment): segment is TimelineSegment & { slide: number } {
+  return typeof segment.slide === "number";
+}
+
+function hasSlides(segments: TimelineSegment[]): boolean {
+  return segments.some(onSlide);
+}
+
+/** Whether a slide's segment has a time worth showing (a video slide). */
+function slideIsTimed(segment: TimelineSegment): boolean {
+  return segment.end_seconds > 0;
+}
+
+function SegmentPlace({ segment }: { segment: TimelineSegment }) {
+  const range = `${formatTimestamp(segment.start_seconds)}–${formatTimestamp(segment.end_seconds)}`;
+  const dateTime = `PT${Math.max(0, Math.round(segment.start_seconds))}S`;
+  if (onSlide(segment)) {
+    const timed = slideIsTimed(segment);
+    return (
+      <span className="t-time t-time--slide" title={timed ? `Slide ${segment.slide}, ${range}` : `Slide ${segment.slide}`}>
+        Slide {segment.slide}
+        {timed ? (
+          <time dateTime={dateTime} className="t-slide-time">
+            {formatTimestamp(segment.start_seconds)}
+          </time>
+        ) : null}
+      </span>
+    );
+  }
+  return (
+    <time dateTime={dateTime} title={range} className="t-time">
+      {formatTimestamp(segment.start_seconds)}
+    </time>
+  );
+}
+
 function formatTimestamp(value: number) {
   const totalSeconds = Math.max(0, Math.round(value));
   const hours = Math.floor(totalSeconds / 3600);
@@ -98,41 +143,56 @@ function formatTimestamp(value: number) {
  * column, the text found in the frame beside it in serif, one line per line
  * the model returned (a card listing "Grain / Protein / Veg" stays three
  * lines). Only the start time is shown; the end is carried in the `title` and
- * `dateTime`. The backend sends no frames, so there are no thumbnails.
+ * `dateTime`. A plain video sends no frames, so it has no thumbnails; a
+ * multi-slide post with slide pictures goes to `SlideOnScreenView` instead.
  */
 function OnScreenView({
   segments,
   fallback,
   emptyMessage,
+  slides: pictures,
 }: {
   segments: ScreenTextSegment[];
   fallback: string;
   emptyMessage: string;
+  slides?: PostSlide[] | null;
 }) {
   const text = fallback.trim();
+  /* Checked before the empty state: an all-photo post with no text found
+     still has its slides to show. */
+  if (pictures && pictures.length > 0) {
+    return <SlideOnScreenView segments={segments} fallback={text} slides={pictures} />;
+  }
   if (segments.length === 0 && !text) {
     return <p className="t-intro">{emptyMessage}</p>;
   }
 
+  const slides = hasSlides(segments);
+  /* One slide is just "the post": "each slide" for a single photo misreads. */
+  const oneSlide = slides && new Set(segments.filter(onSlide).map((segment) => segment.slide)).size === 1;
   return (
     <>
-      <p className="t-intro">Text found in the video frames, with the time it appears.</p>
+      <p className="t-intro">
+        {oneSlide
+          ? "Text found in the post."
+          : slides
+            ? "Text found on each slide of the post."
+            : "Text found in the video frames, with the time it appears."}
+      </p>
       {segments.length === 0 ? (
         /* An older run, or a model reply without timings: the text alone. */
         <p className="screen-text" dir="auto">
           {text}
         </p>
       ) : (
-        <ol className="t-list t-list--screen" aria-label="On-screen text by time">
+        <ol
+          className="t-list t-list--screen"
+          data-slides={slides ? "on" : undefined}
+          aria-label={slides ? "On-screen text by slide" : "On-screen text by time"}
+        >
           {segments.map((segment, index) => (
-            <li key={`${segment.start_seconds}-${segment.end_seconds}-${index}`} className="t-row">
-              <time
-                dateTime={`PT${Math.max(0, Math.round(segment.start_seconds))}S`}
-                title={`${formatTimestamp(segment.start_seconds)}–${formatTimestamp(segment.end_seconds)}`}
-                className="t-time"
-              >
-                {formatTimestamp(segment.start_seconds)}
-              </time>
+            <li key={`${segment.slide ?? ""}-${segment.start_seconds}-${segment.end_seconds}-${index}`} className="t-row">
+              <SegmentPlace segment={segment} />
               <p className="t-text" dir="auto">
                 {segment.text.trim()}
               </p>
@@ -140,6 +200,141 @@ function OnScreenView({
           ))}
         </ol>
       )}
+    </>
+  );
+}
+
+/* ---- slide pictures (2026-11-27) ----
+   A multi-slide post whose response carried `slides` gets one row per slide:
+   the slide's picture and, beside it (under it on a phone), "Slide 3" and
+   every piece of text found on that slide. One picture per slide, never one
+   per segment: a video slide can have several timed segments, and repeating
+   the same frame down the list would be noise. A slide with a picture and no
+   text still gets its row. A segment naming a slide the list does not have,
+   or naming no slide, keeps today's row (label | text, no picture) in its
+   place by slide number, unnamed ones last.
+
+   The pictures are on screen only. Copy, Share and Download read `result`,
+   and `slides` is a separate prop, so none of them can include an image. */
+type SlideItem =
+  | { kind: "slide"; number: number; slide: PostSlide; segments: ScreenTextSegment[] }
+  | { kind: "segment"; number: number; segment: ScreenTextSegment };
+
+function slideItems(segments: ScreenTextSegment[], slides: PostSlide[]): SlideItem[] {
+  const pictured = new Map(slides.map((slide) => [slide.slide, slide]));
+  const bySlide = new Map<number, ScreenTextSegment[]>();
+  const items: SlideItem[] = [];
+  const unnamed: SlideItem[] = [];
+  for (const segment of segments) {
+    if (onSlide(segment) && pictured.has(segment.slide)) {
+      const list = bySlide.get(segment.slide) ?? [];
+      list.push(segment);
+      bySlide.set(segment.slide, list);
+    } else if (onSlide(segment)) {
+      items.push({ kind: "segment", number: segment.slide, segment });
+    } else {
+      unnamed.push({ kind: "segment", number: Number.POSITIVE_INFINITY, segment });
+    }
+  }
+  for (const slide of slides) {
+    items.push({ kind: "slide", number: slide.slide, slide, segments: bySlide.get(slide.slide) ?? [] });
+  }
+  /* Array sort is stable, so rows sharing a slide number keep their order.
+     (A pictured slide and a stray segment never share one: a segment whose
+     slide is pictured is grouped under it.) */
+  return [...items.sort((a, b) => a.number - b.number), ...unnamed];
+}
+
+function SlidePicture({ slide, total }: { slide: PostSlide; total: number }) {
+  const label = `Slide ${slide.slide} of ${total}`;
+  return (
+    <div className="slide-thumb" data-kind={slide.kind}>
+      {slide.thumbnail ? (
+        /* A `data:` URI that next/image cannot optimise (same reason as the
+           History poster's `blob:` URL). Not focusable, not draggable, and
+           unselectable, so selecting the slide's text skips it. */
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          className="slide-img"
+          src={slide.thumbnail}
+          alt={label}
+          loading="lazy"
+          decoding="async"
+          draggable={false}
+        />
+      ) : (
+        /* No picture from the server: the box alone, never a broken image. */
+        <span className="slide-placeholder" role="img" aria-label={`${label}, no picture`} />
+      )}
+      {slide.kind === "video" ? <span className="slide-badge">Video</span> : null}
+    </div>
+  );
+}
+
+function SlideOnScreenView({
+  segments,
+  fallback,
+  slides,
+}: {
+  segments: ScreenTextSegment[];
+  fallback: string;
+  slides: PostSlide[];
+}) {
+  const total = Math.max(slides.length, ...slides.map((slide) => slide.slide));
+  /* With per-slide segments, an unpictured-text slide says so. With only a
+     flat `screen_text` (no segments), which slide held what is unknown, so
+     the text is shown once above and the rows carry pictures alone. */
+  const perSlide = segments.length > 0;
+  return (
+    <>
+      <p className="t-intro">{total === 1 ? "Text found in the post." : "Text found on each slide of the post."}</p>
+      {!perSlide && fallback ? (
+        <p className="screen-text" dir="auto">
+          {fallback}
+        </p>
+      ) : null}
+      <ol className="t-list t-list--screen" data-slides="on" data-images="on" aria-label="On-screen text by slide">
+        {slideItems(segments, slides).map((item, index) =>
+          item.kind === "slide" ? (
+            <li key={`slide-${item.number}`} className="t-row slide-row">
+              <SlidePicture slide={item.slide} total={total} />
+              <div className="slide-body">
+                <span className="t-time slide-label">Slide {item.number}</span>
+                {item.segments.length === 0 ? (
+                  perSlide ? <p className="slide-none">No text found on this slide.</p> : null
+                ) : (
+                  item.segments.map((segment, i) => (
+                    <div key={`${segment.start_seconds}-${segment.end_seconds}-${i}`} className="slide-seg">
+                      {slideIsTimed(segment) ? (
+                        <time
+                          className="t-slide-time"
+                          dateTime={`PT${Math.max(0, Math.round(segment.start_seconds))}S`}
+                          title={`${formatTimestamp(segment.start_seconds)}–${formatTimestamp(segment.end_seconds)}`}
+                        >
+                          {formatTimestamp(segment.start_seconds)}
+                        </time>
+                      ) : null}
+                      <p className="t-text" dir="auto">
+                        {segment.text.trim()}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </li>
+          ) : (
+            <li
+              key={`seg-${item.segment.slide ?? ""}-${item.segment.start_seconds}-${item.segment.end_seconds}-${index}`}
+              className="t-row"
+            >
+              <SegmentPlace segment={item.segment} />
+              <p className="t-text" dir="auto">
+                {item.segment.text.trim()}
+              </p>
+            </li>
+          )
+        )}
+      </ol>
     </>
   );
 }
@@ -244,18 +439,15 @@ function TranscriptView({ segments, fallback }: { segments: TranscriptSegment[];
           </button>
         </div>
       ) : (
-        <ol className="t-list" data-times={showTimes ? "on" : "off"} aria-label="Timestamped transcript">
+        <ol
+          className="t-list"
+          data-times={showTimes ? "on" : "off"}
+          data-slides={hasSlides(visible) ? "on" : undefined}
+          aria-label="Timestamped transcript"
+        >
           {visible.map((segment, index) => (
-            <li key={`${segment.start_seconds}-${segment.end_seconds}-${index}`} className="t-row">
-              {showTimes ? (
-                <time
-                  dateTime={`PT${Math.max(0, Math.round(segment.start_seconds))}S`}
-                  title={`${formatTimestamp(segment.start_seconds)}–${formatTimestamp(segment.end_seconds)}`}
-                  className="t-time"
-                >
-                  {formatTimestamp(segment.start_seconds)}
-                </time>
-              ) : null}
+            <li key={`${segment.slide ?? ""}-${segment.start_seconds}-${segment.end_seconds}-${index}`} className="t-row">
+              {showTimes ? <SegmentPlace segment={segment} /> : null}
               <div className="t-body">
                 {segment.speaker ? (
                   <span className="t-speaker" dir="auto">
@@ -284,7 +476,11 @@ function timelineMarkdown(segments: TimelineSegment[], fallback: string, emptyMe
   return segments
     .map((segment) => {
       const speaker = "speaker" in segment && segment.speaker ? ` — ${singleLine(segment.speaker)}` : "";
-      return `### ${formatTimestamp(segment.start_seconds)}–${formatTimestamp(segment.end_seconds)}${speaker}\n\n${segment.text.trim()}`;
+      const range = `${formatTimestamp(segment.start_seconds)}–${formatTimestamp(segment.end_seconds)}`;
+      const place = onSlide(segment)
+        ? `Slide ${segment.slide}${slideIsTimed(segment) ? ` · ${range}` : ""}`
+        : range;
+      return `### ${place}${speaker}\n\n${segment.text.trim()}`;
     })
     .join("\n\n");
 }
@@ -293,6 +489,7 @@ function buildMarkdownReport(
   result: VideoAnalysis,
   sourceMetadata?: SourceMetadata | null,
   completeness: AnalysisCompleteness = "full",
+  slides?: PostSlide[] | null,
 ) {
   const captionsOnly = completeness === "captions_only";
   const sections = [`# ${singleLine(result.title)}`];
@@ -308,7 +505,9 @@ function buildMarkdownReport(
   if (sourceMetadata) {
     const sourceDetails = [
       `- **Platform:** ${singleLine(platformName(sourceMetadata.platform))}`,
-      sourceMetadata.title && `- **Source title:** ${singleLine(sourceMetadata.title)}`,
+      /* `slides` only names the post here ("Photo by" for one photo); no
+         picture is ever written into the report. */
+      sourceMetadata.title && `- **Source title:** ${singleLine(sourceTitle(sourceMetadata.title, { slides }))}`,
       sourceMetadata.uploader &&
         `- **Creator:** ${
           safeHttpUrl(sourceMetadata.uploader_url)
@@ -353,6 +552,7 @@ function markdownDocument(
   result: VideoAnalysis,
   sourceMetadata?: SourceMetadata | null,
   completeness: AnalysisCompleteness = "full",
+  slides?: PostSlide[] | null,
 ): MarkdownDocument {
   const filename = `${result.title || "videolens-notes"}`
     .toLowerCase()
@@ -361,7 +561,7 @@ function markdownDocument(
   return {
     filename: filename || "videolens-notes",
     title: result.title || "VideoLens notes",
-    text: buildMarkdownReport(result, sourceMetadata, completeness),
+    text: buildMarkdownReport(result, sourceMetadata, completeness, slides),
   };
 }
 
@@ -415,7 +615,15 @@ const PLATFORM_ICONS: Record<string, string> = {
  * The counts lost their icons in the editorial pass: "184K views" says what it
  * is in words, and the glyph beside it was a second label for the same fact.
  */
-export function SourceCard({ metadata }: { metadata: SourceMetadata }) {
+export function SourceCard({
+  metadata,
+  slides = null,
+}: {
+  metadata: SourceMetadata;
+  /** A multi-slide post's slides, used only to name it: yt-dlp's
+   *  "Video by <user>" reads "Photo by" / "Post by" (domain/slides.ts). */
+  slides?: PostSlide[] | null;
+}) {
   /* Third-party strings (yt-dlp read them off the fetched page): linked only
      when they are plain http(s) addresses. */
   const sourceHref = safeHttpUrl(metadata.source_url);
@@ -427,6 +635,7 @@ export function SourceCard({ metadata }: { metadata: SourceMetadata }) {
     { label: "comments", value: metadata.comment_count },
   ].flatMap((stat) => (stat.value == null ? [] : [{ ...stat, value: stat.value }]));
   const icon = PLATFORM_ICONS[platformKey(metadata.platform) ?? ""];
+  const title = metadata.title ? sourceTitle(metadata.title, { slides }) : null;
 
   return (
     <article className="source-card">
@@ -472,8 +681,8 @@ export function SourceCard({ metadata }: { metadata: SourceMetadata }) {
                 {metadata.uploader}
               </p>
             )}
-            {metadata.title && metadata.title !== metadata.description && (
-              <p className="source-card__source-title">{metadata.title}</p>
+            {title && metadata.title !== metadata.description && (
+              <p className="source-card__source-title">{title}</p>
             )}
           </div>
         </div>
@@ -567,10 +776,14 @@ export default function ResultsView({
   result,
   sourceMetadata,
   completeness = "full",
+  slides = null,
 }: {
   result: VideoAnalysis;
   sourceMetadata?: SourceMetadata | null;
   completeness?: AnalysisCompleteness;
+  /** A carousel's slide pictures, for the On-screen tab only. Deliberately
+   *  not part of `result`: nothing exported (Copy, Share, .md) reads it. */
+  slides?: PostSlide[] | null;
 }) {
   const captionsOnly = completeness === "captions_only";
   const [active, setActive] = useState<TabKey>(DEFAULT_TAB);
@@ -657,7 +870,7 @@ export default function ResultsView({
     window.setTimeout(() => setCopied(false), 2000);
   };
 
-  const shareContent = () => share(markdownDocument(result, sourceMetadata, completeness));
+  const shareContent = () => share(markdownDocument(result, sourceMetadata, completeness, slides));
 
   return (
     <>
@@ -708,7 +921,7 @@ export default function ResultsView({
           )}
           <button
             type="button"
-            onClick={() => void save(markdownDocument(result, sourceMetadata, completeness))}
+            onClick={() => void save(markdownDocument(result, sourceMetadata, completeness, slides))}
             className="btn btn-primary btn-pill result-download"
           >
             Download .md
@@ -912,6 +1125,7 @@ export default function ResultsView({
           segments={result.screen_text_segments || []}
           fallback={result.screen_text || ""}
           emptyMessage={captionsOnly ? CAPTIONS_ONLY_NO_SCREEN_TEXT : FULL_NO_SCREEN_TEXT}
+          slides={slides}
         />
       </div>
     </>

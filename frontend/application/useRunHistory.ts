@@ -1,8 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { isVisibleOwner, type HistoryRecord, type RunPlatform, type RunSummary } from "@/domain/entities";
+import {
+  isVisibleOwner,
+  type HistoryRecord,
+  type RunPlatform,
+  type RunSummary,
+  type SlideKind,
+} from "@/domain/entities";
 import { knownPlatformName, linkHost, platformFromUrl } from "@/domain/platforms";
+import { sourceTitle } from "@/domain/slides";
 import { StorageUnavailableError } from "@/domain/errors";
 import {
   EXPIRED_MESSAGE,
@@ -36,6 +43,11 @@ export interface HistoryEntry extends RunSummary {
    *  before its result reached this browser (`EXPIRED_MESSAGE`). Nothing was
    *  wrong with the source, so the row says "Expired", not "Failed". */
   expired: boolean;
+  /** Each slide's kind, in slide order, from the record's `slides`; absent
+   *  for reels, uploads, saved runs and records written before slides were
+   *  kept. The poster drops its play disc when every slide is an image
+   *  (`hasNothingToPlay`, components/history.ts). */
+  slide_kinds?: SlideKind[] | null;
 }
 
 const STORAGE_MESSAGE = "History can't be saved in this browser.";
@@ -56,7 +68,9 @@ function fallbackPlatform(record: HistoryRecord): RunPlatform | null {
 }
 
 function fallbackTitle(record: HistoryRecord, platform: RunPlatform | null): string | null {
-  if (record.title?.trim()) return record.title;
+  /* yt-dlp's "Video by <user>" for a photo post reads "Photo by" / "Post by";
+     a record with no slide facts (every older one) keeps it (domain/slides.ts). */
+  if (record.title?.trim()) return sourceTitle(record.title, { slides: record.slides, slideCount: record.slide_count });
   if (record.file_name) return record.file_name;
   const url = record.source_url ?? record.source_metadata?.source_url;
   if (!url) return null;
@@ -74,12 +88,14 @@ function toEntry(record: HistoryRecord, thumbnailUrl: string | null): HistoryEnt
     source_kind: record.source_kind,
     platform,
     duration_seconds: record.duration_seconds,
+    slide_count: record.slide_count ?? null,
     summary_snippet: record.summary_snippet,
     orientation: record.orientation,
     width: record.width,
     height: record.height,
     thumbnail_url: thumbnailUrl,
     expired: record.status === "failed" && record.error === EXPIRED_MESSAGE,
+    slide_kinds: Array.isArray(record.slides) && record.slides.length > 0 ? record.slides.map((s) => s.kind) : null,
   };
 }
 

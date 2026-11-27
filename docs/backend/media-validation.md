@@ -9,10 +9,10 @@ Everything about getting a valid media file onto local disk: upload handling, UR
 - `deadline.py` — `DownloadDeadline`, `run_download` and `DOWNLOAD_EXECUTOR`: the wall-clock bound on every link download and the bounded thread pool they run on (below).
 - `process.py` — `run_process`: the one way ffmpeg/ffprobe are started, with a timeout, killed on timeout and on cancellation.
 - `ytdlp_net.py` — `GuardedYoutubeDL`, the only `YoutubeDL` the app builds: every yt-dlp request goes through `net.py`'s pinned connections, and only native downloaders run (below).
-- `ytdlp_downloader.py` — `_cookie_options`, `download_url` (the yt-dlp fetch itself).
+- `ytdlp_downloader.py` — `_cookie_options`, `download_url` (the yt-dlp fetch itself), and the multi-slide helpers (`_collect_slides`, `_fetch_image`, `_skip_entries_without_media`; see "Multi-slide posts" below).
 - `captions.py` — `fetch_captions`, the subtitle salvage path used when every resolver has failed.
 - `resolvers/` — one route per file plus the chain that orders them: `ytdlp.py` (`YtDlpResolver`), `direct_http.py` (`DirectHttpResolver`), `chain.py` (`ResolverChain`).
-- `thumbnails.py` — history poster + display size (Phase 5a): `thumbnail_urls_from_info`, `dimensions_from_info`, `parse_video_dimensions`/`probe_dimensions` (ffprobe, rotation-aware), `fetch_image` (SSRF-guarded), `extract_frame`, `encode_thumbnail`, `build_thumbnail`. See the section below.
+- `thumbnails.py` — history poster + display size (Phase 5a): `thumbnail_urls_from_info`, `dimensions_from_info`, `parse_video_dimensions`/`probe_dimensions` (ffprobe, rotation-aware), `fetch_image` (SSRF-guarded), `extract_frame`, `encode_thumbnail`, `build_thumbnail`; since 2026-11-27 also `slide_thumbnail`/`build_slide_thumbnails` for a carousel's per-slide pictures (`encode_thumbnail` and `extract_frame` take the size, steps and ceiling as keyword arguments, the poster's by default). See the section below and `run-processing.md`, "Slide pictures".
 - `service.py` — `MediaService`, the single adapter that composes all of the above into the `MediaProcessor` port the use cases depend on.
 
 **Resolver chain**: `MediaService.download_url` no longer calls yt-dlp directly — it delegates to a `ResolverChain` of `domain.ports.SourceResolver` implementations, tried in order. Each resolver declares `can_handle(url)` and is skipped when it says no; a resolver that raises `MediaValidationError` is treated as "this route did not work" and the chain moves on, while any other exception propagates immediately (a bug must not be silently retried away). Current order:
@@ -56,9 +56,21 @@ This is the load-bearing check that stops someone submitting `http://169.254.169
 
 **Source metadata**: `download_url` also builds a `domain.entities.SourceMetadata` from the same `extract_info()` call already needed for the download itself (`platform` from `extractor_key`, plus `title`/`uploader`/`uploader_url`/`description`/`upload_date`/`like_count`/`view_count`/`comment_count`, all `dict.get()`-based so missing fields are just `None`) and attaches it to the returned `SavedUpload`. This is platform post metadata, distinct from the Gemini-generated `VideoAnalysis` — see `docs/backend/run-processing.md` for how it's persisted onto the `Run`. File uploads (`uploads.save_upload`) never set this field.
 
+## Multi-slide posts: Instagram carousels (2026-11-26)
+
+An Instagram carousel is one post of up to 20 slides, each a video or a still image; a post that is one photo is the same thing with one slide. Before this, `noplaylist` did nothing for it (Instagram's extractor ignores it), every video slide was written to the same `download.<ext>`, and the first image slide raised "No video formats found" and failed the run. Now a post is downloaded, checked and analyzed as one unit:
+
+- **Download** (`ytdlp_downloader.py`). Still the one `extract_info(url, download=True)` call. Only Instagram links take the slide path: any other site's playlist, set or multi-part link stops after its first entry (`playlistend` 1) and is refused with "This link is a playlist or set. Paste a link to one video or track instead." (`_PLAYLIST_LINK`, `_single_entry_of`), unless it holds exactly one entry, which is then the ordinary single file. Before this a SoundCloud set or a YouTube playlist went down the slide path, downloading up to 20 files and labelling audio as video. The output template is `%(playlist_index&slide-{:02d}|download)s.%(ext)s`: a playlist entry becomes `slide-01.mp4`, `slide-02.jpg`..., a single file keeps `download.<ext>`. `playlistend` is `MAX_SLIDES` (20, Instagram's own limit) for Instagram. For Instagram links only, `ignore_no_formats_error` lets an image entry through extraction and the `match_filter` `_skip_entries_without_media` skips it at download time (an entry with no media URL would otherwise make `YoutubeDL.dl` raise); its info, whose `thumbnails` are every rendition of the photo, stays in the result. `_collect_slides` then walks the entries in order: a downloaded file is a `VIDEO` slide, an Instagram image entry gets its largest rendition fetched by `_fetch_image` through the downloader's own `urlopen` (so on `net.py`'s pinned connections, with the entry's `http_headers`, under the run's deadline), sniffed as JPEG, PNG or WebP and saved under its real extension. An entry with neither is skipped and logged; a post with no slide left fails with "This post has no video or image we could download.". A one-video "post" goes back to the single-file path unchanged.
+- **Size**: the progress hook sums bytes across every file being written, so a post's slides (and a video's split streams) share one `MAX_FILE_SIZE_MB` budget; images count against what is left, and one image is capped at 15 MB. The post-download check uses the total ("That post is over the 200MB limit.").
+- **Probe and cap** (`ffmpeg.enforce_slides_cap`, `MediaProcessor.enforce_slides_cap`): every image slide must decode as `mjpeg`/`png`/`webp` (`probe_image`, which runs the same playlist sniff and demuxer refusal as every probe), and the video slides' lengths are summed against the run's duration limit ("The videos in this post are 4:10 long. The limit is 3:00."). Images take no time. The total is what the long-run slot counts.
+- **Normalize** (`ffmpeg.normalize_slides`): videos through `normalize_media` (now with a `name=` stem, so outputs are `normalized-01.mp4`...), images re-encoded by `normalize_image` to a JPEG no larger than `MAX_SLIDE_IMAGE_SIDE` (2048 px) on the longest side, never enlarged, metadata dropped.
+- **Result**: `SavedUpload.slides` carries `MediaSlide(path, kind)` in order, with `path` the first slide and `thumbnail_urls`/`width`/`height` from the first slide's entry, so the poster is the post's cover.
+
+Not covered: TikTok photo posts and other sites' multi-item posts; they are refused as playlists (or analyzed as their single entry), and image entries are fetched for Instagram links only. Instagram serves carousels only through its API and GraphQL paths, both of which want a logged-in `YTDLP_COOKIES_FILE` in practice. Tests: `tests/infrastructure/media/test_ytdlp_carousel.py` (real yt-dlp processing against a local server; the FFmpeg lookup is faked, so it runs without FFmpeg as on CI), `test_ffmpeg_slides.py` (real binaries, skipped without them).
+
 ## History poster: thumbnail and display size (Phase 5a)
 
-`MediaService.describe_visuals(media_path=, thumbnail_urls=, width=, height=, duration_seconds=) -> MediaVisuals` (the `MediaProcessor` port method) produces what the browser stores in its IndexedDB History. It **never raises**: the whole step is wrapped in a 45 s `wait_for` and any error returns empty `MediaVisuals`.
+`MediaService.describe_visuals(media_path=, thumbnail_urls=, width=, height=, duration_seconds=, slides=) -> MediaVisuals` (the `MediaProcessor` port method) produces what the browser stores in its IndexedDB History. It **never raises**: the whole step is wrapped in a 45 s `wait_for` and any error returns empty `MediaVisuals`. With `slides` (a multi-slide post) it also fills `MediaVisuals.slides` after the poster: per slide a JPEG from the local file, ≤480 px, ≤80 KB, under a 1.2 MB / 25 s budget for the set (`run-processing.md`). Measured with the test fixtures: a detailed 1080x1350 image 37.7 KB at 384x480, a flat graphic 19.3 KB, a 1080x1920 video frame 18.0 KB at 270x480, a 300x200 image kept at 300x200 (8.2 KB), pure noise 62.2 KB.
 
 **Dimensions**: `ffprobe -select_streams v:0 -show_entries stream=width,height:stream_disposition=attached_pic:stream_tags=rotate:stream_side_data=rotation -of json`. A ±90/270° rotation (display-matrix side data on new files, `rotate` tag on old ones) swaps width/height so phone portrait video reports portrait. An `attached_pic` stream (MP3 cover art) counts as no video. The probe wins; yt-dlp's `width`/`height` are the fallback (and the only source on the captions path). Audio → `None`.
 
@@ -73,8 +85,20 @@ This is the load-bearing check that stops someone submitting `http://169.254.169
 
 `validate_temp_dir` runs from **both** entry points — `api/app.py`'s
 `lifespan` and `worker/settings.py`'s `startup` — and refuses to boot on a
-`TEMP_DIR` that is not an absolute POSIX path, cannot be created, or is not
-writable. It creates the directory as part of that check.
+`TEMP_DIR` that is not an absolute path for the host OS, cannot be created, or
+is not writable. It creates the directory as part of that check.
+
+"Absolute" is judged by the OS the process runs on, with that OS's path module
+(`_require_absolute_for_host`, `_host_is_windows`): on Linux (the container)
+`posixpath.isabs`, so `C:/...` is refused, which is the case below; on native
+Windows `ntpath.isabs`, so a drive or UNC path passes and `/tmp/videolens`
+(the `.env.example` default) is refused, because it has no drive. Each message
+names its own OS: a local native-Windows run (no Docker) needs `TEMP_DIR` set
+to something like `C:/Users/<you>/AppData/Local/Temp/videolens` in
+`backend/.env`. Before 2026-11-26 the check used `os.path.isabs` with a
+message about POSIX paths, which was wrong on Windows. Tests in
+`tests/infrastructure/media/test_uploads.py` patch `_host_is_windows` and
+`os.makedirs`, so both branches run on any host.
 
 This exists because of a real production failure. The dev deployment had a
 Railway service variable `TEMP_DIR` set to
@@ -157,3 +181,8 @@ creates per-run subdirectories as before.
 - 2026-11-20 · Claude (backend agent) · tests: hostile `.mp4` input with a faked subprocess; known issue recorded: no input protocol whitelist and no content check before ffprobe
 - 2026-11-20 · Claude (backend agent) · re-review: TLS socket tracked after wrap so the deadline ends TLS reads; one download budget per run across yt-dlp, direct HTTP and captions; thumbnail fetch on the download pool with a 10 s deadline and chunked capped read; 20 MB ceiling on yt-dlp unsized reads and inflation; `-protocol_whitelist file` on every ffprobe/ffmpeg input and a playlist sniff before ffprobe (expected failures removed, real-binary tests added)
 - 2026-11-21 · Claude (backend agent) · second re-review: the sniff refuses any file whose first non-blank byte is `<` or `#` (DASH behind a comment or lowercase `<mpd`), and the intake probe refuses a file ffprobe opened as HLS/DASH/concat and similar; a TLS connection made after the deadline fired reports "took too long", not "couldn't be downloaded"
+- 2026-11-26 · Claude (session ccr-3d42b168) · multi-slide posts: per-slide output template, Instagram image slides let through and fetched via the guarded `urlopen`, one byte budget across a post, `enforce_slides_cap`/`probe_image`, `normalize_slides`/`normalize_image`, `SavedUpload.slides`
+- 2026-11-26 · Claude (session ccr-3d42b168) · review fix: slides are Instagram-only; other sites' playlists download one entry and are refused (`_PLAYLIST_LINK`) unless they hold exactly one
+- 2026-11-26 · Claude (backend agent) · restored this doc (c30d346 had truncated it to its changelog line by accident) and described the playlist refusal in "Multi-slide posts"; `TEMP_DIR` judged absolute by the host OS's path rules with an OS-specific message (native Windows needs a drive path; Linux still refuses `C:/...`)
+- 2026-11-27 · Claude (backend agent) · `build_slide_thumbnails`/`slide_thumbnail` (≤480 px, ≤80 KB per slide, 1.2 MB and 25 s for the set) and the `slides=` argument of `describe_visuals`; measured sizes recorded
+- 2026-11-27 · Claude (backend agent) · CI fix: `test_ytdlp_carousel.py` patches `ytdlp_downloader._media_binary` (as the other downloader tests do), so its 11 download tests run on the FFmpeg-less CI runner instead of failing
