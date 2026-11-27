@@ -4,7 +4,7 @@ import type { MouseEvent, Ref } from "react";
 import Link from "next/link";
 import { ChevronRight, FileText, KeyRound, Shield, SunMoon, Tag, type LucideIcon } from "lucide-react";
 import { isPlainLeftClick } from "@/components/navClick";
-import { mainTabHref, type MainTab } from "@/application/useMainTab";
+import { mainTabHref, type MainTab, type SelectTab } from "@/application/useMainTab";
 import type { ThemePreference } from "@/components/theme";
 
 /* Hallmark · theme: editorial · component: bottom sheet (installed-app shell)
@@ -70,7 +70,7 @@ type MoreSheetProps = {
   ref: Ref<HTMLDialogElement>;
   activeTab: MainTab | null;
   currentRoute?: LegalRoute;
-  onSelectTab?: (tab: MainTab) => void;
+  onSelectTab?: SelectTab;
   /** The stored preference when the sheet opened, kept current by
    *  `onChooseTheme`. "system" = nothing stored, the device decides. */
   themePreference: ThemePreference;
@@ -98,7 +98,13 @@ export default function MoreSheet({
     event.currentTarget.closest("dialog")?.close();
     if (!onSelectTab || !isPlainLeftClick(event)) return;
     event.preventDefault();
-    onSelectTab(tab);
+    /* A sheet row is a step deeper, like Privacy and Terms (document
+       navigations): push, so Android hardware Back returns to the view the
+       sheet was opened over (2026-11-26, Android QA run 25; a plain switch
+       replaces the entry there, and Back from Releases went to Analyze).
+       From one sheet view to another, replace: Back still skips to the view
+       under both, not through each page visited in the sheet. */
+    onSelectTab(tab, { push: !sheetOwnsLocation(activeTab) });
   };
 
   const renderRow = (row: MoreSheetRow) => {

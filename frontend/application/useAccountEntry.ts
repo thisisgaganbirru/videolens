@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { AuthUser, Capability } from "@/domain/entities";
-import { authSession, capabilitiesGateway } from "@/infrastructure/container";
+import type { AuthUser, Capability, CapabilityReport } from "@/domain/entities";
+import { authSession } from "@/infrastructure/container";
+import { latestCapabilities, loadCapabilities, onCapabilities } from "@/application/capabilitiesReport";
 import { useAuthUser } from "@/application/useAuthSession";
 
 /* The Account entry in the shared chrome (top bar control, phone-menu row,
@@ -13,8 +14,9 @@ import { useAuthUser } from "@/application/useAuthSession";
    server's `auth` capability `ok`. `/app` already reads both (useAuthUser +
    useCapabilities in HomeScreen) and derives the entry with `accountEntryFrom`
    below. The other routes have no shell that reads capabilities, so
-   `useAccountEntry` reads the `auth` row itself, once per page load, shared
-   by the nav and the dock (both call the hook; one request). */
+   `useAccountEntry` reads the `auth` row itself through the same shared
+   read as `/app` (capabilitiesReport.ts): one request for nav, dock and
+   landing hint, read again on `online` until a report arrives. */
 
 export type AccountState = "loading" | "signed-out" | "signed-in";
 
@@ -40,22 +42,8 @@ export function accountEntryFrom(
   };
 }
 
-let authCapabilityRead: Promise<Capability | null> | null = null;
-
-/** The `auth` capability row, read once per page load. A failed read is
- *  forgotten so a later mount can try again, and counts as "no" meanwhile:
- *  missing health information hides the entry, it never shows a broken one. */
-function readAuthCapability(): Promise<Capability | null> {
-  if (!authCapabilityRead) {
-    authCapabilityRead = capabilitiesGateway
-      .fetchReport()
-      .then((report) => report.capabilities.find((row) => row.name === "auth") ?? null)
-      .catch(() => {
-        authCapabilityRead = null;
-        return null;
-      });
-  }
-  return authCapabilityRead;
+function authRow(report: CapabilityReport | null): Capability | null {
+  return report?.capabilities.find((row) => row.name === "auth") ?? null;
 }
 
 /**
@@ -72,16 +60,19 @@ export function useAccountEntry(): AccountEntry {
   useEffect(() => {
     if (!authSession.enabled) return;
     let cancelled = false;
-    void readAuthCapability().then((row) => {
-      if (!cancelled) setAuthCapability(row);
+    /* Every report replaces the last: this read, a re-read the transport
+       asked for while sign-in was unconfirmed (2026-11-21), or the retry on
+       `online` after an offline load (2026-11-26, Android QA run 25b). */
+    const stop = onCapabilities((report) => {
+      if (!cancelled) setAuthCapability(authRow(report));
     });
-    /* A later report (the transport re-reads while sign-in is unconfirmed,
-       2026-11-21) replaces the first, so a recovered `auth` row shows the
-       entry without a reload. */
-    const stop = capabilitiesGateway.subscribe((report) => {
-      const row = report.capabilities.find((r) => r.name === "auth") ?? null;
-      authCapabilityRead = Promise.resolve(row);
-      if (!cancelled) setAuthCapability(row);
+    /* One shared read (capabilitiesReport.ts) for nav, dock and the landing
+       hint, retried on `online` until a report arrives. A failure hides the
+       entry; it never shows a broken one. A report this page load already
+       has (a client navigation from `/app`) resolves at once and is used. */
+    void loadCapabilities().then(() => {
+      const seen = latestCapabilities();
+      if (seen && !cancelled) setAuthCapability(authRow(seen));
     });
     return () => {
       cancelled = true;

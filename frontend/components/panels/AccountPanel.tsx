@@ -247,11 +247,10 @@ function Unavailable() {
   return (
     <section className="key-card" aria-labelledby="acct-off-title">
       <h2 id="acct-off-title" className="acct-card-title">
-        Sign-in is not available on this server
+        Sign-in isn’t available right now
       </h2>
       <p className="key-help">
-        Everything else works without an account: analyze, History, and your own Gemini key under API
-        key.
+        Everything else works without an account: analyze, History, and your own key under Gemini key.
       </p>
     </section>
   );

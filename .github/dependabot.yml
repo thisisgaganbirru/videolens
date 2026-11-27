@@ -1,10 +1,13 @@
 version: 2
 
-# Every entry targets `dev`, not the default branch (`main`). Without
-# `target-branch`, Dependabot opens PRs straight against `main`, skipping the
-# dev lane entirely; by 2026-10-29 that had piled up 16 stale PRs, most of
-# them superseded by later bumps on `dev`. On `dev` they go through the normal
-# PR checks and reach production with the next promotion.
+# Every entry targets `dev` explicitly. Until 2026-11-26 the default branch
+# was `main`, and without `target-branch` Dependabot opened PRs straight
+# against it, skipping the dev lane entirely; by 2026-10-29 that had piled up
+# 16 stale PRs, most of them superseded by later bumps on `dev`. The default
+# branch is `dev` now, but keep `target-branch`: main's ruleset rejects any PR
+# not from `dev` or `hotfix/*` (production-environment.yml, `source-branch`).
+# On `dev` they go through the normal PR checks and reach production with the
+# next promotion.
 #
 # Language and Actions updates are grouped into one weekly PR per ecosystem,
 # so a week of bumps costs one CI run, not one per package. Majors stay

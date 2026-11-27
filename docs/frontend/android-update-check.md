@@ -354,8 +354,11 @@ only when Gradle gets `-PdevBuild=true`, adds `applicationIdSuffix ".dev"` and
   `${applicationId}.fileprovider` (becomes `ai.videolens.app.dev.fileprovider`),
   the Java `namespace` / `R` package stays `ai.videolens.app`, and
   `capacitor.config.ts` `appId` is only read by `cap sync`, not at runtime.
-  There are no deep-link or custom-scheme intent filters (only LAUNCHER and
-  `SEND text/plain`). `strings.xml` `package_name` / `custom_url_scheme` are
+  The Google sign-in deep link (added 2026-11-22) uses
+  `android:scheme="${applicationId}"`, so it follows too: the dev APK
+  answers `ai.videolens.app.dev://auth/callback` and production
+  `ai.videolens.app://auth/callback` (since 2026-11-26; before that both
+  claimed the production link, `auth-sign-in.md`, "Android"). `strings.xml` `package_name` / `custom_url_scheme` are
   unused Capacitor template strings.
 - This update check compares `versionCode` only, so the `-dev` versionName
   does not affect it. The dev app still asks the dev backend's
@@ -370,7 +373,7 @@ only when Gradle gets `-PdevBuild=true`, adds `applicationIdSuffix ".dev"` and
   each other in `app/build/outputs/apk/debug/`. CI is unaffected: it globs
   `*.apk` and the artifact name carries `dev`.
 
-App version is **2.3.0** (`frontend/package.json`, which `build.gradle` reads
+App version is **2.3.1** (`frontend/package.json`, which `build.gradle` reads
 as `versionName`).
 
 ## Changelog
@@ -393,3 +396,5 @@ as `versionName`).
 - 2026-11-02 · frontend (refinement 15) · corrected the pinch-zoom note: Capacitor's Bridge sets setBuiltInZoomControls(zoomEnabled), default false and unset here, so pinch zoom never existed in the app and R14 lost nothing; zoom left off (open owner question); no behaviour change
 - 2026-11-05 · frontend (dev-apk suffix) · added the `debug` build type with the `-PdevBuild` `.dev` applicationId / `-dev` versionName suffix (dev APK installs beside production), bumped the app to 2.2.0, documented the package-id dependents checked
 - 2026-11-26 · release agent · bumped the app to 2.3.0 for the dev release ahead of promotion to main
+- 2026-11-26 · frontend agent · package-id dependents: the sign-in deep-link scheme is now `${applicationId}` and follows the `.dev` suffix (replaces the stale "no deep-link filters" note)
+- 2026-11-26 · Claude (release agent) · bumped the app to 2.3.1 for the dev release ahead of promotion to main

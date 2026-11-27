@@ -31,10 +31,10 @@ promotion PR, push to `main`), built its images three times, and published a
 
 | Event | Runs | Does not run, and why |
 |---|---|---|
-| PR into `dev` | `changes`, then only the touched parts: backend and/or frontend checks, Android if `frontend/` changed (the APK is kept as a 14-day artifact, built against the dev backend with the `.dev` application id; `dev_artifact` input), advisory scan of the touched images, `lint-workflows` (actionlint) if `.github/` changed, `hygiene` (no AI-tool attribution in the PR's commits or description) always; `required` aggregates | — |
-| Any PR event into `dev` or `main`, including `edited` | `commit-hygiene.yml`: the same hygiene job, reported as `pr-hygiene / Commit hygiene` (the lanes' copy is `hygiene / Commit hygiene`) | The lanes cannot listen for `edited` (see engineering-standards.md, "Commit hygiene"), so fixing a bad title or description re-runs only this copy; the lane's `required` stays red until a push or a manual re-run. CI runs the base branch's script; `main` has none until the first promotion carrying it merges, so that promotion PR runs its own copy with a `::warning::`. |
+| PR into `dev` | `changes`, then only the touched parts: backend and/or frontend checks, Android if `frontend/` changed (the APK is kept as a 14-day artifact, built against the dev backend with the `.dev` application id; `dev_artifact` input), advisory scan of the touched images, `lint-workflows` (actionlint) if `.github/` changed, `hygiene` (no AI-tool attribution in the PR's commits or description) always; `dev-required` aggregates | — |
+| Any PR event into `dev` or `main`, including `edited` | `commit-hygiene.yml`: the same hygiene job, reported as `pr-hygiene / Commit hygiene` (the lanes' copy is `hygiene / Commit hygiene`) | The lanes cannot listen for `edited` (see engineering-standards.md, "Commit hygiene"), so fixing a bad title or description re-runs only this copy; the lane's aggregate (`dev-required` / `production-required`) stays red until a push or a manual re-run. CI runs the base branch's script; both `dev` and `main` have it (`main` since the 2.3.0 promotion, PR #154, 2026-11-26), so the fallback to the PR's own copy with a `::warning::` no longer applies. |
 | Push to `dev` | nothing | The PR just tested this exact tree (requires "up to date before merging"). Railway deploys. |
-| PR into `main` (promotion, Dependabot) | full application checks, **enforced** scan of both images, `hygiene`; `required` aggregates | Android: `dev`'s PRs built this tree, and the push builds it again with the production URL. |
+| PR into `main` (promotion from `dev`, or a `hotfix/*` branch) | `source-branch` (head must be `dev` or `hotfix/*` of this repository), full application checks, **enforced** scan of both images, `hygiene`; `production-required` aggregates | Android: `dev`'s PRs built this tree, and the push builds it again with the production URL. |
 | Push to `main` | `publish` (build once, scan, promote), `android` (APK with the production URL), `release` | Application checks: the promotion PR tested this tree. |
 | Nightly 06:17 UTC | advisory scan of `main`, tracking issue | — |
 
@@ -69,12 +69,55 @@ create`. The image behind `latest` is byte-for-byte the scanned one; before,
 the publish job rebuilt an image separate from the one the check job scanned.
 A failed scan leaves an unpromoted `sha-` tag, which nothing pulls.
 
-**Required checks.** Each caller ends in a job named `required` that always
-reports (`if: always()`). Branch protection should require exactly that check
-on `dev` and on `main`, not the individual jobs: the `dev` lane skips jobs on
-purpose, and a required check that never reports leaves a PR waiting forever.
-The `dev` gate treats `skipped` as fine; the production gate demands every job
-`success`, since nothing there is path-filtered.
+**Required checks.** Each lane ends in one aggregate job that always reports
+(`if: always()`): `dev-required` on the dev lane, `production-required` on the
+production lane (both were `required` until 2026-11-26). The rulesets require exactly that check,
+not the individual jobs: the `dev` lane skips jobs on purpose, and a required
+check that never reports leaves a PR waiting forever. The `dev` gate treats
+`skipped` as fine; the production gate demands every job `success`, since
+nothing there is path-filtered. The names differ on purpose: a PR opened into
+`dev` and then retargeted to `main` fires only `edited`, which neither lane
+listens to, so with one shared name the dev lane's green `required` on the
+same head commit satisfied `main`'s ruleset without the production lane (and
+its enforced scan) ever running. Now `dev`'s ruleset requires `dev-required`
+and `main`'s requires `production-required`, each reported by one lane only,
+both next to `pr-hygiene / Commit hygiene`; a retargeted PR needs a push or a
+close-and-reopen to run the right lane. Both lanes and both rulesets must
+stay in step: renaming either job without its ruleset leaves that branch
+waiting forever on a check nobody reports. The owner switched the rulesets
+before #156 (the rename) merged; the order, and which PRs waited in between, is
+in `engineering-standards.md`, "Branch protection". The switch-over is
+complete: the first promotion (2.3.1, PR #162, 2026-11-26) moved `main`'s tree
+to `production-required`, so hotfix PRs into `main` can merge again.
+
+**Source branch.** `main` takes pull requests from `dev` (the promotion) and
+from `hotfix/*` branches (owner decision, 2026-11-26), and only from branches
+of this repository. The production lane's `source-branch` job checks the PR's
+head repository and head ref (passed through `env:`, never interpolated into
+the script) and fails with an `::error::` naming the offending branch; it
+feeds `production-required`, so anything else cannot merge. Dependabot
+targets `dev` and is rejected here. It is a guard against mistakes, not a
+security boundary: like every job on `pull_request` it runs from the PR's own
+tree, so a PR that edits `production-environment.yml` can change it (hence
+owner review for `.github/`, as for commit hygiene), and it shares the
+retarget blind spot above.
+
+**Hotfixes and the post-release sync.** A production fix that cannot wait for
+the next promotion goes on a `hotfix/<name>` branch cut from `main`, through a
+PR into `main` (the full production lane runs on it), and is then merged back
+with a `main` -> `dev` PR (precedent: #139 then #140). After every release,
+hotfix or promotion, `main` is at least one merge commit ahead of `dev`, so a
+`main` -> `dev` sync PR is a standard release step: open it from a branch
+such as `chore/merge-main-into-dev` (the dev lane runs; the sync is usually a
+no-op tree). With "up to date before merging" and no bypass, skipping it
+leaves the next promotion PR behind `main` with no way to update it from the
+PR page.
+
+**Default branch.** `dev` since 2026-11-26 (an owner setting). New PRs
+default to `dev`, and scheduled workflows run from `dev`'s copy of their
+file, which is why `security-nightly-scan.yml` passes `ref: main` to the scan.
+`target_commitish` on the release step matters again for the same reason (see
+below).
 
 **Workflow lint.** `lint-workflows` on the dev lane runs
 [actionlint](https://github.com/rhysd/actionlint) (the `rhysd/actionlint`
@@ -85,7 +128,8 @@ are fixed, not suppressed; the one inline `# shellcheck disable=` (SC2016 in
 the nightly issue script) carries its reason beside it.
 
 **Timeouts.** Every job carries `timeout-minutes`, so a hung step costs that
-much and not GitHub's default of 360 minutes: 5 for `changes`, `required`,
+much and not GitHub's default of 360 minutes: 5 for `changes`, `dev-required`,
+`production-required`, `source-branch`, Android `signing`,
 `lint-workflows` and the nightly `issue`; 15 for `backend` and `frontend`; 20
 for `scan`; 25 for `android`; 30 for `publish` (arm64 under QEMU); 10 for
 `release`. Green runs take 2 to 5 minutes end to end, so these are generous.
@@ -98,13 +142,21 @@ pinned SDK packages). They stay in this repo: one project does not justify a
 separate actions repo, and an in-repo path cannot drift from the code it builds.
 
 **Repository settings this design relies on** (not files; an administrator
-sets them in GitHub):
-- Branch protection on `dev` and `main`: require the `required` check, require
-  branches to be up to date before merging, and disallow direct pushes. Without
-  "up to date", a push could merge a tree no workflow tested; without blocking
-  direct pushes, a push to `dev` deploys with no checks at all (Railway's Wait
-  for CI treats "no workflow runs" as a pass).
-- The `production` GitHub environment still protects `publish`.
+sets them in GitHub; current state in `docs/engineering-standards.md`,
+"Branch protection"):
+- One ruleset per branch. `dev`: require `dev-required` and `pr-hygiene / Commit
+  hygiene`. `main`: require `production-required` and `pr-hygiene / Commit
+  hygiene`. Both: pull request required (0 approvals, conversation
+  resolution, merge commits only), branches up to date before merging, no
+  deletion, no force push, no bypass actors. Without "up to date", a push
+  could merge a tree no workflow tested; without blocking direct pushes, a
+  push to `dev` deploys with no checks at all (Railway's Wait for CI treats
+  "no workflow runs" as a pass).
+- The `production` GitHub environment (deployment branches: `main` only, no
+  required reviewers by owner decision 2026-11-26) protects `publish`, the
+  Android `signing` and `sign` jobs, and the four `ANDROID_*` signing secrets
+  stored in it. No workflow uses the `dev` GitHub environment.
+- Default branch `dev`.
 
 Rough cost per change: one `dev` PR (about 4-10 minutes depending on what it
 touches) plus a share of the promotion (about 10 for the PR, about 15 for the
@@ -121,15 +173,29 @@ key is configured). It is capped at `contents: read` and never creates a tag
 or a release. Since 2026-11-20 it has three jobs, so the signing key never
 shares a runner with npm or Gradle dependency code:
 
-- `signing` (no checkout): with `upload_apk`, its `Prepare release signing`
-  step checks the `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` /
-  `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` secrets, which
-  `production-environment.yml` passes through explicitly, for emptiness
-  (and that the keystore decodes, without writing it) and outputs the variant.
+- `signing` (no checkout; only with `upload_apk`, in the GitHub environment
+  named by the `environment` input, which `production-environment.yml` sets
+  to `production`): its `Prepare release signing` step checks the
+  `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` /
+  `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` secrets for emptiness (and
+  that the keystore decodes, without writing it) and outputs the variant.
+  Since 2026-11-26 they are `production` environment secrets, not repository
+  secrets, and the caller passes nothing (no `secrets:` on either side): a
+  job reads an environment's secrets only while it runs in that environment,
+  and `production` admits `main` only, whereas a repository secret reaches
+  any same-repository branch's workflow. On the dev lane (no `upload_apk`, no
+  `environment`) the job is skipped rather than run with an empty
+  `environment:`, so no dev-lane job names an environment; `android` then
+  runs anyway (`!cancelled() && needs.signing.result != 'failure'`) and
+  falls back to the debug variant. `upload_apk` without `environment` (or
+  the reverse) fails `android`'s input validation. A side effect: every
+  `main` push now records `production` deployments for these jobs, the debug
+  fallback included.
 - `android`: checkout, `gradle/actions/wrapper-validation`, `npm ci`, sync,
-  Gradle. It receives no secret. For `release` it builds an **unsigned**
-  `assembleRelease` and uploads it as `<artifact>-unsigned` (1 day).
-- `sign` (release only; no checkout, no npm, no Gradle): JDK, Android SDK
+  Gradle. It receives no secret and runs in no environment. For `release` it
+  builds an **unsigned** `assembleRelease` and uploads it as
+  `<artifact>-unsigned` (1 day).
+- `sign` (release only, in the same environment; no checkout, no npm, no Gradle): JDK, Android SDK
   build-tools 36.0.0, downloads the unsigned APK, `zipalign`, `apksigner sign`
   with the passwords read from the environment, `apksigner verify`, rejects a
   debug certificate, and uploads `<artifact>` (the name the release job
@@ -158,30 +224,66 @@ so a `package.json` version string cannot inject shell. Two callers:
   locally, so this is the only thing that catches a broken Capacitor sync or
   Gradle build before it lands. The APK is discarded; nothing on `dev`
   reaches a device.
-- `production-environment.yml` — on push to `main`, passes `upload_apk: true`, so the reusable
+- `production-environment.yml` — on push to `main`, passes `upload_apk: true` and `environment: production`, so the reusable
   also writes `version.json` and uploads the APK as a workflow artifact. A
   separate `release` job in that workflow (the only job in the repository
   holding `contents: write`) downloads the artifact and publishes the release,
 and since 2026-10-29 it also waits on `publish`, so an APK never ships for a
 commit whose images failed the enforced scan.
 
-#### The APK's backend URL
+#### The APK's build-time configuration (backend URL and sign-in)
 
-`reusable-android-checks.yml` takes an `api_base_url` input and sets it as
-`NEXT_PUBLIC_API_BASE_URL` on the `npm run android:sync` step. This is
-**build-time, not runtime**: `android:sync` runs `build:mobile`, and Next
-inlines every `NEXT_PUBLIC_*` value into the static export, so the URL is
-compiled into the APK and cannot be changed after the fact.
+`reusable-android-checks.yml` takes three string inputs and sets them on the
+`npm run android:sync` step:
 
-Only `production-environment.yml` passes it (the production Railway backend,
-matching the images that workflow publishes). The PR and `dev` callers
-deliberately omit it: those builds exist to prove the Android project still
-compiles and their APK is discarded, never installed.
+| Input | Becomes | Production lane | Dev lane |
+|---|---|---|---|
+| `api_base_url` | `NEXT_PUBLIC_API_BASE_URL` | `https://videolens-backend-production.up.railway.app` | `https://videolens-backend-dev.up.railway.app` |
+| `supabase_url` | `NEXT_PUBLIC_SUPABASE_URL` | `https://lslepkhscayqxmsnckns.supabase.co` | `https://pjekwwiaocywdbwqgtgl.supabase.co` |
+| `supabase_publishable_key` | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | that project's `sb_publishable_...` key | that project's `sb_publishable_...` key |
 
-A validation step fails the build when `upload_apk: true` and `api_base_url`
-is empty, mirroring the frontend-scoped check in
-`reusable-container-publish.yml`. That guard exists because the failure it
-prevents is **completely silent**: `infrastructure/runsGateway.ts` falls back
+This is **build-time, not runtime**: `android:sync` runs `build:mobile`, and
+Next inlines every `NEXT_PUBLIC_*` value into the static export, so the
+values are compiled into the APK and cannot be changed after the fact.
+`inject-csp.mjs --export` reads the same environment, so the Supabase origin
+lands in the export's meta CSP `connect-src` (`docs/frontend/security-headers.md`).
+
+All three are **literal values in the caller** (`production-environment.yml`,
+`development-environment.yml`), not GitHub Actions variables or secrets. They
+are public (the publishable key is meant for the bundle), they change only
+when the environment itself changes, and a literal keeps the whole lane
+readable in one file and reviewable in the PR that changes it. Each Supabase
+pair must be the project the same lane's backend trusts (`AUTH_*`), or the
+backend reports `auth` as `off`/mismatched and the Account tab stays hidden.
+Never a `sb_secret_...` or service_role key: the validation step rejects
+any key that does not start with `sb_publishable_`.
+
+The web Dockerfile also takes `NEXT_PUBLIC_SITE_URL` and
+`NEXT_PUBLIC_NOINDEX`. The APK deliberately does not: they only feed
+canonical links, `robots.txt` and the sitemap, none of which an APK serves.
+There are no other `NEXT_PUBLIC_*` values (no Stripe one: Checkout and the
+Portal are server-created redirects).
+
+The plain gate (neither `upload_apk` nor `dev_artifact`) may omit all three.
+For an APK that reaches a device (`upload_apk` or `dev_artifact`), two steps
+fail the build loudly:
+
+- **Validate build inputs** (before checkout): `api_base_url` non-empty,
+  `supabase_url` of the form `https://<ref>.supabase.co`, the key
+  `sb_publishable_...`.
+- **Check sign-in is compiled into the export** (after `android:sync`): the
+  Supabase host must appear in `out/_next/static/**/*.js` and its origin in
+  `out/index.html` (the CSP meta). This catches a value that was set in the
+  inputs but never reached the bundle.
+
+Before 2026-11-26 only `api_base_url` was passed, so every CI-built APK
+(including v2.3.0-build543) had sign-in off: no error anywhere, the
+`NullAuthSession` was built, and the Account tab never appeared. Local builds
+worked only because `.env.local` supplied the values.
+
+The `api_base_url` guard mirrors the frontend-scoped check in
+`reusable-container-publish.yml`. It exists because the failure it
+prevents is **completely silent**: `infrastructure/apiBase.ts` falls back
 to `http://localhost:8000` when the variable is unset, which is correct for
 `next dev` and wrong for a phone — on a device `localhost` is the device, so
 every request fails with "Can't reach the server", while CI stays green
@@ -192,9 +294,10 @@ The release step passes `target_commitish: ${{ github.sha }}`, pinning the tag
 to the commit the APK was built from rather than to wherever the branch tip has
 since moved. It mattered more when releases ran on `dev`, where GitHub would
 otherwise create the tag on the default branch (`main`) and the tag would not
-describe the artifact at all — observed on `dev-v1.1.0-build28`. Now that
-releases run on `main` the two usually coincide, but a concurrent merge is
-enough to separate them. `workflow_dispatch` runs build and test only; the
+describe the artifact at all — observed on `dev-v1.1.0-build28`. Releases
+run on `main`, and since 2026-11-26 the default branch is `dev`, so without
+it the tag would land on `dev`'s tip again; a concurrent merge into `main` is
+enough to separate them too. `workflow_dispatch` runs build and test only; the
 release job is gated on `github.event_name == 'push'`.
 
 ### Tag scheme and versionCode
@@ -532,7 +635,7 @@ this, chosen by the owner on 2026-11-07.
 It reads the update type with `dependabot/fetch-metadata` and, for anything
 that is not a semver-major, turns on GitHub auto-merge (`gh pr merge --auto
 --merge`). GitHub then merges the moment branch protection is satisfied: the
-`required` check green and the branch up to date. A red PR stays open. Majors
+`dev-required` check green and the branch up to date. A red PR stays open. Majors
 are skipped; `update-type` is the highest change in the PR, so one major in a
 group keeps the group out. Digest bumps carry no semver change and go through.
 It needs the repository setting "Allow auto-merge" turned on.
@@ -696,10 +799,13 @@ its validation step while the backend leg still publishes — the matrix sets
 `fail-fast: false`, and the requirement is scoped by `matrix.service`. A missing
 production API base URL cannot block an image that has no use for it.
 
-Configure GitHub environments named `dev` and `production`. Production should
-require reviewer approval and restrict deployment branches to `main`. Branch
-protection should require the pull-request application, container, and Android
-jobs.
+The GitHub `production` environment restricts deployment branches to `main`
+and, by owner decision (2026-11-26), requires no reviewers: the gate is the
+`main` ruleset and its `production-required` check. It holds
+`PRODUCTION_API_BASE_URL` and, once created, the four `ANDROID_*` signing
+secrets. The `dev` GitHub environment is used by no workflow. The rulesets
+require the aggregate checks (`dev-required` on `dev`, `production-required` on
+`main`) plus `pr-hygiene / Commit hygiene`, never the individual jobs.
 
 ## Files touched
 
@@ -732,8 +838,17 @@ jobs.
   builds are verified locally; the optional local emulated arm64 verification
   was interrupted, so the first successful publication workflow remains the
   arm64 proof.
-- GitHub environment protection and branch protection are repository settings,
-  not files, and must be configured by a repository administrator.
+- GitHub environment protection and the branch rulesets are repository
+  settings, not files, and must be configured by a repository administrator.
+  The workflows and the rulesets must agree on the check names
+  (`dev-required`, `production-required`, `pr-hygiene / Commit hygiene`); nothing
+  in CI detects a mismatch, which shows only as a PR waiting forever.
+- The Android `signing` / `sign` jobs read the signing secrets from the
+  `production` environment without any `secrets:` declaration or
+  passthrough. GitHub documents that a reusable workflow job with
+  `environment:` uses that environment's secrets, and actionlint accepts it,
+  but the path has not run with real secrets here; it is checked on the
+  first release-signed build (`DEPLOYMENT.md`, "Android release signing").
 - **Nothing detects a stale `.grype.yaml` rule.** Grype ignore rules are
   unconditional; once an upstream fix ships and the base image moves, a rule
   stops matching anything and becomes dead config that still reads as a live
@@ -869,3 +984,8 @@ jobs.
 - 2026-11-20 · Claude (CI agent) · the security scan's frontend build passes `NEXT_PUBLIC_API_BASE_URL=https://scan-placeholder.invalid`; the new blank-URL guard in `next.config.mjs` failed it (Docker builds do not see `CI=true`)
 - 2026-11-20 · Claude (CI agent) · hygiene check names made distinct (`pr-hygiene / Commit hygiene` from `commit-hygiene.yml`, `hygiene / Commit hygiene` in the lanes); the nightly `issue` job tracks scans that could not run in their own issue
 - 2026-11-21 · Claude (CI agent) · hygiene row: fixing a title re-runs only `pr-hygiene` (the lane's `required` stays red until a push or re-run), and `main` has no `scripts/commit-hygiene.sh` until the first promotion carrying it merges, so that PR runs its own copy
+- 2026-11-26 · ci-separation agent · main/dev separation: production aggregate renamed `production-required` (one ruleset per branch, kept in step); `source-branch` job (PRs into `main` only from `dev` or `hotfix/*` of this repo); Android signing secrets moved to the `production` environment (no `secrets:` passthrough; `signing`/`sign` run in the new `environment` input and are skipped on the dev lane); hotfix flow and post-release `main` -> `dev` sync documented; default branch `dev`, so the nightly scan pins `ref: main`; replaced the stale environments/reviewers paragraph
+- 2026-11-26 · ci-separation agent · dev lane aggregate renamed `required` -> `dev-required` (owner decision); dev ruleset requires `dev-required`, main ruleset `production-required`, both with `pr-hygiene / Commit hygiene`; rulesets switched before #156 merges
+- 2026-11-26 · deps agent · took Dependabot #151's eight pip bumps (fastapi 0.165.0, python-multipart 0.0.34, pydantic 2.14.4, pydantic-settings 2.16.3, google-genai 3.6.1, boto3 1.44.6, sqlalchemy 2.1.9, stripe 17.1.0; transitive botocore 1.44.12, pydantic-core 2.50.5) in a hand-regenerated, marker-preserving `requirements.txt` (uv `--universal`, exact versions via `-P`). Dependabot dropping the markers is now four-for-four on pip PRs (#95, #136, #137, #151)
+- 2026-11-26 · Claude (apk-supabase-config agent) · APKs had sign-in off: the Android sync step passed only `NEXT_PUBLIC_API_BASE_URL`. `reusable-android-checks.yml` takes `supabase_url` and `supabase_publishable_key` (literal per lane in both callers, like `api_base_url`), validates them before checkout for `upload_apk`/`dev_artifact` (https `*.supabase.co`, `sb_publishable_` only) and checks after the sync that the host is in the export JS and the origin in `out/index.html`'s CSP; section renamed "The APK's build-time configuration"; stale "dev callers omit api_base_url" text corrected
+- 2026-11-26 · Claude (docs agent) · Required checks: switch-over recorded as complete; the first promotion (2.3.1, PR #162) moved `main`'s tree to `production-required`, so hotfix PRs into `main` can merge again. Hygiene row: `main` has `scripts/commit-hygiene.sh` since the 2.3.0 promotion (PR #154), so the own-copy fallback note is resolved

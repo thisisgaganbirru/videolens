@@ -7,7 +7,7 @@ import MoreSheet, { sheetOwnsLocation, type LegalRoute } from "@/components/More
 import { TAB_LABEL } from "@/components/AppNav";
 import { isPlainLeftClick } from "@/components/navClick";
 import { setThemePreference, themePreference, type ThemePreference } from "@/components/theme";
-import { mainTabHref, type MainTab } from "@/application/useMainTab";
+import { mainTabHref, type MainTab, type SelectTab } from "@/application/useMainTab";
 import { useHardwareBack } from "@/application/useHardwareBack";
 import { useSoftKeyboard } from "@/application/useSoftKeyboard";
 
@@ -41,7 +41,7 @@ type BottomTabBarProps = {
   /** On a legal route, which one — marks its sheet row and lights up More. */
   currentRoute?: LegalRoute;
   /** Supplied only on `/app`, where a tab switch can update the URL in place. */
-  onSelectTab?: (tab: MainTab) => void;
+  onSelectTab?: SelectTab;
   /** Draw the Account dock item (auth phase 2); off unless `/app` says
    *  sign-in is available. */
   showAccount?: boolean;

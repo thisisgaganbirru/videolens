@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import type { Capability, CapabilityReport } from "@/domain/entities";
-import { capabilitiesGateway } from "@/infrastructure/container";
-import { noteReadResult, onReconnectChance } from "@/application/serverReachability";
+import { onReconnectChance } from "@/application/serverReachability";
+import { latestCapabilities, loadCapabilities, onCapabilities } from "@/application/capabilitiesReport";
 
 /* What the deployment says about itself, so a user learns a source will not
    work *before* spending an upload on it rather than after waiting through a
@@ -24,7 +24,10 @@ import { noteReadResult, onReconnectChance } from "@/application/serverReachabil
       `HomeScreen`, which is never unmounted by a tab switch (the tabs are a
       `pushState` query param), so this is one request per app load — not one
       per tab visit. That is also why the two contextual notices take props
-      from `HomeScreen` instead of calling this hook themselves.
+      from `HomeScreen` instead of calling this hook themselves. The read
+      itself lives in `capabilitiesReport.ts`, shared with `useAccountEntry`
+      on the other routes; a read that never arrived is repeated on
+      `online` (2026-11-26), never once a report is in.
    3. **Only `degraded` and `unavailable` are worth showing.** `ok` shows
       nothing — a permanent "all systems operational" strip is chrome that
       tells the user nothing they can act on. `disabled` shows nothing either,
@@ -55,37 +58,32 @@ export function useCapabilities() {
 
   useEffect(() => {
     let cancelled = false;
-    let have = false;
-    let pending = false;
     /* Every report that arrives, this hook's own read or a re-read the
        transport asked for while sign-in was unconfirmed (2026-11-21), so a
        recovered `auth` row shows here without a reload. */
-    const stopListening = capabilitiesGateway.subscribe((next) => {
-      noteReadResult("capabilities");
-      have = true;
+    const stopListening = onCapabilities((next) => {
       if (cancelled) return;
       setReport(next);
       setSettled(true);
     });
+    /* The read is shared with useAccountEntry (capabilitiesReport.ts),
+       which also retries it on `online` until a report arrives (2026-11-26,
+       Android QA run 25b). Failure is still silent here — see (1) above;
+       it is reported to serverReachability, which says so on Analyze. */
     const load = () => {
-      if (have || pending) return;
-      pending = true;
-      capabilitiesGateway
-        .fetchReport()
-        .catch((err: unknown) => {
-          /* Still silent here — see (1) above. What it does report is
-             whether the server could be reached at all, which Analyze says
-             on its own (serverReachability, refinement 4 LCH-06). */
-          noteReadResult("capabilities", err);
-        })
-        .finally(() => {
-          pending = false;
-          if (!cancelled) setSettled(true);
-        });
+      void loadCapabilities().finally(() => {
+        if (cancelled) return;
+        /* A report this page load already had (another route read it, then
+           a client navigation here) resolves at once. */
+        const seen = latestCapabilities();
+        if (seen) setReport(seen);
+        setSettled(true);
+      });
     };
     load();
-    /* (2) still holds on a healthy launch: one fetch. A second happens only
-       when the first never arrived and the connection may be back. */
+    /* (2) still holds on a healthy launch: one fetch. Focus and visibility
+       retry it only while the reachability notice is up; `loadCapabilities`
+       is a no-op once a report has arrived. */
     const stop = onReconnectChance(load);
     return () => {
       cancelled = true;

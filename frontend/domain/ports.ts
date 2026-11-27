@@ -380,13 +380,15 @@ export type AuthRedirectResult = { id: number; ok: true } | { id: number; ok: fa
  * - Web: this tab navigates to the page, and the provider sends it back to
  *   `/app?view=account` with `?code=` (or `?error=`).
  * - Installed app: the system browser (a Custom Tab), and the provider sends
- *   it to `ai.videolens.app://auth/callback`, which Android hands back to the
- *   app (`AndroidManifest.xml`).
+ *   it to `<applicationId>://auth/callback` (`ai.videolens.app` in
+ *   production, `ai.videolens.app.dev` for the dev APK), which Android hands
+ *   back to that app alone (`AndroidManifest.xml`).
  */
 export interface AuthRedirectBrowser {
   /** The address the provider must send the person back to. Must be in the
-   *  provider project's redirect allowlist. */
-  returnUrl(): string;
+   *  provider project's redirect allowlist. Async: the installed app reads
+   *  its own application id for the scheme. */
+  returnUrl(): Promise<string>;
   /** Shows the provider's page. Web: navigates this tab away. */
   open(url: string): Promise<void>;
   /** Closes the app's browser if it is still open. Web: nothing. */

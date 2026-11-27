@@ -94,8 +94,9 @@ healthy reply on the next window `focus` clears it and the pill appears.
 ## Refinement 9 (2026-11-02) — staying current, and proving a refund
 
 **Re-reads.** `revalidateFreeRuns()` (a no-op on the user's own key) runs:
-- on `visibilitychange` to visible, and on Capacitor `resume` (via the new
-  `NativeShell.onResume`, throttled to 1.5s), from `useFreeRuns`;
+- on `visibilitychange` to visible, on Capacitor `resume` (via the new
+  `NativeShell.onResume`, throttled to 1.5s), and (2026-11-26) on the window
+  `online` event, from `useFreeRuns` (see "Coming back online" below);
 - whenever a run completes or fails (`useAnalysisRun.settleFreeRuns`);
 - whenever the intake comes back (`status === "idle"` in HomeScreen), so
   "Analyze another" after a refunded run shows the refunded count.
@@ -387,6 +388,44 @@ offer differs from the one shown (for example `key` stamped, sign-in shown:
 0.027 at 412); an unexpired hint after runs came back early. Each happens
 once, then the hint is rewritten or removed.
 
+## Coming back online (2026-11-26, Android QA run 25)
+
+Repro on the 2.3.0 APK: Wi-Fi and data off, reload, network on, wait 15 s.
+The strip stayed empty until the app was left and reopened (resume re-read
+it). The only path that answered `online` was `serverReachability`'s
+reconnect retry, and it was gated on `navigator.onLine` reading true at the
+moment of the event, which the Android WebView does not promise.
+
+- `useFreeRuns` now listens for `online` in the same effect as
+  `visibilitychange` and Capacitor `resume`, through the same 1.5 s throttle,
+  ungated. `refreshFreeRuns` shares one request when the reachability retry
+  fires too (verified: exactly one `GET /api/free-runs` after `online`).
+- `useServerReachability` keeps the `navigator.onLine` gate for `focus` and
+  `visibilitychange` but not for `online` itself, so the capabilities read is
+  retried as well and "Can't reach the server" clears beside the returning
+  strip (without this the strip came back under a stale notice).
+
+Verified in Chromium at 412 px with `/api/*` mocked
+(`scratchpad\run25\verify_run25.py`): `navigator.onLine` overridden to false
+and every API request aborted with `internetdisconnected` for the load, then
+the flag cleared and `online` dispatched with no focus or visibility change.
+"Synced" (`onLine` already true at the event) and "lagging" (`onLine` flips
+just after) both show "3 of 3 runs left today." and no notice. Against the
+pre-fix code the same script showed the strip in the synced case (the old
+gated path) and nothing, with zero reads, in the lagging case. That the
+device fires `online` with `onLine` lagging is a hypothesis that fits the
+QA repro, not something observed on the device; the `online` listener is
+the ungated path either way. Re-check on the next APK.
+
+Run 25b (android-64, code559) passed the strip but found the Account tab and
+the strip's "Sign in for 10 a day." still missing after reconnect: the
+capabilities read had no `online` path of its own, and the reachability
+retry's `online` listener is removed by its own `[state]` effect when a real
+event flips the state. It now has one (`capabilitiesReport.ts`, see
+`capability-reporting.md`, "Shared read, retried on `online`"). The
+synthetic-event checks above could not show this; `verify_run25b.py` adds a
+real-event case.
+
 ## Changelog
 
 - 2026-11-01 · frontend agent (Phase 5b) · created: device token store, free-runs gateway/port, `useFreeRuns` store, 401 retry-once and 402 limit state in `useAnalysisRun`, `FreeRunsBanner` on all shells, `UploadForm` `blocked`, API key lede and Privacy sentence
@@ -407,3 +446,5 @@ once, then the hint is rewritten or removed.
 - 2026-11-14 · frontend agent · UX fix spec batch b: strip is text only (no "Add key" pill, container query removed), "N of L runs left today. Resets at <local time>." with the inline Sign in where offered, spent "You've used today's L runs. They reset at <time>."; out-of-runs offer moved into the intake card (`blockedOffer`: sign-in / upgrade / key); strip and block wait for `stripKnown`; ghost has a valid `resetsAt`; 402 `extra_runs_cap` no longer says "tomorrow"
 - 2026-11-14 · frontend agent · desktop (60rem up): the strip sits at the right end of the "New analysis" row (`.intake-head` grid, `justify-self: end`, max 26rem, 0.875rem/1.35 with 8px block padding so two lines stay shorter than the h1 and the card never moves); ghost stand-in and `data-byok` rule unchanged; below 60rem the stacked strip is as before
 - 2026-11-14 · frontend agent · out-of-runs and signed-in strip shifts: `data-runs-spent` pre-paint hint (`infrastructure/layoutHints.ts`, `application/useLayoutHints.ts`) reserves the spent strip and the out-of-runs block (`UploadForm` `blockedHeld`) for a returning spent visitor; three strip stand-ins chosen by `data-session` / `data-runs-spent`. Numbers under "Remembered spent state"
+- 2026-11-26 · frontend agent · Android QA run 25: re-read on the `online` event in `useFreeRuns` (same throttled path as resume), and `useServerReachability` no longer gates its `online` retry on `navigator.onLine`, so after an offline launch the strip comes back and the "Can't reach the server" notice clears without leaving the app
+- 2026-11-26 · frontend agent · Android QA run 25b: note on the capabilities reconnect fix (the strip's sign-in hint depends on the `auth` row) and why the run 25 synthetic `online` check missed the real-event race

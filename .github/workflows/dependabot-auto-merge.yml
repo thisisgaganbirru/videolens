@@ -2,7 +2,7 @@ name: Dependabot auto-merge
 
 # Turns on GitHub auto-merge for Dependabot PRs into dev that are not a
 # semver-major. GitHub then merges by itself the moment branch protection is
-# satisfied: the `required` check green and the branch up to date with dev. A
+# satisfied: the `dev-required` check green and the branch up to date with dev. A
 # red PR simply stays open. A PR that falls behind dev waits until its branch
 # is updated; the daily Claude overseer (a scheduled task, see
 # docs/container-workflows.md) does that, and auto-merge finishes the job.
