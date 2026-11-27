@@ -5,9 +5,9 @@ from unittest.mock import patch
 from google.genai import errors as genai_errors
 from google.genai import types
 
-from app.domain.entities import CaptionTrack, VideoAnalysis
+from app.domain.entities import AnalysisContext, CaptionTrack, VideoAnalysis
 from app.domain.errors import AnalysisUnavailableError
-from app.infrastructure.ai.gemini_engine import GeminiEngine
+from app.infrastructure.ai.gemini_engine import GeminiEngine, _is_gemini3_or_later
 from app.infrastructure.config import Settings
 
 
@@ -73,6 +73,9 @@ class _FakeModels:
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
+        if isinstance(outcome, tuple):  # (result, usage_metadata)
+            parsed, usage = outcome
+            return SimpleNamespace(parsed=parsed, text=None, usage_metadata=usage)
         return SimpleNamespace(parsed=outcome, text=None)
 
 
@@ -107,6 +110,9 @@ def _engine(client: _FakeClient, rand: float = 1.0, **settings) -> tuple[GeminiE
         "gemini_slide_image_resolution": "high",
         "gemini_video_fps": 0.0,
         "gemini_media_resolution": "",
+        "gemini_video_token_budget": 400_000,
+        "gemini_max_output_tokens": 0,
+        "gemini_thinking_level": "",
         **settings,
     }
     engine = GeminiEngine(
@@ -530,14 +536,15 @@ class VideoSamplingTests(unittest.IsolatedAsyncioTestCase):
         engine, _ = _engine(
             client,
             gemini_retry_attempts=1,
-            gemini_fallback_model="fallback-model",
+            # A Gemini 3 fallback; an older one is stripped (OlderFallbackModelTests).
+            gemini_fallback_model="gemini-3.5-flash",
             gemini_video_fps=2.0,
             gemini_media_resolution="high",
         )
 
         await engine.analyze_with_retry("clip.mp4")
 
-        self.assertEqual(client.models.models_called, ["primary-model", "fallback-model"])
+        self.assertEqual(client.models.models_called, ["primary-model", "gemini-3.5-flash"])
         self.assertIs(client.models.contents_seen[1][0], client.models.contents_seen[0][0])
         self.assertIs(client.models.configs_seen[1], client.models.configs_seen[0])
 
@@ -549,6 +556,299 @@ class VideoSamplingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(client.models.configs_seen[0].media_resolution)
         self.assertEqual(client.models.contents_seen[0][0], "Caption track language: en (publisher-provided)")
+
+
+_LOGGER = "app.infrastructure.ai.gemini_engine"
+_CONTEXT = AnalysisContext(run_id="run-1", duration_seconds=12.0, tier="paid")
+
+
+def _usage(**overrides) -> SimpleNamespace:
+    values = {
+        "prompt_token_count": 1234,
+        "candidates_token_count": 567,
+        "thoughts_token_count": 89,
+        "cached_content_token_count": None,
+        "total_token_count": 1890,
+        "prompt_tokens_details": [
+            SimpleNamespace(modality=types.MediaModality.VIDEO, token_count=1000),
+            SimpleNamespace(modality=types.MediaModality.TEXT, token_count=234),
+        ],
+        **overrides,
+    }
+    return SimpleNamespace(**values)
+
+
+def _usage_lines(logs) -> list[str]:
+    return [line for line in logs.output if "Gemini usage" in line]
+
+
+class UsageLoggingTests(unittest.IsolatedAsyncioTestCase):
+    """One "Gemini usage" INFO line per generate_content call that returned,
+    with the run's labels and usage_metadata's counts. Never the key."""
+
+    async def test_a_run_logs_its_labels_and_token_counts(self) -> None:
+        client = _FakeClient([(_RESULT, _usage())])
+        engine, _ = _engine(client, gemini_video_fps=2.0, gemini_media_resolution="high")
+
+        with self.assertLogs(_LOGGER, "INFO") as logs:
+            await engine.analyze_with_retry("clip.mp4", context=_CONTEXT)
+
+        (line,) = _usage_lines(logs)
+        for expected in (
+            "run=run-1",
+            "op=media",
+            "model=primary-model",
+            "attempt=1",
+            "fallback=false",
+            "key=shared",
+            "tier=paid",
+            "media_seconds=12.0",
+            "slides=null",
+            "fps=2.0",
+            "media_resolution=high",
+            "estimated_video_tokens=7020",
+            "budget_downgraded=false",
+            "prompt_token_count=1234",
+            "candidates_token_count=567",
+            "thoughts_token_count=89",
+            "cached_content_token_count=null",
+            "total_token_count=1890",
+            "prompt_tokens_by_modality=VIDEO:1000,TEXT:234",
+        ):
+            self.assertIn(expected, line)
+        self.assertNotIn("server-key", line)
+
+    async def test_unset_settings_log_as_defaults(self) -> None:
+        client = _FakeClient([_RESULT])
+        engine, _ = _engine(client)
+
+        with self.assertLogs(_LOGGER, "INFO") as logs:
+            await engine.analyze_with_retry("clip.mp4")
+
+        (line,) = _usage_lines(logs)
+        self.assertIn("fps=default", line)
+        self.assertIn("media_resolution=default", line)
+        self.assertIn("run=null", line)
+
+    async def test_an_own_key_is_logged_as_a_label_only(self) -> None:
+        own = _FakeClient([(_RESULT, _usage())])
+        engine, _ = _engine(_FakeClient([]))
+
+        with patch("app.infrastructure.ai.gemini_engine.genai.Client", return_value=own):
+            with self.assertLogs(_LOGGER, "INFO") as logs:
+                await engine.analyze_with_retry("clip.mp4", api_key="AIza-own-secret", context=_CONTEXT)
+        await engine.drain()
+
+        (line,) = _usage_lines(logs)
+        self.assertIn("key=byok", line)
+        self.assertNotIn("AIza-own-secret", "\n".join(logs.output))
+        self.assertNotIn("server-key", "\n".join(logs.output))
+
+    async def test_missing_usage_metadata_logs_nulls_and_the_run_completes(self) -> None:
+        client = _FakeClient([_RESULT])  # the fake response has no usage_metadata at all
+        engine, _ = _engine(client)
+
+        with self.assertLogs(_LOGGER, "INFO") as logs:
+            result = await engine.analyze_with_retry("clip.mp4", context=_CONTEXT)
+
+        self.assertIs(result, _RESULT)
+        (line,) = _usage_lines(logs)
+        for name in (
+            "prompt_token_count",
+            "candidates_token_count",
+            "thoughts_token_count",
+            "cached_content_token_count",
+            "total_token_count",
+            "prompt_tokens_by_modality",
+        ):
+            self.assertIn(f"{name}=null", line)
+
+    async def test_a_logging_failure_never_fails_the_run(self) -> None:
+        class Exploding:
+            def __getattr__(self, name):
+                raise RuntimeError("boom")
+
+        client = _FakeClient([(_RESULT, Exploding())])
+        engine, _ = _engine(client)
+
+        self.assertIs(await engine.analyze_with_retry("clip.mp4", context=_CONTEXT), _RESULT)
+
+    async def test_the_attempt_that_answered_is_numbered(self) -> None:
+        client = _FakeClient([_busy(), _busy(), (_RESULT, _usage())])
+        engine, _ = _engine(client)
+
+        with self.assertLogs(_LOGGER, "INFO") as logs:
+            await engine.analyze_with_retry("clip.mp4", context=_CONTEXT)
+
+        (line,) = _usage_lines(logs)
+        self.assertIn("attempt=3", line)
+        self.assertIn("fallback=false", line)
+
+    async def test_the_fallback_model_logs_its_own_line(self) -> None:
+        client = _FakeClient([_busy(), _busy(), (_RESULT, _usage())])
+        engine, _ = _engine(client, gemini_retry_attempts=1, gemini_fallback_model="gemini-3.5-flash")
+
+        with self.assertLogs(_LOGGER, "INFO") as logs:
+            await engine.analyze_with_retry("clip.mp4", context=_CONTEXT)
+
+        (line,) = _usage_lines(logs)
+        self.assertIn("model=gemini-3.5-flash", line)
+        self.assertIn("attempt=2", line)
+        self.assertIn("fallback=true", line)
+
+    async def test_captions_log_too(self) -> None:
+        client = _FakeClient([(_RESULT, _usage())])
+        engine, _ = _engine(client)
+        captions = CaptionTrack(language="en", automatic=True, text="hi", duration_seconds=42.0)
+
+        with self.assertLogs(_LOGGER, "INFO") as logs:
+            await engine.analyze_captions(captions, context=AnalysisContext(run_id="run-9", tier="standard"))
+
+        (line,) = _usage_lines(logs)
+        self.assertIn("run=run-9", line)
+        self.assertIn("op=captions", line)
+        self.assertIn("media_seconds=42.0", line)
+        self.assertIn("fps=null", line)
+        self.assertIn("total_token_count=1890", line)
+
+
+class VideoTokenBudgetTests(unittest.IsolatedAsyncioTestCase):
+    """GEMINI_VIDEO_TOKEN_BUDGET on a single file: over it, fps and
+    resolution go back to Gemini's defaults for that run."""
+
+    _LONG = AnalysisContext(run_id="run-1", duration_seconds=600.0)
+
+    async def test_over_budget_sends_the_defaults_and_warns(self) -> None:
+        client = _FakeClient([_RESULT])
+        engine, _ = _engine(
+            client, gemini_video_fps=2.0, gemini_media_resolution="high", gemini_video_token_budget=100_000
+        )
+
+        with self.assertLogs(_LOGGER, "INFO") as logs:
+            await engine.analyze_with_retry("clip.mp4", context=self._LONG)
+
+        self.assertIsInstance(client.models.contents_seen[0][0], SimpleNamespace)  # the bare upload
+        self.assertIsNone(client.models.configs_seen[0].media_resolution)
+        output = "\n".join(logs.output)
+        self.assertIn("351000", output)  # 600 x (280 x 2 + 25)
+        self.assertIn("GEMINI_VIDEO_TOKEN_BUDGET", output)
+        (line,) = _usage_lines(logs)
+        self.assertIn("budget_downgraded=true", line)
+        self.assertIn("fps=default", line)
+
+    async def test_under_budget_keeps_the_settings(self) -> None:
+        client = _FakeClient([_RESULT])
+        engine, _ = _engine(client, gemini_video_fps=2.0, gemini_media_resolution="high")
+
+        await engine.analyze_with_retry("clip.mp4", context=self._LONG)  # 351k < 400k
+
+        self.assertEqual(client.models.contents_seen[0][0].video_metadata.fps, 2.0)
+        self.assertEqual(
+            client.models.configs_seen[0].media_resolution, types.MediaResolution.MEDIA_RESOLUTION_HIGH
+        )
+
+    async def test_a_budget_of_zero_disables_the_check(self) -> None:
+        client = _FakeClient([_RESULT])
+        engine, _ = _engine(
+            client, gemini_video_fps=2.0, gemini_media_resolution="high", gemini_video_token_budget=0
+        )
+
+        await engine.analyze_with_retry("clip.mp4", context=self._LONG)
+
+        self.assertEqual(client.models.contents_seen[0][0].video_metadata.fps, 2.0)
+
+    async def test_an_unknown_length_sends_the_settings_as_configured(self) -> None:
+        client = _FakeClient([_RESULT])
+        engine, _ = _engine(client, gemini_video_fps=2.0, gemini_video_token_budget=1)
+
+        await engine.analyze_with_retry("clip.mp4")  # no context: a local-mode upload
+
+        self.assertEqual(client.models.contents_seen[0][0].video_metadata.fps, 2.0)
+
+    async def test_audio_is_never_estimated(self) -> None:
+        client = _FakeClient([_RESULT])
+        engine, _ = _engine(client, gemini_media_resolution="high", gemini_video_token_budget=1)
+
+        await engine.analyze_with_retry("normalized.mp3", context=self._LONG)
+
+        self.assertEqual(
+            client.models.configs_seen[0].media_resolution, types.MediaResolution.MEDIA_RESOLUTION_HIGH
+        )
+
+
+class ResponseSettingsTests(unittest.IsolatedAsyncioTestCase):
+    """GEMINI_MAX_OUTPUT_TOKENS and GEMINI_THINKING_LEVEL: absent from the
+    config unless set."""
+
+    async def test_unset_leaves_the_config_as_before(self) -> None:
+        client = _FakeClient([_RESULT, _RESULT])
+        engine, _ = _engine(client)
+
+        await engine.analyze_with_retry("clip.mp4")
+        await engine.analyze_captions(CaptionTrack(language="en", automatic=False, text="hi"))
+
+        for config in client.models.configs_seen:
+            self.assertIsNone(config.max_output_tokens)
+            self.assertIsNone(config.thinking_config)
+
+    async def test_set_values_reach_media_and_caption_requests(self) -> None:
+        client = _FakeClient([_RESULT, _RESULT])
+        engine, _ = _engine(client, gemini_max_output_tokens=8192, gemini_thinking_level="low")
+
+        await engine.analyze_with_retry("clip.mp4")
+        await engine.analyze_captions(CaptionTrack(language="en", automatic=False, text="hi"))
+
+        for config in client.models.configs_seen:
+            self.assertEqual(config.max_output_tokens, 8192)
+            self.assertEqual(config.thinking_config.thinking_level, types.ThinkingLevel.LOW)
+
+
+class OlderFallbackModelTests(unittest.IsolatedAsyncioTestCase):
+    """A fallback older than Gemini 3 (or one whose name does not parse)
+    gets no media resolution, request-wide or per part, and no thinking
+    level; it keeps the frame rate. The primary's request is untouched."""
+
+    def test_model_names(self) -> None:
+        for name, expected in (
+            ("gemini-3.6-flash", True),
+            ("gemini-3-pro-preview", True),
+            ("models/gemini-4.0-flash", True),
+            ("gemini-2.5-flash", False),
+            ("gemini-1.5-pro", False),
+            ("gemini-flash-latest", False),
+            ("fallback-model", False),
+        ):
+            with self.subTest(name=name):
+                self.assertIs(_is_gemini3_or_later(name), expected)
+
+    async def test_an_older_fallback_is_sent_without_resolution_or_thinking(self) -> None:
+        client = _FakeClient([_busy(), _RESULT])
+        engine, _ = _engine(
+            client,
+            gemini_retry_attempts=1,
+            gemini_fallback_model="gemini-2.5-flash",
+            gemini_video_fps=2.0,
+            gemini_media_resolution="high",
+            gemini_thinking_level="low",
+        )
+
+        await engine.analyze_with_retry("clip.mp4")
+
+        primary, fallback = client.models.configs_seen
+        self.assertEqual(primary.media_resolution, types.MediaResolution.MEDIA_RESOLUTION_HIGH)
+        self.assertEqual(primary.thinking_config.thinking_level, types.ThinkingLevel.LOW)
+        self.assertIsNone(fallback.media_resolution)
+        self.assertIsNone(fallback.thinking_config)
+        self.assertEqual(client.models.contents_seen[1][0].video_metadata.fps, 2.0)
+
+    async def test_nothing_to_strip_reuses_the_same_request(self) -> None:
+        client = _FakeClient([_busy(), _RESULT])
+        engine, _ = _engine(client, gemini_retry_attempts=1, gemini_fallback_model="gemini-2.5-flash")
+
+        await engine.analyze_with_retry("clip.mp4")
+
+        self.assertIs(client.models.contents_seen[1], client.models.contents_seen[0])
+        self.assertIs(client.models.configs_seen[1], client.models.configs_seen[0])
 
 
 if __name__ == "__main__":

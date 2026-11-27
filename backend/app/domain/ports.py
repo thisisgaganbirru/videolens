@@ -17,6 +17,7 @@ from .entities import (
     HeldExtraRun,
     SubscriptionSnapshot,
     AnalysisCompleteness,
+    AnalysisContext,
     ApiKey,
     ApiKeyCreated,
     Capability,
@@ -191,6 +192,7 @@ class AnalysisEngine(Protocol):
         on_stage: Optional[StageCallback] = None,
         api_key: str | None = None,
         metadata: Optional[SourceMetadata] = None,
+        context: Optional[AnalysisContext] = None,
     ) -> VideoAnalysis: ...
 
     async def analyze_slides_with_retry(
@@ -199,6 +201,7 @@ class AnalysisEngine(Protocol):
         on_stage: Optional[StageCallback] = None,
         api_key: str | None = None,
         metadata: Optional[SourceMetadata] = None,
+        context: Optional[AnalysisContext] = None,
     ) -> VideoAnalysis:
         """One analysis of a whole multi-slide post: every slide in order, in
         one request, so the notes read the post as its author wrote it."""
@@ -208,6 +211,7 @@ class AnalysisEngine(Protocol):
         self,
         captions: CaptionTrack,
         api_key: str | None = None,
+        context: Optional[AnalysisContext] = None,
     ) -> VideoAnalysis: ...
 
 

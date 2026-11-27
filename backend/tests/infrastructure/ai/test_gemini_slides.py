@@ -9,10 +9,17 @@ from unittest.mock import patch
 from google.genai import errors as genai_errors
 from google.genai import types
 
-from app.domain.entities import MediaSlide, ScreenTextSegment, SlideKind, TranscriptSegment, VideoAnalysis
+from app.domain.entities import (
+    AnalysisContext,
+    MediaSlide,
+    ScreenTextSegment,
+    SlideKind,
+    TranscriptSegment,
+    VideoAnalysis,
+)
 from app.infrastructure.ai.gemini_engine import CAROUSEL_SYSTEM_INSTRUCTION, SYSTEM_INSTRUCTION, GeminiEngine
 from app.infrastructure.config import Settings
-from tests.infrastructure.ai.test_gemini_engine import _RESULT, _FakeClient, _api_error, _engine
+from tests.infrastructure.ai.test_gemini_engine import _RESULT, _FakeClient, _api_error, _busy, _engine
 
 _SLIDES = (
     MediaSlide(path="normalized-01.jpg", kind=SlideKind.IMAGE),
@@ -242,6 +249,87 @@ class SlideVideoSamplingTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIsInstance(last, types.Part)
         self.assertEqual(video.media_resolution.level, types.PartMediaResolutionLevel.MEDIA_RESOLUTION_HIGH)
         self.assertIsNone(client.models.configs_seen[0].media_resolution)
+
+
+class SlideTokenBudgetTests(unittest.IsolatedAsyncioTestCase):
+    """GEMINI_VIDEO_TOKEN_BUDGET on a mixed image + video post. The
+    estimate is the video slides' total length (`AnalysisContext`); over the
+    budget only the video slides go back to defaults, and image slides keep
+    GEMINI_SLIDE_IMAGE_RESOLUTION either way."""
+
+    _SETTINGS = {
+        "gemini_video_fps": 2.0,
+        "gemini_media_resolution": "high",
+        "gemini_slide_image_resolution": "ultra_high",
+    }
+
+    def _assert_images_keep_their_level(self, image, last) -> None:
+        for part in (image, last):
+            self.assertIsNone(part.video_metadata)
+            self.assertEqual(part.media_resolution.level, types.PartMediaResolutionLevel.MEDIA_RESOLUTION_ULTRA_HIGH)
+
+    async def test_over_budget_resets_the_video_slides_only(self) -> None:
+        client = _FakeClient([_RESULT])
+        engine, _ = _engine(client, gemini_video_token_budget=100_000, **self._SETTINGS)
+
+        with self.assertLogs("app.infrastructure.ai.gemini_engine", "INFO") as logs:
+            await engine.analyze_slides_with_retry(
+                _SLIDES, context=AnalysisContext(run_id="run-1", duration_seconds=600.0)
+            )
+
+        image, video, last = _media(client.models.contents_seen[0])
+        self.assertNotIsInstance(video, types.Part)  # the bare upload: no fps, no level
+        self._assert_images_keep_their_level(image, last)
+        self.assertIsNone(client.models.configs_seen[0].media_resolution)
+        (line,) = [line for line in logs.output if "Gemini usage" in line]
+        self.assertIn("op=slides", line)
+        self.assertIn("slides=3", line)
+        self.assertIn("estimated_video_tokens=351000", line)
+        self.assertIn("budget_downgraded=true", line)
+
+    async def test_under_budget_keeps_fps_and_resolution_on_the_video_slides(self) -> None:
+        client = _FakeClient([_RESULT])
+        engine, _ = _engine(client, **self._SETTINGS)
+
+        await engine.analyze_slides_with_retry(_SLIDES, context=AnalysisContext(duration_seconds=30.0))
+
+        image, video, last = _media(client.models.contents_seen[0])
+        self.assertEqual(video.video_metadata.fps, 2.0)
+        self.assertEqual(video.media_resolution.level, types.PartMediaResolutionLevel.MEDIA_RESOLUTION_HIGH)
+        self._assert_images_keep_their_level(image, last)
+        self.assertIsNone(client.models.configs_seen[0].media_resolution)
+
+    async def test_a_post_of_images_only_is_never_estimated(self) -> None:
+        images = (
+            MediaSlide(path="normalized-01.jpg", kind=SlideKind.IMAGE),
+            MediaSlide(path="normalized-02.jpg", kind=SlideKind.IMAGE),
+        )
+        client = _FakeClient([_RESULT])
+        engine, _ = _engine(client, gemini_video_token_budget=1, **self._SETTINGS)
+
+        with self.assertLogs("app.infrastructure.ai.gemini_engine", "INFO") as logs:
+            await engine.analyze_slides_with_retry(images, context=AnalysisContext(duration_seconds=600.0))
+
+        self._assert_images_keep_their_level(*_media(client.models.contents_seen[0]))
+        (line,) = [line for line in logs.output if "Gemini usage" in line]
+        self.assertIn("estimated_video_tokens=null", line)
+        self.assertIn("budget_downgraded=false", line)
+
+    async def test_an_older_fallback_gets_no_per_part_level_on_any_slide(self) -> None:
+        client = _FakeClient([_busy(), _RESULT])
+        engine, _ = _engine(
+            client, gemini_retry_attempts=1, gemini_fallback_model="gemini-2.5-flash", **self._SETTINGS
+        )
+
+        await engine.analyze_slides_with_retry(_SLIDES)
+
+        primary = _media(client.models.contents_seen[0])
+        fallback = _media(client.models.contents_seen[1])
+        self.assertEqual(primary[0].media_resolution.level, types.PartMediaResolutionLevel.MEDIA_RESOLUTION_ULTRA_HIGH)
+        for part in fallback:
+            self.assertIsNone(part.media_resolution)
+        self.assertEqual(fallback[1].video_metadata.fps, 2.0)
+        self.assertEqual([_file_name(part) for part in fallback], ["files/1", "files/2", "files/3"])
 
 
 class SlideScreenTextTests(unittest.IsolatedAsyncioTestCase):

@@ -64,7 +64,7 @@ intake and the pipeline). `check_schema`
 | — | `media/ytdlp_net.py` | `GuardedYoutubeDL`: yt-dlp's requests on `net.py`'s pinned connections, native downloaders only |
 | — | `media/deadline.py` | `run_download`: every link download on the bounded `DOWNLOAD_EXECUTOR` under a wall-clock `DownloadDeadline` |
 | — | `media/process.py` | `run_process`: ffmpeg/ffprobe with a timeout, killed on timeout and cancellation |
-| `AnalysisEngine` | `ai/gemini_engine.py` | Upload, structured output, jittered retries, optional fallback model, caption-only analysis, a multi-slide post (carousel) in one request; `ai/source_context.py` fences publisher metadata as untrusted text |
+| `AnalysisEngine` | `ai/gemini_engine.py` | Upload, structured output, jittered retries, optional fallback model, caption-only analysis, a multi-slide post (carousel) in one request; `ai/source_context.py` fences publisher metadata as untrusted text; `ai/token_estimate.py` is the pre-flight video token budget; one "Gemini usage" log line per call |
 | `ObjectStore` | `storage/s3_object_store.py` | |
 | `JobQueue` | `queue/job_queue.py` | arq/Redis, or an in-process task it keeps a reference to |
 | `SpendCap` | `quota/daily_budget.py` | Atomic take-if-under-cap (Lua), hold/release per run and refund onto the claim's own UTC day, never below zero |

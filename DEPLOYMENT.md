@@ -315,11 +315,18 @@ GEMINI_FALLBACK_MODEL=
 GEMINI_SLIDE_IMAGE_RESOLUTION=high
 # Video sampling (docs/backend/gemini-analysis.md). Both off = Gemini's own
 # defaults (1 fps, 70 tokens a frame). "high" is 280 a frame, for on-screen
-# text; GEMINI_VIDEO_FPS=2 doubles frame tokens. Both also reach a carousel's
-# video slides (per part); its image slides keep the setting above. Set them
-# on the worker.
+# text ("medium" is the same 70 as "low" on Gemini 3); GEMINI_VIDEO_FPS is 0
+# or 0.5-2, and 2 doubles frame tokens. Both also reach a carousel's video
+# slides (per part); its image slides keep the setting above. A run whose
+# estimated video tokens exceed GEMINI_VIDEO_TOKEN_BUDGET (<= 0 = off) goes
+# back to the defaults. Set them on the worker.
 GEMINI_VIDEO_FPS=0
 GEMINI_MEDIA_RESOLUTION=
+GEMINI_VIDEO_TOKEN_BUDGET=400000
+# Optional (worker): output cap and Gemini 3 thinking level (minimal, low,
+# medium, high, xhigh). 0 / blank = not sent. Neither has been tried live.
+GEMINI_MAX_OUTPUT_TOKENS=0
+GEMINI_THINKING_LEVEL=
 RATE_LIMIT_PER_HOUR=20
 # Looser per-IP limit on the read endpoints (polling, run list, free-runs).
 READ_RATE_LIMIT_PER_MINUTE=120

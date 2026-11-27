@@ -2,7 +2,14 @@ import asyncio
 import logging
 import os
 
-from ..domain.entities import AnalysisCompleteness, MediaSlide, MediaVisuals, Run, RunStatus
+from ..domain.entities import (
+    AnalysisCompleteness,
+    AnalysisContext,
+    MediaSlide,
+    MediaVisuals,
+    Run,
+    RunStatus,
+)
 from ..domain.entitlements import MediaLimits, MediaTier
 from ..domain.errors import (  # the two messages are re-exported for callers and tests
     BYOK_KEY_EXPIRED_MESSAGE,
@@ -34,6 +41,18 @@ logger = logging.getLogger("videolens")
 # A run in either state has ended. The store never writes to it again, and
 # the worker never starts or continues work for it.
 _ENDED = (RunStatus.COMPLETE, RunStatus.FAILED)
+
+
+def _analysis_context(
+    run_id: str, limits: MediaLimits | None, duration_seconds: float | None
+) -> AnalysisContext:
+    """What the analysis engine may log about this run (and budget its
+    video tokens with): never the key, never anything sent to the model."""
+    return AnalysisContext(
+        run_id=run_id,
+        duration_seconds=duration_seconds,
+        tier=limits.tier.value if limits is not None else None,
+    )
 
 
 class _RunEndedElsewhere(Exception):
@@ -185,7 +204,11 @@ class ProcessRunUseCase:
             )
             if reached is not None:
                 reached.value = True
-            result = await self._analysis.analyze_captions(captions, api_key=gemini_api_key)
+            result = await self._analysis.analyze_captions(
+                captions,
+                api_key=gemini_api_key,
+                context=_analysis_context(run_id, limits, captions.duration_seconds),
+            )
             if captions.metadata is not None:
                 await self._runs.set_source_metadata(run_id, captions.metadata)
             await self._record_duration(run_id, captions.duration_seconds)
@@ -433,6 +456,10 @@ class ProcessRunUseCase:
         # analysis, not only the rejections above). Not on cancellation: a
         # cancelled job may be run again by arq.
         reached = _GeminiReached()
+        # The media's length (a post: its video slides' total) for the
+        # engine's usage log and token budget; unknown for a local-mode
+        # upload, which was probed at intake.
+        media_seconds: float | None = None
         cancelled = False
         # A worker shutdown cancelled the job and arq will run it again: the
         # run, its holds and its uploaded source are left for that retry.
@@ -476,6 +503,7 @@ class ProcessRunUseCase:
                     # not caught here and is not a rejection.
                     rejected_before_analysis = True
                     raise
+                media_seconds = duration
                 await self._record_slide_count(run_id, slides)
                 # A post of images only has no length worth showing.
                 await self._record_duration(run_id, duration if not slides or duration > 0 else None)
@@ -503,6 +531,7 @@ class ProcessRunUseCase:
                 # Intake already holds the slot for a long upload; this
                 # re-arms its expiry now the worker has started on it.
                 await self._claim_long_run(run_id, limits, duration, None)
+                media_seconds = duration
                 await self._record_duration(run_id, duration)
                 visuals = self._start_visuals(media_path=saved_path, duration_seconds=duration)
 
@@ -532,12 +561,14 @@ class ProcessRunUseCase:
             # falls back to analyzing the media alone.
             await self._ensure_not_ended(run_id)
             reached.value = True
+            context = _analysis_context(run_id, limits, media_seconds)
             if slides:
                 result = await self._analysis.analyze_slides_with_retry(
                     normalized_slides,
                     on_stage=on_stage,
                     api_key=gemini_api_key,
                     metadata=metadata,
+                    context=context,
                 )
             else:
                 result = await self._analysis.analyze_with_retry(
@@ -545,6 +576,7 @@ class ProcessRunUseCase:
                     on_stage=on_stage,
                     api_key=gemini_api_key,
                     metadata=metadata,
+                    context=context,
                 )
             await self._record_visuals(run_id, visuals)
             if not await self._runs.set_result(run_id, result):

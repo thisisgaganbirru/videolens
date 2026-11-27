@@ -325,6 +325,22 @@ class MediaSlide:
     kind: SlideKind
 
 
+@dataclass(frozen=True)
+class AnalysisContext:
+    """Server-known facts about the run an analysis belongs to, for the
+    engine's usage log and its pre-flight token estimate. Never sent to the
+    model and never part of `VideoAnalysis`. Every field may be unknown.
+
+    `duration_seconds` is the media's length; for a multi-slide post, the
+    total of its video slides (what `enforce_slides_cap` returns). `tier`
+    is the `MediaTier` value the run was admitted under (standard,
+    signed_in_byok, paid), not the account's plan."""
+
+    run_id: Optional[str] = None
+    duration_seconds: Optional[float] = None
+    tier: Optional[str] = None
+
+
 @dataclass
 class SavedUpload:
     path: str

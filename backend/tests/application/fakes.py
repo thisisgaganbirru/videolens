@@ -394,6 +394,8 @@ class FakeAnalysisEngine:
         self.caption_result = None
         self.caption_error: Exception | None = None
         self.slide_calls: list[tuple[tuple[MediaSlide, ...], str | None]] = []
+        # The AnalysisContext of every call, in call order.
+        self.contexts_seen: list = []
 
     async def analyze_slides_with_retry(
         self,
@@ -401,8 +403,10 @@ class FakeAnalysisEngine:
         on_stage=None,
         api_key: str | None = None,
         metadata: SourceMetadata | None = None,
+        context=None,
     ):
         self.slide_calls.append((slides, api_key))
+        self.contexts_seen.append(context)
         self.metadata_seen.append(metadata)
         if on_stage:
             await on_stage("uploading_to_gemini")
@@ -417,8 +421,10 @@ class FakeAnalysisEngine:
         on_stage=None,
         api_key: str | None = None,
         metadata: SourceMetadata | None = None,
+        context=None,
     ):
         self.calls.append((video_path, api_key))
+        self.contexts_seen.append(context)
         self.metadata_seen.append(metadata)
         if on_stage:
             await on_stage("uploading_to_gemini")
@@ -429,8 +435,9 @@ class FakeAnalysisEngine:
             raise self.error
         return self.result
 
-    async def analyze_captions(self, captions, api_key: str | None = None):
+    async def analyze_captions(self, captions, api_key: str | None = None, context=None):
         self.caption_calls.append(captions)
+        self.contexts_seen.append(context)
         if self.caption_error:
             raise self.caption_error
         return self.caption_result or self.result

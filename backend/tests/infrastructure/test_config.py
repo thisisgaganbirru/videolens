@@ -101,16 +101,36 @@ class GeminiVideoSettingsTests(unittest.TestCase):
         self.assertEqual(settings.gemini_video_fps, 0.0)
         self.assertEqual(settings.gemini_media_resolution, "")
 
-    def test_fps_outside_what_gemini_accepts_is_refused(self) -> None:
-        for fps in (-1.0, 24.5):
+    def test_fps_is_off_or_between_half_and_two(self) -> None:
+        for fps in (-1.0, 0.1, 0.49, 2.01, 3.0, 24.0):
             with self.subTest(fps=fps), self.assertRaises(ValidationError):
                 Settings(_env_file=None, gemini_video_fps=fps)
-        self.assertEqual(Settings(_env_file=None, gemini_video_fps=24).gemini_video_fps, 24.0)
+        for fps in (0, 0.5, 1, 1.5, 2):
+            with self.subTest(fps=fps):
+                self.assertEqual(Settings(_env_file=None, gemini_video_fps=fps).gemini_video_fps, float(fps))
 
     def test_unknown_resolution_is_refused(self) -> None:
         for value in ("ultra_high", "HIGH", "280"):
             with self.subTest(value=value), self.assertRaises(ValidationError):
                 Settings(_env_file=None, gemini_media_resolution=value)
+
+    def test_guardrail_defaults_change_nothing(self) -> None:
+        settings = Settings(_env_file=None)
+        self.assertEqual(settings.gemini_video_token_budget, 400_000)
+        self.assertEqual(settings.gemini_max_output_tokens, 0)
+        self.assertEqual(settings.gemini_thinking_level, "")
+
+    def test_thinking_level_follows_the_sdk_levels(self) -> None:
+        for value in ("minimal", "low", "medium", "high", "xhigh"):
+            with self.subTest(value=value):
+                self.assertEqual(Settings(_env_file=None, gemini_thinking_level=value).gemini_thinking_level, value)
+        for value in ("LOW", "max", "THINKING_LEVEL_UNSPECIFIED"):
+            with self.subTest(value=value), self.assertRaises(ValidationError):
+                Settings(_env_file=None, gemini_thinking_level=value)
+
+    def test_negative_max_output_tokens_is_refused(self) -> None:
+        with self.assertRaises(ValidationError):
+            Settings(_env_file=None, gemini_max_output_tokens=-1)
 
 
 if __name__ == "__main__":

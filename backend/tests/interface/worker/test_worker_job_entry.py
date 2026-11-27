@@ -66,11 +66,13 @@ class _Analysis:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def analyze_with_retry(self, video_path, on_stage=None, attempts=2, api_key=None, metadata=None):
+    async def analyze_with_retry(
+        self, video_path, on_stage=None, attempts=2, api_key=None, metadata=None, context=None
+    ):
         self.calls += 1
         return ANALYSIS
 
-    async def analyze_captions(self, captions, api_key=None):
+    async def analyze_captions(self, captions, api_key=None, context=None):
         self.calls += 1
         return ANALYSIS
 

@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import random
+import re
 from typing import Any, Awaitable, Callable, Optional, TypeVar
 
 from google import genai
@@ -13,11 +14,19 @@ from google.genai import types
 # are only served on `v1beta`). Moving to `v1` is a separate, tested change.
 _HTTP_OPTIONS = types.HttpOptions(api_version="v1beta")
 
-from ...domain.entities import CaptionTrack, MediaSlide, SlideKind, SourceMetadata, VideoAnalysis
+from ...domain.entities import (
+    AnalysisContext,
+    CaptionTrack,
+    MediaSlide,
+    SlideKind,
+    SourceMetadata,
+    VideoAnalysis,
+)
 from ...domain.errors import AnalysisUnavailableError, GeminiConfigurationError
 from ...domain.ports import StageCallback
 from ..config import Settings
 from .source_context import build_source_context
+from .token_estimate import SamplingDecision, within_budget
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +57,11 @@ _MEDIA_RESOLUTIONS = {
     "medium": types.MediaResolution.MEDIA_RESOLUTION_MEDIUM,
     "high": types.MediaResolution.MEDIA_RESOLUTION_HIGH,
 }
+
+# A model name's Gemini major version ("gemini-3.6-flash" -> 3). Per-part
+# media resolution and thinking levels are Gemini 3+ only; a fallback model
+# whose name does not parse is treated as older (`_strip_for_older_model`).
+_GEMINI_MAJOR = re.compile(r"gemini-(\d+)")
 
 
 class _FileProcessingError(RuntimeError):
@@ -292,23 +306,38 @@ class GeminiEngine:
         *,
         contents: list[Any],
         config: types.GenerateContentConfig,
+        usage: Optional[dict[str, Any]] = None,
     ) -> Any:
         """`generate_content` with transient-only backoff on the primary model,
         then - if GEMINI_FALLBACK_MODEL is set - a short cycle on the fallback.
 
         `contents` may hold an already-uploaded file; it is reused as-is for
-        the fallback, so falling back never costs a second upload.
+        the fallback, so falling back never costs a second upload. A
+        fallback older than Gemini 3 gets them without media resolution or
+        a thinking level (`_strip_for_older_model`). Every call that returns
+        logs one "Gemini usage" line (`_log_usage`), with `usage`'s labels.
         """
         primary = self._settings.gemini_model
 
-        def call(model: str) -> Callable[[], Awaitable[Any]]:
-            return lambda: client.aio.models.generate_content(
-                model=model, contents=contents, config=config
-            )
+        def call(
+            model: str, contents: list[Any], config: types.GenerateContentConfig, fallback: bool
+        ) -> Callable[[], Awaitable[Any]]:
+            attempt = 0
+
+            async def once() -> Any:
+                nonlocal attempt
+                attempt += 1
+                response = await client.aio.models.generate_content(
+                    model=model, contents=contents, config=config
+                )
+                _log_usage(response, usage, model=model, attempt=attempt, fallback=fallback)
+                return response
+
+            return once
 
         try:
             return await self._with_backoff(
-                call(primary),
+                call(primary, contents, config, False),
                 attempts=self._settings.gemini_retry_attempts,
                 model=primary,
                 operation="generate_content",
@@ -326,8 +355,10 @@ class GeminiEngine:
                 fallback,
             )
 
+        if not _is_gemini3_or_later(fallback):
+            contents, config = _strip_for_older_model(contents, config)
         response = await self._with_backoff(
-            call(fallback),
+            call(fallback, contents, config, True),
             attempts=_FALLBACK_ATTEMPTS,
             model=fallback,
             operation="generate_content",
@@ -353,7 +384,9 @@ class GeminiEngine:
         on_stage: Optional[StageCallback] = None,
         api_key: str | None = None,
         metadata: Optional[SourceMetadata] = None,
+        context: Optional[AnalysisContext] = None,
     ) -> VideoAnalysis:
+        # No `video_slots`: GEMINI_MEDIA_RESOLUTION goes on the whole request.
         result = await self._analyze_files(
             [(None, video_path)],
             system_instruction=SYSTEM_INSTRUCTION,
@@ -361,8 +394,7 @@ class GeminiEngine:
             on_stage=on_stage,
             api_key=api_key,
             metadata=metadata,
-            # None (blank setting) leaves the field out of the request.
-            media_resolution=_MEDIA_RESOLUTIONS.get(self._settings.gemini_media_resolution),
+            context=context,
         )
         return _checked_slides(result, None)
 
@@ -372,12 +404,10 @@ class GeminiEngine:
         on_stage: Optional[StageCallback] = None,
         api_key: str | None = None,
         metadata: Optional[SourceMetadata] = None,
+        context: Optional[AnalysisContext] = None,
     ) -> VideoAnalysis:
         count = len(slides)
         image_resolution = _part_level(self._settings.gemini_slide_image_resolution)
-        # GEMINI_MEDIA_RESOLUTION, per part on video slides only (see
-        # `_MEDIA_RESOLUTIONS`); blank leaves them as before.
-        video_resolution = _part_level(self._settings.gemini_media_resolution)
         result = await self._analyze_files(
             [
                 (f"Slide {index} of {count} ({slide.kind.value}):", slide.path)
@@ -388,10 +418,11 @@ class GeminiEngine:
             on_stage=on_stage,
             api_key=api_key,
             metadata=metadata,
-            resolutions=[
-                image_resolution if slide.kind is SlideKind.IMAGE else video_resolution
-                for slide in slides
-            ],
+            context=context,
+            resolutions=[image_resolution if slide.kind is SlideKind.IMAGE else None for slide in slides],
+            # GEMINI_MEDIA_RESOLUTION, per part on video slides only (see
+            # `_MEDIA_RESOLUTIONS`); blank leaves them as before.
+            video_slots=[slide.kind is not SlideKind.IMAGE for slide in slides],
         )
         return _screen_text_from_segments(_checked_slides(result, count))
 
@@ -404,17 +435,23 @@ class GeminiEngine:
         on_stage: Optional[StageCallback] = None,
         api_key: str | None = None,
         metadata: Optional[SourceMetadata] = None,
+        context: Optional[AnalysisContext] = None,
         resolutions: Optional[list[Optional[types.PartMediaResolutionLevel]]] = None,
-        media_resolution: Optional[types.MediaResolution] = None,
+        video_slots: Optional[list[bool]] = None,
     ) -> VideoAnalysis:
         """Upload every file (each after its own label, when it has one),
         analyze them in one request, and return as soon as the answer is
         parsed. Every upload is deleted however that went, in the background
         (`_schedule_cleanup`), which also releases the client afterwards.
-        `resolutions[i]`, when set, is file i's per-part media resolution;
-        GEMINI_VIDEO_FPS applies to every video file (`_media_part`); a file
-        with neither goes in as the upload itself. `media_resolution` is the
-        request-wide one, left out of the request when None."""
+
+        `resolutions[i]`, when set, is file i's own per-part media resolution
+        (a carousel's image slides). GEMINI_VIDEO_FPS applies to every video
+        file (`_media_part`). GEMINI_MEDIA_RESOLUTION goes per part on the
+        files `video_slots` marks (a carousel's video slides) or, with no
+        `video_slots`, on the whole request (a single file). Both of those
+        are first checked against GEMINI_VIDEO_TOKEN_BUDGET (`_sampling`)
+        and fall back to Gemini's defaults for this run when over it. A file
+        with nothing to carry goes in as the upload itself."""
         if on_stage:
             await on_stage("uploading_to_gemini")
         client = self._get_client(api_key)
@@ -437,14 +474,18 @@ class GeminiEngine:
 
             if on_stage:
                 await on_stage("analyzing")
+            sampling = self._sampling(uploaded, context)
+            levels = list(resolutions or [None] * len(files))
+            if video_slots is not None:
+                video_level = _part_level(sampling.resolution)
+                levels = [video_level if slot else level for level, slot in zip(levels, video_slots)]
             media_parts: list[Any] = []
-            levels = resolutions or [None] * len(files)
-            fps = self._settings.gemini_video_fps
             for (label, _), file, level in zip(files, uploaded, levels):
                 if label:
                     media_parts.append(label)
-                media_parts.append(_media_part(file, level, fps))
-            # Built once, so the fallback model gets the same parts and config.
+                media_parts.append(_media_part(file, level, sampling.fps))
+            # Built once, so the fallback model gets the same parts and config
+            # (minus what an older fallback cannot take).
             response = await self._generate_with_retry(
                 client,
                 contents=[*media_parts, *prompt_parts],
@@ -452,7 +493,21 @@ class GeminiEngine:
                     system_instruction=system_instruction,
                     response_mime_type="application/json",
                     response_schema=VideoAnalysis,
-                    media_resolution=media_resolution,
+                    # None (blank setting, or a carousel) leaves it out.
+                    media_resolution=(
+                        _MEDIA_RESOLUTIONS.get(sampling.resolution) if video_slots is None else None
+                    ),
+                    **self._response_settings(),
+                ),
+                usage=_usage_labels(
+                    "media" if video_slots is None else "slides",
+                    api_key,
+                    context,
+                    slides=None if video_slots is None else len(files),
+                    fps=sampling.fps,
+                    media_resolution=sampling.resolution,
+                    estimate=sampling.estimate,
+                    downgraded=sampling.downgraded,
                 ),
             )
             return self._parse(response)
@@ -462,6 +517,48 @@ class GeminiEngine:
             # the background. Synchronous, so it also runs while a
             # cancellation is unwinding through here.
             self._schedule_cleanup(client, api_key, uploaded)
+
+    def _sampling(self, uploaded: list[Any], context: Optional[AnalysisContext]) -> SamplingDecision:
+        """GEMINI_VIDEO_FPS and GEMINI_MEDIA_RESOLUTION for this run, after
+        the pre-flight budget check. Only a request with a video upload is
+        estimated, from the run's video length (`AnalysisContext`); with no
+        length known (a local-mode upload) the settings go as configured."""
+        settings = self._settings
+        has_video = any(
+            (getattr(file, "mime_type", None) or "").startswith("video/") for file in uploaded
+        )
+        seconds = context.duration_seconds if context is not None and has_video else None
+        decision = within_budget(
+            seconds,
+            settings.gemini_video_fps,
+            settings.gemini_media_resolution,
+            settings.gemini_video_token_budget,
+        )
+        if decision.downgraded:
+            logger.warning(
+                "Gemini run %s estimated at %d video input tokens (%.0fs, fps %s, resolution %s), "
+                "over GEMINI_VIDEO_TOKEN_BUDGET %d; sending it with Gemini's default fps and resolution",
+                (context.run_id if context is not None else None) or "null",
+                decision.estimate,
+                seconds,
+                settings.gemini_video_fps or "default",
+                settings.gemini_media_resolution or "default",
+                settings.gemini_video_token_budget,
+            )
+        return decision
+
+    def _response_settings(self) -> dict[str, Any]:
+        """GEMINI_MAX_OUTPUT_TOKENS and GEMINI_THINKING_LEVEL as
+        GenerateContentConfig fields, each only when set: unset, the config
+        is exactly what it was before they existed."""
+        extra: dict[str, Any] = {}
+        if self._settings.gemini_max_output_tokens > 0:
+            extra["max_output_tokens"] = self._settings.gemini_max_output_tokens
+        if self._settings.gemini_thinking_level:
+            extra["thinking_config"] = types.ThinkingConfig(
+                thinking_level=types.ThinkingLevel(self._settings.gemini_thinking_level.upper())
+            )
+        return extra
 
     def _schedule_cleanup(self, client: genai.Client, api_key: str | None, uploaded: list[Any]) -> None:
         """Start the background task that deletes this call's uploads and
@@ -564,7 +661,10 @@ class GeminiEngine:
                 raise outcome
 
     async def analyze_captions(
-        self, captions: CaptionTrack, api_key: str | None = None
+        self,
+        captions: CaptionTrack,
+        api_key: str | None = None,
+        context: Optional[AnalysisContext] = None,
     ) -> VideoAnalysis:
         """Text-only analysis of a recovered subtitle track.
 
@@ -591,6 +691,13 @@ class GeminiEngine:
                     system_instruction=CAPTION_SYSTEM_INSTRUCTION,
                     response_mime_type="application/json",
                     response_schema=VideoAnalysis,
+                    **self._response_settings(),
+                ),
+                usage=_usage_labels(
+                    "captions",
+                    api_key,
+                    context,
+                    media_seconds=getattr(captions, "duration_seconds", None),
                 ),
             )
         except Exception as exc:  # noqa: BLE001 - mapped, then re-raised as-is
@@ -625,6 +732,7 @@ class GeminiEngine:
         attempts: int = 2,
         api_key: str | None = None,
         metadata: Optional[SourceMetadata] = None,
+        context: Optional[AnalysisContext] = None,
     ) -> VideoAnalysis:
         """Analyze `video_path`, mapping a final transient failure onto
         AnalysisUnavailableError.
@@ -638,7 +746,9 @@ class GeminiEngine:
         log the traceback.
         """
         return await self._with_reupload(
-            lambda: self._analyze(video_path, on_stage=on_stage, api_key=api_key, metadata=metadata),
+            lambda: self._analyze(
+                video_path, on_stage=on_stage, api_key=api_key, metadata=metadata, context=context
+            ),
             attempts,
         )
 
@@ -649,11 +759,14 @@ class GeminiEngine:
         attempts: int = 2,
         api_key: str | None = None,
         metadata: Optional[SourceMetadata] = None,
+        context: Optional[AnalysisContext] = None,
     ) -> VideoAnalysis:
         """`analyze_with_retry` for a multi-slide post: one request with every
         slide, re-uploaded together if Gemini fails to process any of them."""
         return await self._with_reupload(
-            lambda: self._analyze_slides(slides, on_stage=on_stage, api_key=api_key, metadata=metadata),
+            lambda: self._analyze_slides(
+                slides, on_stage=on_stage, api_key=api_key, metadata=metadata, context=context
+            ),
             attempts,
         )
 
@@ -704,6 +817,116 @@ def _media_part(file: Any, level: Optional[types.PartMediaResolutionLevel], fps:
         video_metadata=types.VideoMetadata(fps=fps) if sample else None,
         media_resolution=types.PartMediaResolution(level=level) if level is not None else None,
     )
+
+
+def _is_gemini3_or_later(model: str) -> bool:
+    """True for a "gemini-<major>..." name with major >= 3. Anything that
+    does not parse ("gemini-flash-latest", a custom name) is treated as
+    older: dropping a setting costs some OCR detail, while sending one an
+    older model cannot take is a 400 that fails the run."""
+    match = _GEMINI_MAJOR.search(model.lower())
+    return bool(match) and int(match.group(1)) >= 3
+
+
+def _strip_for_older_model(
+    contents: list[Any], config: types.GenerateContentConfig
+) -> tuple[list[Any], types.GenerateContentConfig]:
+    """`contents` and `config` for a pre-Gemini-3 fallback: no media
+    resolution, request-wide or on any part (image slides included), and no
+    thinking level. The frame rate stays. Returns the same objects when
+    there is nothing to strip."""
+    stripped = [
+        part.model_copy(update={"media_resolution": None})
+        if isinstance(part, types.Part) and part.media_resolution is not None
+        else part
+        for part in contents
+    ]
+    if any(a is not b for a, b in zip(stripped, contents)):
+        contents = stripped
+    if config.media_resolution is not None or config.thinking_config is not None:
+        config = config.model_copy(update={"media_resolution": None, "thinking_config": None})
+    return contents, config
+
+
+def _usage_labels(
+    operation: str,
+    api_key: Optional[str],
+    context: Optional[AnalysisContext],
+    *,
+    media_seconds: Optional[float] = None,
+    slides: Optional[int] = None,
+    fps: Optional[float] = None,
+    media_resolution: Optional[str] = None,
+    estimate: Optional[int] = None,
+    downgraded: Optional[bool] = None,
+) -> dict[str, Any]:
+    """The run's half of the "Gemini usage" line. `key` is a label, "byok"
+    or "shared", never the key. fps 0 and a blank resolution are Gemini's
+    defaults and log as "default"; a caption run has neither (null)."""
+    if media_seconds is None and context is not None:
+        media_seconds = context.duration_seconds
+    return {
+        "run": context.run_id if context is not None else None,
+        "op": operation,
+        "key": "byok" if api_key else "shared",
+        "tier": context.tier if context is not None else None,
+        "media_seconds": round(media_seconds, 1) if media_seconds is not None else None,
+        "slides": slides,
+        "fps": (fps or "default") if fps is not None else None,
+        "media_resolution": (media_resolution or "default") if media_resolution is not None else None,
+        "estimated_video_tokens": estimate,
+        "budget_downgraded": downgraded,
+    }
+
+
+_USAGE_FIELDS = (
+    "prompt_token_count",
+    "candidates_token_count",
+    "thoughts_token_count",
+    "cached_content_token_count",
+    "total_token_count",
+)
+
+
+def _log_value(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value).replace(" ", "_")
+
+
+def _log_usage(
+    response: Any, labels: Optional[dict[str, Any]], *, model: str, attempt: int, fallback: bool
+) -> None:
+    """One INFO line per generate_content call that returned, so real token
+    counts can be read from the logs: the run's labels, the model and
+    attempt, and `usage_metadata`'s counts (null when missing). Never
+    raises: a logging problem must not fail a run."""
+    try:
+        labels = dict(labels or {})
+        fields: dict[str, Any] = {
+            "run": labels.pop("run", None),
+            "op": labels.pop("op", None),
+            "model": model,
+            "attempt": attempt,
+            "fallback": fallback,
+            **labels,
+        }
+        usage = getattr(response, "usage_metadata", None)
+        for name in _USAGE_FIELDS:
+            fields[name] = getattr(usage, name, None)
+        by_modality = []
+        for detail in getattr(usage, "prompt_tokens_details", None) or []:
+            modality = getattr(detail, "modality", None)
+            modality = getattr(modality, "value", modality)
+            by_modality.append(f"{modality}:{getattr(detail, 'token_count', None)}")
+        fields["prompt_tokens_by_modality"] = ",".join(by_modality) or None
+        logger.info(
+            "Gemini usage %s", " ".join(f"{key}={_log_value(value)}" for key, value in fields.items())
+        )
+    except Exception:  # noqa: BLE001 - logging must never fail a run
+        logger.debug("Could not log Gemini usage")
 
 
 def _screen_text_from_segments(result: VideoAnalysis) -> VideoAnalysis:

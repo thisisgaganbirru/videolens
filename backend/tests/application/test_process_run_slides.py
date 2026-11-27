@@ -5,7 +5,16 @@ request, and its slide count recorded as a media fact."""
 import unittest
 
 from app.application.process_run import ProcessRunUseCase
-from app.domain.entities import MediaSlide, MediaVisuals, RunStatus, SlideKind, SourceMetadata, VideoAnalysis
+from app.domain.entities import (
+    AnalysisContext,
+    MediaSlide,
+    MediaVisuals,
+    RunStatus,
+    SlideKind,
+    SourceMetadata,
+    VideoAnalysis,
+)
+from app.domain.entitlements import MediaLimits, MediaTier
 from app.domain.errors import MediaValidationError
 
 from .fakes import FakeAnalysisEngine, FakeFreeRunAllowance, FakeMediaProcessor, FakeObjectStore, FakeRunRepository
@@ -56,6 +65,25 @@ class ProcessCarouselTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([slide.kind for slide in analyzed], [slide.kind for slide in SLIDES])
         self.assertEqual(self.analysis.metadata_seen, [self.media.download_metadata])
         self.assertEqual(self.media.cleaned_up, ["run-1"])
+
+    async def test_the_analysis_gets_the_run_and_its_video_length(self) -> None:
+        await self.use_case.execute("run-1", source_url=URL)
+
+        self.assertEqual(
+            self.analysis.contexts_seen, [AnalysisContext(run_id="run-1", duration_seconds=12.0, tier=None)]
+        )
+
+    async def test_a_single_video_link_passes_its_probed_length_and_tier(self) -> None:
+        self.media.download_slides = ()
+        self.media.probed_duration = 42.0
+        limits = MediaLimits(tier=MediaTier.STANDARD, max_duration_seconds=180, max_file_size_mb=200)
+
+        await self.use_case.execute("run-1", source_url=URL, limits=limits)
+
+        self.assertEqual(
+            self.analysis.contexts_seen,
+            [AnalysisContext(run_id="run-1", duration_seconds=42.0, tier="standard")],
+        )
 
     async def test_the_first_slide_is_the_poster(self) -> None:
         self.media.download_thumbnail_urls = ("https://cdn/cover.jpg",)
