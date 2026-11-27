@@ -119,8 +119,12 @@ class CarouselDownloadTests(unittest.IsolatedAsyncioTestCase):
 
         # The submitted link itself is checked up front by name (patched, as in
         # the other downloader tests); every fetch yt-dlp then makes goes to
-        # 127.0.0.1 through the real guard, opened to loopback.
-        with patch.object(ytdlp_downloader, "validate_public_url"), patch(
+        # 127.0.0.1 through the real guard, opened to loopback. No slide here
+        # needs FFmpeg (one format each, nothing to merge), so its lookup is
+        # faked too, as in the other downloader tests: CI has no FFmpeg.
+        with patch.object(ytdlp_downloader, "validate_public_url"), patch.object(
+            ytdlp_downloader, "_media_binary", return_value="/usr/bin/ffmpeg"
+        ), patch(
             "app.infrastructure.media.net.is_public_address", return_value=True
         ), patch.dict(
             os.environ, {name: "" for name in _PROXY_VARIABLES}

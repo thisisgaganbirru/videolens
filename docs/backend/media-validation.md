@@ -66,7 +66,7 @@ An Instagram carousel is one post of up to 20 slides, each a video or a still im
 - **Normalize** (`ffmpeg.normalize_slides`): videos through `normalize_media` (now with a `name=` stem, so outputs are `normalized-01.mp4`...), images re-encoded by `normalize_image` to a JPEG no larger than `MAX_SLIDE_IMAGE_SIDE` (2048 px) on the longest side, never enlarged, metadata dropped.
 - **Result**: `SavedUpload.slides` carries `MediaSlide(path, kind)` in order, with `path` the first slide and `thumbnail_urls`/`width`/`height` from the first slide's entry, so the poster is the post's cover.
 
-Not covered: TikTok photo posts and other sites' multi-item posts; they are refused as playlists (or analyzed as their single entry), and image entries are fetched for Instagram links only. Instagram serves carousels only through its API and GraphQL paths, both of which want a logged-in `YTDLP_COOKIES_FILE` in practice. Tests: `tests/infrastructure/media/test_ytdlp_carousel.py` (real yt-dlp processing against a local server), `test_ffmpeg_slides.py` (real binaries).
+Not covered: TikTok photo posts and other sites' multi-item posts; they are refused as playlists (or analyzed as their single entry), and image entries are fetched for Instagram links only. Instagram serves carousels only through its API and GraphQL paths, both of which want a logged-in `YTDLP_COOKIES_FILE` in practice. Tests: `tests/infrastructure/media/test_ytdlp_carousel.py` (real yt-dlp processing against a local server; the FFmpeg lookup is faked, so it runs without FFmpeg as on CI), `test_ffmpeg_slides.py` (real binaries, skipped without them).
 
 ## History poster: thumbnail and display size (Phase 5a)
 
@@ -185,3 +185,4 @@ creates per-run subdirectories as before.
 - 2026-11-26 · Claude (session ccr-3d42b168) · review fix: slides are Instagram-only; other sites' playlists download one entry and are refused (`_PLAYLIST_LINK`) unless they hold exactly one
 - 2026-11-26 · Claude (backend agent) · restored this doc (c30d346 had truncated it to its changelog line by accident) and described the playlist refusal in "Multi-slide posts"; `TEMP_DIR` judged absolute by the host OS's path rules with an OS-specific message (native Windows needs a drive path; Linux still refuses `C:/...`)
 - 2026-11-27 · Claude (backend agent) · `build_slide_thumbnails`/`slide_thumbnail` (≤480 px, ≤80 KB per slide, 1.2 MB and 25 s for the set) and the `slides=` argument of `describe_visuals`; measured sizes recorded
+- 2026-11-27 · Claude (backend agent) · CI fix: `test_ytdlp_carousel.py` patches `ytdlp_downloader._media_binary` (as the other downloader tests do), so its 11 download tests run on the FFmpeg-less CI runner instead of failing
