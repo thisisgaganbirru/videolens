@@ -519,7 +519,7 @@ buttons and the rest of the card are unchanged.
 
 ## Multi-slide posts (2026-11-26)
 
-A carousel's segments carry `slide` and their seconds restart at 0 on every slide (both 0 on an image slide), so a column of "0:00" would be noise. `SegmentPlace` shows "Slide 3" in the accent column instead, with the time under it in muted only when the segment is timed (a video slide, `end_seconds > 0`); a list with any slide gets `data-slides="on"`, which widens the column to 4.75rem unless timestamps are switched off. The On-screen intro reads "Text found on each slide of the post." and the list is labelled "On-screen text by slide". The downloaded report heads such a segment `### Slide 3` or `### Slide 3 · 0:02–0:05`. A plain video never has `slide` (the backend clears it), so nothing changes for one. Checked at 390 px in a throwaway preview route, no horizontal scroll; no new tokens.
+A carousel's segments carry `slide` and their seconds restart at 0 on every slide (both 0 on an image slide), so a column of "0:00" would be noise. `SegmentPlace` shows "Slide 3" in the accent column instead, with the time under it in muted only when the segment is timed (a video slide, `end_seconds > 0`); a list with any slide gets `data-slides="on"`, which widens the column to 4.75rem unless timestamps are switched off. The On-screen intro reads "Text found on each slide of the post." (from 2026-11-27, "Text found in the post." when the post has one slide) and the list is labelled "On-screen text by slide". The downloaded report heads such a segment `### Slide 3` or `### Slide 3 · 0:02–0:05`. A plain video never has `slide` (the backend clears it), so nothing changes for one. Checked at 390 px in a throwaway preview route, no horizontal scroll; no new tokens.
 
 ## Slide pictures (2026-11-27)
 
@@ -578,6 +578,35 @@ overflow at any width, 3 pictures decoded, placeholder and Video badge
 present, no page errors. Not checked on a device or against a live backend
 response.
 
+## One-photo posts and the source title (2026-11-27)
+
+Owner-approved 2026-11-27, seen on a live one-photo Instagram post
+(`slide_count` 1, one `image` slide, `duration_seconds` null).
+
+- **On-screen intro.** One slide is "the post": `SlideOnScreenView` says
+  "Text found in the post." when `total` is 1, and `OnScreenView` (segments
+  with `slide`, no pictures) says it when the segments name one distinct
+  slide. Two or more keep "Text found on each slide of the post."; a plain
+  video keeps "Text found in the video frames, with the time it appears."
+  The row label "Slide 1" and alt "Slide 1 of 1" are unchanged (not in scope).
+- **Source title.** The frontend never wrote "Video by": it is yt-dlp's
+  title for an untitled Instagram item (`instagram.py`, "Video by %s"; it
+  uses "Post by %s" only on one of its paths), shown as
+  `.source-card__source-title`. `domain/slides.ts` `sourceTitle(title,
+  { slides, slideCount })` rewrites it at display time only, the stored
+  metadata keeps yt-dlp's string:
+  - one slide, `kind: "image"` → "Photo by <user>";
+  - two or more slides (from `slides` or `slide_count`) → "Post by <user>";
+  - `slide_count` 1 with no `slides` (kind unknown) → "Post by <user>";
+  - one `video` slide, no slide facts at all (reels, uploads, every older
+    History entry), or any other title → unchanged, so "Video by" stays.
+  Applied in `SourceCard` (new optional `slides` prop, passed by HomeScreen,
+  so the live result and a run reopened from History match), the report's
+  "Source title:" line (`buildMarkdownReport` takes `slides` for the name
+  only; no picture enters the .md), and History's list titles (see
+  run-history.md). No API field added. Duration is not used: the slide kind
+  already says it.
+
 ## Changelog
 
 - 2026-08-15 · frontend agent · ported ResultsView + SourceCard; de-boxed the source card, wired .disclosure and role=tabpanel, rebuilt SourceCard.preview with six states
@@ -604,3 +633,4 @@ response.
 - 2026-11-20 · Claude (frontend agent) · the four result panels are `select-text`; the transcript toolbar stays `select-none`
 - 2026-11-26 · Claude (session ccr-3d42b168) · slide labels for multi-slide posts in the transcript, On-screen and report (`SegmentPlace`, `data-slides`, `.t-time--slide`, `.t-slide-time`)
 - 2026-11-27 · Claude (frontend agent) · slide pictures in the On-screen tab for multi-slide posts (`slides` prop, `SlideOnScreenView`, `.slide-*`); one row per slide, placeholder for a null picture, Video badge; never in Copy, Share or the .md
+- 2026-11-27 · Claude (frontend agent) · one-photo wording: On-screen intro "Text found in the post." for a single slide; yt-dlp's "Video by <user>" source title reads "Photo by" (one image slide) or "Post by" (multi-slide) in the source card, the .md report and History (`sourceTitle`, domain/slides.ts); older entries unchanged

@@ -57,6 +57,18 @@ export function isAudio(run: RunSummary): boolean {
   return run.platform === "audio_file";
 }
 
+/** A photo-only post has nothing to play, so the poster drops its centre
+ *  disc. Decided by the same facts as the badge: with slide kinds known
+ *  (this browser's record), only when every slide is an image; without them
+ *  (saved runs, older records), only when the badge itself says "Photo"
+ *  (`slide_count` 1). Any video slide, a multi-slide post of unknown kinds,
+ *  and every reel, upload or run with no slide facts keep the disc. */
+export function hasNothingToPlay(run: RunSummary & { slide_kinds?: ReadonlyArray<string> | null }): boolean {
+  const kinds = run.slide_kinds;
+  if (Array.isArray(kinds) && kinds.length > 0) return kinds.every((kind) => kind === "image");
+  return run.slide_count === 1;
+}
+
 /** Landscape posters span two columns at 16:9; everything else is a 3:4
  *  portrait. Measured size decides when there is one (wider than tall =
  *  landscape); otherwise the server's orientation; otherwise portrait. */

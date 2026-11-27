@@ -10,6 +10,7 @@ import { safeHttpUrl } from "./safeUrl";
 import { splitTakeaway } from "./takeaway";
 import { formatDuration } from "./history";
 import { platformKey, platformName } from "@/domain/platforms";
+import { sourceTitle } from "@/domain/slides";
 import type {
   AnalysisCompleteness,
   PostSlide,
@@ -167,10 +168,16 @@ function OnScreenView({
   }
 
   const slides = hasSlides(segments);
+  /* One slide is just "the post": "each slide" for a single photo misreads. */
+  const oneSlide = slides && new Set(segments.filter(onSlide).map((segment) => segment.slide)).size === 1;
   return (
     <>
       <p className="t-intro">
-        {slides ? "Text found on each slide of the post." : "Text found in the video frames, with the time it appears."}
+        {oneSlide
+          ? "Text found in the post."
+          : slides
+            ? "Text found on each slide of the post."
+            : "Text found in the video frames, with the time it appears."}
       </p>
       {segments.length === 0 ? (
         /* An older run, or a model reply without timings: the text alone. */
@@ -280,7 +287,7 @@ function SlideOnScreenView({
   const perSlide = segments.length > 0;
   return (
     <>
-      <p className="t-intro">Text found on each slide of the post.</p>
+      <p className="t-intro">{total === 1 ? "Text found in the post." : "Text found on each slide of the post."}</p>
       {!perSlide && fallback ? (
         <p className="screen-text" dir="auto">
           {fallback}
@@ -482,6 +489,7 @@ function buildMarkdownReport(
   result: VideoAnalysis,
   sourceMetadata?: SourceMetadata | null,
   completeness: AnalysisCompleteness = "full",
+  slides?: PostSlide[] | null,
 ) {
   const captionsOnly = completeness === "captions_only";
   const sections = [`# ${singleLine(result.title)}`];
@@ -497,7 +505,9 @@ function buildMarkdownReport(
   if (sourceMetadata) {
     const sourceDetails = [
       `- **Platform:** ${singleLine(platformName(sourceMetadata.platform))}`,
-      sourceMetadata.title && `- **Source title:** ${singleLine(sourceMetadata.title)}`,
+      /* `slides` only names the post here ("Photo by" for one photo); no
+         picture is ever written into the report. */
+      sourceMetadata.title && `- **Source title:** ${singleLine(sourceTitle(sourceMetadata.title, { slides }))}`,
       sourceMetadata.uploader &&
         `- **Creator:** ${
           safeHttpUrl(sourceMetadata.uploader_url)
@@ -542,6 +552,7 @@ function markdownDocument(
   result: VideoAnalysis,
   sourceMetadata?: SourceMetadata | null,
   completeness: AnalysisCompleteness = "full",
+  slides?: PostSlide[] | null,
 ): MarkdownDocument {
   const filename = `${result.title || "videolens-notes"}`
     .toLowerCase()
@@ -550,7 +561,7 @@ function markdownDocument(
   return {
     filename: filename || "videolens-notes",
     title: result.title || "VideoLens notes",
-    text: buildMarkdownReport(result, sourceMetadata, completeness),
+    text: buildMarkdownReport(result, sourceMetadata, completeness, slides),
   };
 }
 
@@ -604,7 +615,15 @@ const PLATFORM_ICONS: Record<string, string> = {
  * The counts lost their icons in the editorial pass: "184K views" says what it
  * is in words, and the glyph beside it was a second label for the same fact.
  */
-export function SourceCard({ metadata }: { metadata: SourceMetadata }) {
+export function SourceCard({
+  metadata,
+  slides = null,
+}: {
+  metadata: SourceMetadata;
+  /** A multi-slide post's slides, used only to name it: yt-dlp's
+   *  "Video by <user>" reads "Photo by" / "Post by" (domain/slides.ts). */
+  slides?: PostSlide[] | null;
+}) {
   /* Third-party strings (yt-dlp read them off the fetched page): linked only
      when they are plain http(s) addresses. */
   const sourceHref = safeHttpUrl(metadata.source_url);
@@ -616,6 +635,7 @@ export function SourceCard({ metadata }: { metadata: SourceMetadata }) {
     { label: "comments", value: metadata.comment_count },
   ].flatMap((stat) => (stat.value == null ? [] : [{ ...stat, value: stat.value }]));
   const icon = PLATFORM_ICONS[platformKey(metadata.platform) ?? ""];
+  const title = metadata.title ? sourceTitle(metadata.title, { slides }) : null;
 
   return (
     <article className="source-card">
@@ -661,8 +681,8 @@ export function SourceCard({ metadata }: { metadata: SourceMetadata }) {
                 {metadata.uploader}
               </p>
             )}
-            {metadata.title && metadata.title !== metadata.description && (
-              <p className="source-card__source-title">{metadata.title}</p>
+            {title && metadata.title !== metadata.description && (
+              <p className="source-card__source-title">{title}</p>
             )}
           </div>
         </div>
@@ -850,7 +870,7 @@ export default function ResultsView({
     window.setTimeout(() => setCopied(false), 2000);
   };
 
-  const shareContent = () => share(markdownDocument(result, sourceMetadata, completeness));
+  const shareContent = () => share(markdownDocument(result, sourceMetadata, completeness, slides));
 
   return (
     <>
@@ -901,7 +921,7 @@ export default function ResultsView({
           )}
           <button
             type="button"
-            onClick={() => void save(markdownDocument(result, sourceMetadata, completeness))}
+            onClick={() => void save(markdownDocument(result, sourceMetadata, completeness, slides))}
             className="btn btn-primary btn-pill result-download"
           >
             Download .md

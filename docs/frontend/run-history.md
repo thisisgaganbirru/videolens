@@ -309,7 +309,14 @@ Instagram download refusal, for example) showed "Untitled run" under a bare
   youtu.be → YouTube, instagram.com → Instagram, tiktok.com → TikTok, other
   hosts → `other`, which the chip shows as "Link");
 - title: the server's, else the upload's file name, else "<Platform> link",
-  else the link's host (`linkHost`, without `www.`/`m.`).
+  else the link's host (`linkHost`, without `www.`/`m.`). From 2026-11-27 a
+  server title of yt-dlp's "Video by <user>" goes through `sourceTitle`
+  (`domain/slides.ts`) with the record's `slides`/`slide_count`: "Photo by"
+  for one image slide, "Post by" for a multi-slide post, unchanged without
+  slide facts. A saved run's `source_title` fallback (`HistoryPanel`
+  `savedEntry`) does the same with `source.slide_count`. A complete run
+  usually lists the result's own title, so this shows mainly on runs that
+  never finished. See results-view.md.
 The stored record is unchanged, and real metadata replaces these when it
 arrives. The Failed badge is kept. Verified: an instagram.com reel shows
 "Instagram" / "Instagram link" / Failed, and example.org shows
@@ -550,6 +557,15 @@ at sign-out lost those runs for good.
 
 `slide_count` rides along like `duration_seconds`: on `RunStatusResponse` and `RunSummary` (patched into the record by `patchFromRun`/`patchFromSummary` only when present), on `HistoryRecord` (optional, so older records read as none), and on a saved run's `source` (`savedEntry`). `posterBadge` shows `formatSlides` ("7 slides", or "Photo" for one image) ahead of the duration, as a `slides` badge kind with the default badge style.
 
+**No play disc on a photo-only post (2026-11-27).** `hasNothingToPlay`
+(`components/history.ts`) drops `.poster-play` when the card has nothing to
+play. `toEntry` copies each slide's kind into `HistoryEntry.slide_kinds`;
+with kinds known, the disc goes only when every slide is an image. Without
+them (saved runs, records written before `slides`), it goes only when the
+badge itself says "Photo" (`slide_count` 1). Any video slide, a multi-slide
+post of unknown kinds, and every reel, upload or older run keep it. The
+disc is absolutely positioned, so nothing else moves.
+
 ## Slide pictures (2026-11-27)
 
 `patchFromRun` stores a run's `slides` (read through `readSlides`) with each
@@ -594,3 +610,5 @@ without its own copy therefore shows text only.
 - 2026-11-21 · Claude (frontend agent) · sign-out hides account rows instead of deleting them (viewer filter on list and open, guarded updates, per-viewer cap, reconcile on sign-in); only account deletion and a closed-hold sign-out remove that account's rows
 - 2026-11-26 · Claude (session ccr-3d42b168) · `slide_count` on run, summary, record and saved source; slides badge on the poster
 - 2026-11-27 · Claude (frontend agent) · `HistoryRecord.slides` (carousel slide pictures as Blobs, browser-only, no schema bump); reopened from History as data URLs
+- 2026-11-27 · Claude (frontend agent) · list titles: yt-dlp's "Video by <user>" reads "Photo by" / "Post by" from the record's slide facts (`sourceTitle`); records without them unchanged
+- 2026-11-27 · Claude (frontend agent) · poster drops the centre play disc for photo-only posts (`hasNothingToPlay`: all slide kinds image, or `slide_count` 1 when kinds are unknown); `HistoryEntry.slide_kinds` from the record

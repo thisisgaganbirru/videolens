@@ -616,7 +616,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                 )}
                 <div className="source-panel" id="source-panel" data-open={sourceOpen ? "true" : "false"}>
                   {sourceMetadata ? (
-                    <SourceCard metadata={sourceMetadata} />
+                    <SourceCard metadata={sourceMetadata} slides={slides} />
                   ) : fileSource ? (
                     <FileSourceCard name={fileSource.name} durationSeconds={fileSource.durationSeconds} />
                   ) : (
