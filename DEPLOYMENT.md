@@ -310,6 +310,9 @@ GEMINI_MODEL=gemini-3.6-flash
 # Optional second model tried once GEMINI_MODEL has exhausted its 429/5xx
 # retries (GEMINI_RETRY_ATTEMPTS=6, GEMINI_RETRY_MAX_DELAY_SECONDS=20).
 GEMINI_FALLBACK_MODEL=
+# Optional (worker): per-part media resolution for a multi-slide post's image
+# slides; default ultra_high, blank = the model's default.
+GEMINI_SLIDE_IMAGE_RESOLUTION=ultra_high
 RATE_LIMIT_PER_HOUR=20
 # Looser per-IP limit on the read endpoints (polling, run list, free-runs).
 READ_RATE_LIMIT_PER_MINUTE=120

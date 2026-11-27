@@ -40,7 +40,8 @@ class _FakeFiles:
             outcome = self.upload_outcomes.pop(0)
             if isinstance(outcome, Exception):
                 raise outcome
-        return SimpleNamespace(name=f"files/{self.upload_calls}")
+        name = f"files/{self.upload_calls}"
+        return SimpleNamespace(name=name, uri=f"https://files.test/{name}", mime_type="application/octet-stream")
 
     async def get(self, name):
         self.get_calls += 1
@@ -96,6 +97,7 @@ def _engine(client: _FakeClient, rand: float = 1.0, **settings) -> tuple[GeminiE
         "gemini_fallback_model": "",
         "gemini_retry_attempts": 6,
         "gemini_retry_max_delay_seconds": 20.0,
+        "gemini_slide_image_resolution": "ultra_high",
         **settings,
     }
     engine = GeminiEngine(

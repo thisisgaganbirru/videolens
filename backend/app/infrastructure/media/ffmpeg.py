@@ -43,9 +43,10 @@ _PLAYLIST_DEMUXERS = frozenset({
 
 # Image slides of a multi-slide post. They must decode as one of these (the
 # downloader only sniffed their first bytes), and are re-encoded to a JPEG
-# whose longest side is at most MAX_SLIDE_IMAGE_SIDE: Gemini tiles a large
-# image into 768 px squares, so this keeps a dense infographic legible
-# without paying for pixels no post has (Instagram's largest are 1440 px).
+# whose longest side is at most MAX_SLIDE_IMAGE_SIDE, never enlarged:
+# Instagram's largest are 1440 px, so this only bounds an odd oversized
+# file. How finely Gemini reads the result is the per-part media resolution
+# (GEMINI_SLIDE_IMAGE_RESOLUTION, gemini_engine.py), not this size.
 _IMAGE_SLIDE_CODECS = frozenset({"mjpeg", "png", "webp"})
 MAX_SLIDE_IMAGE_SIDE = 2048
 _UNREADABLE_SLIDE = "A slide in this post couldn't be read."

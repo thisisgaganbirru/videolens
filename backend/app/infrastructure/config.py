@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # The Capacitor Android WebView serves the bundled Next.js export from the
@@ -31,6 +33,12 @@ class Settings(BaseSettings):
     # full-jitter exponential backoff (2s base, doubling) between them.
     gemini_retry_attempts: int = 6
     gemini_retry_max_delay_seconds: float = 20.0
+    # Per-part media resolution for the image slides of a multi-slide post.
+    # Gemini 3's default for an image is `high` (about 1120 tokens), which
+    # read a slide's headline but dropped its small print; `ultra_high`
+    # (about 2240, per part only) is the one level above it. Blank = leave it
+    # to the model's default. Videos and single files never carry one.
+    gemini_slide_image_resolution: Literal["", "low", "medium", "high", "ultra_high"] = "ultra_high"
 
     max_file_size_mb: int = 200
     max_duration_seconds: int = 180

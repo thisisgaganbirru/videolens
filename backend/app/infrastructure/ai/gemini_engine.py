@@ -13,7 +13,7 @@ from google.genai import types
 # are only served on `v1beta`). Moving to `v1` is a separate, tested change.
 _HTTP_OPTIONS = types.HttpOptions(api_version="v1beta")
 
-from ...domain.entities import CaptionTrack, MediaSlide, SourceMetadata, VideoAnalysis
+from ...domain.entities import CaptionTrack, MediaSlide, SlideKind, SourceMetadata, VideoAnalysis
 from ...domain.errors import AnalysisUnavailableError, GeminiConfigurationError
 from ...domain.ports import StageCallback
 from ..config import Settings
@@ -96,14 +96,21 @@ CAROUSEL_SYSTEM_INSTRUCTION = _BASE_INSTRUCTION + """
 This time the media is not one file but a multi-slide post (a carousel). The slides arrive in
 order, each one preceded by a label such as "Slide 2 of 5 (image):". Treat them as one piece of
 content read in that order, and write the title, summary and notes about the post as a whole.
-- Image slides have no sound and no timeline. Read every legible piece of text on them, small
-  print, chart labels and handwriting included, and describe what a slide shows when that matters
-  to what the post says.
+- Image slides have no sound and no timeline. Describe what a slide shows when that matters to
+  what the post says.
+- Image slides are read in full, not summarised. Give every image slide with legible text exactly
+  one screen_text_segments entry whose text is every legible line on that slide, in reading order
+  (top to bottom, left to right), keeping its line breaks: headlines and subtitles, but equally the
+  body text, small print, code, terminal or command-line text, captions inside screenshots, chart
+  labels, handwriting, footers and handles. Copy the text as written; do not pick out only the
+  prominent lines, shorten, paraphrase or translate it. Text too small or blurred to read is left
+  out rather than guessed.
 - Video slides: transcribe their speech and read their on-screen text as for any video.
 - Set `slide` on every transcript_segments and screen_text_segments entry to the 1-based number
   of the slide it comes from.
 - Timestamps restart at 0 on every slide. On an image slide, set start_seconds and end_seconds to 0.
-- Give every slide with legible text at least one screen_text_segments entry.
+- screen_text is the text of the screen_text_segments entries in slide order, with a blank line
+  between entries: the full text, not a selection of the important parts.
 - Follow the slide order in the markdown notes, and name the slide a point comes from when that
   helps the reader find it."""
 
@@ -350,6 +357,7 @@ class GeminiEngine:
         metadata: Optional[SourceMetadata] = None,
     ) -> VideoAnalysis:
         count = len(slides)
+        image_resolution = self._slide_image_resolution()
         result = await self._analyze_files(
             [
                 (f"Slide {index} of {count} ({slide.kind.value}):", slide.path)
@@ -360,8 +368,17 @@ class GeminiEngine:
             on_stage=on_stage,
             api_key=api_key,
             metadata=metadata,
+            resolutions=[
+                image_resolution if slide.kind is SlideKind.IMAGE else None for slide in slides
+            ],
         )
-        return _checked_slides(result, count)
+        return _screen_text_from_segments(_checked_slides(result, count))
+
+    def _slide_image_resolution(self) -> Optional[types.PartMediaResolutionLevel]:
+        level = self._settings.gemini_slide_image_resolution
+        if not level:
+            return None
+        return types.PartMediaResolutionLevel(f"MEDIA_RESOLUTION_{level.upper()}")
 
     async def _analyze_files(
         self,
@@ -372,10 +389,12 @@ class GeminiEngine:
         on_stage: Optional[StageCallback] = None,
         api_key: str | None = None,
         metadata: Optional[SourceMetadata] = None,
+        resolutions: Optional[list[Optional[types.PartMediaResolutionLevel]]] = None,
     ) -> VideoAnalysis:
         """Upload every file (each after its own label, when it has one),
         analyze them in one request, and delete every upload however that
-        went."""
+        went. `resolutions[i]`, when set, is file i's per-part media
+        resolution; a file without one goes in as the upload itself."""
         if on_stage:
             await on_stage("uploading_to_gemini")
         client = self._get_client(api_key)
@@ -400,10 +419,11 @@ class GeminiEngine:
                 if on_stage:
                     await on_stage("analyzing")
                 media_parts: list[Any] = []
-                for (label, _), file in zip(files, uploaded):
+                levels = resolutions or [None] * len(files)
+                for (label, _), file, level in zip(files, uploaded, levels):
                     if label:
                         media_parts.append(label)
-                    media_parts.append(file)
+                    media_parts.append(file if level is None else _part_at(file, level))
                 response = await self._generate_with_retry(
                     client,
                     contents=[*media_parts, *prompt_parts],
@@ -574,6 +594,31 @@ class GeminiEngine:
                     raise
                 raise mapped from exc
         raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _part_at(file: Any, level: types.PartMediaResolutionLevel) -> types.Part:
+    """An uploaded file as a part with its own media resolution. The SDK
+    turns a bare File into exactly this part minus the resolution."""
+    return types.Part(
+        file_data=types.FileData(file_uri=file.uri, mime_type=file.mime_type),
+        media_resolution=types.PartMediaResolution(level=level),
+    )
+
+
+def _screen_text_from_segments(result: VideoAnalysis) -> VideoAnalysis:
+    """A multi-slide post's flat `screen_text` is its segments' text in the
+    order the model gave them, a blank line between entries, so the two can
+    never disagree (the model's own `screen_text` was a shorter selection).
+    With no segment carrying text, the model's `screen_text` is kept.
+    Single files keep theirs: a video's segments repeat text that stays on
+    screen, which its flat text lists once."""
+    texts = [segment.text.strip() for segment in result.screen_text_segments if segment.text.strip()]
+    if not texts:
+        return result
+    joined = "\n\n".join(texts)
+    if joined == result.screen_text:
+        return result
+    return result.model_copy(update={"screen_text": joined})
 
 
 def _checked_slides(result: VideoAnalysis, count: Optional[int]) -> VideoAnalysis:
