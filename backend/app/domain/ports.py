@@ -160,10 +160,13 @@ class MediaProcessor(Protocol):
         width: int | None = None,
         height: int | None = None,
         duration_seconds: float | None = None,
+        slides: tuple[MediaSlide, ...] = (),
     ) -> MediaVisuals:
         """Poster thumbnail (a small JPEG data URL) and display size for the
         history card. `thumbnail_urls`/`width`/`height` are the source's own
         hints (yt-dlp); `media_path` is the local file, when there is one.
+        `slides`: a multi-slide post's local slide files, in order; each gets
+        a small picture in `MediaVisuals.slides` (None when there are none).
         Never raises: anything that goes wrong yields None fields."""
         ...
 

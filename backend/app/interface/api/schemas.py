@@ -11,6 +11,17 @@ class RunCreateResponse(BaseModel):
     status: RunStatus
 
 
+class SlideThumbnailResponse(BaseModel):
+    """One slide of a multi-slide post as a small picture. `slide` is 1-based
+    and matches `screen_text_segments[].slide`; `thumbnail` is a
+    `data:image/jpeg;base64,...` URL (longest side <= 480 px) or null when
+    that slide's picture could not be made."""
+
+    slide: int
+    kind: Literal["image", "video"]
+    thumbnail: Optional[str] = None
+
+
 class RunStatusResponse(BaseModel):
     run_id: str
     status: RunStatus
@@ -33,6 +44,12 @@ class RunStatusResponse(BaseModel):
     # A multi-slide post (an Instagram carousel): how many slides it was
     # analyzed as. Its segments then carry `slide`. None for one media file.
     slide_count: Optional[int] = None
+    # The same post's slides as small pictures, ordered by slide number; set
+    # once the run is complete, None for one media file. For the person's own
+    # result and browser History only: shares carry text and the post link,
+    # and a paid account's saved history never stores them. Not on the list
+    # (`RunSummary`) either, for the same reason as `thumbnail`.
+    slides: Optional[list[SlideThumbnailResponse]] = None
 
 
 class RunSummary(BaseModel):

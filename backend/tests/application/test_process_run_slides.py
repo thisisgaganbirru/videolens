@@ -5,7 +5,7 @@ request, and its slide count recorded as a media fact."""
 import unittest
 
 from app.application.process_run import ProcessRunUseCase
-from app.domain.entities import MediaSlide, RunStatus, SlideKind, SourceMetadata, VideoAnalysis
+from app.domain.entities import MediaSlide, MediaVisuals, RunStatus, SlideKind, SourceMetadata, VideoAnalysis
 from app.domain.errors import MediaValidationError
 
 from .fakes import FakeAnalysisEngine, FakeFreeRunAllowance, FakeMediaProcessor, FakeObjectStore, FakeRunRepository
@@ -68,6 +68,68 @@ class ProcessCarouselTests(unittest.IsolatedAsyncioTestCase):
         # The post's total says nothing about the first slide's own length.
         self.assertIsNone(call["duration_seconds"])
 
+    async def test_each_slide_gets_a_picture_numbered_like_its_segments(self) -> None:
+        await self.use_case.execute("run-1", source_url=URL)
+
+        run = self.runs.runs["run-1"]
+        self.assertEqual(run.status, RunStatus.COMPLETE)
+        # Made from the downloaded slide files, the same tuple (and order)
+        # the analysis numbers its segments by.
+        (call,) = self.media.visuals_calls
+        self.assertEqual(call["slides"], SLIDES)
+        self.assertEqual([item.slide for item in run.slides], [1, 2, 3])
+        self.assertEqual([item.kind for item in run.slides], [slide.kind for slide in SLIDES])
+        self.assertEqual(run.slides[1].thumbnail, "data:image/jpeg;base64,S2")
+        # Written with the poster, before the run is marked complete, so the
+        # first poll that sees `complete` already has them.
+        self.assertEqual(self.runs.visuals_written_while, [RunStatus.PROCESSING])
+
+    async def test_the_slide_pictures_never_reach_the_analysis(self) -> None:
+        await self.use_case.execute("run-1", source_url=URL)
+
+        (analyzed, _), = self.analysis.slide_calls
+        # Only the normalized slide files go to Gemini; no picture, no data URL.
+        self.assertTrue(all(isinstance(slide, MediaSlide) for slide in analyzed))
+        self.assertEqual([slide.path for slide in analyzed], [f"/tmp/run-1/normalized-0{i}" for i in (1, 2, 3)])
+
+    async def test_a_single_photo_post_gets_one_slide_picture(self) -> None:
+        # Like slide_count, which a single-image post also carries (1).
+        self.media.download_slides = (SLIDES[0],)
+
+        await self.use_case.execute("run-1", source_url=URL)
+
+        run = self.runs.runs["run-1"]
+        self.assertEqual(run.slide_count, 1)
+        self.assertEqual([(item.slide, item.kind) for item in run.slides], [(1, SlideKind.IMAGE)])
+
+    async def test_slide_pictures_are_written_when_the_poster_is_missing(self) -> None:
+        self.media.visuals = MediaVisuals()
+
+        await self.use_case.execute("run-1", source_url=URL)
+
+        run = self.runs.runs["run-1"]
+        self.assertIsNone(run.thumbnail)
+        self.assertEqual(len(run.slides), 3)
+
+    async def test_failed_slide_pictures_never_fail_the_run(self) -> None:
+        self.media.visuals_error = RuntimeError("ffmpeg gone")
+
+        await self.use_case.execute("run-1", source_url=URL)
+
+        run = self.runs.runs["run-1"]
+        self.assertEqual(run.status, RunStatus.COMPLETE)
+        self.assertIsNone(run.slides)
+
+    async def test_a_failed_post_keeps_no_slide_pictures(self) -> None:
+        self.analysis.error = MediaValidationError("nope")
+
+        await self.use_case.execute("run-1", source_url=URL)
+
+        run = self.runs.runs["run-1"]
+        self.assertEqual(run.status, RunStatus.FAILED)
+        self.assertIsNone(run.slides)
+        self.assertEqual(self.media.cleaned_up, ["run-1"])
+
     async def test_an_all_image_post_records_no_duration(self) -> None:
         self.media.slides_duration = 0.0
 
@@ -100,6 +162,10 @@ class ProcessCarouselTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.media.enforced_slides, [])
         self.assertEqual(self.analysis.slide_calls, [])
         self.assertEqual(len(self.analysis.calls), 1)
+        # No slides, so no slide pictures: the single-file result is unchanged.
+        self.assertIsNone(run.slides)
+        (call,) = self.media.visuals_calls
+        self.assertEqual(call["slides"], ())
 
     async def test_a_failed_slide_count_write_never_fails_the_run(self) -> None:
         async def broken(run_id: str, slide_count: int) -> None:

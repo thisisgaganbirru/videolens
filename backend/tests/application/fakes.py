@@ -2,6 +2,7 @@
 the Protocol methods application-layer tests need, plus a bit of call
 tracking so tests can assert on how a use case drove its dependencies."""
 
+import dataclasses
 from datetime import datetime, timezone
 
 from app.domain.entities import (
@@ -18,6 +19,7 @@ from app.domain.entities import (
     Run,
     RunStatus,
     SavedUpload,
+    SlideVisual,
     SourceMetadata,
 )
 
@@ -134,6 +136,8 @@ class FakeRunRepository:
         run.thumbnail = visuals.thumbnail
         run.width = visuals.width
         run.height = visuals.height
+        if visuals.slides is not None:
+            run.slides = list(visuals.slides)
 
     async def set_error(self, run_id: str, error: str) -> bool:
         if (run := self._live(run_id)) is None:
@@ -260,6 +264,16 @@ class FakeMediaProcessor:
         self.visuals_calls.append(kwargs)
         if self.visuals_error:
             raise self.visuals_error
+        slides = kwargs.get("slides") or ()
+        if slides and self.visuals.slides is None:
+            # Like the real adapter: one picture per slide given, numbered from 1.
+            return dataclasses.replace(
+                self.visuals,
+                slides=tuple(
+                    SlideVisual(slide=number, kind=slide.kind, thumbnail=f"data:image/jpeg;base64,S{number}")
+                    for number, slide in enumerate(slides, start=1)
+                ),
+            )
         return self.visuals
 
 

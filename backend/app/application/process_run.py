@@ -244,7 +244,9 @@ class ProcessRunUseCase:
             return
         try:
             visuals = await task
-            if visuals.thumbnail is None and visuals.width is None:
+            # A post's slide pictures are worth writing even when its poster
+            # and size came back empty.
+            if visuals.thumbnail is None and visuals.width is None and visuals.slides is None:
                 return
             await self._runs.set_visuals(run_id, visuals)
         except asyncio.CancelledError:
@@ -485,6 +487,12 @@ class ProcessRunUseCase:
                     height=downloaded.height,
                     # The total says nothing about the first slide's length.
                     duration_seconds=None if slides else duration,
+                    # Each slide's small picture, from the downloaded files
+                    # (already probed above), alongside normalize and Gemini
+                    # and never sent to it. Written with the poster just
+                    # before the run completes; discarded with it before the
+                    # run directory is removed.
+                    slides=slides,
                 )
             elif source_key:
                 run_dir = self._media.create_run_dir(run_id)

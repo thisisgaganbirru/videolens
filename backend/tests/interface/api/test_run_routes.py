@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 from starlette.testclient import TestClient
 
 from app.container import container
-from app.domain.entities import Run, RunStatus, SourceMetadata, VideoAnalysis
+from app.domain.entities import Run, RunStatus, SlideKind, SlideVisual, SourceMetadata, VideoAnalysis
 from app.interface.api.app import app
 
 HEADERS = {"X-Client-ID": "test-client-0123456789"}
@@ -116,6 +116,42 @@ class RunRouteTests(unittest.TestCase):
 
         self.assertEqual(body["slide_count"], 5)
         self.assertEqual(item["slide_count"], 5)
+
+    def test_a_carousel_returns_its_slide_pictures_on_status_only(self) -> None:
+        run = LINK_RUN.model_copy(
+            update={
+                "slide_count": 3,
+                "slides": [
+                    SlideVisual(slide=1, kind=SlideKind.VIDEO, thumbnail="data:image/jpeg;base64,AQ=="),
+                    SlideVisual(slide=2, kind=SlideKind.IMAGE, thumbnail=None),
+                    SlideVisual(slide=3, kind=SlideKind.IMAGE, thumbnail="data:image/jpeg;base64,Aw=="),
+                ],
+            }
+        )
+        with patch.object(container.get_run_use_case, "execute", AsyncMock(return_value=run)):
+            body = self.client.get("/api/runs/link-1", headers=HEADERS).json()
+        with patch.object(container.list_runs_use_case, "execute", AsyncMock(return_value=[run])):
+            (item,) = self.client.get("/api/runs", headers=HEADERS).json()["runs"]
+
+        self.assertEqual(
+            body["slides"],
+            [
+                {"slide": 1, "kind": "video", "thumbnail": "data:image/jpeg;base64,AQ=="},
+                {"slide": 2, "kind": "image", "thumbnail": None},
+                {"slide": 3, "kind": "image", "thumbnail": "data:image/jpeg;base64,Aw=="},
+            ],
+        )
+        # 20 rows of inline pictures would make every history poll heavy.
+        self.assertNotIn("slides", item)
+
+    def test_a_single_file_run_has_null_slides(self) -> None:
+        for run in (LINK_RUN, FILE_RUN, LEGACY_RUN):
+            with self.subTest(run=run.run_id), patch.object(
+                container.get_run_use_case, "execute", AsyncMock(return_value=run)
+            ):
+                body = self.client.get(f"/api/runs/{run.run_id}", headers=HEADERS).json()
+                self.assertIn("slides", body)
+                self.assertIsNone(body["slides"])
 
     def test_status_of_a_legacy_run_has_null_poster_fields(self) -> None:
         with patch.object(container.get_run_use_case, "execute", AsyncMock(return_value=LEGACY_RUN)):

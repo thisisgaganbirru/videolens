@@ -188,6 +188,8 @@ class RunStore:
             if visuals.width is not None and visuals.height is not None:
                 run.width = visuals.width
                 run.height = visuals.height
+            if visuals.slides is not None:
+                run.slides = list(visuals.slides)
         if error is not None:
             run.error = error
         run.updated_at = datetime.now(timezone.utc)

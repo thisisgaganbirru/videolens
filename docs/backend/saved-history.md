@@ -181,7 +181,9 @@ Saved: title, summary snippet, the full `VideoAnalysis` as JSON,
 public link for a link run, the publisher's title and uploader, duration,
 width, height), and the poster thumbnail (`Run.thumbnail` as is, the ≤ 20 KB
 JPEG data URL the live run exposes; owner decision 2026-11-14). **Never**
-saved: any other media, any key, the file name.
+saved: any other media (including a carousel's per-slide pictures,
+`Run.slides`; owner decision 2026-11-27: they stay in the live run and the
+browser's History), any key, the file name.
 
 **Idempotent**: `(account_id, run_id)` is unique and the insert is `ON
 CONFLICT DO NOTHING`, so a retried job saves once.
@@ -369,3 +371,4 @@ on Postgres if `DATABASE_APP_ROLE` does not exist.
 - 2026-11-20 · Claude (backend agent) · tests: cross-account read/list/delete of a saved run at route level
 - 2026-11-20 · Claude (backend agent) · re-review: with billing off the purge waits for billing (retried hourly) while a live stored subscription is on file
 - 2026-11-26 · Claude (session ccr-3d42b168) · the saved `source` descriptor gains `slide_count` for a multi-slide post (a JSON key, no migration); segments in the saved result may carry `slide`
+- 2026-11-27 · Claude (backend agent) · a carousel's per-slide pictures (`Run.slides`, 2026-11-27) are never saved: `_record` copies only the poster `thumbnail`, and `saved_runs`/`SavedRun` have no slides field (test: `test_a_carousel_saves_its_poster_but_never_its_slide_pictures`)

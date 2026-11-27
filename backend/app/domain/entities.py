@@ -69,6 +69,23 @@ class SourceMetadata(BaseModel):
     comment_count: Optional[int] = None
 
 
+class SlideKind(str, Enum):
+    IMAGE = "image"
+    VIDEO = "video"
+
+
+class SlideVisual(BaseModel):
+    """One slide's small picture for a multi-slide post's result. `slide` is
+    1-based, the number its `screen_text_segments[].slide` carry. `thumbnail`
+    is a `data:image/jpeg;base64,...` URL (longest side <= 480 px), or None
+    when that slide's picture could not be made or was past the set's byte
+    budget (infrastructure/media/thumbnails.py)."""
+
+    slide: int
+    kind: SlideKind
+    thumbnail: Optional[str] = None
+
+
 class Run(BaseModel):
     run_id: str
     owner_id: str
@@ -120,6 +137,12 @@ class Run(BaseModel):
     # which for such a post is the video slides' total and is left unset
     # when every slide is an image. None for a single media file.
     slide_count: Optional[int] = None
+    # The same post's slides as small pictures, in order, for the person's own
+    # result and their browser History (like `thumbnail`). Set alongside
+    # `slide_count` (written with the poster, just before the run completes)
+    # and None otherwise. Kept only for this record's TTL: never in a paid
+    # account's saved history, never sent to Gemini, never shared.
+    slides: Optional[list[SlideVisual]] = None
 
 
 class CapabilityState(str, Enum):
@@ -292,11 +315,6 @@ class ApiKeyCreated:
     secret: str
 
 
-class SlideKind(str, Enum):
-    IMAGE = "image"
-    VIDEO = "video"
-
-
 @dataclass(frozen=True)
 class MediaSlide:
     """One item of a multi-slide post, as a local file in the run directory.
@@ -337,6 +355,9 @@ class MediaVisuals:
     thumbnail: Optional[str] = None
     width: Optional[int] = None
     height: Optional[int] = None
+    # A multi-slide post's per-slide pictures (`Run.slides`); None when
+    # `describe_visuals` was not given any slides.
+    slides: Optional[tuple[SlideVisual, ...]] = None
 
 
 @dataclass

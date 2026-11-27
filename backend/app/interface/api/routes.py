@@ -53,6 +53,7 @@ from .schemas import (
     SavedRunResponse,
     SavedRunsDeletedResponse,
     SavedRunSourceResponse,
+    SlideThumbnailResponse,
     SavedRunSummaryResponse,
     WorkspaceResponse,
 )
@@ -248,6 +249,14 @@ async def get_run(
         height=facts.height,
         orientation=facts.orientation,
         slide_count=facts.slide_count,
+        slides=(
+            [
+                SlideThumbnailResponse(slide=item.slide, kind=item.kind.value, thumbnail=item.thumbnail)
+                for item in run.slides
+            ]
+            if run.slides
+            else None
+        ),
     )
 
 
