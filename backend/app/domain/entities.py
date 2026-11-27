@@ -18,12 +18,19 @@ class TranscriptSegment(BaseModel):
     end_seconds: float
     text: str
     speaker: Optional[str] = None
+    # Which slide of a multi-slide post (an Instagram carousel) the segment
+    # comes from, 1-based. Model output like the timestamps, which restart at
+    # 0 on every slide (an image slide's are both 0). None for one media file:
+    # the engine clears it there, so the UI never labels a plain video.
+    slide: Optional[int] = None
 
 
 class ScreenTextSegment(BaseModel):
     start_seconds: float
     end_seconds: float
     text: str
+    # See TranscriptSegment.slide.
+    slide: Optional[int] = None
 
 
 class AnalysisCompleteness(str, Enum):
@@ -60,6 +67,23 @@ class SourceMetadata(BaseModel):
     like_count: Optional[int] = None
     view_count: Optional[int] = None
     comment_count: Optional[int] = None
+
+
+class SlideKind(str, Enum):
+    IMAGE = "image"
+    VIDEO = "video"
+
+
+class SlideVisual(BaseModel):
+    """One slide's small picture for a multi-slide post's result. `slide` is
+    1-based, the number its `screen_text_segments[].slide` carry. `thumbnail`
+    is a `data:image/jpeg;base64,...` URL (longest side <= 480 px), or None
+    when that slide's picture could not be made or was past the set's byte
+    budget (infrastructure/media/thumbnails.py)."""
+
+    slide: int
+    kind: SlideKind
+    thumbnail: Optional[str] = None
 
 
 class Run(BaseModel):
@@ -108,6 +132,17 @@ class Run(BaseModel):
     # (docs/backend/saved-history.md). Server bookkeeping, never sent to the
     # client; None for anonymous runs and runs stored before it existed.
     account_id: Optional[str] = None
+    # How many slides a multi-slide post (an Instagram carousel or a
+    # single-image post) was analyzed as. A media fact like the duration,
+    # which for such a post is the video slides' total and is left unset
+    # when every slide is an image. None for a single media file.
+    slide_count: Optional[int] = None
+    # The same post's slides as small pictures, in order, for the person's own
+    # result and their browser History (like `thumbnail`). Set alongside
+    # `slide_count` (written with the poster, just before the run completes)
+    # and None otherwise. Kept only for this record's TTL: never in a paid
+    # account's saved history, never sent to Gemini, never shared.
+    slides: Optional[list[SlideVisual]] = None
 
 
 class CapabilityState(str, Enum):
@@ -280,6 +315,16 @@ class ApiKeyCreated:
     secret: str
 
 
+@dataclass(frozen=True)
+class MediaSlide:
+    """One item of a multi-slide post, as a local file in the run directory.
+    VIDEO covers anything ffmpeg reads as timed media (a slide with no
+    picture is normalized to audio like any other file)."""
+
+    path: str
+    kind: SlideKind
+
+
 @dataclass
 class SavedUpload:
     path: str
@@ -292,8 +337,13 @@ class SavedUpload:
     width: Optional[int] = None
     height: Optional[int] = None
     # Bytes on disk, when the adapter measured them (the one-long-run-per-
-    # account guard counts a file above the standard size as long).
+    # account guard counts a file above the standard size as long). For a
+    # multi-slide post, every slide together.
     size_bytes: Optional[int] = None
+    # Set only for a multi-slide post (an Instagram carousel, or a post that
+    # is a single image), in the post's own order; `path` is then the first
+    # slide's file. Empty for one media file, which keeps the old pipeline.
+    slides: tuple[MediaSlide, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -305,6 +355,9 @@ class MediaVisuals:
     thumbnail: Optional[str] = None
     width: Optional[int] = None
     height: Optional[int] = None
+    # A multi-slide post's per-slide pictures (`Run.slides`); None when
+    # `describe_visuals` was not given any slides.
+    slides: Optional[tuple[SlideVisual, ...]] = None
 
 
 @dataclass
@@ -552,6 +605,8 @@ class SavedRunSource:
     duration_seconds: Optional[float] = None
     width: Optional[int] = None
     height: Optional[int] = None
+    # A multi-slide post's slide count (`Run.slide_count`).
+    slide_count: Optional[int] = None
 
     def to_dict(self) -> dict:
         return {key: value for key, value in self.__dict__.items() if value is not None}

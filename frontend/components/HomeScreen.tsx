@@ -87,6 +87,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
     freeRunRefunded,
     result,
     completeness,
+    slides,
     sourceMetadata,
     error,
     submitting,
@@ -615,7 +616,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                 )}
                 <div className="source-panel" id="source-panel" data-open={sourceOpen ? "true" : "false"}>
                   {sourceMetadata ? (
-                    <SourceCard metadata={sourceMetadata} />
+                    <SourceCard metadata={sourceMetadata} slides={slides} />
                   ) : fileSource ? (
                     <FileSourceCard name={fileSource.name} durationSeconds={fileSource.durationSeconds} />
                   ) : (
@@ -641,6 +642,7 @@ export default function HomeScreen({ activeTab }: { activeTab: MainTab }) {
                     result={result}
                     sourceMetadata={sourceMetadata}
                     completeness={completeness}
+                    slides={slides}
                   />
                 </article>
                 {/* UX fix spec 4.4: where the result is kept. Static text, so

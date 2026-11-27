@@ -23,6 +23,7 @@ from .entities import (
     CaptionTrack,
     FreeRunClaim,
     FreeRunStatus,
+    MediaSlide,
     MediaVisuals,
     PendingAccountPurge,
     ReleaseIndex,
@@ -90,6 +91,8 @@ class RunRepository(Protocol):
 
     async def set_duration(self, run_id: str, duration_seconds: float) -> None: ...
 
+    async def set_slide_count(self, run_id: str, slide_count: int) -> None: ...
+
     async def set_visuals(self, run_id: str, visuals: MediaVisuals) -> None:
         """Record the poster thumbnail and display size. Fields left None are
         left as they were."""
@@ -135,6 +138,20 @@ class MediaProcessor(Protocol):
 
     async def normalize_media(self, src_path: str, run_dir: str) -> str: ...
 
+    async def enforce_slides_cap(
+        self, run_id: str, slides: tuple[MediaSlide, ...], limits: Optional[MediaLimits] = None
+    ) -> float:
+        """A multi-slide post's `enforce_duration_cap`: every slide must be
+        readable (an image slide must really be an image), and the video
+        slides' total length must fit the cap. Returns that total (0 when
+        every slide is an image)."""
+        ...
+
+    async def normalize_slides(self, slides: tuple[MediaSlide, ...], run_dir: str) -> tuple[MediaSlide, ...]:
+        """`normalize_media` for each slide, in order: video slides as usual,
+        image slides re-encoded as bounded JPEGs."""
+        ...
+
     async def describe_visuals(
         self,
         *,
@@ -143,10 +160,13 @@ class MediaProcessor(Protocol):
         width: int | None = None,
         height: int | None = None,
         duration_seconds: float | None = None,
+        slides: tuple[MediaSlide, ...] = (),
     ) -> MediaVisuals:
         """Poster thumbnail (a small JPEG data URL) and display size for the
         history card. `thumbnail_urls`/`width`/`height` are the source's own
         hints (yt-dlp); `media_path` is the local file, when there is one.
+        `slides`: a multi-slide post's local slide files, in order; each gets
+        a small picture in `MediaVisuals.slides` (None when there are none).
         Never raises: anything that goes wrong yields None fields."""
         ...
 
@@ -172,6 +192,17 @@ class AnalysisEngine(Protocol):
         api_key: str | None = None,
         metadata: Optional[SourceMetadata] = None,
     ) -> VideoAnalysis: ...
+
+    async def analyze_slides_with_retry(
+        self,
+        slides: tuple[MediaSlide, ...],
+        on_stage: Optional[StageCallback] = None,
+        api_key: str | None = None,
+        metadata: Optional[SourceMetadata] = None,
+    ) -> VideoAnalysis:
+        """One analysis of a whole multi-slide post: every slide in order, in
+        one request, so the notes read the post as its author wrote it."""
+        ...
 
     async def analyze_captions(
         self,

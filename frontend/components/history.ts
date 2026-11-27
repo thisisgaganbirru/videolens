@@ -57,6 +57,18 @@ export function isAudio(run: RunSummary): boolean {
   return run.platform === "audio_file";
 }
 
+/** A photo-only post has nothing to play, so the poster drops its centre
+ *  disc. Decided by the same facts as the badge: with slide kinds known
+ *  (this browser's record), only when every slide is an image; without them
+ *  (saved runs, older records), only when the badge itself says "Photo"
+ *  (`slide_count` 1). Any video slide, a multi-slide post of unknown kinds,
+ *  and every reel, upload or run with no slide facts keep the disc. */
+export function hasNothingToPlay(run: RunSummary & { slide_kinds?: ReadonlyArray<string> | null }): boolean {
+  const kinds = run.slide_kinds;
+  if (Array.isArray(kinds) && kinds.length > 0) return kinds.every((kind) => kind === "image");
+  return run.slide_count === 1;
+}
+
 /** Landscape posters span two columns at 16:9; everything else is a 3:4
  *  portrait. Measured size decides when there is one (wider than tall =
  *  landscape); otherwise the server's orientation; otherwise portrait. */
@@ -79,6 +91,7 @@ export function formatDuration(seconds: number | null | undefined): string | nul
 
 export type PosterBadge =
   | { kind: "duration"; text: string }
+  | { kind: "slides"; text: string }
   | { kind: "failed"; text: string }
   | { kind: "expired"; text: string }
   | { kind: "processing"; text: string };
@@ -94,8 +107,19 @@ export function posterBadge(run: PosterRun): PosterBadge | null {
   if (run.status === "failed" && run.expired) return { kind: "expired", text: "Expired" };
   if (run.status === "failed") return { kind: "failed", text: "Failed" };
   if (run.status === "queued" || run.status === "processing") return { kind: "processing", text: "Processing" };
+  /* A multi-slide post is counted in slides, not seconds: an all-image
+     carousel has no length at all, and a mixed one's total would read as one
+     video's. */
+  const slides = formatSlides(run.slide_count);
+  if (slides) return { kind: "slides", text: slides };
   const duration = formatDuration(run.duration_seconds);
   return duration ? { kind: "duration", text: duration } : null;
+}
+
+/** "7 slides", or "Photo" for a post that is one image; null otherwise. */
+export function formatSlides(count: number | null | undefined): string | null {
+  if (typeof count !== "number" || !Number.isFinite(count) || count < 1) return null;
+  return count === 1 ? "Photo" : `${Math.round(count)} slides`;
 }
 
 export const UNTITLED = "Untitled run";

@@ -15,11 +15,13 @@ import {
 import type { SavedOpenOutcome } from "@/application/useAnalysisRun";
 import { classifyGatewayError } from "@/application/gatewayError";
 import type { RunSourceKind, SavedRunSummary } from "@/domain/entities";
+import { sourceTitle } from "@/domain/slides";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { formatLongDay } from "@/components/format";
 import {
   HISTORY_FILTERS,
   buildHistory,
+  hasNothingToPlay,
   isAudio,
   isLandscape,
   platformLabel,
@@ -397,11 +399,14 @@ function savedEntry(item: SavedRunSummary): HistoryEntry {
   return {
     run_id: item.run_id,
     status: "complete",
-    title: item.title?.trim() || source?.source_title?.trim() || null,
+    title:
+      item.title?.trim() ||
+      (source?.source_title?.trim() ? sourceTitle(source.source_title.trim(), { slideCount: source.slide_count }) : null),
     created_at: item.created_at,
     source_kind: source?.source_kind ?? null,
     platform: source?.platform ?? null,
     duration_seconds: source?.duration_seconds ?? null,
+    slide_count: source?.slide_count ?? null,
     summary_snippet: item.summary_snippet ?? null,
     width: source?.width ?? null,
     height: source?.height ?? null,
@@ -807,9 +812,11 @@ function Poster({
             <img className="poster-img" src={run.thumbnail_url} alt="" decoding="async" draggable={false} />
           )}
           {chip && <span className="poster-chip">{chip}</span>}
-          <span className="poster-play">
-            <Glyph className="poster-glyph" data-glyph={isAudio(run) ? "audio" : "play"} />
-          </span>
+          {!hasNothingToPlay(run) && (
+            <span className="poster-play">
+              <Glyph className="poster-glyph" data-glyph={isAudio(run) ? "audio" : "play"} />
+            </span>
+          )}
           {badge && (
             <span className="poster-badge" data-kind={badge.kind}>
               {badge.text}

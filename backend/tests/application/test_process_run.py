@@ -367,9 +367,12 @@ class ProcessRunUseCaseTests(unittest.IsolatedAsyncioTestCase):
                     width=1920,
                     height=1080,
                     duration_seconds=30.0,
+                    # One media file: no slides, so no slide pictures.
+                    slides=(),
                 )
             ],
         )
+        self.assertIsNone(run.slides)
 
     async def test_object_store_upload_gets_a_frame_grab(self) -> None:
         await self.use_case.execute("run-1", source_key="runs/run-1/source.mp4")

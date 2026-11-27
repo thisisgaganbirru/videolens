@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from app.infrastructure.config import Settings
 from app.infrastructure.media.uploads import validate_temp_dir
@@ -15,30 +16,66 @@ class ValidateTempDirTests(unittest.TestCase):
     an output path as a protocol scheme. These assert the startup check that
     now rejects it outright."""
 
-    @unittest.skipIf(
-        os.name == "nt",
-        "On Windows `C:/...` is a genuinely absolute path; the check targets the Linux container.",
-    )
+    def _on(self, windows: bool):
+        return mock.patch(
+            "app.infrastructure.media.uploads._host_is_windows", return_value=windows
+        )
+
     def test_rejects_a_windows_path(self) -> None:
-        # The literal value that broke the dev deployment.
+        # The literal value that broke the dev deployment, on a Linux host.
         settings = Settings(temp_dir="C:/Users/birru/AppData/Local/Temp/videolens")
 
-        with self.assertRaises(RuntimeError) as ctx:
-            validate_temp_dir(settings)
+        with self._on(windows=False), mock.patch("os.makedirs") as makedirs:
+            with self.assertRaises(RuntimeError) as ctx:
+                validate_temp_dir(settings)
 
-        self.assertIn("absolute", str(ctx.exception))
+        self.assertIn("absolute POSIX path", str(ctx.exception))
         self.assertIn("TEMP_DIR", str(ctx.exception))
+        makedirs.assert_not_called()
 
-    def test_rejects_a_relative_path(self) -> None:
-        settings = Settings(temp_dir="tmp/videolens")
+    def test_rejects_a_backslash_windows_path_on_linux(self) -> None:
+        with self._on(windows=False), mock.patch("os.makedirs") as makedirs:
+            with self.assertRaises(RuntimeError):
+                validate_temp_dir(Settings(temp_dir=r"C:\Users\me\Temp\videolens"))
+        makedirs.assert_not_called()
 
-        with self.assertRaises(RuntimeError):
-            validate_temp_dir(settings)
+    def test_accepts_a_posix_path_on_linux(self) -> None:
+        with self._on(windows=False), mock.patch("os.makedirs") as makedirs, mock.patch(
+            "os.access", return_value=True
+        ):
+            validate_temp_dir(Settings(temp_dir="/tmp/videolens"))
+        makedirs.assert_called_once_with("/tmp/videolens", exist_ok=True)
 
-    @unittest.skipIf(
-        os.name == "nt",
-        "On Windows `C:/...` is a genuinely absolute path; the check targets the Linux container.",
-    )
+    def test_accepts_a_drive_path_on_windows(self) -> None:
+        """A local native-Windows run: a drive path is absolute there."""
+        for path in ("C:/Users/me/AppData/Local/Temp/videolens", r"C:\Temp\videolens", r"\\host\share\vl"):
+            with self.subTest(path=path), self._on(windows=True), mock.patch(
+                "os.makedirs"
+            ) as makedirs, mock.patch("os.access", return_value=True):
+                validate_temp_dir(Settings(temp_dir=path))
+                makedirs.assert_called_once_with(path, exist_ok=True)
+
+    def test_rejects_a_driveless_path_on_windows_with_a_windows_message(self) -> None:
+        """`/tmp/videolens` (the .env.example default) has no drive on
+        Windows, so it is refused there, with advice for that OS rather than
+        a message about POSIX paths."""
+        with self._on(windows=True), mock.patch("os.makedirs") as makedirs:
+            with self.assertRaises(RuntimeError) as ctx:
+                validate_temp_dir(Settings(temp_dir="/tmp/videolens"))
+
+        message = str(ctx.exception)
+        self.assertIn("absolute Windows path", message)
+        self.assertIn("/tmp/videolens", message)
+        self.assertNotIn("POSIX", message)
+        makedirs.assert_not_called()
+
+    def test_rejects_a_relative_path_on_either_host(self) -> None:
+        for windows in (False, True):
+            with self.subTest(windows=windows), self._on(windows), mock.patch("os.makedirs") as makedirs:
+                with self.assertRaises(RuntimeError):
+                    validate_temp_dir(Settings(temp_dir="tmp/videolens"))
+                makedirs.assert_not_called()
+
     def test_does_not_create_a_directory_for_a_rejected_path(self) -> None:
         """The bug was `os.makedirs` running before any validation, which is
         what silently created `./C:/Users/...`. Rejection must come first."""
@@ -46,7 +83,7 @@ class ValidateTempDirTests(unittest.TestCase):
             previous = os.getcwd()
             os.chdir(cwd)
             try:
-                with self.assertRaises(RuntimeError):
+                with self._on(windows=False), self.assertRaises(RuntimeError):
                     validate_temp_dir(Settings(temp_dir="C:/Users/birru/AppData/Local/Temp/videolens"))
                 self.assertEqual(os.listdir(cwd), [])
             finally:

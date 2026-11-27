@@ -15,15 +15,28 @@ Where it comes from, in order:
 3. Nothing. Audio has no poster, and a failure here is cosmetic: every public
    function in this module logs and returns None instead of raising, because
    a missing thumbnail must never fail an otherwise healthy run.
+
+A multi-slide post (an Instagram carousel) also gets one small picture per
+slide (`build_slide_thumbnails`), made from the slide files already on disk:
+a JPEG with its longest side at most `SLIDE_MAX_SIDE` and no larger than
+`MAX_SLIDE_THUMBNAIL_BYTES`, the whole set held to
+`SLIDE_THUMBNAILS_BUDGET_BYTES` and `SLIDE_THUMBNAILS_DEADLINE_SECONDS`. A
+video slide's picture is a frame taken the way the poster's is. These are for
+the person's own result and browser History only: never sent to Gemini, and
+kept server side only on the run record, for RUN_TTL_SECONDS
+(docs/backend/run-processing.md).
 """
 
 import asyncio
 import base64
 import json
 import logging
+import time
 import urllib.error
 import urllib.request
 from typing import Iterable, Optional
+
+from ...domain.entities import MediaSlide, SlideKind, SlideVisual
 
 from ..config import Settings
 from .deadline import DownloadDeadline, run_download
@@ -49,6 +62,24 @@ QUALITY_STEPS = (4, 7, 11, 16, 23, 31)
 # Only reached when even the worst quality at MAX_SIDE is over the ceiling
 # (very noisy images). The ceiling is hard, so the picture gets smaller.
 SIDE_STEPS = (MAX_SIDE, 240, 180, 120, 80)
+
+# Slide thumbnails: bigger than the poster (they are looked at, not just
+# recognised), so a 1080x1350 slide becomes 384x480. q:v 5 puts a typical
+# slide at roughly 10-45 KB; the further steps only matter for very noisy
+# images, which still end up under the per-slide ceiling.
+SLIDE_MAX_SIDE = 480
+MAX_SLIDE_THUMBNAIL_BYTES = 80 * 1024
+SLIDE_QUALITY_STEPS = (5, 8, 12, 18, 25, 31)
+SLIDE_SIDE_STEPS = (SLIDE_MAX_SIDE, 360, 240)
+# The whole set rides on the run record (Redis or memory) for RUN_TTL_SECONDS
+# and is read back with every `get` of it, so it is capped as a set: once the
+# running total (data URLs, in bytes) would pass this, that slide and every
+# later one get `thumbnail: null`. 20 slides (the downloader's MAX_SLIDES) at
+# ~60 KB fit.
+SLIDE_THUMBNAILS_BUDGET_BYTES = 1_200_000
+# Wall clock for the whole set, inside describe_visuals' overall timeout
+# (service.py) and after the poster, so slow slides only ever cost slides.
+SLIDE_THUMBNAILS_DEADLINE_SECONDS = 25
 
 _USER_AGENT = "VideoLens/1.0 (+https://github.com/thisisgaganbirru/videolens)"
 
@@ -167,13 +198,21 @@ def _scale_filter(side: int) -> str:
     return f"scale='min({side},iw)':'min({side},ih)':force_original_aspect_ratio=decrease"
 
 
-async def encode_thumbnail(settings: Settings, image: bytes) -> Optional[bytes]:
+async def encode_thumbnail(
+    settings: Settings,
+    image: bytes,
+    *,
+    side_steps: tuple[int, ...] = SIDE_STEPS,
+    quality_steps: tuple[int, ...] = QUALITY_STEPS,
+    max_bytes: int = MAX_THUMBNAIL_BYTES,
+) -> Optional[bytes]:
     """Re-encode any image ffmpeg can read to a JPEG within MAX_SIDE and
-    MAX_THUMBNAIL_BYTES, stepping quality down and then size down until it
-    fits. None if it never fits or ffmpeg cannot read the input."""
+    MAX_THUMBNAIL_BYTES (the defaults: the poster's), stepping quality down
+    and then size down until it fits. None if it never fits or ffmpeg cannot
+    read the input."""
     ffmpeg = _media_binary(settings, "ffmpeg")
-    for side in SIDE_STEPS:
-        for quality in QUALITY_STEPS:
+    for side in side_steps:
+        for quality in quality_steps:
             code, stdout = await _run(
                 [
                     # stdin only: the fetched bytes are the publisher's.
@@ -189,7 +228,7 @@ async def encode_thumbnail(settings: Settings, image: bytes) -> Optional[bytes]:
                 # Unreadable input does not get more readable at a lower
                 # quality - stop instead of trying all 30 combinations.
                 return None
-            if len(stdout) <= MAX_THUMBNAIL_BYTES:
+            if len(stdout) <= max_bytes:
                 return stdout
     return None
 
@@ -203,10 +242,10 @@ def frame_offset_seconds(duration_seconds: Optional[float]) -> float:
 
 
 async def extract_frame(
-    settings: Settings, media_path: str, duration_seconds: Optional[float]
+    settings: Settings, media_path: str, duration_seconds: Optional[float], *, max_side: int = MAX_SIDE
 ) -> Optional[bytes]:
-    """One frame as a PNG (lossless, already <= MAX_SIDE so it stays small in
-    memory). ffmpeg applies the rotation itself, so a portrait clip yields a
+    """One frame as a PNG (lossless, already <= `max_side` so it stays small
+    in memory). ffmpeg applies the rotation itself, so a portrait clip yields a
     portrait frame. Retries at 0s when the first seek finds nothing."""
     ffmpeg = _media_binary(settings, "ffmpeg")
     for offset in dict.fromkeys((frame_offset_seconds(duration_seconds), 0.0)):
@@ -215,7 +254,7 @@ async def extract_frame(
                 ffmpeg, "-v", "error",
                 "-ss", f"{offset:.3f}", *INPUT_PROTOCOLS, "-i", media_path,
                 "-frames:v", "1", "-an",
-                "-vf", _scale_filter(MAX_SIDE),
+                "-vf", _scale_filter(max_side),
                 "-f", "image2pipe", "-c:v", "png", "pipe:1",
             ]
         )
@@ -308,3 +347,96 @@ async def build_thumbnail(
     except Exception:  # noqa: BLE001 - cosmetic, see module docstring
         logger.warning("Thumbnail capture failed", exc_info=True)
     return None
+
+
+# ------------------------------------------------------------ slide thumbnails
+
+
+def _read_file(path: str) -> bytes:
+    with open(path, "rb") as handle:
+        return handle.read()
+
+
+async def slide_thumbnail(settings: Settings, slide: MediaSlide) -> Optional[bytes]:
+    """One slide's JPEG, or None. An image slide is re-encoded from its file
+    (enforce_slides_cap has already probed it as a real JPEG/PNG/WebP); a
+    video slide gives the frame the poster would (~1s in, 0s when that finds
+    nothing; no per-slide duration is known). A video slide with no picture
+    has no frame, so None. Never raises, apart from cancellation."""
+    try:
+        if slide.kind is SlideKind.IMAGE:
+            source = await asyncio.to_thread(_read_file, slide.path)
+        else:
+            source = await extract_frame(settings, slide.path, None, max_side=SLIDE_MAX_SIDE)
+        if not source:
+            return None
+        return await encode_thumbnail(
+            settings,
+            source,
+            side_steps=SLIDE_SIDE_STEPS,
+            quality_steps=SLIDE_QUALITY_STEPS,
+            max_bytes=MAX_SLIDE_THUMBNAIL_BYTES,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 - cosmetic, see module docstring
+        logger.warning("Slide thumbnail failed", exc_info=True)
+        return None
+
+
+async def build_slide_thumbnails(
+    settings: Settings,
+    slides: tuple[MediaSlide, ...],
+    *,
+    budget_bytes: int = SLIDE_THUMBNAILS_BUDGET_BYTES,
+    deadline_seconds: float = SLIDE_THUMBNAILS_DEADLINE_SECONDS,
+) -> tuple[SlideVisual, ...]:
+    """One `SlideVisual` per slide, numbered from 1 in the post's order (the
+    numbers the analysis gives `screen_text_segments[].slide`).
+
+    One slide at a time: each is a fraction of a second of FFmpeg, and the
+    set runs alongside normalization and Gemini, so there is nothing to gain
+    by competing with them. A slide that fails, the slide that would pass the
+    byte budget and every one after it, and any slide still unmade at the
+    deadline get `thumbnail=None`. Never raises, apart from cancellation."""
+    started = time.perf_counter()
+    loop = asyncio.get_running_loop()
+    give_up_at = loop.time() + deadline_seconds
+    thumbs: list[Optional[str]] = [None] * len(slides)
+    total = 0
+    stopped = ""
+    try:
+        for index, slide in enumerate(slides):
+            remaining = give_up_at - loop.time()
+            if remaining <= 0:
+                stopped = ", deadline reached"
+                break
+            try:
+                jpeg = await asyncio.wait_for(slide_thumbnail(settings, slide), remaining)
+            except asyncio.TimeoutError:
+                stopped = ", deadline reached"
+                break
+            if jpeg is None:
+                continue
+            data_url = to_data_url(jpeg)
+            if total + len(data_url) > budget_bytes:
+                stopped = ", over the byte budget"
+                break
+            total += len(data_url)
+            thumbs[index] = data_url
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 - cosmetic, see module docstring
+        logger.warning("Slide thumbnails failed", exc_info=True)
+    logger.debug(
+        "Slide thumbnails: %d of %d made, %d bytes, %.2fs%s",
+        sum(1 for thumb in thumbs if thumb is not None),
+        len(slides),
+        total,
+        time.perf_counter() - started,
+        stopped,
+    )
+    return tuple(
+        SlideVisual(slide=number, kind=slide.kind, thumbnail=thumbs[number - 1])
+        for number, slide in enumerate(slides, start=1)
+    )

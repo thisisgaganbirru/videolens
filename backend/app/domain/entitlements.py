@@ -145,8 +145,11 @@ def clock(seconds: float) -> str:
     return f"{total // 60}:{total % 60:02d}"
 
 
-def duration_over_limit_message(duration_seconds: float, limits: MediaLimits) -> str:
-    message = f"This video is {clock(duration_seconds)} long. The limit is {clock(limits.max_duration_seconds)}."
+def duration_over_limit_message(
+    duration_seconds: float, limits: MediaLimits, *, lead: str = "This video is"
+) -> str:
+    # `lead`: a multi-slide post says "The videos in this post are".
+    message = f"{lead} {clock(duration_seconds)} long. The limit is {clock(limits.max_duration_seconds)}."
     reach = limits.upgrade_max_duration_seconds
     # Only offered when it would actually have fit: telling someone with a
     # 40-minute video to sign in for 10 minutes is a dead end.

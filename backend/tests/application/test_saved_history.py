@@ -7,6 +7,7 @@ Billing is the real `BillingPlans` over the in-memory stores and the fake
 Stripe gateway (as in test_billing); saved runs are the in-memory adapter,
 which shares its behaviour suite with the SQL one."""
 
+import json
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -16,15 +17,20 @@ from app.application.process_run import ProcessRunUseCase
 from app.application.restore_account import RestoreAccountUseCase
 from app.application.saved_history import SavedHistory, SavedHistoryQueries, encode_cursor
 from app.domain.entities import (
+    ScreenTextSegment,
     AnalysisCompleteness,
     AuthMethod,
     BillingWebhookEvent,
     MediaVisuals,
     Principal,
     RunStatus,
+    SavedRun,
     SavedRunCursor,
+    SlideKind,
+    SlideVisual,
     VideoAnalysis,
 )
+from app.infrastructure.persistence.schema import saved_runs
 from app.domain.errors import InvalidCursorError, SavedRunNotFoundError
 from app.infrastructure.persistence.account_deleter import InMemoryAccountDeleter
 from app.infrastructure.persistence.account_directory import InMemoryAccountDirectory
@@ -105,6 +111,62 @@ class SavingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.result["markdown"], "# T")
         self.assertEqual(saved.source.source_kind, "link")
         self.assertEqual(saved.source.source_url, URL)
+
+    async def test_a_carousel_keeps_its_slide_count_and_slide_labels(self) -> None:
+        await self.h.subscribe()
+        result = ANALYSIS.model_copy(
+            update={"screen_text_segments": [ScreenTextSegment(start_seconds=0, end_seconds=0, text="x", slide=2)]}
+        )
+        # Recorded while the run is live, as the pipeline does; a finished run
+        # takes no more writes.
+        run_id = "run-c"
+        await self.h.runs.create(run_id, "user:sub-1", source_kind="link", platform="instagram", account_id=ACCOUNT)
+        await self.h.runs.set_slide_count(run_id, 4)
+        await self.h.runs.set_result(run_id, result, AnalysisCompleteness.FULL)
+
+        self.assertTrue(await self.h.history.save_completed(run_id, source_url=URL))
+
+        saved = await self.h.queries.get(_person(), run_id)
+        self.assertEqual(saved.source.slide_count, 4)
+        self.assertEqual(saved.result["screen_text_segments"][0]["slide"], 2)
+
+    async def test_a_carousel_saves_its_poster_but_never_its_slide_pictures(self) -> None:
+        # Owner decision 2026-11-27: slide pictures stay in the live run and
+        # the browser's History; saved_runs keeps the small poster only.
+        await self.h.subscribe()
+        run_id = "run-pics"
+        slide_picture = "data:image/jpeg;base64," + "S" * 3000
+        await self.h.runs.create(run_id, "user:sub-1", source_kind="link", platform="instagram", account_id=ACCOUNT)
+        await self.h.runs.set_slide_count(run_id, 2)
+        await self.h.runs.set_visuals(
+            run_id,
+            MediaVisuals(
+                thumbnail=POSTER,
+                width=1080,
+                height=1350,
+                slides=(
+                    SlideVisual(slide=1, kind=SlideKind.IMAGE, thumbnail=slide_picture),
+                    SlideVisual(slide=2, kind=SlideKind.VIDEO, thumbnail=slide_picture),
+                ),
+            ),
+        )
+        await self.h.runs.set_result(run_id, ANALYSIS, AnalysisCompleteness.FULL)
+        self.assertIsNotNone(self.h.runs.runs[run_id].slides)  # the live run has them
+
+        self.assertTrue(await self.h.history.save_completed(run_id, source_url=URL))
+
+        saved = await self.h.saved.get(ACCOUNT, run_id)
+        self.assertEqual(saved.thumbnail, POSTER)
+        self.assertEqual(saved.source.slide_count, 2)
+        self.assertNotIn("slides", saved.result)
+        self.assertNotIn("slides", saved.source.to_dict())
+        self.assertNotIn("slides", SavedRun.__dataclass_fields__)
+        self.assertNotIn("slides", saved_runs.c)
+        # Not a single byte of any slide picture, anywhere in what was saved.
+        stored = json.dumps(
+            {"result": saved.result, "source": saved.source.to_dict(), "thumbnail": saved.thumbnail}
+        )
+        self.assertNotIn("S" * 100, stored)
 
     async def test_free_anonymous_and_billing_off_are_never_saved(self) -> None:
         free = await self.h.finished_run("free-run")

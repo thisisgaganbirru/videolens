@@ -164,6 +164,7 @@ class RunStore:
         completeness: AnalysisCompleteness | None = None,
         source_metadata: SourceMetadata | None = None,
         duration_seconds: float | None = None,
+        slide_count: int | None = None,
         visuals: MediaVisuals | None = None,
         error: str | None = None,
     ) -> None:
@@ -179,12 +180,16 @@ class RunStore:
             run.source_metadata = source_metadata
         if duration_seconds is not None:
             run.duration_seconds = duration_seconds
+        if slide_count is not None:
+            run.slide_count = slide_count
         if visuals is not None:
             if visuals.thumbnail is not None:
                 run.thumbnail = visuals.thumbnail
             if visuals.width is not None and visuals.height is not None:
                 run.width = visuals.width
                 run.height = visuals.height
+            if visuals.slides is not None:
+                run.slides = list(visuals.slides)
         if error is not None:
             run.error = error
         run.updated_at = datetime.now(timezone.utc)
@@ -244,6 +249,9 @@ class RunStore:
 
     async def set_duration(self, run_id: str, duration_seconds: float) -> None:
         await self._update(run_id, duration_seconds=duration_seconds)
+
+    async def set_slide_count(self, run_id: str, slide_count: int) -> None:
+        await self._update(run_id, slide_count=slide_count)
 
     async def set_visuals(self, run_id: str, visuals: MediaVisuals) -> None:
         await self._update(run_id, visuals=visuals)

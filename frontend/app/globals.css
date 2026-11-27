@@ -1525,6 +1525,21 @@ h3 {
   .t-list[data-times="off"] .t-row {
     grid-template-columns: minmax(0, 1fr);
   }
+  /* A multi-slide post: "Slide 12" needs a wider column than "1:05", with a
+     video slide's time under it in muted. Times-off still wins. */
+  .t-list[data-slides="on"]:not([data-times="off"]) .t-row {
+    grid-template-columns: 4.75rem minmax(0, 1fr);
+  }
+  .t-time--slide {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+  .t-slide-time {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--color-muted);
+  }
   .t-time {
     padding-top: 0.15rem;
     font-size: 0.9375rem;
@@ -1606,6 +1621,92 @@ h3 {
   @media (min-width: 48rem) {
     .t-list--screen .t-row {
       grid-template-columns: 3.75rem minmax(0, 1fr);
+    }
+  }
+
+  /* Slide pictures (2026-11-27): a carousel's On-screen rows carry the
+     slide's picture. Phone: picture above the text, as wide as the row up to
+     16rem. From 40rem: a 7.5rem picture column beside the text; the list
+     widens by that column (40 -> 46rem) so the serif text keeps roughly the
+     measure it had. The box is a fixed 4:5 (Instagram's tallest feed shape)
+     so rows never jump while pictures decode; the picture is `contain`ed in
+     it, never cropped, on the neutral tint that is also the no-picture
+     placeholder. No new tokens. The selectors repeat `.t-row` and the
+     attribute so they outrank `.t-list[data-slides="on"]` above. */
+  .t-list--screen[data-images="on"] {
+    max-width: 46rem;
+  }
+  .t-list--screen[data-images="on"] .t-row.slide-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-sm);
+  }
+  .slide-thumb {
+    position: relative;
+    width: min(100%, 16rem);
+    aspect-ratio: 4 / 5;
+    border-radius: var(--radius-control);
+    overflow: hidden;
+    background: var(--color-tint);
+    box-shadow: inset 0 0 0 var(--rule-w) var(--color-rule);
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .slide-img,
+  .slide-placeholder {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    max-width: none;
+    height: 100%;
+  }
+  .slide-img {
+    object-fit: contain;
+    -webkit-user-drag: none;
+  }
+  /* The History poster's duration badge, bottom-left so it never sits on a
+     slide's page-number corner. */
+  .slide-badge {
+    position: absolute;
+    left: 0.5rem;
+    bottom: 0.5rem;
+    padding: 0.125rem 0.4375rem;
+    border-radius: 0.4375rem;
+    background: var(--color-ink);
+    color: var(--color-surface);
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1.35;
+    white-space: nowrap;
+  }
+  .slide-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+  .slide-label {
+    padding-top: 0;
+  }
+  .slide-seg {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+  .slide-none {
+    margin: 0;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--color-muted);
+  }
+  @media (min-width: 40rem) {
+    .t-list--screen[data-images="on"] .t-row.slide-row {
+      grid-template-columns: 7.5rem minmax(0, 1fr);
+      gap: var(--space-md);
+      align-items: start;
+    }
+    .slide-thumb {
+      width: 100%;
     }
   }
 

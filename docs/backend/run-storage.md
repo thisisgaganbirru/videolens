@@ -21,7 +21,8 @@ Persists `Run` records and each owner's run-id history. One class, two backends 
 **History hand-off fields on `Run`** (Phase 5a, 2026-11-01). The browser now files each delivered run into its own History, so `GET /api/runs/{id}` carries everything a history item needs. Three more optional fields, `None` by default (legacy runs deserialize unchanged), written by `set_visuals(run_id, MediaVisuals)` before the run is marked complete:
 - `thumbnail` — `data:image/jpeg;base64,...`, JPEG, longest side ≤320 px, ≤20 KB (hard ceiling). See `docs/backend/media-validation.md` for how it is made.
 - `width` / `height` — *display* size of the video stream (rotation applied, so a phone portrait clip reports portrait). `None` for audio.
-`set_visuals` only overwrites fields that are not `None`. ~27 KB of base64 per run in Redis for at most an hour.
+- `slides` (2026-11-27) — a multi-slide post's per-slide pictures, a list of `{slide, kind, thumbnail}` (`SlideVisual`), each `thumbnail` a ≤480 px JPEG data URL or `None`; set with `slide_count`, `None` otherwise. Capped at 1.2 MB of data URLs per run (`thumbnails.SLIDE_THUMBNAILS_BUDGET_BYTES`); a typical 8-slide post is ~150-350 KB. Redis has no value cap that matters here (512 MB), but the record is read and re-written whole: `_update`'s Lua script `cjson.decode`s it and `list_for_owner` `get`s each listed run in full (up to 20 per `GET /api/runs`, though `RunSummary` drops `slides` and `thumbnail`). It is written once, just before `complete`, so polls while processing stay small.
+`set_visuals` only overwrites fields that are not `None`. ~27 KB of base64 per run in Redis for at most an hour, plus `slides` for a carousel.
 
 **Retention is 1 hour (Phase 5a).** History lives in the browser (IndexedDB) now; the server keeps a run only long enough to deliver it. `GET /api/runs` therefore lists only runs written in the last `RUN_TTL_SECONDS` (default 3600). That includes the MCP server's `list_recent_runs` tool, which calls `GET /api/runs`: **it now only sees runs from the last hour.** No MCP code changed for this.
 
@@ -31,7 +32,7 @@ Nothing about the user is stored — only facts about the media.
 - `source_kind`: stored value; for a legacy run, `"link"` if `source_metadata` exists, else `None`.
 - `platform`: one of `youtube | instagram | tiktok | audio_file | video_file | other`. Links: yt-dlp `extractor_key` by prefix (`Youtube`, `YoutubeTab` → youtube; `Instagram*`; `TikTok*`), then `source_url` host, else `other`. A link run with no `source_metadata` → `None` (the URL itself isn't stored).
 - `orientation` (list and, since Phase 5a, status): measured `width`/`height` win when known (`landscape` iff width > height; square is portrait). Otherwise the URL hint: `landscape` for YouTube URLs not under `/shorts/`; `portrait` for Shorts and every other known platform (incl. file runs); `None` when platform unknown.
-- `width`/`height`: passed through on both responses. `thumbnail` is on `GET /api/runs/{id}` **only** — never on the list (20 inline JPEGs would be ~0.5 MB per poll).
+- `width`/`height`: passed through on both responses. `thumbnail` and `slides` are on `GET /api/runs/{id}` **only** — never on the list (20 inline JPEGs would be ~0.5 MB per poll).
 - `summary_snippet` (list only, never stored): `result.summary` whitespace-collapsed, cut at a word boundary to ≤160 chars including a trailing `…`.
 
 **Known behavior worth knowing**: `_update` silently no-ops if the run doesn't exist rather than raising — a status/stage/result update for an expired or already-cleaned-up run just does nothing, no error surfaces anywhere.
@@ -46,3 +47,4 @@ Nothing about the user is stored — only facts about the media.
 - 2026-11-01 · backend agent (Phase 3) · added `source_kind`/`platform`/`duration_seconds` to `Run`, `set_duration` on the repository, and `domain/run_facts.py` read-time derivations for the history poster grid (`RunSummary` gains `source_kind`, `platform`, `duration_seconds`, `summary_snippet`, `orientation`)
 - 2026-11-01 · backend agent (Phase 5a) · `RUN_TTL_SECONDS` default 7 days → 1 hour (browser keeps History); TTL + owner index re-armed on complete/failed; in-memory prune; `Run.thumbnail`/`width`/`height` + `set_visuals`; orientation prefers measured dims; noted that MCP `list_recent_runs` now only sees the last hour
 - 2026-11-13 · backend agent · writes to a `complete`/`failed` run are skipped (atomic Lua check in Redis, lock in memory); `set_result`/`set_error` return whether they wrote
+- 2026-11-27 · Claude (backend agent) · `Run.slides` (per-slide pictures of a carousel, via `set_visuals`/`MediaVisuals.slides`), on `GET /api/runs/{id}` only; size budget and the whole-record read cost noted

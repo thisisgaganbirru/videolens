@@ -2,6 +2,7 @@
 the Protocol methods application-layer tests need, plus a bit of call
 tracking so tests can assert on how a use case drove its dependencies."""
 
+import dataclasses
 from datetime import datetime, timezone
 
 from app.domain.entities import (
@@ -13,10 +14,12 @@ from app.domain.entities import (
     FreeRunPeriod,
     FreeRunScope,
     FreeRunStatus,
+    MediaSlide,
     MediaVisuals,
     Run,
     RunStatus,
     SavedUpload,
+    SlideVisual,
     SourceMetadata,
 )
 
@@ -118,6 +121,10 @@ class FakeRunRepository:
         if (run := self._live(run_id)) is not None:
             run.duration_seconds = duration_seconds
 
+    async def set_slide_count(self, run_id: str, slide_count: int) -> None:
+        if (run := self._live(run_id)) is not None:
+            run.slide_count = slide_count
+
     async def set_visuals(self, run_id: str, visuals: MediaVisuals) -> None:
         if self.set_visuals_error:
             raise self.set_visuals_error
@@ -129,6 +136,8 @@ class FakeRunRepository:
         run.thumbnail = visuals.thumbnail
         run.width = visuals.width
         run.height = visuals.height
+        if visuals.slides is not None:
+            run.slides = list(visuals.slides)
 
     async def set_error(self, run_id: str, error: str) -> bool:
         if (run := self._live(run_id)) is None:
@@ -170,6 +179,12 @@ class FakeMediaProcessor:
         self.limits_seen: dict[str, list] = {}
         self.upload_size_bytes: int | None = None
         self.download_size_bytes: int | None = None
+        # A multi-slide post: set to make download_url return these slides.
+        self.download_slides: tuple[MediaSlide, ...] = ()
+        self.slides_duration: float = 0.0
+        self.enforce_slides_error: Exception | None = None
+        self.enforced_slides: list[tuple[str, tuple[MediaSlide, ...]]] = []
+        self.normalize_slides_calls: list[tuple[tuple[MediaSlide, ...], str]] = []
 
     def _saw(self, method: str, limits) -> None:
         self.limits_seen.setdefault(method, []).append(limits)
@@ -206,13 +221,30 @@ class FakeMediaProcessor:
         if self.download_error:
             raise self.download_error
         return SavedUpload(
-            path=f"/tmp/{run_id}/download.mp4",
+            path=self.download_slides[0].path if self.download_slides else f"/tmp/{run_id}/download.mp4",
             run_dir=f"/tmp/{run_id}",
             metadata=self.download_metadata,
             thumbnail_urls=self.download_thumbnail_urls,
             width=self.download_dims[0],
             height=self.download_dims[1],
             size_bytes=self.download_size_bytes,
+            slides=self.download_slides,
+        )
+
+    async def enforce_slides_cap(self, run_id: str, slides, limits=None) -> float:
+        self._saw("enforce_slides_cap", limits)
+        self.enforced_slides.append((run_id, slides))
+        if self.enforce_slides_error:
+            raise self.enforce_slides_error
+        return self.slides_duration
+
+    async def normalize_slides(self, slides, run_dir: str):
+        self.normalize_slides_calls.append((slides, run_dir))
+        if self.normalize_error:
+            raise self.normalize_error
+        return tuple(
+            MediaSlide(path=f"{run_dir}/normalized-{index:02d}", kind=slide.kind)
+            for index, slide in enumerate(slides, start=1)
         )
 
     async def fetch_captions(self, url: str, limits=None) -> CaptionTrack | None:
@@ -232,6 +264,16 @@ class FakeMediaProcessor:
         self.visuals_calls.append(kwargs)
         if self.visuals_error:
             raise self.visuals_error
+        slides = kwargs.get("slides") or ()
+        if slides and self.visuals.slides is None:
+            # Like the real adapter: one picture per slide given, numbered from 1.
+            return dataclasses.replace(
+                self.visuals,
+                slides=tuple(
+                    SlideVisual(slide=number, kind=slide.kind, thumbnail=f"data:image/jpeg;base64,S{number}")
+                    for number, slide in enumerate(slides, start=1)
+                ),
+            )
         return self.visuals
 
 
@@ -351,6 +393,23 @@ class FakeAnalysisEngine:
         self.caption_calls: list[CaptionTrack] = []
         self.caption_result = None
         self.caption_error: Exception | None = None
+        self.slide_calls: list[tuple[tuple[MediaSlide, ...], str | None]] = []
+
+    async def analyze_slides_with_retry(
+        self,
+        slides,
+        on_stage=None,
+        api_key: str | None = None,
+        metadata: SourceMetadata | None = None,
+    ):
+        self.slide_calls.append((slides, api_key))
+        self.metadata_seen.append(metadata)
+        if on_stage:
+            await on_stage("uploading_to_gemini")
+            await on_stage("analyzing")
+        if self.error:
+            raise self.error
+        return self.result
 
     async def analyze_with_retry(
         self,

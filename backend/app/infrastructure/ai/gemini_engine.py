@@ -13,7 +13,7 @@ from google.genai import types
 # are only served on `v1beta`). Moving to `v1` is a separate, tested change.
 _HTTP_OPTIONS = types.HttpOptions(api_version="v1beta")
 
-from ...domain.entities import CaptionTrack, SourceMetadata, VideoAnalysis
+from ...domain.entities import CaptionTrack, MediaSlide, SlideKind, SourceMetadata, VideoAnalysis
 from ...domain.errors import AnalysisUnavailableError, GeminiConfigurationError
 from ...domain.ports import StageCallback
 from ..config import Settings
@@ -31,6 +31,11 @@ _BACKOFF_BASE_SECONDS = 2.0
 # The fallback model is a second opinion, not a second full wait: by the time
 # it runs, the primary has already spent its whole retry budget.
 _FALLBACK_ATTEMPTS = 2
+# A multi-slide post uploads its slides (and waits for each to be ACTIVE) this
+# many at a time: up to 20 one after another was 10-20 s of queuing before the
+# analysis could start, and a small cap keeps a burst inside the Files API's
+# own rate limits.
+_UPLOAD_CONCURRENCY = 4
 
 
 class _FileProcessingError(RuntimeError):
@@ -38,7 +43,7 @@ class _FileProcessingError(RuntimeError):
     never reached ACTIVE in time). The one failure where re-uploading the file
     is the right retry, because the uploaded copy itself is the problem."""
 
-SYSTEM_INSTRUCTION = """You are analyzing a short media file. It may be audio-only or a video.
+_BASE_INSTRUCTION = """You are analyzing a short media file. It may be audio-only or a video.
 
 Analyze the entire file and:
 - Transcribe all spoken content.
@@ -79,6 +84,36 @@ Return your analysis in the requested structured format:
   these two fields are read side by side, so they must not be two versions of the same
   paragraph."""
 
+SYSTEM_INSTRUCTION = _BASE_INSTRUCTION + """
+
+Leave `slide` unset on every segment: it is only used for multi-slide posts."""
+
+# A multi-slide post (an Instagram carousel, or a post that is one photo):
+# every slide is a part of one request, each after a "Slide k of N (kind):"
+# label, so the notes follow the post the way its author laid it out.
+CAROUSEL_SYSTEM_INSTRUCTION = _BASE_INSTRUCTION + """
+
+This time the media is not one file but a multi-slide post (a carousel). The slides arrive in
+order, each one preceded by a label such as "Slide 2 of 5 (image):". Treat them as one piece of
+content read in that order, and write the title, summary and notes about the post as a whole.
+- Image slides have no sound and no timeline. Describe what a slide shows when that matters to
+  what the post says.
+- Image slides are read in full, not summarised. Give every image slide with legible text exactly
+  one screen_text_segments entry whose text is every legible line on that slide, in reading order
+  (top to bottom, left to right), keeping its line breaks: headlines and subtitles, but equally the
+  body text, small print, code, terminal or command-line text, captions inside screenshots, chart
+  labels, handwriting, footers and handles. Copy the text as written; do not pick out only the
+  prominent lines, shorten, paraphrase or translate it. Text too small or blurred to read is left
+  out rather than guessed.
+- Video slides: transcribe their speech and read their on-screen text as for any video.
+- Set `slide` on every transcript_segments and screen_text_segments entry to the 1-based number
+  of the slide it comes from.
+- Timestamps restart at 0 on every slide. On an image slide, set start_seconds and end_seconds to 0.
+- screen_text is the text of the screen_text_segments entries in slide order, with a blank line
+  between entries: the full text, not a selection of the important parts.
+- Follow the slide order in the markdown notes, and name the slide a point comes from when that
+  helps the reader find it."""
+
 
 CAPTION_SYSTEM_INSTRUCTION = """You are analyzing the caption/subtitle track of a video whose
 media file could not be retrieved. You have the words only - no audio, no frames.
@@ -114,6 +149,9 @@ class GeminiEngine:
         # Injected so tests can assert on backoff delays without waiting them out.
         self._sleep = sleep
         self._rand = rand
+        # Background upload clean-ups still running (`_schedule_cleanup`).
+        # Strong references: the event loop keeps only weak ones to a task.
+        self._cleanups: set[asyncio.Task[None]] = set()
 
     def _get_client(self, api_key: str | None = None) -> genai.Client:
         # A caller-supplied (bring-your-own) key gets its own client, never cached
@@ -304,49 +342,208 @@ class GeminiEngine:
         api_key: str | None = None,
         metadata: Optional[SourceMetadata] = None,
     ) -> VideoAnalysis:
+        result = await self._analyze_files(
+            [(None, video_path)],
+            system_instruction=SYSTEM_INSTRUCTION,
+            intro="Analyze this media file as instructed.",
+            on_stage=on_stage,
+            api_key=api_key,
+            metadata=metadata,
+        )
+        return _checked_slides(result, None)
+
+    async def _analyze_slides(
+        self,
+        slides: tuple[MediaSlide, ...],
+        on_stage: Optional[StageCallback] = None,
+        api_key: str | None = None,
+        metadata: Optional[SourceMetadata] = None,
+    ) -> VideoAnalysis:
+        count = len(slides)
+        image_resolution = self._slide_image_resolution()
+        result = await self._analyze_files(
+            [
+                (f"Slide {index} of {count} ({slide.kind.value}):", slide.path)
+                for index, slide in enumerate(slides, start=1)
+            ],
+            system_instruction=CAROUSEL_SYSTEM_INSTRUCTION,
+            intro=f"Analyze this {count}-slide post as instructed.",
+            on_stage=on_stage,
+            api_key=api_key,
+            metadata=metadata,
+            resolutions=[
+                image_resolution if slide.kind is SlideKind.IMAGE else None for slide in slides
+            ],
+        )
+        return _screen_text_from_segments(_checked_slides(result, count))
+
+    def _slide_image_resolution(self) -> Optional[types.PartMediaResolutionLevel]:
+        level = self._settings.gemini_slide_image_resolution
+        if not level:
+            return None
+        return types.PartMediaResolutionLevel(f"MEDIA_RESOLUTION_{level.upper()}")
+
+    async def _analyze_files(
+        self,
+        files: list[tuple[Optional[str], str]],
+        *,
+        system_instruction: str,
+        intro: str,
+        on_stage: Optional[StageCallback] = None,
+        api_key: str | None = None,
+        metadata: Optional[SourceMetadata] = None,
+        resolutions: Optional[list[Optional[types.PartMediaResolutionLevel]]] = None,
+    ) -> VideoAnalysis:
+        """Upload every file (each after its own label, when it has one),
+        analyze them in one request, and return as soon as the answer is
+        parsed. Every upload is deleted however that went, in the background
+        (`_schedule_cleanup`), which also releases the client afterwards.
+        `resolutions[i]`, when set, is file i's per-part media resolution; a
+        file without one goes in as the upload itself."""
         if on_stage:
             await on_stage("uploading_to_gemini")
         client = self._get_client(api_key)
 
-        # The media part comes first so the model reads the thing it is
-        # analyzing before any publisher-supplied text about it.
-        prompt_parts: list[str] = ["Analyze this media file as instructed."]
-        source_context = build_source_context(metadata)
-        if source_context:
-            prompt_parts.append(source_context)
-
         # Upload once. The upload is an API call too and can 503 on its own,
         # so it gets the same transient-only backoff - but a generate_content
-        # failure below never sends us back here to upload the file again.
+        # failure below never sends us back here to upload the files again.
+        # `uploaded[i]` is file i once its upload returns, so the clean-up
+        # below deletes every upload that happened, whatever failed.
+        uploaded: list[Any] = [None] * len(files)
         try:
-            uploaded = await self._with_backoff(
-                lambda: client.aio.files.upload(file=video_path),
-                attempts=self._settings.gemini_retry_attempts,
-                model=self._settings.gemini_model,
-                operation="files.upload",
-            )
-            try:
-                await self._wait_until_active(client, uploaded.name)
+            # The media parts come first so the model reads the thing it is
+            # analyzing before any publisher-supplied text about it.
+            prompt_parts: list[str] = [intro]
+            source_context = build_source_context(metadata)
+            if source_context:
+                prompt_parts.append(source_context)
 
-                if on_stage:
-                    await on_stage("analyzing")
-                response = await self._generate_with_retry(
-                    client,
-                    contents=[uploaded, *prompt_parts],
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_INSTRUCTION,
-                        response_mime_type="application/json",
-                        response_schema=VideoAnalysis,
-                    ),
-                )
-                return self._parse(response)
-            finally:
-                try:
-                    await client.aio.files.delete(name=uploaded.name)
-                except Exception:
-                    pass
+            await self._upload_all(client, [path for _, path in files], uploaded)
+
+            if on_stage:
+                await on_stage("analyzing")
+            media_parts: list[Any] = []
+            levels = resolutions or [None] * len(files)
+            for (label, _), file, level in zip(files, uploaded, levels):
+                if label:
+                    media_parts.append(label)
+                media_parts.append(file if level is None else _part_at(file, level))
+            response = await self._generate_with_retry(
+                client,
+                contents=[*media_parts, *prompt_parts],
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    response_mime_type="application/json",
+                    response_schema=VideoAnalysis,
+                ),
+            )
+            return self._parse(response)
+        finally:
+            # Off the critical path: the result (or the error) goes back to
+            # the run now, and the deletes and the client release follow in
+            # the background. Synchronous, so it also runs while a
+            # cancellation is unwinding through here.
+            self._schedule_cleanup(client, api_key, uploaded)
+
+    def _schedule_cleanup(self, client: genai.Client, api_key: str | None, uploaded: list[Any]) -> None:
+        """Start the background task that deletes this call's uploads and
+        then releases its client. It is its own task, so cancelling the run
+        does not cancel it; a strong reference is kept in `_cleanups` until
+        it finishes (asyncio holds tasks only weakly). Scheduled even with
+        nothing to delete, because a per-BYOK client still has to be closed."""
+        names = [file.name for file in uploaded if file is not None]
+        task = asyncio.get_running_loop().create_task(self._cleanup(client, api_key, names))
+        self._cleanups.add(task)
+        task.add_done_callback(self._cleanups.discard)
+
+    async def _cleanup(self, client: genai.Client, api_key: str | None, names: list[str]) -> None:
+        """Delete `names`, then release the client: never before, so a
+        per-BYOK client is not closed under a delete still in flight (the
+        shared client is never closed). Never raises."""
+        try:
+            await self._delete_all(client, names)
+        except Exception:  # noqa: BLE001 - background clean-up must not raise
+            logger.debug("Gemini upload clean-up failed")
         finally:
             await self._release(client, api_key)
+
+    @staticmethod
+    async def _delete_all(client: genai.Client, names: list[str]) -> None:
+        """Delete every upload, `_UPLOAD_CONCURRENCY` at a time (one at a
+        time was ~0.5 s a file). A failed delete is swallowed and does not
+        stop the others; the file then expires on Gemini's side after 48 h.
+        Only the count is logged, never a file name or the error text."""
+        if not names:
+            return
+        gate = asyncio.Semaphore(_UPLOAD_CONCURRENCY)
+
+        async def one(name: str) -> None:
+            async with gate:
+                await client.aio.files.delete(name=name)
+
+        outcomes = await asyncio.gather(*(one(name) for name in names), return_exceptions=True)
+        failed = [outcome for outcome in outcomes if isinstance(outcome, Exception)]
+        if failed:
+            logger.info(
+                "%d of %d Gemini uploads could not be deleted (%s); Gemini expires them after 48 h",
+                len(failed),
+                len(names),
+                ", ".join(sorted({type(outcome).__name__ for outcome in failed})),
+            )
+
+    async def drain(self, timeout: float = 5.0) -> None:
+        """Best effort at shutdown: wait up to `timeout` seconds for the
+        background clean-ups still running, then give up without raising.
+        What is left is not cancelled; an upload never deleted expires on
+        Gemini's side after 48 h."""
+        pending = set(self._cleanups)
+        if not pending:
+            return
+        try:
+            _, still_running = await asyncio.wait(pending, timeout=max(timeout, 0.0))
+        except Exception:  # noqa: BLE001 - shutdown must not fail here
+            logger.debug("Draining Gemini clean-ups failed")
+            return
+        if still_running:
+            logger.info(
+                "%d Gemini upload clean-up(s) still running after %.1fs at shutdown; "
+                "their files expire on Gemini's side after 48 h",
+                len(still_running),
+                timeout,
+            )
+
+    async def _upload_all(self, client: genai.Client, paths: list[str], uploaded: list[Any]) -> None:
+        """Upload every path and wait for each to be ACTIVE, at most
+        `_UPLOAD_CONCURRENCY` at a time, filling `uploaded` by position.
+        Every upload is allowed to finish (so none is left undeleted), no new
+        one starts after a failure, and the first failure in slide order is
+        raised once all have settled."""
+        gate = asyncio.Semaphore(_UPLOAD_CONCURRENCY)
+        failed = False
+
+        async def one(index: int, path: str) -> None:
+            nonlocal failed
+            async with gate:
+                if failed:
+                    return
+                try:
+                    uploaded[index] = await self._with_backoff(
+                        lambda: client.aio.files.upload(file=path),
+                        attempts=self._settings.gemini_retry_attempts,
+                        model=self._settings.gemini_model,
+                        operation="files.upload",
+                    )
+                    await self._wait_until_active(client, uploaded[index].name)
+                except BaseException:
+                    failed = True
+                    raise
+
+        outcomes = await asyncio.gather(
+            *(one(index, path) for index, path in enumerate(paths)), return_exceptions=True
+        )
+        for outcome in outcomes:
+            if isinstance(outcome, BaseException):
+                raise outcome
 
     async def analyze_captions(
         self, captions: CaptionTrack, api_key: str | None = None
@@ -422,12 +619,31 @@ class GeminiEngine:
         propagates on the first attempt so ProcessRunUseCase can mask it and
         log the traceback.
         """
+        return await self._with_reupload(
+            lambda: self._analyze(video_path, on_stage=on_stage, api_key=api_key, metadata=metadata),
+            attempts,
+        )
+
+    async def analyze_slides_with_retry(
+        self,
+        slides: tuple[MediaSlide, ...],
+        on_stage: Optional[StageCallback] = None,
+        attempts: int = 2,
+        api_key: str | None = None,
+        metadata: Optional[SourceMetadata] = None,
+    ) -> VideoAnalysis:
+        """`analyze_with_retry` for a multi-slide post: one request with every
+        slide, re-uploaded together if Gemini fails to process any of them."""
+        return await self._with_reupload(
+            lambda: self._analyze_slides(slides, on_stage=on_stage, api_key=api_key, metadata=metadata),
+            attempts,
+        )
+
+    async def _with_reupload(self, analyze: Callable[[], Awaitable[VideoAnalysis]], attempts: int) -> VideoAnalysis:
         attempts = max(1, attempts)
         for attempt in range(1, attempts + 1):
             try:
-                return await self._analyze(
-                    video_path, on_stage=on_stage, api_key=api_key, metadata=metadata
-                )
+                return await analyze()
             except _FileProcessingError as exc:
                 if attempt == attempts:
                     raise
@@ -445,3 +661,49 @@ class GeminiEngine:
                     raise
                 raise mapped from exc
         raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _part_at(file: Any, level: types.PartMediaResolutionLevel) -> types.Part:
+    """An uploaded file as a part with its own media resolution. The SDK
+    turns a bare File into exactly this part minus the resolution."""
+    return types.Part(
+        file_data=types.FileData(file_uri=file.uri, mime_type=file.mime_type),
+        media_resolution=types.PartMediaResolution(level=level),
+    )
+
+
+def _screen_text_from_segments(result: VideoAnalysis) -> VideoAnalysis:
+    """A multi-slide post's flat `screen_text` is its segments' text in the
+    order the model gave them, a blank line between entries, so the two can
+    never disagree (the model's own `screen_text` was a shorter selection).
+    With no segment carrying text, the model's `screen_text` is kept.
+    Single files keep theirs: a video's segments repeat text that stays on
+    screen, which its flat text lists once."""
+    texts = [segment.text.strip() for segment in result.screen_text_segments if segment.text.strip()]
+    if not texts:
+        return result
+    joined = "\n\n".join(texts)
+    if joined == result.screen_text:
+        return result
+    return result.model_copy(update={"screen_text": joined})
+
+
+def _checked_slides(result: VideoAnalysis, count: Optional[int]) -> VideoAnalysis:
+    """Keep a segment's `slide` only where it can be true: on a post of
+    `count` slides, a number from 1 to `count`; on one media file (`count`
+    None), never. Returns `result` itself when nothing needed clearing."""
+
+    def check(segment):
+        slide = segment.slide
+        if slide is None or (count is not None and 1 <= slide <= count):
+            return segment
+        return segment.model_copy(update={"slide": None})
+
+    transcript = [check(segment) for segment in result.transcript_segments]
+    screen = [check(segment) for segment in result.screen_text_segments]
+    unchanged = all(a is b for a, b in zip(transcript, result.transcript_segments)) and all(
+        a is b for a, b in zip(screen, result.screen_text_segments)
+    )
+    if unchanged:
+        return result
+    return result.model_copy(update={"transcript_segments": transcript, "screen_text_segments": screen})

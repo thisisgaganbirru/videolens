@@ -53,6 +53,7 @@ from .schemas import (
     SavedRunResponse,
     SavedRunsDeletedResponse,
     SavedRunSourceResponse,
+    SlideThumbnailResponse,
     SavedRunSummaryResponse,
     WorkspaceResponse,
 )
@@ -219,6 +220,7 @@ def _summary(run: Run) -> RunSummary:
         orientation=facts.orientation,
         width=facts.width,
         height=facts.height,
+        slide_count=facts.slide_count,
     )
 
 
@@ -246,6 +248,15 @@ async def get_run(
         width=facts.width,
         height=facts.height,
         orientation=facts.orientation,
+        slide_count=facts.slide_count,
+        slides=(
+            [
+                SlideThumbnailResponse(slide=item.slide, kind=item.kind.value, thumbnail=item.thumbnail)
+                for item in run.slides
+            ]
+            if run.slides
+            else None
+        ),
     )
 
 
